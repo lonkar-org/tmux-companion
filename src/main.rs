@@ -43,6 +43,9 @@ enum Cmd {
         /// Middle-ellipsize the branch name when longer than this (default 20)
         #[arg(long)]
         branch_max_len: Option<usize>,
+        /// Show the git glyph before the branch name (off by default)
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        branch_icon: bool,
     },
 
     /// Print sample git segments in every color style (local, no server)
@@ -116,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
             style,
             no_cap,
             branch_max_len,
+            branch_icon,
         } => {
             let req = Request {
                 cmd: "gst".into(),
@@ -126,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
                     "style": style,
                     "no_cap": no_cap,
                     "branch_max_len": branch_max_len,
+                    "branch_icon": branch_icon,
                 }),
             };
             client::send_and_print(req).await?;

@@ -331,11 +331,12 @@ pub fn status_line_capped(
     style: Style,
     cap_glyph: Option<&'static str>,
 ) -> String {
-    status_line_render(s, nvim_suspended, no_tmux, style, cap_glyph, None)
+    status_line_render(s, nvim_suspended, no_tmux, style, cap_glyph, None, true)
 }
 
 /// Innermost render; `branch_max` overrides the branch middle-ellipsis
-/// threshold (default `BRANCH_MAX_LEN`).
+/// threshold (default `BRANCH_MAX_LEN`); `branch_icon` controls whether the
+/// leading git glyph (and its trailing space) precede the branch name.
 pub fn status_line_render(
     s: &GitStatus,
     nvim_suspended: bool,
@@ -343,6 +344,7 @@ pub fn status_line_render(
     style: Style,
     cap_glyph: Option<&'static str>,
     branch_max: Option<usize>,
+    branch_icon: bool,
 ) -> String {
     let bar_bg = if nvim_suspended { BG_TERMINAL } else { BG_BAR };
     let mut p = s.palette(style, bar_bg);
@@ -382,10 +384,12 @@ pub fn status_line_render(
         ));
     }
 
+    // GIT carries its own trailing space, so skipping it also drops the gap
+    // between glyph and branch name.
     remote.add(format!(
         "{}{}{}{}",
         colored_segment(no_tmux, fg, bg, ""),
-        GIT,
+        if branch_icon { GIT } else { "" },
         short_branch_len(&s.branch, branch_max.unwrap_or(BRANCH_MAX_LEN)),
         WHITE_SPACE
     ));
@@ -565,6 +569,7 @@ pub async fn render(
     style: Style,
     no_cap: bool,
     branch_max_len: Option<usize>,
+    branch_icon: bool,
 ) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
     let cap = if no_cap { Some("") } else { None };
@@ -591,8 +596,15 @@ pub async fn render(
         let cached =
             tokio::task::spawn_blocking(move || crate::db::get_git_status(&id_c, 2)).await??;
         if let Some(status) = cached {
-            let line =
-                status_line_render(&status, nvim_suspended, false, style, cap, branch_max_len);
+            let line = status_line_render(
+                &status,
+                nvim_suspended,
+                false,
+                style,
+                cap,
+                branch_max_len,
+                branch_icon,
+            );
             return Ok(if no_cap { line.trim_end().to_string() } else { line });
         }
     }
@@ -603,7 +615,15 @@ pub async fn render(
     let s_clone = status.clone();
     tokio::task::spawn_blocking(move || crate::db::save_git_status(&id_c, &s_clone)).await??;
 
-    let line = status_line_render(&status, nvim_suspended, false, style, cap, branch_max_len);
+    let line = status_line_render(
+        &status,
+        nvim_suspended,
+        false,
+        style,
+        cap,
+        branch_max_len,
+        branch_icon,
+    );
     Ok(if no_cap { line.trim_end().to_string() } else { line })
 }
 
@@ -1454,6 +1474,24 @@ mod tests {
         assert_eq!(line.matches(SEPARATOR).count(), 1, "{line}");
         assert!(line.ends_with(SEPARATOR), "{line}");
         assert!(!line.contains('|'), "stale pipe divider: {line}");
+    }
+
+    #[test]
+    fn branch_icon_off_drops_glyph_and_its_space() {
+        let s = s_clean();
+        let line = status_line_render(&s, false, false, Style::Outline, None, None, false);
+        assert!(!line.contains(GIT.trim()), "git glyph left over: {line}");
+        // GIT's trailing space must go with it: branch name follows the color
+        // code directly, no orphaned gap.
+        assert!(line.contains("]branch1"), "gap before branch: {line}");
+    }
+
+    #[test]
+    fn branch_icon_on_keeps_legacy_shape() {
+        let s = s_clean();
+        let with_icon = status_line_render(&s, false, false, Style::Outline, None, None, true);
+        assert_eq!(with_icon, status_line_styled(&s, false, false, Style::Outline));
+        assert!(with_icon.contains(GIT));
     }
 
     #[test]
