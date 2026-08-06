@@ -27,8 +27,6 @@ use crate::tmux::{
 const OUTLINE_CAP: &str = crate::tmux::icons::SEPARATOR;
 
 const BRANCH_MAX_LEN: usize = 20;
-const HEAD_LEN: usize = 8;
-const TAIL_LEN: usize = 9;
 
 // Branch-type icon patterns — evaluated in order (first match wins).
 // Using a Vec (not HashMap) to ensure deterministic order and allow order-sensitive matching.
@@ -261,7 +259,12 @@ impl GitStatus {
     }
 }
 
+#[cfg(test)]
 fn short_branch(branch: &str) -> String {
+    short_branch_len(branch, BRANCH_MAX_LEN)
+}
+
+fn short_branch_len(branch: &str, max_len: usize) -> String {
     let mut icon = "";
     let mut stripped = String::new();
 
@@ -279,15 +282,18 @@ fn short_branch(branch: &str) -> String {
         &stripped
     };
     let char_count = name.chars().count();
-    // Go iterates indices 0..len-1, truncating when index >= branchMaxLen,
-    // which fires at index 20 (i.e., when len > 20 chars).
-    // Tail formula: branch[lastIndex-tailLen:] = last (tailLen+1) = 10 chars.
-    let truncated = if char_count > BRANCH_MAX_LEN {
-        let head: String = name.chars().take(HEAD_LEN).collect();
+    // Middle-ellipsize names longer than max_len chars. The kept chars are
+    // split ~45% head / ~55% tail of (max_len - 2), which reproduces the
+    // historic Go port's 8 + "..." + 10 shape at the default max_len of 20.
+    let truncated = if char_count > max_len {
+        let budget = max_len.saturating_sub(2).max(2);
+        let head_len = budget * 45 / 100;
+        let tail_len = budget - head_len;
+        let head: String = name.chars().take(head_len).collect();
         let tail: String = name
             .chars()
             .rev()
-            .take(TAIL_LEN + 1)
+            .take(tail_len)
             .collect::<String>()
             .chars()
             .rev()
@@ -324,6 +330,19 @@ pub fn status_line_capped(
     no_tmux: bool,
     style: Style,
     cap_glyph: Option<&'static str>,
+) -> String {
+    status_line_render(s, nvim_suspended, no_tmux, style, cap_glyph, None)
+}
+
+/// Innermost render; `branch_max` overrides the branch middle-ellipsis
+/// threshold (default `BRANCH_MAX_LEN`).
+pub fn status_line_render(
+    s: &GitStatus,
+    nvim_suspended: bool,
+    no_tmux: bool,
+    style: Style,
+    cap_glyph: Option<&'static str>,
+    branch_max: Option<usize>,
 ) -> String {
     let bar_bg = if nvim_suspended { BG_TERMINAL } else { BG_BAR };
     let mut p = s.palette(style, bar_bg);
@@ -367,7 +386,7 @@ pub fn status_line_capped(
         "{}{}{}{}",
         colored_segment(no_tmux, fg, bg, ""),
         GIT,
-        short_branch(&s.branch),
+        short_branch_len(&s.branch, branch_max.unwrap_or(BRANCH_MAX_LEN)),
         WHITE_SPACE
     ));
 
@@ -545,6 +564,7 @@ pub async fn render(
     force: bool,
     style: Style,
     no_cap: bool,
+    branch_max_len: Option<usize>,
 ) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
     let cap = if no_cap { Some("") } else { None };
@@ -571,7 +591,8 @@ pub async fn render(
         let cached =
             tokio::task::spawn_blocking(move || crate::db::get_git_status(&id_c, 2)).await??;
         if let Some(status) = cached {
-            let line = status_line_capped(&status, nvim_suspended, false, style, cap);
+            let line =
+                status_line_render(&status, nvim_suspended, false, style, cap, branch_max_len);
             return Ok(if no_cap { line.trim_end().to_string() } else { line });
         }
     }
@@ -582,7 +603,7 @@ pub async fn render(
     let s_clone = status.clone();
     tokio::task::spawn_blocking(move || crate::db::save_git_status(&id_c, &s_clone)).await??;
 
-    let line = status_line_capped(&status, nvim_suspended, false, style, cap);
+    let line = status_line_render(&status, nvim_suspended, false, style, cap, branch_max_len);
     Ok(if no_cap { line.trim_end().to_string() } else { line })
 }
 
@@ -881,6 +902,31 @@ mod tests {
     #[test]
     fn short_branch_plain() {
         assert_eq!(short_branch("branch1"), "branch1");
+    }
+
+    #[test]
+    fn short_branch_len_default_matches_legacy_shape() {
+        // 25 chars: default max 20 keeps 8 head + "..." + 10 tail
+        let r = short_branch_len("abcdefghijklmnopqrstuvwxy", 20);
+        assert_eq!(r, "abcdefgh...pqrstuvwxy");
+        assert_eq!(r, short_branch("abcdefghijklmnopqrstuvwxy"));
+    }
+
+    #[test]
+    fn short_branch_len_proportional_at_40() {
+        // budget 38: head 17, tail 21
+        let name: String = ('a'..='z').cycle().take(50).collect();
+        let r = short_branch_len(&name, 40);
+        assert_eq!(r.chars().count(), 17 + 3 + 21);
+        assert!(r.starts_with(&name.chars().take(17).collect::<String>()));
+        let tail: String = name.chars().skip(50 - 21).collect();
+        assert!(r.ends_with(&tail));
+    }
+
+    #[test]
+    fn short_branch_len_at_exact_max_not_truncated() {
+        let name: String = ('a'..='z').cycle().take(40).collect();
+        assert_eq!(short_branch_len(&name, 40), name);
     }
 
     #[test]

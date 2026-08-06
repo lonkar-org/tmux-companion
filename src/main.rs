@@ -40,6 +40,9 @@ enum Cmd {
         /// Omit the trailing end-cap glyph (for use at the start of status-right)
         #[arg(long, action = clap::ArgAction::SetTrue)]
         no_cap: bool,
+        /// Middle-ellipsize the branch name when longer than this (default 20)
+        #[arg(long)]
+        branch_max_len: Option<usize>,
     },
 
     /// Print sample git segments in every color style (local, no server)
@@ -112,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
             force,
             style,
             no_cap,
+            branch_max_len,
         } => {
             let req = Request {
                 cmd: "gst".into(),
@@ -121,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
                     "force": force,
                     "style": style,
                     "no_cap": no_cap,
+                    "branch_max_len": branch_max_len,
                 }),
             };
             client::send_and_print(req).await?;

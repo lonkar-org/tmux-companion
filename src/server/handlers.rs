@@ -19,7 +19,8 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 .and_then(crate::tmux::format::Style::parse)
                 .unwrap_or_default();
             let no_cap = req.args["no_cap"].as_bool().unwrap_or(false);
-            segments::git::render(path, pid, force, style, no_cap).await
+            let branch_max_len = req.args["branch_max_len"].as_u64().map(|n| n as usize);
+            segments::git::render(path, pid, force, style, no_cap, branch_max_len).await
         }
         "battery" => {
             const TTL: Duration = Duration::from_secs(30);
