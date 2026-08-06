@@ -29,6 +29,9 @@ pub const CAP_RULE: &str = " \u{2502}"; // plain vertical rule
 pub const CAP_EIGHTH: &str = " \u{258f}"; // left one-eighth block
 pub const CAP_NONE: &str = ""; // nothing at all
 pub const BEHIND: &str = "\u{f409} ";
+// Fallback branch-type glyph (md-source_branch) for names with no recognized
+// prefix — main, master, dev, stable, ...
+pub const BRANCH: &str = "\u{f062c} ";
 pub const BUGFIX: &str = "\u{f188} ";
 pub const CHORE: &str = "\u{f19a1} ";
 pub const CLEAN: &str = "\u{ebb1}";
@@ -49,5 +52,6 @@ pub const SEPARATOR: &str = "\u{e621}";
 pub const STAGED: &str = "\u{f01c} ";
 pub const STASHED: &str = "\u{e257} ";
 pub const SYNC: &str = "\u{f1378}";
+pub const TAG: &str = "\u{f412} ";
 pub const UNMERGED: &str = "\u{f1a98} ";
 pub const WHITE_SPACE: &str = " ";

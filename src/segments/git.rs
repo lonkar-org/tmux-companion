@@ -46,6 +46,7 @@ static BRANCH_TYPES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
             crate::tmux::icons::RELEASE,
             Regex::new(r"^releases?/").unwrap(),
         ),
+        (crate::tmux::icons::TAG, Regex::new(r"^tags?/").unwrap()),
     ]
 });
 
@@ -265,7 +266,9 @@ fn short_branch(branch: &str) -> String {
 }
 
 fn short_branch_len(branch: &str, max_len: usize) -> String {
-    let mut icon = "";
+    // No recognized prefix falls back to the plain branch glyph, so main,
+    // master, dev, ... still carry a type marker.
+    let mut icon = crate::tmux::icons::BRANCH;
     let mut stripped = String::new();
 
     for (icn, pattern) in BRANCH_TYPES.iter() {
@@ -920,15 +923,15 @@ mod tests {
     // ── short_branch ─────────────────────────────────────────────────────────
 
     #[test]
-    fn short_branch_plain() {
-        assert_eq!(short_branch("branch1"), "branch1");
+    fn short_branch_plain_gets_fallback_branch_icon() {
+        assert_eq!(short_branch("branch1"), format!("{}branch1", BRANCH));
     }
 
     #[test]
     fn short_branch_len_default_matches_legacy_shape() {
         // 25 chars: default max 20 keeps 8 head + "..." + 10 tail
         let r = short_branch_len("abcdefghijklmnopqrstuvwxy", 20);
-        assert_eq!(r, "abcdefgh...pqrstuvwxy");
+        assert_eq!(r, format!("{}abcdefgh...pqrstuvwxy", BRANCH));
         assert_eq!(r, short_branch("abcdefghijklmnopqrstuvwxy"));
     }
 
@@ -937,6 +940,7 @@ mod tests {
         // budget 38: head 17, tail 21
         let name: String = ('a'..='z').cycle().take(50).collect();
         let r = short_branch_len(&name, 40);
+        let r = r.strip_prefix(BRANCH).unwrap();
         assert_eq!(r.chars().count(), 17 + 3 + 21);
         assert!(r.starts_with(&name.chars().take(17).collect::<String>()));
         let tail: String = name.chars().skip(50 - 21).collect();
@@ -946,7 +950,7 @@ mod tests {
     #[test]
     fn short_branch_len_at_exact_max_not_truncated() {
         let name: String = ('a'..='z').cycle().take(40).collect();
-        assert_eq!(short_branch_len(&name, 40), name);
+        assert_eq!(short_branch_len(&name, 40), format!("{}{}", BRANCH, name));
     }
 
     #[test]
@@ -1025,8 +1029,24 @@ mod tests {
         let r = short_branch(long);
         // head = first 8 chars = "this-is-"
         // tail = last 10 chars (Go: branch[len-1-tailLen:] = branch[21:]) = "ranch-name"
-        assert!(r.starts_with("this-is-"), "head: {r}");
+        assert!(r.starts_with(&format!("{}this-is-", BRANCH)), "head: {r}");
         assert!(r.ends_with("ranch-name"), "tail: {r}");
+    }
+
+    #[test]
+    fn short_branch_tag() {
+        let r = short_branch("tags/v1.2.3");
+        assert!(r.starts_with(TAG), "tag icon: {r}");
+        assert!(r.contains("v1.2.3"));
+        assert!(short_branch("tag/v2").starts_with(TAG));
+    }
+
+    #[test]
+    fn short_branch_fallback_for_common_trunk_names() {
+        for name in ["main", "master", "dev", "stable", "xyz"] {
+            let r = short_branch(name);
+            assert_eq!(r, format!("{}{}", BRANCH, name));
+        }
     }
 
     // ── status_line_mode: tmux format (ports all 17 Go test cases) ────────────
@@ -1481,9 +1501,12 @@ mod tests {
         let s = s_clean();
         let line = status_line_render(&s, false, false, Style::Outline, None, None, false);
         assert!(!line.contains(GIT.trim()), "git glyph left over: {line}");
-        // GIT's trailing space must go with it: branch name follows the color
-        // code directly, no orphaned gap.
-        assert!(line.contains("]branch1"), "gap before branch: {line}");
+        // GIT's trailing space must go with it: the branch-type glyph follows
+        // the color code directly, no orphaned gap.
+        assert!(
+            line.contains(&format!("]{}branch1", BRANCH)),
+            "gap before branch: {line}"
+        );
     }
 
     #[test]
