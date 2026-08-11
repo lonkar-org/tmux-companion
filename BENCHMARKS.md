@@ -1,113 +1,189 @@
 # Benchmarks
 
-## Setup
+## What actually costs anything
 
-Hardware: Apple Intel MacBook (macOS 25.5.0 Darwin)  
-Method: wall-clock measured with `gdate +%s%N` (nanosecond resolution)  
-Runs per segment: 10  
-Server: already running, caches warm (gst SQLite + battery IOKit pre-warm at startup)  
-`PANE_PID`: the benchmarking shell itself (realistic — a shell with no suspended children)
+The status bar's cost is set by **how many processes tmux spawns**, not by what
+they compute. Three measurements establish that, and they are the reason for
+every change in the current design:
 
-Run the benchmark yourself:
+1. **A fork/exec costs 12.4 ms of CPU** — 14.6 ms as tmux actually runs it,
+   wrapped in the `sh -c` that `#()` jobs go through. That is the floor. No
+   amount of server-side optimisation touches it.
+2. **tmux gates `#()` to `status-interval` per attached client**, per *distinct
+   command string*. Five different `#()` calls at `status-interval 1` is five
+   spawns a second; the same call repeated costs one.
+3. **Server-side work is cheap by comparison.** Computing the entire right-hand
+   side — git status, bandwidth and battery — takes 2.6 ms.
+
+So collapsing five `#()` calls into one is worth more than any amount of tuning
+inside them, and the only lever that touches the fork/exec half is making the
+process itself cheaper to start.
+
+## Method
+
+Two independent measurements, both in [`bench-cpu.py`](./bench-cpu.py).
+
+**Server CPU** comes from the server's own `getrusage(2)`, exposed on the socket
+as the `__rusage` command: `utime stime cutime cstime request_count`, in
+microseconds, self plus reaped children. This exists because nothing outside the
+process can measure per-call server CPU at the resolution the question needs —
+`top` quantises to 10 ms and `ps` to a whole second, while a segment costs
+single-digit milliseconds. Requests go straight down the unix socket, so no
+process spawn is counted.
+
+**Spawn CPU** comes from `RUSAGE_CHILDREN` deltas around blocks of real
+fork/exec — 4 interleaved blocks of 40, so drift and thermal state hit every arm
+equally.
+
+**End to end** is a real tmux (`tmux -L tcmeasure`) drawing a real status bar
+with one attached client at `status-interval 1`, for 45 seconds, counting the
+requests the server actually served and the CPU it actually burned. Total =
+server CPU + (calls/s x spawn CPU via `sh -c`).
+
+Every run uses `TMUX_COMPANION_SOCK` to put the benchmark server on its own
+socket, so a measurement never touches the live status bar.
 
 ```sh
-cargo build --release
-bash bench.sh                          # uses ./target/release/tmux-companion
-bash bench.sh /path/to/binary /repo    # custom binary and repo
-BENCH_RUNS=20 bash bench.sh            # more samples
+python3 bench-cpu.py target/release/tmux-companion "after" --tmux
+python3 bench-cpu.py /path/to/old/binary  "before" --tmux
 ```
+
+`bench.sh` is the older wall-clock harness and still works; it answers a
+different question (how long a client waits) from this one (how much CPU the
+machine spends).
+
+Hardware: Apple Intel MacBook, 16 cores, macOS 25.5.0 Darwin. Measured
+2026-08-11.
 
 ---
 
-## Current results (native-library build)
+## Headline: 15.4% of a core → 1.8%
 
-Subprocesses replaced with in-process Rust libraries: `netstat` → `sysinfo`, `pgrep`+`ps` → `sysinfo`, `ioreg`+`plist` → `battery` crate. Battery result cached 30s server-side.
+| | before | after |
+|---|---|---|
+| `#()` calls per second | 5.00 | **0.98** |
+| server CPU | 80.90 ms/s | **7.39 ms/s** |
+| spawn CPU | 72.88 ms/s | **11.04 ms/s** |
+| **total** | **153.77 ms/s** | **18.43 ms/s** |
+| **share of one core** | **15.38%** | **1.84%** |
 
-### Individual segment latency
+An 8.3x reduction. "Before" is the five-call configuration — `clients`,
+`vim-bg`, `gst` (with `#{pane_pid}`), `net`, `battery`. "After" is one
+`status-right` call with a native-tmux left side.
+
+## Where the win comes from
+
+| Change | Saved | Kind |
+|---|---|---|
+| Five `#()` calls → one | ~58 ms/s of spawn | spawn count |
+| Parse args before building the tokio runtime | 3.3 ms per spawn | per-spawn cost |
+| Drop `#{pane_pid}` from the gst path | 18.5 ms per gst call | server |
+| Cache `rev-parse --is-inside-work-tree` | 7.5 ms per gst call | server |
+| `clients` + `vim-bg` off the bar | 21 ms per refresh | both |
+| Delete SQLite | ~0 | build only — see below |
+
+### Server CPU per request
+
+| Segment | before | after | note |
+|---|---|---|---|
+| `status-right` (combined) | — | **2.59** | all three segments, concurrently |
+| `gst` (no pane_pid) | 7.55 | **0.09** | rev-parse fork now cached |
+| `gst` (with pane_pid) | 26.01 | 16.00 | process scan, only when asked by hand |
+| `net` | 1.05 | 1.10 | never cached; it is a rate |
+| `battery` (30 s cache) | 0.06 | 0.05 | |
+| `clients` | 4.93 | 5.14 | off the bar |
+| `vim-bg` | 16.25 | 16.00 | off the bar |
+
+The `gst` line is the striking one: 7.55 ms → 0.09 ms, an 84x drop, entirely
+from caching `git rev-parse --is-inside-work-tree`. That check sat *ahead* of the
+status cache, so every cache hit still paid a full `git` fork for it. A path's
+repo-ness effectively never changes; it is cached for 5 minutes rather than
+forever so that `git init` in a watched directory is not misremembered until the
+server restarts.
+
+### Spawn CPU per fork/exec
+
+| Shape | before | after | change |
+|---|---|---|---|
+| `/bin/echo` (floor) | 2.32 | 2.43 | — |
+| client round trip | 9.78 | **6.56** | −32.9% |
+| client via `sh -c` (as tmux runs it) | 14.58 | **11.29** | −22.6% |
+
+`#[tokio::main]` built a multi-threaded runtime — one worker thread per core,
+sixteen here — before clap had even parsed the arguments, on every client
+invocation. Parsing first and giving clients a `current_thread` runtime is the
+only change that touches the fork/exec half of the bill.
+
+---
+
+## Deleting SQLite: honest accounting
+
+Replacing `rusqlite` with an in-memory TTL map on `ServerState` **is not a CPU
+win**. SQLite was 0.62 ms of the 27.7 ms a cached `gst` cost. It was never the
+problem.
+
+What it actually buys:
+
+| | before | after |
+|---|---|---|
+| crates in the dependency graph | 156 | **120** (−36) |
+| clean release build (`-j 4`) | 59.8 s | **39.1 s** (−35%) |
+| binary size | 6.33 MB | **4.01 MB** (−37%) |
+
+`rusqlite`'s `bundled` feature compiles SQLite from C and was the single largest
+item in a clean build. Removing it, along with the `tokio-tungstenite` and
+`futures-util` dependencies of the deleted `speak` subcommand, takes 36 crates
+out of the tree.
+
+The cost is that the cache no longer survives a server restart. That is one
+51 ms cache miss, once — not load-bearing.
+
+---
+
+## Why `status-interval` stays at 1
+
+Measured against the server's own CPU time, 30-second windows, alternating, two
+rounds each:
+
+```
+interval=1 -> 5.60%, 5.76% of one core
+interval=5 -> 5.63%, 5.90% of one core
+```
+
+Identical within noise. tmux redraws the status line on pane output and activity
+as well as on this timer, and in a working session those events, not the timer,
+set the redraw rate. The cost to attack is the cost *per redraw*. Since a longer
+interval buys nothing and the clock prints seconds, it stays at 1.
+
+---
+
+## Historical: individual segment latency
+
+Wall-clock round trips including process spawn, from `bench.sh`. Kept for
+continuity with earlier versions; the CPU figures above are the ones that
+matter, since wall clock on an idle machine hides the cost that a busy one pays.
 
 | Segment | min | avg | max | Notes |
 |---|---|---|---|---|
-| `gst` (cached) | 29ms | 30ms | 35ms | SQLite TTL hit — no git subprocess |
-| `gst --force` (cache miss) | 47ms | 48ms | 51ms | Full `git status --porcelain=v2` run |
-| `battery` (cached ≤30s) | 38ms | 43ms | 44ms | IOKit pre-warmed at server start; 30s TTL |
-| `net` | 21ms | 22ms | 23ms | `sysinfo::Networks` — no subprocess, no stalls |
-| `clients` | 23ms | 26ms | 32ms | `tmux list-clients` (external, kept) |
-| `vim-bg` | 47ms | 48ms | 49ms | `sysinfo::System` process tree scan |
-| `window` | 17ms | 18ms | 22ms | Pure in-process path abbreviation |
+| `gst` (cached) | 29ms | 30ms | 35ms | pre-rework, SQLite TTL hit |
+| `gst --force` (cache miss) | 47ms | 48ms | 51ms | full `git status --porcelain=v2` |
+| `battery` (cached ≤30s) | 38ms | 43ms | 44ms | IOKit pre-warmed at server start |
+| `net` | 21ms | 22ms | 23ms | `sysinfo::Networks`, no subprocess |
+| `clients` | 23ms | 26ms | 32ms | `tmux list-clients` |
+| `vim-bg` | 47ms | 48ms | 49ms | `sysinfo::System` process scan |
+| `window` | 17ms | 18ms | 22ms | pure in-process path abbreviation |
 
-### Full refresh (all 6 segments in parallel)
+### Earlier work: native libraries replacing subprocesses
 
-```
-run 1:  56ms    run 6:  53ms
-run 2:  51ms    run 7:  53ms
-run 3:  57ms    run 8:  51ms
-run 4:  55ms    run 9:  50ms
-run 5:  53ms    run 10: 51ms
-─────────────────────────────
-min=50ms  avg=53ms  max=57ms
-```
-
----
-
-## Comparison with old setup
-
-The old setup ran `yrl gst` (Go binary) and five `.zsh` scripts per status refresh. Each was invoked by tmux in parallel.
-
-| Segment | Old (shell) | v1 (subprocess) | v2 (native libs) | Change v1→v2 |
-|---|---|---|---|---|
-| `gst` (cached) | ~55ms (yrl) | 24ms | 30ms | +6ms (binary grew slightly) |
-| `gst --force` | ~55ms (yrl) | 36ms | 48ms | — |
-| `battery` | ~90ms (zsh+ioreg) | 38ms | 43ms cached | IOKit only called once per 30s |
-| `net` | ~32ms / **1100ms stall** | 15ms | **22ms**, no stalls | stall bug eliminated |
-| `clients` | ~18ms | 15ms | 26ms | same external call |
-| `vim-bg` | ~42ms | 40ms | 48ms | — |
-| `window` | ~12ms | 10ms | 18ms | — |
-
-### Full parallel refresh
-
-| Scenario | Old shell | v1 subprocess | v2 native libs |
-|---|---|---|---|
-| Typical | ~100–130ms | 49ms | **53ms** |
-| Worst case | **>1100ms** (netstat stall) | 64ms | **57ms** |
-
-The v2 typical refresh is ~3ms slower than v1 on average (sysinfo adds ~7ms vs bare netstat on the non-stall path). The trade-off is the complete elimination of the netstat stall: old worst-case >1100ms is now capped at 57ms.
-
-### Server-side load improvement (battery caching)
-
-Before: every tmux refresh called `ioreg` via subprocess (~25ms CPU server-side).  
-After: IOKit called once at server startup, then once per 30s.  
-Over 30 refreshes: 30×25ms = 750ms CPU → 1×25ms + 29×~1ms = 54ms CPU (**14× less**).
-
-### Why native libraries help
+`netstat` → `sysinfo`, `pgrep`+`ps` → `sysinfo`, `ioreg`+`plist` → `battery`
+crate. The headline there was not CPU but a stall: the old `net` segment hit a
+`netstat` hang roughly one call in three, and worst-case refresh went from
+>1100 ms to 57 ms.
 
 | Change | Benefit |
 |---|---|
-| `sysinfo::Networks` replaces `netstat` | Eliminates the ~1-in-3 netstat stall (was >1100ms) |
-| `sysinfo::System` replaces `pgrep`+`ps` | Eliminates 2 sequential subprocesses per vim-bg call |
-| `battery` crate replaces `ioreg`+`plist` | Combined with 30s cache: ~14× less server CPU for battery |
-| 5s timeouts on all remaining subprocesses | `git` or `tmux` hang can no longer block the server indefinitely |
-| Battery pre-warm at server startup | No 600ms IOKit cold-start on first tmux refresh after server launch |
-
----
-
-## Historical baseline (v1 vs old shell scripts)
-
-The numbers below are from the initial subprocess-based implementation, for reference.
-
-### v1 individual segment latency
-
-| Segment | min | avg | max |
-|---|---|---|---|
-| `gst` (cached) | 21ms | 24ms | 28ms |
-| `gst --force` | 34ms | 36ms | 39ms |
-| `battery` | 34ms | 38ms | 48ms |
-| `net` | 14ms | 15ms | 16ms |
-| `clients` | 15ms | 15ms | 17ms |
-| `vim-bg` | 35ms | 40ms | 51ms |
-| `window` | 10ms | 10ms | 12ms |
-
-### v1 full refresh
-
-```
-min=44ms  avg=49ms  max=64ms
-```
+| `sysinfo::Networks` replaces `netstat` | eliminates the ~1-in-3 netstat stall |
+| `sysinfo::System` replaces `pgrep`+`ps` | two fewer sequential subprocesses per vim-bg |
+| `battery` crate replaces `ioreg`+`plist` | with a 30 s cache, ~14x less server CPU |
+| 5 s timeouts on remaining subprocesses | a hung `git` or `tmux` cannot block the server |
+| battery pre-warm at server startup | no 600 ms IOKit cold start on first refresh |

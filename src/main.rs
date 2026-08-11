@@ -1,13 +1,11 @@
+mod cache;
 mod client;
-mod db;
 mod preview;
 mod proto;
 mod segments;
 mod server;
 mod tmux;
-mod tts;
 
-use std::io::Read;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -46,6 +44,33 @@ enum Cmd {
         /// Show the git glyph before the branch name (off by default)
         #[arg(long, action = clap::ArgAction::SetTrue)]
         branch_icon: bool,
+        /// Seconds a cached status stays fresh (0 disables the cache)
+        #[arg(long, default_value = "5")]
+        ttl: f64,
+    },
+
+    /// Whole right-hand status side in one call: git status, bandwidth and
+    /// battery, computed concurrently and returned with the tmux literals that
+    /// used to sit between them in the config.
+    StatusRight {
+        /// Path to the current pane's directory (defaults to current directory)
+        path: Option<PathBuf>,
+        /// Color style: fill (solid background), outline, outline-bright
+        #[arg(short = 's', long, default_value = "outline-bright")]
+        style: String,
+        /// Middle-ellipsize the branch name when longer than this (default 20)
+        #[arg(long)]
+        branch_max_len: Option<usize>,
+        /// Show the git glyph before the branch name (off by default)
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        branch_icon: bool,
+        /// Bypass the git cache and force a fresh git status fetch
+        #[arg(short = 'f', long, action = clap::ArgAction::SetTrue)]
+        force: bool,
+        /// Seconds a cached git status stays fresh (0 disables the cache).
+        /// Applies to the git segment only -- bandwidth is always live.
+        #[arg(long, default_value = "5")]
+        ttl: f64,
     },
 
     /// Print sample git segments in every color style (local, no server)
@@ -94,21 +119,34 @@ enum Cmd {
         pane_index: u32,
     },
 
-    /// Speak text through a local vachan-server TTS (arg, or stdin if omitted)
-    Speak {
-        #[arg(trailing_var_arg = true)]
-        text: Vec<String>,
-        /// vachan-server WebSocket URL (default: ws://127.0.0.1:8765/synthesize)
-        #[arg(long)]
-        url: Option<String>,
-    },
+    /// Bare client round trip with no server work, for benchmarking.
+    #[command(hide = true)]
+    Noop,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Parse first, then build the smallest runtime the chosen subcommand needs.
+///
+/// `#[tokio::main]` used to stand up a multi-threaded runtime -- one worker
+/// thread per core, sixteen on this machine -- before clap had even looked at
+/// the arguments, on every one of the client invocations tmux makes every
+/// second.  A client does one connect, one write and one read; a
+/// `current_thread` runtime serves that exactly as well for 3.5 ms less CPU per
+/// spawn.  The server keeps the multi-threaded runtime: it fans segments out
+/// across `spawn_blocking` and `tokio::join!`.
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    let runtime = if matches!(cli.command, Cmd::Server) {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build()?
+    } else {
+        tokio::runtime::Builder::new_current_thread().enable_all().build()?
+    };
+
+    runtime.block_on(run(cli.command))
+}
+
+async fn run(command: Cmd) -> anyhow::Result<()> {
+    match command {
         Cmd::Server => {
             server::run().await?;
         }
@@ -120,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
             no_cap,
             branch_max_len,
             branch_icon,
+            ttl,
         } => {
             let req = Request {
                 cmd: "gst".into(),
@@ -131,6 +170,28 @@ async fn main() -> anyhow::Result<()> {
                     "no_cap": no_cap,
                     "branch_max_len": branch_max_len,
                     "branch_icon": branch_icon,
+                    "ttl_secs": ttl,
+                }),
+            };
+            client::send_and_print(req).await?;
+        }
+        Cmd::StatusRight {
+            path,
+            style,
+            branch_max_len,
+            branch_icon,
+            force,
+            ttl,
+        } => {
+            let req = Request {
+                cmd: "status-right".into(),
+                args: serde_json::json!({
+                    "path": path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                    "style": style,
+                    "branch_max_len": branch_max_len,
+                    "branch_icon": branch_icon,
+                    "force": force,
+                    "ttl_secs": ttl,
                 }),
             };
             client::send_and_print(req).await?;
@@ -209,15 +270,12 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
-        Cmd::Speak { text, url } => {
-            let text = if text.is_empty() {
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf)?;
-                buf
-            } else {
-                text.join(" ")
-            };
-            tts::speak(url.as_deref(), &text).await?;
+        Cmd::Noop => {
+            client::send_and_print(Request {
+                cmd: "noop".into(),
+                args: serde_json::Value::Object(Default::default()),
+            })
+            .await?;
         }
     }
 

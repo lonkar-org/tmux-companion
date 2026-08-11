@@ -1,12 +1,14 @@
 use std::{
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
+    time::Duration,
 };
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
+use crate::server::state::{DEFAULT_GST_TTL, ServerState};
 use crate::tmux::{
     format::{
         AC_DARK_BLUE, AC_GONE, AC_GREEN, AC_LOADING, AC_NEW, AC_PURPLE, BG_BAR, BG_CLEAN,
@@ -565,69 +567,121 @@ async fn fetch_git_status(path: &Path) -> anyhow::Result<GitStatus> {
     Ok(status)
 }
 
-pub async fn render(
-    path: Option<PathBuf>,
-    pid: Option<u32>,
-    force: bool,
-    style: Style,
-    no_cap: bool,
-    branch_max_len: Option<usize>,
-    branch_icon: bool,
-) -> anyhow::Result<String> {
+/// Everything the git segment needs in order to render.
+///
+/// A struct rather than seven positional arguments, so the standalone `gst`
+/// command and the combined status side can be read side by side and a new
+/// option cannot be silently transposed with its neighbour.
+#[derive(Debug, Clone)]
+pub struct GstOptions {
+    pub path: Option<PathBuf>,
+    /// Pane pid, used only to mark a suspended nvim in the segment.
+    ///
+    /// `None` from the combined status side, and that is the point: resolving
+    /// it calls `has_suspended_nvim`, which enumerates the entire process table
+    /// and cost more than everything else in the segment put together — 18.5 ms
+    /// of the 26.0 ms measured per call.  Still honoured when a hand invocation
+    /// passes a pid, so `gst <path> <pid>` behaves as it always did.
+    pub pane_pid: Option<u32>,
+    /// Skip the cache read.  The fresh result is still written back, so the
+    /// next ordinary call is warm.
+    pub force: bool,
+    pub style: Style,
+    pub no_cap: bool,
+    pub branch_max_len: Option<usize>,
+    pub branch_icon: bool,
+    /// How long a cached status stays fresh.
+    pub ttl: Duration,
+}
+
+impl Default for GstOptions {
+    fn default() -> Self {
+        Self {
+            path: None,
+            pane_pid: None,
+            force: false,
+            style: Style::default(),
+            no_cap: false,
+            branch_max_len: None,
+            branch_icon: false,
+            ttl: DEFAULT_GST_TTL,
+        }
+    }
+}
+
+pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
-    let cap = if no_cap { Some("") } else { None };
-    let path = match path {
+    let cap = if opts.no_cap { Some("") } else { None };
+    let path = match &opts.path {
         Some(p) => p.canonicalize()?,
         None => std::env::current_dir()?,
     };
 
-    // Not-a-git-repo check: if rev-parse fails, return empty
-    let check = run_git(&["rev-parse", "--is-inside-work-tree"], &path).await;
-    if check.map(|s| s.trim() != "true").unwrap_or(true) {
+    if !is_inside_work_tree(&path, state).await {
         return Ok(String::new());
     }
 
-    let id = B64.encode(path.to_string_lossy().as_bytes());
-
-    let nvim_suspended = match pid {
-        Some(p) => crate::segments::vim_bg::has_suspended_nvim(p).await.unwrap_or(false),
+    let nvim_suspended = match opts.pane_pid {
+        Some(p) => crate::segments::vim_bg::has_suspended_nvim(p)
+            .await
+            .unwrap_or(false),
         None => false,
     };
 
-    if !force {
-        let id_c = id.clone();
-        let cached =
-            tokio::task::spawn_blocking(move || crate::db::get_git_status(&id_c, 2)).await??;
-        if let Some(status) = cached {
-            let line = status_line_render(
-                &status,
-                nvim_suspended,
-                false,
-                style,
-                cap,
-                branch_max_len,
-                branch_icon,
-            );
-            return Ok(if no_cap { line.trim_end().to_string() } else { line });
+    let cached = if opts.force {
+        None
+    } else {
+        state.lock().await.git_cached(&path, opts.ttl)
+    };
+
+    let status = match cached {
+        Some(status) => status,
+        None => {
+            let fresh = fetch_git_status(&path).await?;
+            state
+                .lock()
+                .await
+                .git_store(path.clone(), fresh.clone(), opts.ttl);
+            fresh
         }
-    }
-
-    let status = fetch_git_status(&path).await?;
-
-    let id_c = id.clone();
-    let s_clone = status.clone();
-    tokio::task::spawn_blocking(move || crate::db::save_git_status(&id_c, &s_clone)).await??;
+    };
 
     let line = status_line_render(
         &status,
         nvim_suspended,
         false,
-        style,
+        opts.style,
         cap,
-        branch_max_len,
-        branch_icon,
+        opts.branch_max_len,
+        opts.branch_icon,
     );
-    Ok(if no_cap { line.trim_end().to_string() } else { line })
+    Ok(if opts.no_cap {
+        line.trim_end().to_string()
+    } else {
+        line
+    })
+}
+
+/// `git rev-parse --is-inside-work-tree`, cached per canonicalized path.
+///
+/// This fork ran on every call including cache hits — it sits ahead of the
+/// status cache, so even a warm `gst` paid for it, and once the process scan
+/// was gone it was the largest remaining server-side cost in the segment.
+///
+/// A directory's repo-ness effectively never changes, so the answer is cached;
+/// it is cached with a TTL rather than forever so that `git init` in a
+/// directory already on the status bar is not misremembered until the server
+/// restarts.  Both answers are cached — without the negative one, every
+/// non-repo pane would keep paying the fork on every refresh.
+async fn is_inside_work_tree(path: &Path, state: &Arc<Mutex<ServerState>>) -> bool {
+    let key = path.to_path_buf();
+    if let Some(known) = state.lock().await.repo_cached(&key) {
+        return known;
+    }
+    let out = run_git(&["rev-parse", "--is-inside-work-tree"], path).await;
+    let inside = out.map(|s| s.trim() == "true").unwrap_or(false);
+    state.lock().await.repo_store(key, inside);
+    inside
 }
 
 #[cfg(test)]

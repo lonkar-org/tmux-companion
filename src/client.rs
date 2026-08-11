@@ -4,7 +4,23 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::proto::{Request, Response};
 
+/// Longest path a `sockaddr_un` can hold on macOS, minus the NUL terminator.
+const SUN_PATH_MAX: usize = 103;
+
 pub fn sock_path() -> PathBuf {
+    // `TMUX_COMPANION_SOCK` puts a server beside the live one -- what the
+    // measurements in BENCHMARKS.md use, so a benchmark run never touches the
+    // status bar the user is actually looking at.  Ignored, with a warning, if
+    // it cannot fit in a unix socket address.
+    if let Some(p) = std::env::var_os("TMUX_COMPANION_SOCK") {
+        if !p.is_empty() && p.len() <= SUN_PATH_MAX {
+            return PathBuf::from(p);
+        }
+        eprintln!(
+            "tmux-companion: ignoring TMUX_COMPANION_SOCK ({} bytes; limit is {SUN_PATH_MAX})",
+            p.len()
+        );
+    }
     let uid = nix::unistd::getuid();
     PathBuf::from(format!("/tmp/tmux-companion-{}.sock", uid))
 }

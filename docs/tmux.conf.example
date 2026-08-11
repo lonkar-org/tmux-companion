@@ -1,0 +1,97 @@
+# tmux-companion status-line configuration
+#
+# The status bar makes exactly one `#()` call.  tmux gates `#()` to
+# `status-interval` per attached client, so the cost of the bar is dominated by
+# how many distinct commands it has to spawn, not by what they compute:
+# fork/exec is 12.4 ms of CPU per spawn (14.6 ms including the shell tmux wraps
+# jobs in), while the entire server-side computation for the whole right side is
+# under 10 ms.  Collapsing five calls into one is therefore the whole game.
+#
+# See BENCHMARKS.md for the measurements behind every claim here.
+#
+# ── INSTALL ORDER ───────────────────────────────────────────────────────────
+#
+# Install the binary FIRST, then apply this config.  The config references the
+# `status-right` subcommand, which older binaries do not have; applying it
+# against an old binary leaves the right-hand side blank until you upgrade.
+#
+#   cd /path/to/tmux-companion
+#   cargo build --release
+#   sudo install -m 755 target/release/tmux-companion /usr/local/bin/tmux-companion
+#   pkill -f 'tmux-companion server'      # the next client call restarts it
+#   tmux source-file ~/.config/tmux/tmux.conf
+#
+# Killing the server is what picks up the new binary: it is a singleton that
+# runs until killed, so an upgraded binary on disk changes nothing until the old
+# process exits.
+
+
+# ── status-interval ─────────────────────────────────────────────────────────
+#
+# Stays at 1.  The clock below prints seconds, so anything higher makes it
+# visibly wrong, and measurement says a longer interval buys nothing anyway:
+#
+#   interval=1 -> 5.60%, 5.76% of one core
+#   interval=5 -> 5.63%, 5.90% of one core
+#
+# Identical within noise.  tmux redraws the status line on pane output and
+# activity as well as on this timer, and in a working session those events, not
+# the timer, set the redraw rate.  The cost to attack is the cost PER redraw.
+set -g  status-interval 1
+
+
+# ── Left: native tmux only, no subprocess at all ────────────────────────────
+#
+# Session name, an ssh hostname when this server was started under an ssh
+# connection, and the clock.  The `clients` and `vim-bg` segments used to live
+# here and have been removed from the bar: between them they cost two process
+# spawns and a whole-process-table scan every second.  Both subcommands still
+# exist and can be run by hand.
+set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
+if-shell '[ -n "$SSH_CONNECTION" ]' \
+  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
+set -ga status-left  "#[fg=color240,bg=color233] %H:%M:%S"
+set -ga status-left  "#[fg=color235,bg=color233] "
+
+# ── Right: one call, three segments ─────────────────────────────────────────
+#
+# `status-right` returns git status, bandwidth and battery computed
+# concurrently, already joined with the tmux literals that used to sit between
+# the three separate `#()` calls.  The output is byte-identical to what the old
+# three-call configuration produced.
+#
+# Note there is no `#{pane_pid}` argument.  Passing it made the git segment call
+# has_suspended_nvim, which enumerates every process on the machine: 18.5 ms of
+# the 26.0 ms the segment cost per call.  The segment loses its suspended-nvim
+# marker in exchange.  `tmux-companion gst <path> <pid>` still honours a pid.
+#
+# --ttl sets how long a git status stays cached, in seconds; the default is 5.
+# It applies to the git segment only -- bandwidth is a rate and is always live.
+set -g  status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+
+# session name (~30 worst case) + ssh hostname (~20) + clock 9
+set -g  status-left-length 80
+# max, not fixed width: the right side uses its actual content width up to this
+set -g  status-right-length 150
+
+# ── Windows: tmux's own formats ─────────────────────────────────────────────
+#
+# The `window` subcommand still exists, but driving window-status-format through
+# it spawns one process per window per redraw.
+set -g window-status-format          "#I:#W#{?window_flags,#{window_flags}, }"
+set -g window-status-current-format  "#I:#W#{?window_flags,#{window_flags}, }"
+set -g window-status-separator       " "
+set -g window-status-style           default
+set -g window-status-current-style   default
+
+
+# ── Removed: the `speak` keybinding ─────────────────────────────────────────
+#
+# The `speak` subcommand has been deleted, so this binding must be removed --
+# it would now fail with a clap "unrecognized subcommand" error:
+#
+#   bind -Tmy-keys u send-keys -X copy-selection-no-clear \; \
+#     run-shell -b "tmux show-buffer | tmux-companion speak"
+#
+# It targeted a vachan-server WebSocket route (`GET /synthesize`) that no longer
+# exists; the server answers 405.

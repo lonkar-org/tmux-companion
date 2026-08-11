@@ -1,23 +1,98 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
+use crate::{cache::TtlMap, segments::git::GitStatus, segments::network::NetSample};
+
+/// Default freshness window for a cached `git status`, overridable per request
+/// with `--ttl`.  Five seconds: long enough that a one-second status bar is
+/// served from memory four times out of five, short enough that a commit made
+/// in the pane shows up before the user wonders why it has not.
+pub const DEFAULT_GST_TTL: Duration = Duration::from_secs(5);
+
+/// How long to trust "this path is / is not inside a work tree".
+///
+/// A directory's repo-ness effectively never changes, so this could be cached
+/// forever — except that `git init` in a directory already on the bar would
+/// then be misremembered until the server restarts.  Five minutes keeps the
+/// fork off the hot path (it is the largest remaining per-call cost) while
+/// bounding how long a fresh `git init` stays invisible.
+pub const REPO_CHECK_TTL: Duration = Duration::from_secs(300);
+
+/// Battery is sampled at most this often; IOKit is expensive and the reading
+/// does not move fast enough to matter.
+pub const BATTERY_TTL: Duration = Duration::from_secs(30);
+
 pub struct ServerState {
-    pub net_previous: Option<(u64, u64, Instant)>,
+    /// Previous cumulative rx/tx counters, for the bandwidth delta.
+    pub net_previous: Option<NetSample>,
+    /// The last bandwidth string rendered, replayed when two samples arrive too
+    /// close together to divide by (see `segments::network`).
+    pub net_last_render: String,
     pub dir_aliases: HashMap<PathBuf, String>,
-    /// Cached battery render result with the time it was computed.
+    /// Cached battery render with the time it was computed.
     pub battery_cache: Option<(String, Instant)>,
+    /// Parsed `git status`, keyed by canonicalized repository path.
+    git_cache: TtlMap<PathBuf, GitStatus>,
+    /// Whether a path is inside a git work tree, keyed by canonicalized path.
+    repo_check: TtlMap<PathBuf, bool>,
 }
 
+/// Every method on `ServerState` is synchronous by design: the state lives
+/// behind a `tokio::sync::Mutex`, and keeping the methods sync makes it
+/// impossible to hold the guard across an `.await`.  See the lock-discipline
+/// invariant in `CLAUDE.md`.
 impl ServerState {
     pub fn new() -> Self {
         Self {
             net_previous: None,
+            net_last_render: String::new(),
             dir_aliases: load_dir_aliases(),
             battery_cache: None,
+            git_cache: TtlMap::new(),
+            repo_check: TtlMap::new(),
         }
+    }
+
+    // ── git status ───────────────────────────────────────────────────────────
+
+    pub fn git_cached(&self, path: &PathBuf, ttl: Duration) -> Option<GitStatus> {
+        self.git_cache.get(path, ttl)
+    }
+
+    pub fn git_store(&mut self, path: PathBuf, status: GitStatus, ttl: Duration) {
+        self.git_cache.insert(path, status, ttl);
+    }
+
+    // ── is-inside-work-tree ──────────────────────────────────────────────────
+
+    pub fn repo_cached(&self, path: &PathBuf) -> Option<bool> {
+        self.repo_check.get(path, REPO_CHECK_TTL)
+    }
+
+    pub fn repo_store(&mut self, path: PathBuf, inside: bool) {
+        self.repo_check.insert(path, inside, REPO_CHECK_TTL);
+    }
+
+    // ── battery ──────────────────────────────────────────────────────────────
+
+    pub fn battery_cached(&self) -> Option<String> {
+        self.battery_cache
+            .as_ref()
+            .filter(|(_, t)| t.elapsed() < BATTERY_TTL)
+            .map(|(s, _)| s.clone())
+    }
+
+    pub fn battery_store(&mut self, rendered: String) {
+        self.battery_cache = Some((rendered, Instant::now()));
+    }
+}
+
+impl Default for ServerState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -36,4 +111,97 @@ fn load_dir_aliases() -> HashMap<PathBuf, String> {
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(branch: &str) -> GitStatus {
+        GitStatus {
+            branch: branch.into(),
+            remote_success: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn git_cache_round_trips() {
+        let mut st = ServerState::new();
+        let p = PathBuf::from("/tmp/repo");
+        assert!(st.git_cached(&p, DEFAULT_GST_TTL).is_none());
+        st.git_store(p.clone(), status("main"), DEFAULT_GST_TTL);
+        assert_eq!(
+            st.git_cached(&p, DEFAULT_GST_TTL).map(|s| s.branch),
+            Some("main".to_string())
+        );
+    }
+
+    #[test]
+    fn git_cache_respects_a_zero_ttl_flag() {
+        // `--ttl 0` means "never serve from cache", including immediately after
+        // the write — the flag applies from the first hit.
+        let mut st = ServerState::new();
+        let p = PathBuf::from("/tmp/repo");
+        st.git_store(p.clone(), status("main"), Duration::ZERO);
+        assert!(st.git_cached(&p, Duration::ZERO).is_none());
+    }
+
+    #[test]
+    fn git_cache_is_keyed_by_path() {
+        let mut st = ServerState::new();
+        let a = PathBuf::from("/tmp/a");
+        let b = PathBuf::from("/tmp/b");
+        st.git_store(a.clone(), status("main"), DEFAULT_GST_TTL);
+        st.git_store(b.clone(), status("dev"), DEFAULT_GST_TTL);
+        assert_eq!(
+            st.git_cached(&a, DEFAULT_GST_TTL).map(|s| s.branch),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            st.git_cached(&b, DEFAULT_GST_TTL).map(|s| s.branch),
+            Some("dev".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_check_cache_round_trips_both_answers() {
+        let mut st = ServerState::new();
+        let yes = PathBuf::from("/tmp/repo");
+        let no = PathBuf::from("/tmp/plain");
+        assert_eq!(st.repo_cached(&yes), None);
+        st.repo_store(yes.clone(), true);
+        st.repo_store(no.clone(), false);
+        assert_eq!(st.repo_cached(&yes), Some(true));
+        // A negative answer is cached too, otherwise every non-repo pane keeps
+        // paying the fork on every refresh.
+        assert_eq!(st.repo_cached(&no), Some(false));
+    }
+
+    #[test]
+    fn repo_check_ttl_is_bounded_so_git_init_is_noticed() {
+        // The point of the TTL: it must not be "forever".
+        assert!(REPO_CHECK_TTL <= Duration::from_secs(600));
+        assert!(REPO_CHECK_TTL >= Duration::from_secs(60));
+    }
+
+    #[test]
+    fn default_gst_ttl_is_five_seconds() {
+        assert_eq!(DEFAULT_GST_TTL, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn battery_cache_round_trips() {
+        let mut st = ServerState::new();
+        assert!(st.battery_cached().is_none());
+        st.battery_store("100%".into());
+        assert_eq!(st.battery_cached(), Some("100%".to_string()));
+    }
+
+    #[test]
+    fn net_state_starts_empty() {
+        let st = ServerState::new();
+        assert!(st.net_previous.is_none());
+        assert!(st.net_last_render.is_empty());
+    }
 }

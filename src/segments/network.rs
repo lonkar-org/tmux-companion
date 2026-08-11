@@ -1,8 +1,21 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::tmux::icons::{ARROW_LEFT, RATE_GIB, RATE_KIB, RATE_MIB};
 
 const THRESHOLD_BPS: u64 = 20_480; // 20 KiB/s default threshold
+
+/// Below this interval a delta is not divided: a handful of bytes over a few
+/// milliseconds extrapolates to a nonsense rate, and two clients refreshing
+/// back to back would make the bar flicker between a real number and a spike.
+pub const MIN_ELAPSED: Duration = Duration::from_millis(200);
+
+/// A cumulative counter reading and the instant it was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetSample {
+    pub rx: u64,
+    pub tx: u64,
+    pub at: Instant,
+}
 
 /// Format a byte rate. Each multiple-of-1024 unit is a single glyph rather than
 /// spelled-out text, so the segment stays narrow; plain bytes keep their text
@@ -61,20 +74,58 @@ fn read_net_bytes_native() -> (u64, u64) {
         })
 }
 
-pub async fn render(previous: &mut Option<(u64, u64, Instant)>) -> anyhow::Result<String> {
-    let (rx, tx) = tokio::task::spawn_blocking(read_net_bytes_native).await?;
+/// Take a counter reading off the async runtime.
+///
+/// This is the only expensive half of the segment and it touches no shared
+/// state, so the combined status side can run it concurrently with the other
+/// segments and apply the arithmetic afterwards under one short lock.
+pub async fn sample() -> anyhow::Result<(u64, u64)> {
+    Ok(tokio::task::spawn_blocking(read_net_bytes_native).await?)
+}
 
-    let Some((prev_rx, prev_tx, prev_time)) = previous.take() else {
-        *previous = Some((rx, tx, Instant::now()));
-        return Ok(String::new());
+/// Bytes per second over `elapsed`, as a whole number.
+///
+/// `as_secs_f64` rather than `as_secs`: truncating to whole seconds reported a
+/// 1.1-second interval as one second and inflated every rate by the remainder —
+/// about 10% at the intervals tmux actually produces.
+pub fn rate(delta: u64, elapsed: Duration) -> u64 {
+    let secs = elapsed.as_secs_f64();
+    if secs <= 0.0 {
+        return 0;
+    }
+    (delta as f64 / secs) as u64
+}
+
+/// Fold a new counter reading into the running state and return what to draw.
+///
+/// Pure apart from its two `&mut` arguments and an explicit `now`, so the whole
+/// state machine — first call, normal call, too-soon call — is unit-testable
+/// without a clock.
+pub fn advance(
+    previous: &mut Option<NetSample>,
+    last_render: &mut String,
+    rx: u64,
+    tx: u64,
+    now: Instant,
+) -> String {
+    let Some(prev) = *previous else {
+        // Nothing to difference against yet; anchor and draw nothing.
+        *previous = Some(NetSample { rx, tx, at: now });
+        return String::new();
     };
 
-    let elapsed = prev_time.elapsed().as_secs().max(1);
-    let dl = rx.saturating_sub(prev_rx) / elapsed;
-    let ul = tx.saturating_sub(prev_tx) / elapsed;
-    *previous = Some((rx, tx, Instant::now()));
+    let elapsed = now.duration_since(prev.at);
+    if elapsed < MIN_ELAPSED {
+        // Deliberately leave `previous` alone: the next call then measures from
+        // the older anchor and has a full-length interval to divide by.
+        return last_render.clone();
+    }
 
-    Ok(format_bandwidth(dl, ul))
+    let dl = rate(rx.saturating_sub(prev.rx), elapsed);
+    let ul = rate(tx.saturating_sub(prev.tx), elapsed);
+    *previous = Some(NetSample { rx, tx, at: now });
+    *last_render = format_bandwidth(dl, ul);
+    last_render.clone()
 }
 
 #[cfg(test)]
@@ -243,21 +294,165 @@ mod tests {
         assert!(out.contains(RATE_MIB), "expected MiB glyph in: {out}");
     }
 
-    // ── render state machine ─────────────────────────────────────────────────
+    // ── rate ─────────────────────────────────────────────────────────────────
 
-    #[tokio::test]
-    async fn render_no_previous_returns_empty_and_stores_state() {
-        // Simulate first call: set previous
-        let mut previous: Option<(u64, u64, Instant)> = Some((1000, 2000, Instant::now()));
-        assert!(previous.is_some());
+    #[test]
+    fn rate_over_exactly_one_second_is_the_delta() {
+        assert_eq!(rate(1000, Duration::from_secs(1)), 1000);
+    }
 
-        // Simulate second call: compute delta
-        let (prev_rx, prev_tx, prev_time) = previous.take().unwrap();
-        let elapsed = prev_time.elapsed().as_secs().max(1);
-        let (new_rx, new_tx) = (prev_rx + THRESHOLD_BPS * 2, prev_tx + THRESHOLD_BPS * 3);
-        let dl = new_rx.saturating_sub(prev_rx) / elapsed;
-        let ul = new_tx.saturating_sub(prev_tx) / elapsed;
-        let out = format_bandwidth(dl, ul);
-        assert!(!out.is_empty(), "should produce output: {out}");
+    #[test]
+    fn rate_does_not_truncate_the_interval() {
+        // The bug this replaces: `as_secs()` turned 1.1s into 1s and reported
+        // 1000 B/s where the true rate is ~909 B/s — about 10% high.
+        let r = rate(1000, Duration::from_millis(1100));
+        assert_eq!(r, 909, "1000 bytes over 1.1s is 909 B/s, not 1000");
+        assert_ne!(r, 1000, "must not truncate the interval to whole seconds");
+    }
+
+    #[test]
+    fn rate_scales_up_for_sub_second_intervals() {
+        // Half a second of 500 bytes is a 1000 B/s rate.  The old code divided
+        // by max(1) and reported 500 — half the truth.
+        assert_eq!(rate(500, Duration::from_millis(500)), 1000);
+    }
+
+    #[test]
+    fn rate_scales_down_for_multi_second_intervals() {
+        assert_eq!(rate(3000, Duration::from_secs(3)), 1000);
+        assert_eq!(rate(1000, Duration::from_millis(2500)), 400);
+    }
+
+    #[test]
+    fn rate_of_zero_elapsed_is_zero_not_a_panic() {
+        assert_eq!(rate(1000, Duration::ZERO), 0);
+    }
+
+    #[test]
+    fn rate_of_zero_delta_is_zero() {
+        assert_eq!(rate(0, Duration::from_secs(1)), 0);
+    }
+
+    // ── advance: the render state machine ────────────────────────────────────
+
+    #[test]
+    fn advance_first_call_draws_nothing_and_anchors() {
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        let out = advance(&mut prev, &mut last, 1000, 2000, t0);
+        assert_eq!(out, "", "nothing to difference against on the first call");
+        let anchored = prev.expect("first call must store a sample");
+        assert_eq!(anchored.rx, 1000);
+        assert_eq!(anchored.tx, 2000);
+        assert_eq!(anchored.at, t0);
+    }
+
+    #[test]
+    fn advance_second_call_reports_the_rate() {
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        // 40 KiB down in one second — above the 20 KiB/s threshold.
+        let out = advance(&mut prev, &mut last, 40 * 1024, 0, t0 + Duration::from_secs(1));
+        assert!(out.contains(RATE_KIB), "expected a KiB/s rate: {out}");
+        assert!(out.contains("40"), "expected 40 KiB/s: {out}");
+    }
+
+    #[test]
+    fn advance_uses_fractional_seconds_end_to_end() {
+        // 44 KiB over 1.1s is 40 KiB/s.  With the old truncating arithmetic it
+        // would have reported 44 KiB/s.
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        let out = advance(
+            &mut prev,
+            &mut last,
+            44 * 1024,
+            0,
+            t0 + Duration::from_millis(1100),
+        );
+        assert!(out.contains("40"), "expected 40 KiB/s, got: {out}");
+        assert!(!out.contains("44"), "must not report the untruncated 44: {out}");
+    }
+
+    #[test]
+    fn advance_below_min_elapsed_replays_the_previous_render() {
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        let first = advance(&mut prev, &mut last, 40 * 1024, 0, t0 + Duration::from_secs(1));
+        assert!(!first.is_empty());
+
+        // A second client refreshes 50ms later: far too short an interval to
+        // divide a few bytes by.
+        let anchor_before = prev.expect("anchored");
+        let out = advance(
+            &mut prev,
+            &mut last,
+            40 * 1024 + 10,
+            0,
+            t0 + Duration::from_millis(1050),
+        );
+        assert_eq!(out, first, "should replay the previous rendering verbatim");
+        assert_eq!(
+            prev.expect("still anchored"),
+            anchor_before,
+            "the anchor must not move, so the next call gets a full interval"
+        );
+    }
+
+    #[test]
+    fn advance_just_above_min_elapsed_computes_a_fresh_rate() {
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        let at = t0 + MIN_ELAPSED + Duration::from_millis(1);
+        let out = advance(&mut prev, &mut last, 100 * 1024, 0, at);
+        assert!(!out.is_empty(), "just past the guard it must compute: {out}");
+        assert_eq!(prev.expect("anchored").at, at, "anchor must advance");
+    }
+
+    #[test]
+    fn advance_exactly_at_min_elapsed_computes() {
+        // The guard is `elapsed < MIN_ELAPSED`, so the boundary itself is fine.
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        let at = t0 + MIN_ELAPSED;
+        advance(&mut prev, &mut last, 100 * 1024, 0, at);
+        assert_eq!(prev.expect("anchored").at, at);
+    }
+
+    #[test]
+    fn advance_replays_an_empty_render_when_that_was_the_last_one() {
+        // Quiet network: the previous render was "" and the too-soon path must
+        // reproduce that rather than inventing a segment.
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 0, 0, t0);
+        let quiet = advance(&mut prev, &mut last, 10, 0, t0 + Duration::from_secs(1));
+        assert_eq!(quiet, "", "10 B/s is below the threshold");
+        let soon = advance(&mut prev, &mut last, 20, 0, t0 + Duration::from_millis(1050));
+        assert_eq!(soon, "");
+    }
+
+    #[test]
+    fn advance_handles_counter_reset_without_underflow() {
+        // Interface goes away and comes back: the cumulative counter drops.
+        // saturating_sub must keep this at zero rather than wrapping.
+        let mut prev = None;
+        let mut last = String::new();
+        let t0 = Instant::now();
+        advance(&mut prev, &mut last, 1_000_000, 1_000_000, t0);
+        let out = advance(&mut prev, &mut last, 5, 5, t0 + Duration::from_secs(1));
+        assert_eq!(out, "", "a counter reset must not report a huge rate");
     }
 }

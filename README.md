@@ -26,12 +26,20 @@ as a persistent background daemon. Each tmux refresh sends a lightweight JSON
 request over a Unix socket and prints the result — no process startup overhead,
 no re-reading config files, no repeated disk I/O.
 
+The status bar makes **one** `#()` call. tmux gates `#()` to `status-interval`
+per attached client, so what the bar costs is set by how many distinct commands
+it spawns, not by what they compute: a fork/exec is 12.4 ms of CPU (14.6 ms
+including the shell tmux wraps jobs in), while computing the entire right-hand
+side server-side takes 2.6 ms. The whole bar costs 1.8% of one core; it used to
+cost 15.4%. See [BENCHMARKS.md](./BENCHMARKS.md).
+
 **Requires font with nerdfonts glyphs**
 
 ## Segments
 
 | Subcommand           | Replaces                      | What it shows                                                 |
 | -------------------- | ----------------------------- | ------------------------------------------------------------- |
+| `status-right [PATH]`| the three calls below         | **The whole right side in one call** — git, bandwidth, battery |
 | `gst [PATH]`         | `yrl gst`                     | Powerline git-status segment                                  |
 | `window …`           | `window-status.zsh`           | Window index icon, abbreviated path, process dot, alert flags |
 | `battery`            | `battery-life.zsh`            | Battery percentage and icon (macOS)                           |
@@ -39,7 +47,13 @@ no re-reading config files, no repeated disk I/O.
 | `clients <sa> <wac>` | `check-clients.zsh`           | Other tmux clients connected to the same server               |
 | `vim-bg <pid>`       | `check-vim-in-background.zsh` | Suspended nvim in current pane                                |
 
-All subcommands speak to the same daemon; only `server` starts the daemon itself.
+`status-right` is what the status bar should use. The individual segment
+commands all still work and are useful by hand; `clients` and `vim-bg` are no
+longer on the bar at all, because between them they cost two process spawns and
+a whole-process-table scan every second.
+
+All subcommands speak to the same daemon; only `server` starts the daemon
+itself, and only `preview` needs no daemon at all.
 
 ## Quick start
 
@@ -55,29 +69,26 @@ tmux-companion battery
 
 ## tmux.conf integration
 
-Replace the existing shell-script `#(…)` calls with `tmux-companion`:
+The full annotated block is in [docs/tmux.conf.example](./docs/tmux.conf.example).
+The short version — one `#()` call, everything else native tmux:
 
 ```tmux
-set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S \
-#(tmux-companion clients #{session_attached} #{window_active_clients})\
-#(tmux-companion gst #{pane_current_path})"
-set -ga status-left  "#(tmux-companion vim-bg #{pane_pid})#[fg=colour235,bg=colour233]"
-
-set -g  status-right "#[fg=colour235,bg=colour233]#[fg=colour240,bg=colour235] %H:%M:%S"
-set -ga status-right " #(tmux-companion net)#[fg=color237]#[bg=colour237]#(tmux-companion battery) "
-
-set -g  window-status-current-format \
-  "#(tmux-companion window -c -i #I -n '#W' -w '#{pane_current_path}' \
-     -p '#{pane_current_command}' -s '#{pane_start_path}' -I #{window_id} -f '#{window_flags}' \
-     -P #{window_panes} -A #{pane_index})"
-set -g  window-status-format \
-  "#(tmux-companion window -i #I -n '#W' -w '#{pane_current_path}' \
-     -p '#{pane_current_command}' -I #{window_id} -f '#{window_flags}' \
-     -P #{window_panes} -A #{pane_index})"
+set -g  status-interval 1
+set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
+if-shell '[ -n "$SSH_CONNECTION" ]' \
+  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
+set -ga status-left  "#[fg=color240,bg=color233] %H:%M:%S"
+set -ga status-left  "#[fg=color235,bg=color233] "
+set -g  status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
 
-`-P` / `-A` add a numeric-circle suffix with the active pane index, shown only
-when the window holds more than one pane.
+**Install the binary before applying the config** — it references the
+`status-right` subcommand, which older binaries do not have.
+
+Note the absence of `#{pane_pid}`. Passing it made the git segment call
+`has_suspended_nvim`, which enumerates every process on the machine — 18.5 ms of
+the 26.0 ms the segment cost per call. The segment gives up its suspended-nvim
+marker in exchange; `tmux-companion gst <path> <pid>` still honours a pid.
 
 ## The `gst` segment in detail
 
@@ -86,8 +97,11 @@ tmux-companion gst [PATH] [-f]
 ```
 
 - `PATH` defaults to the current pane directory (`#{pane_current_path}`).
-- `-f` / `--force` — bypass the 2-second SQLite cache and fetch a fresh status.
-  Useful for a keybinding that refreshes on demand.
+- `-f` / `--force` — bypass the cache and fetch a fresh status. Useful for a
+  keybinding that refreshes on demand. The fresh result is still cached, so the
+  next ordinary call is warm.
+- `--ttl SECS` — how long a cached status stays fresh (default 5, `0` disables
+  caching). Applies to the git segment only; bandwidth is never cached.
 - Outputs an empty string for non-git directories (safe to use everywhere).
 
 Segment anatomy (left → right):
@@ -107,26 +121,35 @@ Background colours change with repo state:
 
 ## Server lifecycle
 
+The daemon holds all of its state in memory — the git-status cache, the
+is-inside-work-tree cache, the battery reading and the bandwidth previous-sample
+— and that state dies with it. That is the intended lifetime: one cold
+`git status` after a restart costs 51 ms, once.
+
 The daemon starts automatically when any client subcommand is invoked and no
 server is listening on the socket yet. It runs until the system restarts or
 until it is killed explicitly. Because it lives inside the user's tmux session
 lifetime, no init-system integration is needed.
 
-Socket: `/tmp/tmux-companion-<uid>.sock`
+Socket: `/tmp/tmux-companion-<uid>.sock`, or `$TMUX_COMPANION_SOCK` when set —
+which is how the benchmarks run a server beside the live one without disturbing
+the status bar you are looking at.
 
 ## Building
 
-Requires Rust 1.82+ (edition 2024). SQLite is bundled — no system library
-needed.
+Requires Rust 1.82+ (edition 2024). No system libraries needed.
 
 ```sh
 cargo build --release
+
+# on a machine someone is using, keep off every core:
+nice -n 15 cargo build --release -j 4
 ```
 
-Binary: `target/release/tmux-companion` (≈ 5.4 MB, statically-linked SQLite).
+Binary: `target/release/tmux-companion` (≈ 4.0 MB).
 
 ## Tests
 
 ```sh
-cargo test          # 164 unit tests, no external dependencies required
+cargo test          # 255 unit tests, no external dependencies required
 ```

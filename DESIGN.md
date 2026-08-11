@@ -29,11 +29,12 @@ exit.
 │  tokio async runtime, one task per connection       │
 │                                                     │
 │  ServerState (Arc<Mutex<_>>)                        │
-│    net_previous: Option<(u64, u64, Instant)>        │
-│    dir_aliases:  HashMap<PathBuf, String>           │
-│                                                     │
-│  SQLite (rusqlite, bundled)                         │
-│    git_status  id TEXT PK, status BLOB, updated_at  │
+│    net_previous:  Option<NetSample>                 │
+│    net_last_render: String                          │
+│    dir_aliases:   HashMap<PathBuf, String>          │
+│    battery_cache: Option<(String, Instant)>         │
+│    git_cache:     TtlMap<PathBuf, GitStatus>        │
+│    repo_check:    TtlMap<PathBuf, bool>             │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -92,9 +93,7 @@ src/
   tmux/
     format.rs          Segment builder, colored_segment(), powerline_segment()
     icons.rs           Nerd Font Unicode codepoints
-  db/
-    mod.rs             rusqlite schema init, db_path()
-    git_cache.rs       get / save GitStatus with TTL
+  cache.rs             TtlMap: timestamped map, reader-supplied TTL
 ```
 
 ## Git status segment
@@ -103,14 +102,23 @@ The main segment, ported from the Go `yrl gst` command.
 
 ### Caching
 
-Git status is cached in SQLite with a 2-second TTL keyed by `base64(abs_path)`.
-The server is persistent, so the cache persists across tmux refreshes for the
-same repo.  A cache hit skips all git subprocess invocations — the round-trip
-is then just: socket connect → JSON deserialize → SQLite lookup → JSON serialize
-→ socket write.
+Git status is cached in memory on `ServerState`, keyed by the canonicalized
+repository path, with a TTL that defaults to 5 seconds and is settable per
+request with `--ttl`.  A cache hit skips all git subprocess invocations — the
+round-trip is then socket connect → JSON deserialize → map lookup → JSON
+serialize → socket write, which costs 0.09 ms.
+
+`git rev-parse --is-inside-work-tree` is cached separately, for 5 minutes.  It
+sits ahead of the status cache, so before it was cached every warm call still
+paid a full `git` fork for it — 7.5 ms of the 7.6 ms a warm call cost.  A path's
+repo-ness effectively never changes; the TTL exists only so that `git init` in a
+watched directory is not misremembered until the server restarts.
 
 The `--force` flag on `gst` skips the cache read (the result is still written
-back so the next normal call benefits).
+back so the next normal call benefits).  `--ttl 0` disables the cache entirely.
+
+The cache does not survive a server restart, which is the intended lifetime: one
+cold `git status` costs 51 ms, once.
 
 ### Parsing
 
@@ -166,47 +174,83 @@ index color cycles through 20 colours keyed on `epoch_secs % 20`.
 
 ## Network monitor
 
-`ServerState.net_previous` holds `(rx_bytes, tx_bytes, Instant)` from the
-previous call.  On the first call the state is stored and an empty string is
-returned.  On subsequent calls the delta divided by elapsed seconds gives the
-throughput.  Speeds below 20 480 B/s are suppressed.
+`ServerState.net_previous` holds a `NetSample` — `rx_bytes`, `tx_bytes` and the
+`Instant` they were read — from the previous call.  On the first call the sample
+is stored and an empty string is returned.  On subsequent calls the delta
+divided by the elapsed time gives the throughput.  Speeds below 20 480 B/s are
+suppressed.
 
-`netstat -ibn` output is parsed by `parse_netstat_output` (pure fn, unit
-tested).  Loopback interfaces (`lo*`) are excluded.
+The segment splits into three pieces, so that each is independently testable and
+the expensive one can run concurrently with the other segments:
 
-## SQLite
+- `sample()` reads the cumulative counters via `sysinfo::Networks` (no
+  subprocess; loopback interfaces are excluded) and touches no shared state.
+- `rate(delta, elapsed)` divides, using `as_secs_f64`.  It previously used
+  `as_secs().max(1)`, which truncated: a 1.1-second interval was reported as one
+  second and every rate came out about 10% high, while any interval shorter than
+  a second was divided by a whole one and came out low.
+- `advance(previous, last_render, rx, tx, now)` is the state machine.  Below
+  200 ms of elapsed time it returns the previous rendering unchanged and
+  deliberately does *not* move the anchor, so the next call still has a
+  full-length interval to divide by.  Without that guard two clients refreshing
+  back to back would divide a handful of bytes by a few milliseconds and spike.
 
-`rusqlite` with the `bundled` feature compiles SQLite from source — the binary
-has no runtime dependency on a system SQLite.
+`net` is never cached.  It is a rate, the user wants it live, and at 1.05 ms per
+call there is nothing worth caching.
 
-Each DB operation opens its own connection and closes it on return.
-`rusqlite::Connection` is `!Send`, so it cannot be shared across tokio tasks
-via `Arc<Mutex<_>>`.  Per-operation connections avoid this entirely; the overhead
-is negligible for this access pattern (one query per status refresh, local file).
+## Caching
 
-Schema:
+`src/cache.rs` holds `TtlMap<K, V>`: a `HashMap` whose values carry the `Instant`
+they were written.  Freshness is decided by the *reader* — `age < ttl`, with a
+TTL the caller supplies — which is what lets `--ttl` be a runtime flag rather
+than a constant compiled into the store, and means there is no cold-start
+special case: the first entry written expires exactly like the thousandth.
+Expired entries are swept on insert, so a server running for weeks across many
+panes and repositories cannot grow without bound.
 
-```sql
-CREATE TABLE IF NOT EXISTS git_status (
-    id         TEXT PRIMARY KEY,   -- base64(abs_path)
-    status     BLOB NOT NULL,      -- serde_json-encoded GitStatus
-    updated_at INTEGER NOT NULL    -- Unix epoch seconds
-);
-```
+There is no database.  SQLite was removed because it earned nothing: it cost
+0.62 ms of the 27.7 ms a cached `gst` took, while `rusqlite`'s `bundled` feature
+compiled SQLite from C and was the largest single item in a clean build.
+Dropping it took 36 crates out of the dependency graph, 21 s off a clean build
+and 2.3 MB off the binary.
 
-TTL check: `now_secs - updated_at < 2`.
+`ServerState` carries three caches: git status (5 s, flag-settable),
+is-inside-work-tree (5 min) and battery (30 s).  Every `ServerState` method is
+synchronous, which makes it impossible to hold the mutex guard across an
+`.await` — the combined `status-right` handler polls three segments
+concurrently, and any one of them holding the guard across a suspension point
+would deadlock the others.
+
+## One `#()` call
+
+The status bar makes a single `#()` call, `status-right`, which renders the git,
+bandwidth and battery segments concurrently under `tokio::join!` and joins them
+with the tmux literals that used to sit between the separate calls in
+`tmux.conf`.  `assemble_right` is a pure function so those exact bytes are
+pinned by unit tests.
+
+The reason is measurement, not tidiness: a fork/exec costs 12.4 ms of CPU
+(14.6 ms as tmux runs it, via `sh -c`), tmux gates `#()` to `status-interval`
+per attached client per distinct command string, and the entire server-side
+computation for all three segments is 2.6 ms.  Spawn count is the whole bill.
+The TTL is applied per segment inside the call and never to the assembled
+string: `net` is a rate, and caching the assembly would replay one measurement
+window's average until the entry expired.
 
 ## Testing
 
-164 unit tests.  All pure functions are extracted from async render functions so
+255 unit tests.  All pure functions are extracted from async render functions so
 they can run without spawning any subprocesses or reading hardware.
 
 Key test patterns:
 - `segments/git.rs` — ports all 17 Go status_line test cases from
   `yrl/pkg/git/statusline_test.go`, plus parsing, Area, and helper tests.
-- `db/git_cache.rs` — uses in-memory rusqlite connections for isolation.
-- `segments/network.rs` — tests `parse_netstat_output` and `format_bandwidth`
-  with fixture strings.
+- `cache.rs` — every method takes the current `Instant` explicitly in its `*_at`
+  form, so hit, expiry, boundary and sweep are all tested without sleeping.
+- `server/handlers.rs` — `assemble_right` is pinned byte for byte, including
+  the literals and the trailing space.
+- `segments/network.rs` — `rate` and `advance` are pure, so the fractional-second
+  arithmetic and the sub-200 ms guard are tested against an injected clock.
 - `tmux/format.rs` — verifies every `Segment` method and both output modes of
   `colored_segment`, including the ARROW_RIGHT special case.
 - `segments/window.rs` — tests `abbreviate_path` for root, home, deep nesting,
