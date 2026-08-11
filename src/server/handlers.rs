@@ -15,7 +15,20 @@ static REQ_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 /// The tmux literal that sat between the `net` and `battery` `#()` calls in
 /// `status-right`.  Emitted by the server now that the two segments arrive in
 /// one response; reproduced byte for byte so the bar does not shift.
-pub const RIGHT_SEPARATOR: &str = "#[reverse,fg=color237]#[bg=color237,none]";
+///
+/// The `ARROW_RIGHT` in the middle is load-bearing and was missed on the first
+/// pass: the conf's literal is `#[reverse,fg=color237]<glyph>#[bg=…]`, and
+/// dropping the glyph silently removes the powerline wedge in front of the
+/// battery.  It cost 1 character out of 252, every test agreed with itself,
+/// and only a diff against the real `tmux.conf` caught it.  Built from the
+/// icons constant rather than a pasted codepoint so it tracks a change to the
+/// glyph (see CLAUDE.md's ARROW_RIGHT invariant).
+pub fn right_separator() -> String {
+    format!(
+        "#[reverse,fg=color237]{}#[bg=color237,none]",
+        crate::tmux::icons::ARROW_RIGHT
+    )
+}
 
 /// Assemble the right-hand status side from its three rendered segments.
 ///
@@ -23,7 +36,7 @@ pub const RIGHT_SEPARATOR: &str = "#[reverse,fg=color237]#[bg=color237,none]";
 /// `tmux.conf` between the `#()` calls, and the trailing space that closed the
 /// line — are pinned by unit tests rather than by eyeballing the status bar.
 pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
-    format!("{gst}{net}{RIGHT_SEPARATOR}{battery} ")
+    format!("{gst}{net}{}{battery} ", right_separator())
 }
 
 pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response {
@@ -218,27 +231,45 @@ fn rusage_line() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tmux::icons::ARROW_RIGHT;
 
     // ── assemble_right: exact bytes ──────────────────────────────────────────
     //
     // These pin the replacement for three tmux.conf lines:
     //   set -g  status-right "#(tmux-companion gst --no-cap … )"
     //   set -ga status-right "#(tmux-companion net)"
-    //   set -ga status-right "#[reverse,fg=color237]#[bg=color237,none]#(… battery) "
+    //   set -ga status-right "#[reverse,fg=color237]<ARROW_RIGHT>#[bg=color237,none]#(… battery) "
+
+    /// The conf literal, written from the icons constant so a glyph change
+    /// propagates here rather than being pinned to a stale codepoint.
+    fn sep() -> String {
+        format!("#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]")
+    }
 
     #[test]
     fn assembles_the_three_segments_and_literals_exactly() {
         assert_eq!(
             assemble_right("GST", "NET", "BAT"),
-            "GSTNET#[reverse,fg=color237]#[bg=color237,none]BAT "
+            format!("GSTNET{}BAT ", sep())
         );
     }
 
     #[test]
     fn separator_literal_is_byte_for_byte_the_conf_literal() {
-        // Spelled out rather than referencing the constant: the point of the
-        // test is that the constant has not drifted from the shipped conf.
-        assert_eq!(RIGHT_SEPARATOR, "#[reverse,fg=color237]#[bg=color237,none]");
+        // The wedge between the two format directives is the whole point of
+        // this separator, and its absence is invisible in every other test:
+        // one character out of 252, no colour change, no layout shift that
+        // reads as broken. The first implementation dropped it and shipped a
+        // green suite. Assert the glyph explicitly.
+        let sep = right_separator();
+        assert!(
+            sep.contains(ARROW_RIGHT),
+            "powerline wedge missing: {sep:?}"
+        );
+        assert_eq!(
+            sep,
+            format!("#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]")
+        );
     }
 
     #[test]
@@ -260,32 +291,23 @@ mod tests {
     #[test]
     fn separator_sits_between_net_and_battery_only() {
         let out = assemble_right("<G>", "<N>", "<B>");
-        let sep = out.find(RIGHT_SEPARATOR).expect("separator present");
+        let separator = sep();
+        let sep = out.find(&separator).expect("separator present");
         assert!(out.find("<N>").unwrap() < sep, "separator follows net");
         assert!(sep < out.find("<B>").unwrap(), "separator precedes battery");
-        assert_eq!(
-            out.matches(RIGHT_SEPARATOR).count(),
-            1,
-            "separator appears once"
-        );
+        assert_eq!(out.matches(&separator).count(), 1, "separator appears once");
     }
 
     #[test]
     fn empty_segments_still_produce_the_literals() {
         // A non-repo pane on a quiet network: gst and net are both empty, and
         // the battery segment must still be separated and spaced correctly.
-        assert_eq!(
-            assemble_right("", "", "BAT"),
-            "#[reverse,fg=color237]#[bg=color237,none]BAT "
-        );
+        assert_eq!(assemble_right("", "", "BAT"), format!("{}BAT ", sep()));
     }
 
     #[test]
     fn all_empty_is_just_the_literals() {
-        assert_eq!(
-            assemble_right("", "", ""),
-            "#[reverse,fg=color237]#[bg=color237,none] "
-        );
+        assert_eq!(assemble_right("", "", ""), format!("{} ", sep()));
     }
 
     #[test]
@@ -295,9 +317,7 @@ mod tests {
         let gst = "#[fg=color251,bg=color233] main";
         let net = "#[fg=#5cae36]<40KiB/s";
         let bat = "#[fg=color250,bg=color237] 87%";
-        let old = format!(
-            "{gst}{net}#[reverse,fg=color237]#[bg=color237,none]{bat} "
-        );
+        let old = format!("{gst}{net}#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]{bat} ");
         assert_eq!(assemble_right(gst, net, bat), old);
     }
 
@@ -462,11 +482,15 @@ mod tests {
         .await;
         assert!(r.error.is_none(), "{:?}", r.error);
         assert!(
-            r.output.contains(RIGHT_SEPARATOR),
+            r.output.contains(&right_separator()),
             "missing separator: {:?}",
             r.output
         );
-        assert!(r.output.ends_with(' '), "missing trailing space: {:?}", r.output);
+        assert!(
+            r.output.ends_with(' '),
+            "missing trailing space: {:?}",
+            r.output
+        );
     }
 
     #[tokio::test]
@@ -482,7 +506,7 @@ mod tests {
         let a = dispatch(make(), Arc::clone(&st)).await;
         let b = dispatch(make(), Arc::clone(&st)).await;
         assert!(a.error.is_none() && b.error.is_none());
-        assert!(a.output.contains(RIGHT_SEPARATOR));
-        assert!(b.output.contains(RIGHT_SEPARATOR));
+        assert!(a.output.contains(&right_separator()));
+        assert!(b.output.contains(&right_separator()));
     }
 }
