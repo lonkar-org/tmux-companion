@@ -11,10 +11,10 @@ use tokio::sync::Mutex;
 use crate::server::state::{DEFAULT_GST_TTL, ServerState};
 use crate::tmux::{
     format::{
-        AC_DARK_BLUE, AC_GONE, AC_GREEN, AC_LOADING, AC_NEW, AC_PURPLE, BG_BAR, BG_CLEAN,
+        AC_DARK_BLUE, AC_ERROR, AC_GONE, AC_GREEN, AC_LOADING, AC_NEW, AC_PURPLE, BG_BAR, BG_CLEAN,
         BG_DEFAULT, BG_ERROR, BG_GONE, BG_LOADING, BG_NEW, BG_TERMINAL, FG_BLUE, FG_CLEAN,
-        FG_DARK_BLUE, FG_DEFAULT, FG_GONE, FG_GREEN, FG_GREY89, FG_PREVIOUS, FG_PURPLE, Palette,
-        Segment, Style, colored_segment, powerline_segment,
+        FG_DARK_BLUE, FG_DEFAULT, FG_GONE, FG_GREEN, FG_GREY89, FG_ON_ERROR, FG_PREVIOUS,
+        FG_PURPLE, Palette, Segment, Style, colored_segment, powerline_segment,
     },
     icons::{
         ADDED, AHEAD, ARROW_RIGHT, BEHIND, CLEAN, COPIED, DELETED, FAILED, GIT, MODIFIED, NEW,
@@ -223,7 +223,7 @@ impl GitStatus {
                 loading_fg: FG_GREY89,
                 loading_bg: BG_LOADING,
                 loading_cap: BG_LOADING,
-                error_fg: FG_GREY89,
+                error_fg: FG_ON_ERROR,
                 error_bg: BG_ERROR,
                 error_cap: BG_ERROR,
                 prev_fg: FG_PREVIOUS,
@@ -246,15 +246,15 @@ impl GitStatus {
                     loading_fg: if bright { AC_LOADING } else { BG_LOADING },
                     loading_bg: bar_bg,
                     loading_cap: if bright { AC_LOADING } else { BG_LOADING },
-                    error_fg: BG_ERROR,
+                    error_fg: AC_ERROR,
                     error_bg: bar_bg,
-                    error_cap: BG_ERROR,
+                    error_cap: AC_ERROR,
                     prev_fg: accent,
                     new_fg: if bright { AC_NEW } else { FG_BLUE },
                     green_fg: if bright { AC_GREEN } else { FG_GREEN },
                     dirty_fg: if bright { AC_GONE } else { BG_GONE },
                     ahead_fg: if bright { AC_DARK_BLUE } else { FG_DARK_BLUE },
-                    unmerged_fg: BG_ERROR,
+                    unmerged_fg: AC_ERROR,
                     stash_fg: if bright { AC_PURPLE } else { FG_PURPLE },
                 }
             }
@@ -380,7 +380,12 @@ pub fn status_line_render(
         remote.add(colored_segment(no_tmux, p.prev_fg, bg, WHITE_SPACE));
     } else {
         remote.add(colored_segment(no_tmux, p.prev_fg, p.error_bg, ARROW_RIGHT));
-        remote.add(colored_segment(no_tmux, p.error_fg, p.error_bg, WHITE_SPACE));
+        remote.add(colored_segment(
+            no_tmux,
+            p.error_fg,
+            p.error_bg,
+            WHITE_SPACE,
+        ));
         remote.add(format!("{}{}", FAILED, WHITE_SPACE));
         remote.add(format!(
             "{}{}",
@@ -689,8 +694,8 @@ mod tests {
     use super::*;
     use crate::tmux::{
         format::{
-            AC_DARK_BLUE, AC_GONE, AC_PURPLE, BG_BAR, BG_CLEAN, BG_DEFAULT, BG_ERROR, BG_GONE,
-            BG_LOADING, BG_NEW, BG_TERMINAL, FG_CLEAN, FG_DARK_BLUE, FG_DEFAULT, FG_GONE,
+            AC_DARK_BLUE, AC_ERROR, AC_GONE, AC_PURPLE, BG_BAR, BG_CLEAN, BG_DEFAULT, BG_ERROR,
+            BG_GONE, BG_LOADING, BG_NEW, BG_TERMINAL, FG_CLEAN, FG_DARK_BLUE, FG_DEFAULT, FG_GONE,
             FG_GREEN, FG_PREVIOUS, FG_PURPLE, Style, colored_segment, powerline_segment,
         },
         icons::*,
@@ -1351,7 +1356,11 @@ mod tests {
         // Sub-sections are separated by plain spaces, and only the segment end
         // carries a glyph.
         assert!(!line.contains('|'), "stale pipe divider: {line}");
-        assert_eq!(line.matches(SEPARATOR).count(), 0, "fill ends with an arrow: {line}");
+        assert_eq!(
+            line.matches(SEPARATOR).count(),
+            0,
+            "fill ends with an arrow: {line}"
+        );
         // untracked(1) + unstaged.added(1) → count 2
         assert!(line.contains(&format!("2{}", ADDED)));
     }
@@ -1423,14 +1432,18 @@ mod tests {
     #[test]
     fn status_line_nvim_suspended_uses_terminal_bg_for_arrow() {
         let s = s_clean();
-        let normal   = status_line_mode(&s, false, false);
-        let suspended = status_line_mode(&s, true,  false);
+        let normal = status_line_mode(&s, false, false);
+        let suspended = status_line_mode(&s, true, false);
         // With nvim suspended the final arrow background is BG_TERMINAL ("235"),
         // without it the background is "233".
-        assert!(normal.contains(&format!("bg=color233]{}", ARROW_RIGHT)),
-            "normal arrow bg should be 233: {normal}");
-        assert!(suspended.contains(&format!("bg=color{}]{}", BG_TERMINAL, ARROW_RIGHT)),
-            "suspended arrow bg should be BG_TERMINAL: {suspended}");
+        assert!(
+            normal.contains(&format!("bg=color233]{}", ARROW_RIGHT)),
+            "normal arrow bg should be 233: {normal}"
+        );
+        assert!(
+            suspended.contains(&format!("bg=color{}]{}", BG_TERMINAL, ARROW_RIGHT)),
+            "suspended arrow bg should be BG_TERMINAL: {suspended}"
+        );
         assert_ne!(normal, suspended);
     }
 
@@ -1509,8 +1522,16 @@ mod tests {
             false,
             Style::Outline,
         );
-        assert!(!failed.contains(&format!("bg=color{}]", BG_ERROR)), "{failed}");
-        assert!(failed.contains(&format!("fg=color{}", BG_ERROR)), "{failed}");
+        assert!(
+            !failed.contains(&format!("bg=color{}]", BG_ERROR)),
+            "{failed}"
+        );
+        // Outline draws the error as AC_ERROR rather than BG_ERROR: the fill
+        // background reads 3.47:1 on the bar, under the 4.5 WCAG asks of text.
+        assert!(
+            failed.contains(&format!("fg=color{}", AC_ERROR)),
+            "{failed}"
+        );
 
         let loading = status_line_styled(
             &GitStatus {
@@ -1522,8 +1543,14 @@ mod tests {
             false,
             Style::Outline,
         );
-        assert!(!loading.contains(&format!("bg=color{}]", BG_LOADING)), "{loading}");
-        assert!(loading.contains(&format!("fg=color{}", BG_LOADING)), "{loading}");
+        assert!(
+            !loading.contains(&format!("bg=color{}]", BG_LOADING)),
+            "{loading}"
+        );
+        assert!(
+            loading.contains(&format!("fg=color{}", BG_LOADING)),
+            "{loading}"
+        );
     }
 
     #[test]
@@ -1567,7 +1594,10 @@ mod tests {
     fn branch_icon_on_keeps_legacy_shape() {
         let s = s_clean();
         let with_icon = status_line_render(&s, false, false, Style::Outline, None, None, true);
-        assert_eq!(with_icon, status_line_styled(&s, false, false, Style::Outline));
+        assert_eq!(
+            with_icon,
+            status_line_styled(&s, false, false, Style::Outline)
+        );
         assert!(with_icon.contains(GIT));
     }
 
@@ -1590,7 +1620,10 @@ mod tests {
     fn outline_respects_nvim_suspended_bar_background() {
         let s = s_clean();
         let line = status_line_styled(&s, true, false, Style::Outline);
-        assert!(line.contains(&format!("bg=color{}]", BG_TERMINAL)), "{line}");
+        assert!(
+            line.contains(&format!("bg=color{}]", BG_TERMINAL)),
+            "{line}"
+        );
         assert!(!line.contains(&format!("bg=color{}]", BG_BAR)), "{line}");
     }
 

@@ -39,8 +39,7 @@ pub async fn run() -> anyhow::Result<()> {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
             if let Ok(s) = crate::segments::battery::render().await {
-                state.lock().await.battery_cache =
-                    Some((s, std::time::Instant::now()));
+                state.lock().await.battery_cache = Some((s, std::time::Instant::now()));
             }
         });
     }

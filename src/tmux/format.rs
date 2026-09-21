@@ -17,7 +17,9 @@ pub const FG_DEFAULT: &str = "235";
 pub const FG_GONE: &str = "255";
 pub const FG_GREEN: &str = "22";
 pub const FG_GREY89: &str = "254";
-pub const FG_PREVIOUS: &str = "025";
+/// Text for the previous branch, on the dirty fill background.  colour025
+/// measured 2.73:1 against colour209; colour017 is the same blue and 7.62:1.
+pub const FG_PREVIOUS: &str = "017";
 pub const FG_PURPLE: &str = "53";
 
 // Status-bar background — what a segment sits on.  Used as the segment
@@ -33,6 +35,11 @@ pub const AC_GREEN: &str = "84";
 pub const AC_DARK_BLUE: &str = "75";
 pub const AC_PURPLE: &str = "141";
 pub const AC_NEW: &str = "39";
+/// The error state drawn as an accent on the bar.  BG_ERROR reads 3.47:1 there,
+/// below the 4.5 WCAG asks of text; colour196 is the same red at 4.69:1.
+pub const AC_ERROR: &str = "196";
+/// Text on the error fill.  FG_GREY89 measured 4.25:1 on BG_ERROR, just under.
+pub const FG_ON_ERROR: &str = "255";
 
 /// Fill = solid state-colored background (the original look).
 /// Outline = state color moves to the foreground, background becomes the bar,
@@ -381,6 +388,9 @@ mod tests {
 
     #[test]
     fn powerline_segment_empty_content() {
-        assert_eq!(powerline_segment("120", "235", ""), "#[fg=color120,bg=color235]");
+        assert_eq!(
+            powerline_segment("120", "235", ""),
+            "#[fg=color120,bg=color235]"
+        );
     }
 }

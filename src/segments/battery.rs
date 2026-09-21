@@ -1,6 +1,8 @@
 // Battery icons: 10 levels (empty → full)
-const BATTERY_ICONS: [&str; 10] =
-    ["\u{f244}", "\u{f243}", "\u{f243}", "\u{f242}", "\u{f242}", "\u{f241}", "\u{f241}", "\u{f240}", "\u{f240}", "\u{f240}"];
+const BATTERY_ICONS: [&str; 10] = [
+    "\u{f244}", "\u{f243}", "\u{f243}", "\u{f242}", "\u{f242}", "\u{f241}", "\u{f241}", "\u{f240}",
+    "\u{f240}", "\u{f240}",
+];
 
 pub const CHARGING_ICON: &str = "\u{f1e6}";
 
@@ -36,8 +38,16 @@ fn format_battery_output(
     };
 
     let icon = BATTERY_ICONS[icon_idx.min(9)];
-    let pct_str = if !external { format!(" {}%", pct) } else { String::new() };
-    let plug = if external { format!(" {}", CHARGING_ICON) } else { String::new() };
+    let pct_str = if !external {
+        format!(" {}%", pct)
+    } else {
+        String::new()
+    };
+    let plug = if external {
+        format!(" {}", CHARGING_ICON)
+    } else {
+        String::new()
+    };
 
     format!("{}{}{}{}", color, icon, pct_str, plug)
 }
@@ -62,7 +72,13 @@ pub async fn render() -> anyhow::Result<String> {
             .unwrap_or_default()
             .as_secs();
 
-        Ok(format_battery_output(current, 100, is_charging, external, epoch_secs))
+        Ok(format_battery_output(
+            current,
+            100,
+            is_charging,
+            external,
+            epoch_secs,
+        ))
     })
     .await?
 }

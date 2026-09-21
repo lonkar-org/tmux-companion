@@ -14,11 +14,17 @@ pub struct Response {
 
 impl Response {
     pub fn ok(output: String) -> Self {
-        Self { output, error: None }
+        Self {
+            output,
+            error: None,
+        }
     }
 
     pub fn err(e: impl std::fmt::Display) -> Self {
-        Self { output: String::new(), error: Some(e.to_string()) }
+        Self {
+            output: String::new(),
+            error: Some(e.to_string()),
+        }
     }
 }
 

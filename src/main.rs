@@ -137,9 +137,13 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let runtime = if matches!(cli.command, Cmd::Server) {
-        tokio::runtime::Builder::new_multi_thread().enable_all().build()?
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
     } else {
-        tokio::runtime::Builder::new_current_thread().enable_all().build()?
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
     };
 
     runtime.block_on(run(cli.command))

@@ -3,7 +3,11 @@ const SESSION_CLIENTS_ICON: &str = "󱘖 "; // nf-md-account_multiple
 
 /// Pure formatting logic extracted for unit testing.
 /// `srv_clients` is the raw count from `tmux list-clients` (self already subtracted).
-fn format_client_output(srv_clients: u32, session_attached: u32, window_active_clients: u32) -> String {
+fn format_client_output(
+    srv_clients: u32,
+    session_attached: u32,
+    window_active_clients: u32,
+) -> String {
     if srv_clients == 0 {
         return String::new();
     }
@@ -46,7 +50,11 @@ pub async fn render(session_attached: u32, window_active_clients: u32) -> anyhow
     }
     let srv_clients = raw_count - 1; // subtract self
 
-    Ok(format_client_output(srv_clients, session_attached, window_active_clients))
+    Ok(format_client_output(
+        srv_clients,
+        session_attached,
+        window_active_clients,
+    ))
 }
 
 #[cfg(test)]
@@ -71,21 +79,30 @@ mod tests {
         // window_active=1 → w_clients=0, so no window part
         let out = format_client_output(2, 1, 1);
         assert!(!out.contains(WINDOW_CLIENTS_ICON), "no window icon: {out}");
-        assert!(!out.contains(SESSION_CLIENTS_ICON), "no session icon: {out}");
+        assert!(
+            !out.contains(SESSION_CLIENTS_ICON),
+            "no session icon: {out}"
+        );
         assert!(out.contains("2"), "srv count present: {out}");
     }
 
     #[test]
     fn window_clients_shown_when_above_one() {
         let out = format_client_output(3, 1, 3); // w_active=3 → w_clients=2
-        assert!(out.contains(WINDOW_CLIENTS_ICON), "missing window icon: {out}");
+        assert!(
+            out.contains(WINDOW_CLIENTS_ICON),
+            "missing window icon: {out}"
+        );
         assert!(out.contains("2|"), "expected w_clients=2: {out}");
     }
 
     #[test]
     fn session_clients_shown_when_above_one() {
         let out = format_client_output(3, 3, 1); // sa=3 → s_clients=2
-        assert!(out.contains(SESSION_CLIENTS_ICON), "missing session icon: {out}");
+        assert!(
+            out.contains(SESSION_CLIENTS_ICON),
+            "missing session icon: {out}"
+        );
         assert!(out.contains("2|"), "expected s_clients=2: {out}");
     }
 

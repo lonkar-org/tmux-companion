@@ -38,7 +38,9 @@ fn iec_fmt(bytes_per_sec: u64, pad: usize) -> String {
 /// Equivalent to: sed -E 's/([0-9]+)(.+)/\1#[fg=colour237,none,italics]\2#[none]/g'
 fn iec_fmt_styled(bytes_per_sec: u64) -> String {
     let plain = iec_fmt(bytes_per_sec, 0);
-    let split = plain.find(|c: char| !c.is_ascii_digit()).unwrap_or(plain.len());
+    let split = plain
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(plain.len());
     let (num, unit) = plain.split_at(split);
     format!("{}#[fg=colour237,none,italics]{}#[none]", num, unit)
 }
@@ -50,13 +52,15 @@ fn format_bandwidth(dl: u64, ul: u64) -> String {
     if dl >= THRESHOLD_BPS {
         out.push_str(&format!(
             "#[fg=#5cae36]{}#[fg=colour233,bg=#5cae36]{}",
-            ARROW_LEFT, iec_fmt_styled(dl)
+            ARROW_LEFT,
+            iec_fmt_styled(dl)
         ));
     }
     if ul >= THRESHOLD_BPS {
         out.push_str(&format!(
             "#[fg=#0262a8]{}#[fg=colour233,bg=#0262a8]{}",
-            ARROW_LEFT, iec_fmt_styled(ul)
+            ARROW_LEFT,
+            iec_fmt_styled(ul)
         ));
     }
     out
@@ -171,7 +175,10 @@ mod tests {
         // character, so a unit that opened with a digit would be mis-split.
         for unit in [RATE_KIB, RATE_MIB, RATE_GIB] {
             let first = unit.chars().next().expect("unit is non-empty");
-            assert!(!first.is_ascii_digit(), "unit must not start with a digit: {unit}");
+            assert!(
+                !first.is_ascii_digit(),
+                "unit must not start with a digit: {unit}"
+            );
         }
     }
 
@@ -209,7 +216,10 @@ mod tests {
         let out = format_bandwidth(THRESHOLD_BPS, 0);
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#5cae36]"), "expected green arrow: {out}");
-        assert!(out.contains("#[fg=colour233,bg=#5cae36]"), "expected green segment: {out}");
+        assert!(
+            out.contains("#[fg=colour233,bg=#5cae36]"),
+            "expected green segment: {out}"
+        );
         assert!(!out.contains("#[fg=#0262a8"), "should not have ul: {out}");
     }
 
@@ -218,7 +228,10 @@ mod tests {
         let out = format_bandwidth(0, THRESHOLD_BPS);
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#0262a8]"), "expected blue arrow: {out}");
-        assert!(out.contains("#[fg=colour233,bg=#0262a8]"), "expected blue segment: {out}");
+        assert!(
+            out.contains("#[fg=colour233,bg=#0262a8]"),
+            "expected blue segment: {out}"
+        );
         assert!(!out.contains("#[fg=#5cae36"), "should not have dl: {out}");
     }
 
@@ -268,10 +281,10 @@ mod tests {
     fn iec_fmt_styled_split_is_at_first_non_digit() {
         // Verify number and unit are correctly separated for all unit types.
         for (bps, expected_num, expected_unit) in [
-            (500_u64,                   "500", "B/s"),
-            (2 * 1024,                    "2", RATE_KIB),
-            (5 * 1024 * 1024,             "5", RATE_MIB),
-            (2 * 1024 * 1024 * 1024,      "2", RATE_GIB),
+            (500_u64, "500", "B/s"),
+            (2 * 1024, "2", RATE_KIB),
+            (5 * 1024 * 1024, "5", RATE_MIB),
+            (2 * 1024 * 1024 * 1024, "2", RATE_GIB),
         ] {
             let s = iec_fmt_styled(bps);
             assert!(s.starts_with(expected_num), "num for {bps}: {s}");
@@ -284,7 +297,10 @@ mod tests {
     #[test]
     fn format_bandwidth_unit_is_styled() {
         let out = format_bandwidth(THRESHOLD_BPS, 0);
-        assert!(out.contains("#[fg=colour237,none,italics]"), "unit style present: {out}");
+        assert!(
+            out.contains("#[fg=colour237,none,italics]"),
+            "unit style present: {out}"
+        );
         assert!(out.contains("#[none]"), "unit reset present: {out}");
     }
 
@@ -355,7 +371,13 @@ mod tests {
         let t0 = Instant::now();
         advance(&mut prev, &mut last, 0, 0, t0);
         // 40 KiB down in one second — above the 20 KiB/s threshold.
-        let out = advance(&mut prev, &mut last, 40 * 1024, 0, t0 + Duration::from_secs(1));
+        let out = advance(
+            &mut prev,
+            &mut last,
+            40 * 1024,
+            0,
+            t0 + Duration::from_secs(1),
+        );
         assert!(out.contains(RATE_KIB), "expected a KiB/s rate: {out}");
         assert!(out.contains("40"), "expected 40 KiB/s: {out}");
     }
@@ -376,7 +398,10 @@ mod tests {
             t0 + Duration::from_millis(1100),
         );
         assert!(out.contains("40"), "expected 40 KiB/s, got: {out}");
-        assert!(!out.contains("44"), "must not report the untruncated 44: {out}");
+        assert!(
+            !out.contains("44"),
+            "must not report the untruncated 44: {out}"
+        );
     }
 
     #[test]
@@ -385,7 +410,13 @@ mod tests {
         let mut last = String::new();
         let t0 = Instant::now();
         advance(&mut prev, &mut last, 0, 0, t0);
-        let first = advance(&mut prev, &mut last, 40 * 1024, 0, t0 + Duration::from_secs(1));
+        let first = advance(
+            &mut prev,
+            &mut last,
+            40 * 1024,
+            0,
+            t0 + Duration::from_secs(1),
+        );
         assert!(!first.is_empty());
 
         // A second client refreshes 50ms later: far too short an interval to
@@ -414,7 +445,10 @@ mod tests {
         advance(&mut prev, &mut last, 0, 0, t0);
         let at = t0 + MIN_ELAPSED + Duration::from_millis(1);
         let out = advance(&mut prev, &mut last, 100 * 1024, 0, at);
-        assert!(!out.is_empty(), "just past the guard it must compute: {out}");
+        assert!(
+            !out.is_empty(),
+            "just past the guard it must compute: {out}"
+        );
         assert_eq!(prev.expect("anchored").at, at, "anchor must advance");
     }
 
@@ -440,7 +474,13 @@ mod tests {
         advance(&mut prev, &mut last, 0, 0, t0);
         let quiet = advance(&mut prev, &mut last, 10, 0, t0 + Duration::from_secs(1));
         assert_eq!(quiet, "", "10 B/s is below the threshold");
-        let soon = advance(&mut prev, &mut last, 20, 0, t0 + Duration::from_millis(1050));
+        let soon = advance(
+            &mut prev,
+            &mut last,
+            20,
+            0,
+            t0 + Duration::from_millis(1050),
+        );
         assert_eq!(soon, "");
     }
 

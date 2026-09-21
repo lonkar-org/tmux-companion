@@ -64,10 +64,16 @@ const PANE_BOX: [&str; 11] = [
 ];
 
 // 20-color cycle for running-process animation (seconds % 20)
+//
+// Lifted in HSL, hue and saturation held, until every step clears 4.5:1 against
+// BG_CURRENT as well as BG_BAR.  17 of the 20 were below it on BG_CURRENT, the
+// middle of the ramp worst at 3.21:1, because that is where its luminance
+// passes closest to the background's.  Lightness was raised rather than white
+// mixed in, which would have faded green-to-red into olive-to-salmon.
 const PS_COLORS: [&str; 20] = [
-    "#54b435", "#5cae36", "#63a837", "#6ba338", "#739d39", "#7b9739", "#82913a", "#8a8b3b",
-    "#92863c", "#9a803d", "#a17a3e", "#a9743f", "#b16f40", "#b96941", "#c06342", "#c85d42",
-    "#d05743", "#d85244", "#df4c45", "#e74646",
+    "#54b435", "#5cae36", "#63a837", "#6da639", "#78a43b", "#84a23d", "#8e9f40", "#9b9c42",
+    "#a59844", "#b29446", "#bb904e", "#c18d59", "#c58a5f", "#c98867", "#ce856b", "#d4826d",
+    "#db7d6d", "#e1796e", "#e67671", "#ed7171",
 ];
 
 // Dir logos — applied in priority order (most specific first)
@@ -835,7 +841,10 @@ mod tests {
             ..args_base()
         };
         let out = render(&args, &no_aliases());
-        assert!(out.starts_with(SLANT_IN) || out.contains(SLANT_IN), "opening cap: {out}");
+        assert!(
+            out.starts_with(SLANT_IN) || out.contains(SLANT_IN),
+            "opening cap: {out}"
+        );
         assert!(out.ends_with(SLANT_OUT), "closing cap last: {out}");
     }
 
@@ -950,7 +959,9 @@ mod tests {
         };
         let out = render(&args, &no_aliases());
         let (_, cap_out) = block_caps(true);
-        let body = out.strip_suffix(&cap_out).expect("output ends with the cap");
+        let body = out
+            .strip_suffix(&cap_out)
+            .expect("output ends with the cap");
         assert!(
             body.ends_with(' '),
             "block must be padded before the closing cap: {out}"

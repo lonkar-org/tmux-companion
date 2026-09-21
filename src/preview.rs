@@ -175,7 +175,10 @@ pub fn render() -> String {
     let styles = [
         ("fill (current)", Style::Fill),
         ("outline (icon colors untouched)", Style::Outline),
-        ("outline-bright (icon colors lightened)", Style::OutlineBright),
+        (
+            "outline-bright (icon colors lightened)",
+            Style::OutlineBright,
+        ),
     ];
     let bar: u16 = BG_BAR.parse().unwrap_or(233);
     let mut out = String::new();
