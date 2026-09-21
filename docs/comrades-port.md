@@ -824,16 +824,20 @@ answer. Most are small and all of them get worse after twelve subcommands land.
 
 ### Linux
 
-Phase 0 step 2 says a workflow running the tests on Linux, and nobody has run
-them there. `README.md` line 45 says the battery segment is macOS and
-`DESIGN.md` line 88 calls it "macOS ioreg battery", both of which are stale:
-`segments/battery.rs` goes through the `battery` crate 0.7 and
-`segments/network.rs` through `sysinfo` 0.39, and both of those have Linux
-backends. So the Linux job may pass on the first run. It may also fail on
-something nobody's looked at, and the plan should say the step is "run it and
-write down what actually works" rather than assume either way. The socket path
-is the one I'd check first, since `/tmp/tmux-companion-<uid>.sock` isn't
-where a Linux user expects it when `$XDG_RUNTIME_DIR` exists.
+`README.md` line 45 says the battery segment is macOS and `DESIGN.md` line 88
+calls it "macOS ioreg battery", and both are stale: `segments/battery.rs` goes
+through the `battery` crate 0.7 and `segments/network.rs` through `sysinfo`
+0.39, and both of those carry Linux backends.
+
+Phase 0 step 2 checked it rather than assuming. `cargo check --target
+x86_64-unknown-linux-gnu --all-targets` compiles the crate and its tests clean
+on 1.98.0 with no `cfg` changes and nothing stubbed out, so the Linux arm of
+the matrix is expected to build. What that does not prove is runtime: `check`
+never links, no test reads hardware, and a Linux box with no battery, no tmux
+and no `$XDG_RUNTIME_DIR` is a different question from one that compiles. The
+socket path is the first thing to look at there, since
+`/tmp/tmux-companion-<uid>.sock` isn't where a Linux user expects it when
+`$XDG_RUNTIME_DIR` exists.
 
 ### An old daemon answering a new client
 

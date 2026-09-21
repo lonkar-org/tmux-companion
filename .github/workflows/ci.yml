@@ -1,0 +1,56 @@
+name: CI
+
+# Runs the three checks a contributor is asked to run before pushing, so a
+# pull request fails here rather than in review. The toolchain comes from
+# rust-toolchain.toml, which is what keeps the formatting identical to a
+# maintainer's machine.
+#
+# @claude(badge): the README badge is deliberately not added yet. Phase 0 step
+# 0 moves this repository to lonkar-org, and a badge written before the move
+# points at a redirect. Add it in the same commit as the transfer.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  format:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo fmt --all --check
+
+  check:
+    name: clippy and tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the version; this installs it on a runner
+      # whose preinstalled Rust is something else.
+      - run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ matrix.os }}-cargo-
+
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
