@@ -241,7 +241,7 @@ window's average until the entry expired.
 
 ## Testing
 
-255 unit tests.  All pure functions are extracted from async render functions so
+The suite runs in well under a second.  All pure functions are extracted from async render functions so
 they can run without spawning any subprocesses or reading hardware.
 
 Key test patterns:

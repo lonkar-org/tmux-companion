@@ -4,7 +4,7 @@
 
 ```sh
 cargo build --release          # binary → target/release/tmux-companion
-cargo test                     # 255 unit tests, no external deps
+cargo test                     # unit and integration tests, no external deps
 ```
 
 On a machine someone is using, keep the job count down and the priority low --
@@ -129,6 +129,26 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
    than any segment here costs to compute.  Put anything expensive and slow to
    change behind a `TtlMap` on `ServerState`.
 7. Update `docs/tmux.conf.example` and the module table above.
+
+## Adding a new command
+
+A command is not a segment: it does something to tmux rather than returning
+bytes for the bar.  The steps are the same shape, with one extra.
+
+1. Add the `Cmd` variant and its clap flags in `src/cli.rs`.
+2. Add an args struct to `src/proto.rs` with `#[serde(deny_unknown_fields)]`
+   and a `#[serde(default)]` on every optional field.  The struct is the only
+   definition of the command's arguments; there is no second one.
+3. Send it with `Request::build("name", &args)` in the dispatch in `cli.rs`.
+4. Read it back in `src/server/handlers.rs` with
+   `req.parse_args::<YourArgs>()`.  Never index `req.args["key"]`: a key that
+   was never sent reads back as `None` and changes behaviour silently, which is
+   the bug class the args structs exist to remove.
+5. Write the pure parts as free functions and unit-test them in the same file.
+6. If the command talks to the terminal (a picker, a dialog), it runs in the
+   **client** process, not the daemon.  The daemon has no terminal; it answers
+   with rows and the client draws them.
+7. Add a row to `docs/reference/cli.md` and a line to `docs/port-checklist.md`.
 
 ## Changing icon codepoints
 

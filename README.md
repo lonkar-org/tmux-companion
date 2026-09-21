@@ -135,9 +135,21 @@ Socket: `/tmp/tmux-companion-<uid>.sock`, or `$TMUX_COMPANION_SOCK` when set —
 which is how the benchmarks run a server beside the live one without disturbing
 the status bar you are looking at.
 
+## Documentation
+
+| | |
+| --- | --- |
+| [docs/reference/requirements.md](docs/reference/requirements.md) | Rust, tmux, fonts, platforms |
+| [docs/tmux.conf.example](docs/tmux.conf.example) | the recommended status-bar configuration |
+| [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
+| [BENCHMARKS.md](BENCHMARKS.md) | what the bar costs, and how that was measured |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
+| [docs/comrades-port.md](docs/comrades-port.md) | what is being built next |
+
 ## Building
 
-Requires Rust 1.82+ (edition 2024). No system libraries needed.
+Requires Rust 1.85 or newer, which is the first release with edition 2024. No
+system libraries needed. Full list in [docs/reference/requirements.md](docs/reference/requirements.md).
 
 ```sh
 cargo build --release
@@ -151,5 +163,5 @@ Binary: `target/release/tmux-companion` (≈ 4.0 MB).
 ## Tests
 
 ```sh
-cargo test          # 255 unit tests, no external dependencies required
+cargo test          # unit and integration tests, no external dependencies required
 ```
