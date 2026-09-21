@@ -25,7 +25,12 @@ pub fn sock_path() -> PathBuf {
     PathBuf::from(format!("/tmp/tmux-companion-{}.sock", uid))
 }
 
-pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
+/// One request, one response, no printing.
+///
+/// Split out of `send_and_print` so a test can assert on a `Response` instead
+/// of scraping stdout, which is the whole reason an integration test over the
+/// real socket is worth having.
+pub async fn send(req: Request) -> anyhow::Result<Response> {
     let stream = connect_with_retry().await?;
     let (reader, mut writer) = stream.into_split();
 
@@ -34,13 +39,20 @@ pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
     writer.write_all(msg.as_bytes()).await?;
 
     let mut lines = BufReader::new(reader).lines();
-    if let Some(line) = lines.next_line().await? {
-        let resp: Response = serde_json::from_str(&line)?;
-        if let Some(err) = resp.error {
-            eprintln!("tmux-companion error: {err}");
-        } else {
-            print!("{}", resp.output);
-        }
+    match lines.next_line().await? {
+        Some(line) => Ok(serde_json::from_str(&line)?),
+        // The server closed without answering. Treated as an error rather than
+        // an empty render, so a status bar shows something went wrong.
+        None => anyhow::bail!("server closed the connection without a response"),
+    }
+}
+
+pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
+    let resp = send(req).await?;
+    if let Some(err) = resp.error {
+        eprintln!("tmux-companion error: {err}");
+    } else {
+        print!("{}", resp.output);
     }
     Ok(())
 }

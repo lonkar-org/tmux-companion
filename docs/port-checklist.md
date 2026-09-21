@@ -12,7 +12,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 2 | GitHub Actions: `fmt --check`, `clippy -D warnings`, `test` | done — unverified until somebody pushes; README badge waits for the transfer |
 | 3 | `src/lib.rs`, `main.rs` down to argument parsing, `tests/` | done — main.rs 287 lines to 32 |
 | 4 | one typed args struct per command | done — output byte-identical, checked with compare-output.sh |
-| 5 | integration test over the real socket, plus the singleton | todo |
+| 5 | integration test over the real socket, plus the singleton | done — 9 tests in tests/socket_round_trip.rs |
 | 6 | `//!` and `///` everywhere, `#![warn(missing_docs)]` | todo |
 | 7 | `LICENSE`, `CONTRIBUTING.md`, "Adding a command", test-count sentence | todo |
 | 8 | the config loader and its tables | todo |

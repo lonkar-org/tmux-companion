@@ -53,7 +53,7 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/main.rs` | argument parsing and the runtime choice, nothing else |
 | `src/lib.rs` | the library every module hangs off, so `tests/` can link it |
 | `src/cli.rs` | CLI (`Cmd` enum via clap), dispatch to client or server |
-| `src/client.rs` | connect-with-retry, spawn server, send/print |
+| `src/client.rs` | connect-with-retry, spawn server, `send` and send/print |
 | `src/server/mod.rs` | UnixListener accept loop |
 | `src/server/handlers.rs` | `req.cmd` → segment fn; `assemble_right`, the `__rusage` probe |
 | `src/server/state.rs` | `ServerState` + caches + TTL constants + dir-aliases loader |
