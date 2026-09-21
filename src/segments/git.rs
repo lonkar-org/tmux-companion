@@ -156,11 +156,11 @@ impl GitStatus {
     }
 
     fn parse_tracked_file<'a>(&mut self, words: &mut impl Iterator<Item = &'a str>) {
-        if let Some(xy) = words.next() {
-            if xy.len() >= 2 {
-                self.staged.parse_symbol(&xy[..1]);
-                self.unstaged.parse_symbol(&xy[1..2]);
-            }
+        if let Some(xy) = words.next()
+            && xy.len() >= 2
+        {
+            self.staged.parse_symbol(&xy[..1]);
+            self.unstaged.parse_symbol(&xy[1..2]);
         }
     }
 

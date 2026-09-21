@@ -1,0 +1,6 @@
+# Pinned so a contributor's formatting and lints match CI rather than whichever
+# rustc they happen to have. 1.85 is the floor for edition 2024; this pins the
+# exact toolchain the repository is developed and tested against.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

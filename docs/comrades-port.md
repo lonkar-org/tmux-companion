@@ -38,10 +38,12 @@ good case.
 
 ### What fails today
 
-`cargo fmt --check` reports 37 diffs across 12 files. `cargo clippy --all-targets
--- -D warnings` fails on two lints, a `collapsible_if` at `segments/git.rs:159`
-and an inherent `to_string` at `tmux/format.rs:158` that should be a `Display`
-implementation. Both are one-line fixes and neither's interesting. What is
+`cargo clippy --all-targets -- -D warnings` fails on two lints, a
+`collapsible_if` at `segments/git.rs:159` and an inherent `to_string` at
+`tmux/format.rs:158` that should be a `Display` implementation. The 37 `cargo
+fmt --check` diffs across 12 files this paragraph used to report were already
+gone when phase 0 step 1 ran, fixed somewhere in the status-bar rework, so the
+formatting half of that step turned out to be done already. Both are one-line fixes and neither's interesting. What is
 interesting is that they're there at all, which is the direct consequence of
 there being no `.github` directory, and so nothing that runs either check.
 A contributor's first pull request currently fails on formatting they had no way

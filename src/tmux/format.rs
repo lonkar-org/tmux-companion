@@ -161,9 +161,14 @@ impl Segment {
     pub fn join(&self, sep: &str) -> String {
         self.0.join(sep)
     }
+}
 
-    pub fn to_string(&self) -> String {
-        self.0.join("")
+/// `Segment` renders by concatenating its parts with no separator, so
+/// `to_string` comes from `Display` rather than from an inherent method that
+/// shadows it.
+impl std::fmt::Display for Segment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.join(""))
     }
 }
 
