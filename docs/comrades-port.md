@@ -5,11 +5,16 @@ lines of generators and probes in `mysetup/scripts`. This is the inventory of
 what moves in here, so the companion stops being a status-bar renderer and
 becomes the one binary the config talks to.
 
+Anything that is not in `comrades` today is out of scope for this document.
+`docs/after-the-port.md` is where the survey of what could come afterwards
+lives, so that the scope of this one stays what the title says.
+
 The port is phase 1. Phase 0 is the crate it lands on, because a foundation
 that holds 2,671 lines isn't automatically one that holds twice that with a
-TUI on top. Running alongside both is a documentation track, one step per
-phase, which is what turns a personal tool into one somebody else can send a
-patch to.
+TUI on top. Running alongside both are two tracks, one step per phase each: a
+documentation track, which is what turns a personal tool into one somebody else
+can send a patch to, and a configuration track, which is what stops it being
+configured the way one laptop is set up.
 
 ## Phase 0: the ground the port lands on
 
@@ -133,6 +138,15 @@ rustc they happen to have.
    `#![warn(missing_docs)]` turned on so it stays that way
 7. `LICENSE`, `CONTRIBUTING.md`, an "Adding a command" section in `CLAUDE.md`,
    and the hardcoded test count replaced with a sentence that does not rot
+8. the config loader and everything under it, per the configuration section
+   below: the precedence chain, `config path`, `config check`, `config dump`,
+   the `[dirs]`, `[colors]`, `[glyphs]`, `[git] parts`, `[[layout]]` and
+   `[status.right]` tables,
+   `docs/config.example.toml` and `docs/tmux.conf.full.example`
+9. `vim-bg` renamed to `sh-jobs` with a config-driven job table and a hidden
+   alias for one release, done here because step 4 is rewriting its args anyway
+10. a version field on the wire, a socket created 0600 and checked before use,
+   and a `doctor` subcommand, per the open questions near the end
 
 Step 0 is first because it's free now and annoying later. `lonkar-org` is the
 namespace paired with the blog, `firacode-nfc-tweaked` and `blog-comments` are
@@ -149,6 +163,299 @@ taken again.
 Steps 3 and 4 are the ones with real work in them. The rest is an afternoon, and
 all of it's cheaper now than after twelve subcommands have copied the current
 shape.
+
+## Configuration, since the repository is public
+
+Everything the bar renders is a constant. 23 colour constants in
+`tmux/format.rs`, 37 Nerd Font codepoints in `tmux/icons.rs`, a 20-colour
+animation cycle and a 10-icon battery ramp with its four thresholds in
+`segments/window.rs` and `segments/battery.rs`, a 20 KiB/s bandwidth floor, a
+five second git TTL, a branch cut at 20 characters with a 10 character tail,
+and the order of the three segments inside `assemble_right` with the tmux
+literals between them. Two of those are past opinionated and into personal:
+`load_dir_aliases` reads `~/.yrl/lib/dir-aliases`, and `DIR_LOGOS` in
+`segments/window.rs` maps `~/g/mysetup`, `~/g/` and `~/b/` to icons, so the
+directory layout of one laptop is compiled into a binary that a stranger is
+being invited to `cargo install`.
+
+The port gets a config file and it lands in phase 0 with the rest of the
+foundation, since every phase after it adds settings, and fitting a config
+layer under twelve subcommands afterwards costs more than building it under
+two.
+
+### The file
+
+TOML, read with `toml` and a `serde` derive, which is one dependency and the
+format anybody working in Rust already has open in `Cargo.toml`.
+
+Resolution order, first hit wins:
+
+1. `--config <path>`
+2. `$TMUX_COMPANION_CONFIG`
+3. `$XDG_CONFIG_HOME/tmux-companion/config.toml`, which is
+   `~/.config/tmux-companion/config.toml` on a machine that doesn't set the
+   variable
+4. `~/.tmux-companion.toml`
+5. the built-in defaults, when there is no file at all
+
+<!-- @Yogesh(decide): `~/.tmux-companion.toml` or extensionless `~/.tmux-companion`? extension gets you syntax highlighting, you said the bare name -->
+
+`tmux-companion config path` prints the one it picked, because the commonest
+config question is which file is being read.
+
+A key the parser doesn't recognise is an error naming the key and the line,
+via `deny_unknown_fields`. A silently ignored key is the same bug class as
+`req.args["pane_pid"]` on a name that was never sent, and phase 0 is already
+removing that one from the wire. The daemon refuses to start on a config it
+can't parse, the client prints the error, and since the client's stdout is the
+status bar the error appears where you are already looking. `tmux-companion
+config check` exits nonzero for a pre-commit hook or CI.
+
+<!-- @Yogesh(decide): refuse to start on a bad config, or start on defaults and put a warning in the bar? refusing means one typo empties the bar -->
+
+### Reload
+
+The daemon parses the file once at start and holds an `Arc<Config>` in
+`ServerState`. `tmux-companion reload` re-reads it, and the daemon compares the
+config's mtime on the tick it will already be running to watch `tmux.conf` for
+`keys`, so a colour change survives `prefix+r` without a `pkill`.
+
+Resolution stays off the hot path. Segments take a `&Config`, and the
+`status-right` composition is turned into a render plan at load rather than
+looked up per segment per second, since `DESIGN.md` opens by saying the daemon
+exists to stop repeated reads of config files and a config file read per render
+would be a poor joke.
+
+### tmux user options, and why not
+
+The tmux-native idiom is `set -g @companion-git-ttl 5`, and that is how most
+tmux plugins take their settings. It costs a `show-options` round trip per
+option per render unless the daemon caches them, and then there are two sources
+of truth with a cache in between, which is the invalidation bug this port is
+already deleting from `keys.zsh`. The file is read once by a daemon that is
+running anyway.
+
+Worth reopening if somebody arrives with a setting that has to differ per
+session, since that's the one thing a file can't express and `@` options can.
+
+<!-- @Yogesh(decide): confirm no `@companion-*` options, or support a short whitelist for per-session theme -->
+
+### What moves into the config, and when
+
+Same rule as the documentation track: a phase isn't finished until the
+constants it touched are settings and its row here is done.
+
+| Phase | Settings |
+| --- | --- |
+| 0 | the loader, the precedence chain, `config path`, `config check`, `config dump` |
+| 0 | `[dirs]` aliases and logos, which is what kills `~/.yrl/lib/dir-aliases` and `~/g/` |
+| 0 | `[colors]`, and `[glyphs]` with a `preset` key: `nerd-font-v3` as today, `powerline`, `unicode`, `ascii`, `none`, each overridable glyph by glyph |
+| 0 | `[git]`, `[network]`, `[battery]`, `[window]`: TTLs, thresholds, the branch lengths, and file defaults for the flags that already exist on the CLI |
+| 0 | `[status.right]`, the segment list, the separators between them and the end cap, all of which accept an empty string |
+| 0 | `[git] parts`, an ordered list of what the git segment renders, so nobody is given counts they didn't ask for |
+| 1 | `[theme]` directory and palette source for `theme gen` |
+| 2 | `[keys]`, `[cheatsheet]`, and `[usage]` with its path and an off switch |
+| 3 | `[project]` sources, so zoxide is one option rather than the assumption, plus the project map and `[[layout]]`, the windows a new session starts with |
+| 4 | `[autosave]` interval and enable, `[toggle]` window names, which come from the layout rather than from `edit` and `ai` being hardcoded |
+| 5 | `[run]` history source (zsh, bash, fish, atuin), pane side and width, animation, default dialog button, the shell commands run under |
+| 6 | `[open]` opener command, `[clipboard]` copy command for pbcopy, xclip or wl-copy |
+
+<!-- @Yogesh(check): all five glyph presets in phase 0, or ship nerd-font-v3 and ascii first and add powerline and unicode in phase 6? -->
+
+### Glyphs, since most people don't have a Nerd Font
+
+`git.rs` renders 37 codepoints from a patched font, and to somebody without one
+the segment is a row of boxes. `README.md` states a Nerd Font requirement
+without naming which font or which version, so that reader can't even tell
+whether their install worked.
+
+Five presets, chosen by what a font is guaranteed to carry rather than by taste:
+
+| Preset | What it assumes | For |
+| --- | --- | --- |
+| `nerd-font-v3` | the full Nerd Fonts v3 private-use range | today's bar, unchanged |
+| `powerline` | the powerline range alone, U+E0A0 to U+E0B3 | the many terminals patched years ago and never re-patched |
+| `unicode` | box drawing and geometric shapes any modern font has | a stock font with no patching at all |
+| `ascii` | 7-bit | ssh into a box whose font nobody controls |
+| `none` | nothing | text only |
+
+A preset is a starting point and not a cage: `[glyphs.icons]` overrides one
+glyph at a time, so somebody who has exactly one icon missing fixes that icon
+rather than dropping to a whole preset below.
+
+Separators get the same treatment and the same escape hatch. The segment
+separator, the end cap and the powerline wedge each accept an empty string,
+because "I want nothing between these two" is a real preference and today it
+isn't expressible at all.
+
+### The git segment is a list, not a fixed shape
+
+Everything `GitStatus` knows gets rendered today, in one order, whether or not
+the reader wanted it. Somebody who works on a branch with 400 untracked build
+artifacts doesn't want a count of them, somebody who never pushes doesn't want
+ahead and behind, and somebody who only wants a branch name should be able to
+say so:
+
+```toml
+[git]
+parts = ["branch", "sync", "staged", "modified", "untracked", "stash"]
+counts = true          # false renders presence, not numbers
+hide_when_clean = false
+```
+
+The list decides both which parts appear and in what order, an omitted part
+isn't rendered, and an unknown part name is the config error the loader already
+knows how to raise. Available parts come straight from the struct: `branch`,
+`type` for the feature and bugfix and chore glyphs, `ahead`, `behind`, `sync`
+for the remote state, `staged`, `modified`, `untracked`, `deleted`, `renamed`,
+`copied`, `conflicts`, `stash`.
+
+### Layouts, because `edit` and `ai` are my two windows
+
+`M-s` starts a session with an editor window and an AI window, and both of those
+are mine. Somebody else runs `vim` or `nano` or `helix`, or `codex` or `gemini`
+or `cursor` or nothing at all, and somebody else again wants a window running
+`tail -f` on a log and no editor anywhere:
+
+```toml
+[[layout]]
+name = "default"
+
+  [[layout.window]]
+  name = "editor"
+  command = "nvim"
+
+  [[layout.window]]
+  name = "ai"
+  command = "claude"
+
+[[layout.override]]
+match = "~/work/*"
+use = "work"
+```
+
+`project` starts a session from the layout, `toggle` cycles the windows the
+layout named instead of the two names compiled into `toggle-tool.zsh` today, and
+a layout with no windows in it is a plain shell, which is what somebody who
+wants none of this gets by writing nothing.
+
+Two levels is all tmux has, a window and its panes, so panes are a list inside
+the window entry with an optional split direction, and that is where the nesting
+stops.
+
+### Why TOML and not YAML
+
+The session layout above is the one part of this config that would read better
+in YAML, and every tool in that space uses it: `tmuxinator`, `teamocil`, `smug`
+and `tmuxp` are all YAML. So the question is real and the answer is still TOML.
+
+The deciding fact is maintenance rather than syntax. `serde_yaml` was archived
+by its author on 2024-03-25 and its last release is `0.9.34+deprecated`. The
+forks that inherited it, `serde_yaml_ng` at 0.10.0 from May 2024 and
+`serde_norway` at 0.9.42 from December 2024, have both sat still for about two
+years. `toml` is at 1.1.6, was updated on 2026-09-10, and has 925 million
+downloads. Those figures were checked on 2026-09-22. Picking YAML means picking
+an unmaintained parser for a program somebody installs on their machine.
+
+After that the smaller reasons agree with it. YAML 1.1 coerces `no`, `off`,
+`yes` and `on` into booleans, which bites a config whose values are short
+strings like `no` for a glyph and `on` for a separator, and quoting fixes it
+right up until somebody forgets. YAML is whitespace-significant, so a block
+copied out of a README with the wrong indentation or a tab fails, while TOML
+doesn't care. And somebody installing a Rust program already has `Cargo.toml`
+open, with `starship`, `alacritty` and `helix` configured the same way.
+
+Multi-format loaders exist, `config` and `figment` both do it, and taking one
+would mean two sets of error messages, two example files and a question in every
+issue about which file won. One format, one `config.example.toml`, one parse
+error.
+
+If somebody turns up with a layout deep enough that `[[layout.window]]` genuinely
+hurts, layouts can move to their own file and that file can have its own loader.
+That's a change to one table rather than to the format everything else is in.
+
+### The test that keeps my bar the same
+
+`Config::default()` has to render byte for byte what the binary renders today,
+and the `assemble_right` tests that are already pinned become the proof of it.
+Two more: every field has a default, so an empty file is valid, and
+`config dump` writes the commented `docs/config.example.toml` that CI then
+diffs against the committed copy, which is the same trick the CLI reference
+uses to stop `--help` drifting away from the docs.
+
+### `vim-bg` becomes `sh-jobs`
+
+The segment asks one question with one answer baked in: is there a suspended
+`nvim` under this pane. `has_suspended_nvim` matches a process name containing
+`nvim` and the render string in `segments/vim_bg.rs` spells out `nvim` in three
+colours. Somebody who suspends `vim`, or `claude`, or a `cargo watch`, gets
+nothing, and the name of the subcommand tells them the tool wasn't written
+for them.
+
+So it gets renamed to `sh-jobs` and takes its matches from the config:
+
+```toml
+[[sh-jobs.job]]
+match = "nvim"
+icon  = "󰕷"
+label = "nvim"
+color = "#539035"
+
+[[sh-jobs.job]]
+match = "^claude$"
+icon  = "󰚩"
+color = "#d97757"
+```
+
+First match in file order wins, `states` decides whether a background job
+counts or only a stopped one, and `max` bounds how many icons a busy pane can
+put on the bar. `vim-bg` stays as a hidden alias for one release with a
+deprecation line in `CHANGELOG.md`, since it is in my `tmux.conf` and possibly
+in somebody else's by the time the rename lands.
+
+The cost doesn't change with the rename and it's the reason the segment is
+off the bar: 16.25 ms of server CPU per call, because `sysinfo::System`
+enumerates the whole process table to find children of one pid. A refresh
+scoped to the pane's children instead of everything might cut most of that, and
+I haven't measured it, so the phase that does the rename measures it and
+either earns the segment a place on the bar or writes down what it costs to put
+it there.
+
+### The two tmux.conf examples
+
+`docs/tmux.conf.example` is the recommended bar and stays what it is: one
+`#()` call, 18.43 ms/s of CPU, which is 1.8% of one core. It gets there by
+leaving three subcommands off the bar, so it documents the cheap configuration
+and not the tool.
+
+The port adds `docs/tmux.conf.full.example`, which turns everything on: the
+`window` segment driving `window-status-format`, `clients`, `sh-jobs`, `gst`
+with `#{pane_pid}`, and every picker binding from the comrades port. Each block
+carries the measurement next to it rather than a warning in the abstract:
+
+| Feature | Cost | Where it is measured |
+| --- | --- | --- |
+| each extra `#()` on the bar | 14.6 ms of CPU per second per attached client | `BENCHMARKS.md`, fork/exec |
+| `sh-jobs` on the bar | 16.25 ms of server CPU per call, plus its spawn | process-table scan |
+| `clients` on the bar | 4.93 ms per call, plus its spawn | `tmux list-clients` |
+| `#{pane_pid}` on `status-right` | 18.5 ms per gst call | the suspended-job scan again |
+| `window` in `window-status-format` | one spawn per window per redraw | eight windows is eight spawns |
+| everything on, five calls | 153.77 ms/s, 15.4% of one core | the "before" column |
+
+The full example is the honest one: somebody who wants the suspended-job marker
+on their bar can have it, and they can see the 15.4% before they choose it
+rather than after their fans come on.
+
+### `docs/config.example.toml`
+
+Nobody has to create a config file, so the reference copy has to carry every
+key with its default and a comment saying what it does, and it is generated by
+`tmux-companion config dump` rather than typed, with CI diffing the generated
+output against the committed file. A hand-maintained example config goes stale
+in one phase, and a stale one's worse than none, because a reader copies it.
+
+`reference/configuration.md` is the prose version, and it moves from phase 3 to
+phase 0 for the same reason the loader does.
 
 ## The documentation track
 
@@ -207,6 +514,9 @@ CONTRIBUTING.md      how to build, test, lint and open a pull request
 CHANGELOG.md         keep-a-changelog, one entry per phase
 LICENSE
 docs/
+  config.example.toml       every key, its default and a comment; generated
+  tmux.conf.example         the cheap bar, one `#()` call
+  tmux.conf.full.example    every feature on, each with its measured cost
   tutorial/
     getting-started.md      clone to a visible status bar, no prior knowledge
   how-to/
@@ -224,6 +534,7 @@ docs/
   explanation/
     architecture.md         DESIGN.md minus the reference parts
     performance.md          BENCHMARKS.md
+    after-the-port.md       the survey of what could come next, moved from docs/
 ```
 
 `CLAUDE.md` stays where it is and shrinks to the invariants, which is the part
@@ -237,10 +548,10 @@ write.
 
 | Phase | Documentation step |
 | --- | --- |
-| 0 | `LICENSE`, `CONTRIBUTING.md`, the `docs/` skeleton, `reference/requirements.md` with a verified minimum, `rust-version` and the rest of the crates.io metadata in `Cargo.toml`, `README.md` cut down to a front door |
+| 0 | `LICENSE`, `CONTRIBUTING.md`, the `docs/` skeleton, `reference/requirements.md` with a verified minimum, `reference/configuration.md` and the generated `docs/config.example.toml`, `docs/tmux.conf.full.example` with a cost against every feature, `rust-version` and the rest of the crates.io metadata in `Cargo.toml`, `README.md` cut down to a front door |
 | 1 `theme gen` | `reference/cli.md` started with the first subcommand, and the contrast arithmetic written up in `explanation/` while it's fresh |
 | 2 `keys`, `cheatsheet` | `how-to/add-a-command.md`, written from having just done it twice, and `tutorial/getting-started.md` extended to the first picker |
-| 3 `project` | `reference/configuration.md`, which is where the theme map and the project map file formats finally get written down |
+| 3 `project` | the theme map and the project map file formats appended to `reference/configuration.md`, which by then already exists |
 | 4 `autosave`, `toggle` | `explanation/architecture.md` updated for daemon-owned background tasks, since that's a change in what the daemon is |
 | 5 `theme`, `run` | a themes tutorial, because choosing a theme is the one thing in here a new user will want on day one |
 | 6 the rest | `reference/protocol.md` finalised, `reference/modules.md` regenerated, `CHANGELOG.md` closed for the port |
@@ -256,6 +567,11 @@ of these get a CI job rather than a good intention:
   rotting into a 404
 - a test that diffs `tmux-companion --help` and each subcommand's `--help`
   against `reference/cli.md`, so the CLI reference can't drift from the CLI
+- a test that diffs `tmux-companion config dump` against
+  `docs/config.example.toml`, so a new setting can't land without appearing in
+  the file people copy from
+- `rg --hidden '@(Yogesh|claude)\('` over the tree, so an open question in a
+  doc can't be merged as if it were answered
 
 The rest of the gold-standard list is small and mechanical: a code of conduct, a
 pull request template naming the three commands a contributor should run before
@@ -275,7 +591,7 @@ parts are built:
   lines)
 - a tmux format and colour layer (`src/tmux/format.rs`, 386 lines)
 - process and tty inspection, including `has_suspended_nvim`
-  (`src/segments/vim_bg.rs`)
+  (`src/segments/vim_bg.rs`, which phase 0 generalises into `sh-jobs`)
 - a preview path that renders a segment to ANSI for eyeballing
   (`src/preview.rs`)
 
@@ -299,7 +615,7 @@ and it's about 38ms.
 | `cheatsheet` | `cheatsheet.zsh` | 99 | box layout, usage counts |
 | `project` | `project-session.zsh`, `project-preview.zsh`, `zoxide-window.zsh`, `short-path.zsh` | 272 | matcher, TUI, zoxide read, theme map |
 | `theme` | `choose-tmux-theme.zsh`, `preview-tmux-theme.zsh` | 300 | matcher, colour parse, swatch render |
-| `run` | `run-command-pane.zsh` | 235 | matcher, zsh history parse, pane control, exit dialog |
+| `run` | `run-command-pane.zsh` | 235 | matcher, history parse, pane control, resize animation, exit dialog |
 | `open` | `open-from-text.zsh` | 277 | URL and `file:line:col` extraction, pane reuse |
 
 `theme` is the one with a head start: `preview-tmux-theme.zsh` parses
@@ -309,6 +625,42 @@ already does colour work for the status bar.
 `open` is the most self-contained and the least like the others, since it has
 no picker in two of its four modes and mostly does regex extraction and one
 tmux call.
+
+### What `run` has to keep
+
+It's the one picker whose behaviour isn't obvious from its name, so the details
+are here rather than in a diff nobody reads later. Pick a command from history,
+run it in a new full-height pane on the right at 33% of the window width, and
+when it exits show a dialog centred over that pane offering Close, View and
+Restart, with Close preselected on success and Restart on a non-zero exit.
+
+The parts that are easy to drop and then miss:
+
+- the pane opens at one column and slides out to its width over five ease-out
+  steps in about 150 ms, because tmux has no animation primitive and a stepped
+  `resize-pane` is the closest thing to an IDE sliding a panel out; the step
+  count is a tradeoff against the neighbour pane's shell repainting on every
+  `SIGWINCH`
+- what you typed becomes the command when nothing matches, and `M-Enter` runs
+  the query even when something does, which is what makes the picker usable for
+  a command that was never in the history
+- history is deduplicated, most recent first, and `fc -ln` escapes real
+  newlines, so an entry is unescaped when it's a selection and never when it's
+  the typed query
+- `display-popup -E` blocks until it closes, which is what makes the choice
+  file complete when it returns; a fifo deadlocks there because both sides
+  block, and the comment saying so stays in the Rust
+- if the popup can't open, on a tiny or detached client, the dialog falls back
+  to an inline one-key prompt rather than failing
+- View puts the pane in `copy-mode` read-only and any key brings the dialog
+  back, Restart loops without reopening the pane, and Close animates the pane
+  back down to one column before exiting
+
+Its config: which side and what width, the animation in steps and milliseconds
+or off entirely, the default button per exit status, the shell the command runs
+under, and the history source, which is `zsh` today and wants `bash`, `fish` and
+`atuin` as options since anybody using atuin has no `.zsh_history` worth
+reading.
 
 ## Group 2: orchestration
 
@@ -372,8 +724,147 @@ stays on the binding.
 5. `theme` and `run`, the two biggest pickers
 6. `open`, `close-project`, the probes and the tmux.conf logic
 
-Each of these carries the documentation row from the table above, and is not
-finished without it.
+Each of these carries the documentation row and the configuration row from the
+tables above, plus its before and after numbers in `BENCHMARKS.md`, and is not
+finished without all three.
+
+## Branches, and what lands in main
+
+A phase is weeks of work and it can't sit on one branch until the end, because
+the tmux.conf on this laptop has to keep working the whole time and a branch
+nobody merges is a branch nobody rebases either. So the unit is not the phase,
+it's the smallest change that leaves `main` installable: the binary builds,
+the tests pass, the bar renders, and `docs/tmux.conf.example` still describes
+what the binary does.
+
+One branch per row of the phase tables, not one per phase. Phase 0 has eleven
+steps and they're independent enough to land separately, which is what
+`port/0-fmt-clippy-toolchain` landing on a Tuesday and
+`port/0-config-loader` landing the following weekend looks like in practice.
+
+Naming: `port/<phase>-<thing>`. `port/0-typed-args`, `port/0-config-loader`,
+`port/0-sh-jobs`, `port/1-theme-gen`, `port/2-keys`, `port/2-cheatsheet`.
+The phase number in the branch name is what makes `git branch --list 'port/2-*'`
+answer a question worth asking a year from now.
+
+Each branch merges with the repo rule: `git merge --squash`, one commit whose
+message summarises the branch, then `git branch -m port/2-keys
+parked/port/2-keys` so the commit-by-commit history stays reachable without
+sitting in the branch list. Nothing gets deleted. The parked branches are local
+and don't get pushed.
+
+What a branch has to carry before it merges, which is the same list as the
+phase rows and worth repeating in one place because a branch is where it gets
+forgotten:
+
+- the code, and `cargo fmt`, `clippy -D warnings` and `cargo test` clean
+- its documentation row, in the same branch rather than a follow-up
+- its config keys in `docs/config.example.toml`, which CI checks anyway
+- its before and after numbers in `BENCHMARKS.md`, for a ported command
+- no `@Yogesh(` or `@claude(` marker left in anything it touched
+
+A commit inside a branch is a working state, so `cargo test` passes at every
+one of them. That matters more here than usual, because a bisect over the port
+is the only way to find which of twelve subcommands slowed the bar down.
+
+Two exceptions to the one-branch-per-row rule. A change that touches every
+file mechanically, `cargo fmt` and the `//!` headers being the two in phase 0,
+goes in alone and merges the same day, since it conflicts with everything and
+holding it costs more than it saves. And a pair that has to land together
+merges together: the `vim-bg` to `sh-jobs` rename and the config table it reads
+from make no sense apart, so they're one branch with two commits in it.
+
+`CHANGELOG.md` gets its entry in the merge commit rather than in the branch,
+which is the one place a conflict is guaranteed if every branch edits it.
+
+## What the plan left open
+
+Eight things a reading of the crate turned up that the sections above don't
+answer. Most are small and all of them get worse after twelve subcommands land.
+
+### Linux
+
+Phase 0 step 2 says a workflow running the tests on Linux, and nobody has run
+them there. `README.md` line 45 says the battery segment is macOS and
+`DESIGN.md` line 88 calls it "macOS ioreg battery", both of which are stale:
+`segments/battery.rs` goes through the `battery` crate 0.7 and
+`segments/network.rs` through `sysinfo` 0.39, and both of those have Linux
+backends. So the Linux job may pass on the first run. It may also fail on
+something nobody's looked at, and the plan should say the step is "run it and
+write down what actually works" rather than assume either way. The socket path
+is the one I'd check first, since `/tmp/tmux-companion-<uid>.sock` isn't
+where a Linux user expects it when `$XDG_RUNTIME_DIR` exists.
+
+### An old daemon answering a new client
+
+The client starts a server when the socket is absent and does nothing when a
+server from the previous build is already listening, which today costs a stale
+render and after the port costs a `keys` request to a daemon that has never
+heard of `keys`. `proto.rs` has no version field. Phase 0 step 4 is already
+rewriting both ends of the wire, so the version goes in there: the response
+carries the daemon's version, and a client that sees a version other than its
+own kills the daemon and retries once through the reconnect path it already
+has. `docs/tmux.conf.example` currently handles this with a `pkill` line in the
+install instructions, which works exactly as long as somebody reads it.
+
+### The pickers don't run in the daemon
+
+A `ratatui` picker owns a terminal and the daemon has none, so six of the
+ported subcommands run their TUI in the client process and the daemon only
+answers with rows. That's worth a paragraph in `explanation/architecture.md`,
+because "one binary the config talks to" reads like the daemon does the work,
+and for the whole of group 1 it can't. It also means the `current_thread`
+runtime that saves 3.5 ms per client spawn is what the pickers get, which is
+fine, and the decision should be written down rather than rediscovered.
+
+### No logs and no doctor
+
+A picker that misbehaves inside `display-popup -E` sends its stderr wherever
+the popup went, which is nowhere. A `[general] log` path in the config, plus
+`TMUX_COMPANION_LOG` for a one-off, and a `tmux-companion doctor` printing the
+binary version, the running daemon's version, the socket path, the config path
+in use, the tmux version and whether the configured icons render. Doctor is the
+first thing to ask for on an issue from a stranger, and it doesn't exist.
+
+### The socket becomes an execution surface
+
+This one's worth stating plainly rather than in passing. Today a request makes
+the daemon read git state and hardware counters. After `run` and `open` land, a
+request makes the daemon spawn a process as me, and the socket sits at
+`/tmp/tmux-companion-<uid>.sock`, in a directory every user on the machine can
+write to. Phase 0 should create the socket with mode 0600, check the owner and
+the mode before connecting rather than trusting the path, and prefer
+`$XDG_RUNTIME_DIR` where it exists. `open` also takes text out of a pane and
+hands it to an opener, so the extraction has to reject anything that isn't a
+URL or a `file:line:col`, and the spawn has to be a `Command` with an argument
+vector and no shell anywhere in it.
+
+### Running both for the weeks it takes
+
+The plan has an order and no cutover. Six pickers and three orchestration
+scripts can't all be swapped on one evening, so each binding gets the Rust
+command next to the zsh one under a different key first, the old binding stays
+until the new one has survived a week of use, and `comrades` stays in the
+config until its last script is gone. This is also the answer to a question the
+plan raises and drops, which is what happens to somebody who clones the repo
+halfway through the port: the full tmux.conf example only lists what is built.
+
+### The benchmark row
+
+`BENCHMARKS.md` is the best writing in the repo and the port quotes one number
+out of it, the 93 ms warm `prefix+?` with 50 ms of fzf in it, without making
+anything depend on it. Each ported command records a before number taken from
+the zsh version and an after number from the Rust one, in `BENCHMARKS.md`, in
+the commit that does the port. A command that comes out slower than the script
+it replaced does not merge, which is the rule that keeps "one binary" from
+becoming the only reason anything happened.
+
+### The usage log
+
+"usage log" appears in the `keys` and `cheatsheet` rows as a requirement and
+nowhere as a design. It needs a location, `$XDG_STATE_HOME/tmux-companion/`, a
+format, a bound on how large it gets, and an off switch in `[usage]`, since it
+records what somebody presses and that's their business and not the tool's.
 
 ## What this costs
 
