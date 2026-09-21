@@ -13,7 +13,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 3 | `src/lib.rs`, `main.rs` down to argument parsing, `tests/` | done — main.rs 287 lines to 32 |
 | 4 | one typed args struct per command | done — output byte-identical, checked with compare-output.sh |
 | 5 | integration test over the real socket, plus the singleton | done — 9 tests in tests/socket_round_trip.rs |
-| 6 | `//!` and `///` everywhere, `#![warn(missing_docs)]` | todo |
+| 6 | `//!` and `///` everywhere, `#![warn(missing_docs)]` | done — 197 items documented, rustdoc job in CI |
 | 7 | `LICENSE`, `CONTRIBUTING.md`, "Adding a command", test-count sentence | todo |
 | 8 | the config loader and its tables | todo |
 | 9 | `vim-bg` becomes `sh-jobs` with a job table | todo |

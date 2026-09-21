@@ -1,9 +1,11 @@
+//! Battery percentage and icon, read through the `battery` crate.
 // Battery icons: 10 levels (empty → full)
 const BATTERY_ICONS: [&str; 10] = [
     "\u{f244}", "\u{f243}", "\u{f243}", "\u{f242}", "\u{f242}", "\u{f241}", "\u{f241}", "\u{f240}",
     "\u{f240}", "\u{f240}",
 ];
 
+/// Drawn beside the percentage while the machine is on mains power.
 pub const CHARGING_ICON: &str = "\u{f1e6}";
 
 // Color thresholds: red ≤10%, orange ≤30%, yellow ≤60%, green >60%
@@ -52,6 +54,7 @@ fn format_battery_output(
     format!("{}{}{}{}", color, icon, pct_str, plug)
 }
 
+/// Read the battery and render percentage, icon and charging state.
 pub async fn render() -> anyhow::Result<String> {
     tokio::task::spawn_blocking(|| {
         use battery::units::ratio::ratio;

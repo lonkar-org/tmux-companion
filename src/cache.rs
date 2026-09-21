@@ -33,6 +33,7 @@ impl<K, V> Default for TtlMap<K, V> {
 }
 
 impl<K: Eq + Hash, V: Clone> TtlMap<K, V> {
+    /// An empty map.
     pub fn new() -> Self {
         Self::default()
     }
@@ -52,21 +53,25 @@ impl<K: Eq + Hash, V: Clone> TtlMap<K, V> {
         self.entries.insert(key, (value, now));
     }
 
+    /// [`TtlMap::get_at`] against the current clock.
     pub fn get(&self, key: &K, ttl: Duration) -> Option<V> {
         self.get_at(key, ttl, Instant::now())
     }
 
+    /// [`TtlMap::insert_at`] against the current clock.
     pub fn insert(&mut self, key: K, value: V, ttl: Duration) {
         self.insert_at(key, value, ttl, Instant::now());
     }
 
     /// Number of stored entries, fresh or not.  Exists so the tests can prove
     /// the sweep actually evicts rather than merely hiding expired entries.
+    /// How many entries are stored, expired ones included.
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Whether anything is stored at all.
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()

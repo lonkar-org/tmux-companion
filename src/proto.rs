@@ -1,18 +1,25 @@
 use serde::{Deserialize, Serialize};
 
+/// One line from a client: which command, and its arguments as JSON.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Request {
+    /// Command name, matched by the server's dispatch.
     pub cmd: String,
+    /// The command's own args struct, serialised.
     pub args: serde_json::Value,
 }
 
+/// One line back: what to print, or what went wrong.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
+    /// What the client prints, which for a segment is tmux markup.
     pub output: String,
+    /// Set when the command failed; the client prints it to stderr.
     pub error: Option<String>,
 }
 
 impl Response {
+    /// A successful response.
     pub fn ok(output: String) -> Self {
         Self {
             output,
@@ -20,6 +27,7 @@ impl Response {
         }
     }
 
+    /// A failed one, with empty output.
     pub fn err(e: impl std::fmt::Display) -> Self {
         Self {
             output: String::new(),
@@ -57,14 +65,19 @@ pub struct GstArgs {
     /// `status-right`: it costs a whole-process-table scan.
     #[serde(default)]
     pub pane_pid: Option<u32>,
+    /// Bypass the cache for this call. The fresh result is still stored.
     #[serde(default)]
     pub force: bool,
+    /// Fill, outline or outline-bright.
     #[serde(default)]
     pub style: Style,
+    /// Omit the trailing end cap.
     #[serde(default)]
     pub no_cap: bool,
+    /// Middle-ellipsize a branch name longer than this.
     #[serde(default)]
     pub branch_max_len: Option<usize>,
+    /// Draw the git glyph before the branch name.
     #[serde(default)]
     pub branch_icon: bool,
     /// Cache freshness window in seconds.  Zero disables the cache.
@@ -80,16 +93,22 @@ pub struct GstArgs {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct StatusRightArgs {
+    /// The active pane's directory.
     #[serde(default)]
     pub path: Option<PathBuf>,
+    /// Fill, outline or outline-bright.
     #[serde(default)]
     pub style: Style,
+    /// Middle-ellipsize a branch name longer than this.
     #[serde(default)]
     pub branch_max_len: Option<usize>,
+    /// Draw the git glyph before the branch name.
     #[serde(default)]
     pub branch_icon: bool,
+    /// Bypass the git cache for this call.
     #[serde(default)]
     pub force: bool,
+    /// Git cache freshness window in seconds. Bandwidth is always live.
     #[serde(default = "default_ttl_secs")]
     pub ttl_secs: f64,
 }
@@ -98,8 +117,10 @@ pub struct StatusRightArgs {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ClientsArgs {
+    /// `#{session_attached}`: clients attached to this session, including this one.
     #[serde(default)]
     pub session_attached: u32,
+    /// `#{window_active_clients}`: clients with this window active.
     #[serde(default)]
     pub window_active_clients: u32,
 }
@@ -108,6 +129,7 @@ pub struct ClientsArgs {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct VimBgArgs {
+    /// The pane whose descendants to look through.
     #[serde(default)]
     pub pane_pid: u32,
 }

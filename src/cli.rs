@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::proto::{ClientsArgs, GstArgs, Request, StatusRightArgs, VimBgArgs};
 use clap::{Parser, Subcommand};
 
+/// The parsed command line.
 #[derive(Parser)]
 #[command(name = "tmux-companion", about = "Singleton tmux status server")]
 pub struct Cli {
@@ -15,6 +16,7 @@ pub struct Cli {
     pub command: Cmd,
 }
 
+/// Every subcommand. `server` is the daemon; the rest are clients.
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "kebab-case")]
 pub enum Cmd {
@@ -25,6 +27,7 @@ pub enum Cmd {
     Gst {
         /// Path to git repository (defaults to current directory)
         path: Option<PathBuf>,
+        /// Pane pid, which adds the suspended-editor marker
         pane_pid: Option<u32>,
         /// Bypass the cache and force a fresh git status fetch
         #[arg(short = 'f', long, action = clap::ArgAction::SetTrue)]
@@ -81,31 +84,45 @@ pub enum Cmd {
 
     /// Multi-client indicator segment
     Clients {
+        /// #{session_attached}
         session_attached: u32,
+        /// #{window_active_clients}
         window_active_clients: u32,
     },
 
     /// Background nvim indicator segment
-    VimBg { pane_pid: u32 },
+    VimBg {
+        /// Pane whose descendants to look through
+        pane_pid: u32,
+    },
 
     /// Window status segment
     Window {
+        /// This is the active window (#{window_active})
         #[arg(short = 'c', action = clap::ArgAction::SetTrue)]
         current: bool,
+        /// Window index (#{window_index})
         #[arg(short = 'i')]
         index: u32,
+        /// tmux window id (#{window_id})
         #[arg(short = 'I')]
         window_id: Option<String>,
+        /// Window name (#{window_name})
         #[arg(short = 'n', default_value = "")]
         name: String,
+        /// Active pane's directory (#{pane_current_path})
         #[arg(short = 'w')]
         path: Option<PathBuf>,
+        /// Command running in the active pane (#{pane_current_command})
         #[arg(short = 'p', default_value = "")]
         process: String,
+        /// Directory the window started in (#{pane_start_path})
         #[arg(short = 's')]
         start_path: Option<PathBuf>,
+        /// Window flags (#{window_flags})
         #[arg(short = 'f', default_value = "")]
         flags: String,
+        /// Index of the last window, so the row knows where it ends
         #[arg(short = 'l', default_value = "0")]
         last: u32,
         /// Number of panes in the window (#{window_panes})
@@ -121,6 +138,7 @@ pub enum Cmd {
     Noop,
 }
 
+/// Run one subcommand: start the server, or send one request and print it.
 pub async fn run(command: Cmd) -> anyhow::Result<()> {
     match command {
         Cmd::Server => {

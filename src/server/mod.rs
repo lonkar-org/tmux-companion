@@ -1,4 +1,7 @@
+//! The server half: bind the socket, accept forever, hand each line to a
+//! handler.
 mod handlers;
+/// Server state and its caches.
 pub mod state;
 
 use std::sync::Arc;
@@ -11,6 +14,11 @@ use tokio::{
 
 use crate::{client::sock_path, proto::Request, server::state::ServerState};
 
+/// Bind the socket and serve until killed.
+///
+/// Exits quietly, and successfully, if another server is already listening:
+/// every client invocation tries to start one, so losing that race is the
+/// ordinary case rather than an error.
 pub async fn run() -> anyhow::Result<()> {
     let sock = sock_path();
 

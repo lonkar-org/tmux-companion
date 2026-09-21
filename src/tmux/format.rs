@@ -1,39 +1,67 @@
+//! Colours, styles and the string builder every segment renders through.
+//!
+//! Colours are 256-palette indices as strings, because that is what tmux's
+//! `#[fg=colourN]` wants and converting back and forth buys nothing. The
+//! contrast figures in the comments are measured, not guessed: several of
+//! these were raised to clear 4.5:1 after a check against WCAG.
+
 use super::icons::ARROW_RIGHT;
 
-// Background color constants (256-color palette indices)
+/// Clean work tree, nothing to report.
 pub const BG_CLEAN: &str = "120";
+/// The ordinary dirty-tree background.
 pub const BG_DEFAULT: &str = "209";
+/// A remote operation failed.
 pub const BG_ERROR: &str = "160";
+/// The upstream branch is gone.
 pub const BG_GONE: &str = "088";
+/// A fetch or push is in flight.
 pub const BG_LOADING: &str = "056";
+/// A branch with no upstream yet.
 pub const BG_NEW: &str = "251";
+/// The terminal's own background, used behind the suspended-editor marker.
 pub const BG_TERMINAL: &str = "235";
 
-// Foreground color constants
+/// Blue text on a light fill.
 pub const FG_BLUE: &str = "33";
+/// Text on the clean fill.
 pub const FG_CLEAN: &str = "000";
+/// Darker blue, for counts that sit beside blue text.
 pub const FG_DARK_BLUE: &str = "24";
+/// Text on the ordinary dirty fill.
 pub const FG_DEFAULT: &str = "235";
+/// Text on the gone-upstream fill.
 pub const FG_GONE: &str = "255";
+/// Green text, for staged counts.
 pub const FG_GREEN: &str = "22";
+/// Near-white text, the lightest foreground in the fill palette.
 pub const FG_GREY89: &str = "254";
 /// Text for the previous branch, on the dirty fill background.  colour025
 /// measured 2.73:1 against colour209; colour017 is the same blue and 7.62:1.
 pub const FG_PREVIOUS: &str = "017";
+/// Purple text, for the stash count.
 pub const FG_PURPLE: &str = "53";
 
-// Status-bar background — what a segment sits on.  Used as the segment
-// background in outline styles and as the trailing-arrow background.
+/// Status-bar background, which is what a segment sits on.
+///
+/// Used as the segment background in the outline styles and as the
+/// trailing-arrow background everywhere.
 pub const BG_BAR: &str = "233";
 
 // Outline-mode accents.  The fill palette picks colors readable on a *light*
 // segment background; on the dark status bar those same colors disappear, so
 // the bright outline style swaps in lighter equivalents.
+/// Gone upstream, as an accent on the bar.
 pub const AC_GONE: &str = "203";
+/// In-flight fetch or push, as an accent on the bar.
 pub const AC_LOADING: &str = "105";
+/// Staged counts, as an accent on the bar.
 pub const AC_GREEN: &str = "84";
+/// Blue counts, as an accent on the bar.
 pub const AC_DARK_BLUE: &str = "75";
+/// Stash count, as an accent on the bar.
 pub const AC_PURPLE: &str = "141";
+/// A branch with no upstream, as an accent on the bar.
 pub const AC_NEW: &str = "39";
 /// The error state drawn as an accent on the bar.  BG_ERROR reads 3.47:1 there,
 /// below the 4.5 WCAG asks of text; colour196 is the same red at 4.69:1.
@@ -48,13 +76,18 @@ pub const FG_ON_ERROR: &str = "255";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Style {
+    /// Solid state-coloured background, the original look.
     Fill,
+    /// State colour in the foreground, bar colour behind.
     Outline,
+    /// Outline with the icon colours lightened for the dark bar.
     #[default]
     OutlineBright,
 }
 
 impl Style {
+    /// Parse a `--style` value. `bright` is accepted as a synonym for
+    /// `outline-bright`.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "fill" => Some(Style::Fill),
@@ -69,27 +102,47 @@ impl Style {
 /// The rendering code only reads from here, so a new style is a new palette
 /// and no rendering changes.
 #[derive(Clone, Copy, Debug)]
+/// Every colour the git segment draws with, resolved for one status and one
+/// [`Style`].
 pub struct Palette {
+    /// Segment background.
     pub bg: &'static str,
+    /// Segment foreground.
     pub fg: &'static str,
     /// Filler that restores the main text color after a colored icon.
+    /// Foreground to return to after a coloured run.
     pub reset_fg: &'static str,
     /// Color of the trailing end cap.
+    /// Colour of the end cap.
     pub cap: &'static str,
     /// Glyph the segment ends with — solid arrow when filled, thin when not.
+    /// Glyph the end cap draws.
     pub cap_glyph: &'static str,
+    /// Foreground while a fetch or push is in flight.
     pub loading_fg: &'static str,
+    /// Background while a fetch or push is in flight.
     pub loading_bg: &'static str,
+    /// End-cap colour while a fetch or push is in flight.
     pub loading_cap: &'static str,
+    /// Foreground after a failed remote operation.
     pub error_fg: &'static str,
+    /// Background after a failed remote operation.
     pub error_bg: &'static str,
+    /// End-cap colour after a failed remote operation.
     pub error_cap: &'static str,
+    /// Colour of the previous branch name.
     pub prev_fg: &'static str,
+    /// Colour of the untracked-file count.
     pub new_fg: &'static str,
+    /// Colour of the staged-file count.
     pub green_fg: &'static str,
+    /// Colour of the modified-file count.
     pub dirty_fg: &'static str,
+    /// Colour of the ahead and behind counts.
     pub ahead_fg: &'static str,
+    /// Colour of the conflicted-file count.
     pub unmerged_fg: &'static str,
+    /// Colour of the stash count.
     pub stash_fg: &'static str,
 }
 
@@ -99,10 +152,12 @@ pub struct Palette {
 pub struct Segment(Vec<String>);
 
 impl Segment {
+    /// An empty segment.
     pub fn new() -> Self {
         Self(Vec::new())
     }
 
+    /// Whether anything has been added yet.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -159,6 +214,7 @@ impl Segment {
         }
     }
 
+    /// Join the parts with `sep` between them.
     pub fn join(&self, sep: &str) -> String {
         self.0.join(sep)
     }

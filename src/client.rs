@@ -1,3 +1,5 @@
+//! The client half: find the socket, start a server if nothing answers, send
+//! one JSON line and read one back.
 use std::path::PathBuf;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -7,6 +9,7 @@ use crate::proto::{Request, Response};
 /// Longest path a `sockaddr_un` can hold on macOS, minus the NUL terminator.
 const SUN_PATH_MAX: usize = 103;
 
+/// The socket this process talks to, or would listen on.
 pub fn sock_path() -> PathBuf {
     // `TMUX_COMPANION_SOCK` puts a server beside the live one -- what the
     // measurements in BENCHMARKS.md use, so a benchmark run never touches the
@@ -47,6 +50,7 @@ pub async fn send(req: Request) -> anyhow::Result<Response> {
     }
 }
 
+/// Send one request and print the output field, or the error to stderr.
 pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
     let resp = send(req).await?;
     if let Some(err) = resp.error {

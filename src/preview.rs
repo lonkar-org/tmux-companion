@@ -171,6 +171,7 @@ fn caps() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// Render one sample of every style and state, for eyeballing in a terminal.
 pub fn render() -> String {
     let styles = [
         ("fill (current)", Style::Fill),

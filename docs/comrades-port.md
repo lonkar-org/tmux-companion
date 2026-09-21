@@ -110,11 +110,13 @@ possible in the same commit.
 
 ### Documentation
 
-124 public items carry 19 `///` comments, which is 15%. Two files out of
-eighteen have a `//!` module header, `cache.rs` and `preview.rs`, and both are
-good enough to show what the other sixteen are missing. The comments that do
-exist are unusually good, several of them record the bug that caused them, and
-the gap is coverage rather than quality.
+124 public items carried 19 `///` comments, which was 15%, and two files out of
+eighteen had a `//!` module header. The comments that existed were unusually
+good, several of them record the bug that caused them, so the gap was coverage
+rather than quality. Phase 0 step 6 closed it: `missing_docs` found 197 items,
+which is more than the 105 that count implied because struct fields and
+enum variants count too, and the lint plus a `cargo doc` job with
+`RUSTDOCFLAGS: -D warnings` is what stops it reopening.
 
 `CLAUDE.md` has a seven-step "Adding a new segment" and it's accurate. There's
 no equivalent for adding a command, which is what twelve of the next commits

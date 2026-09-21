@@ -1,3 +1,4 @@
+//! How many other clients are attached to this server, session and window.
 const WINDOW_CLIENTS_ICON: &str = "\u{eb7f} "; // nf-cod-device_desktop (U+EB7F)
 const SESSION_CLIENTS_ICON: &str = "󱘖 "; // nf-md-account_multiple
 
@@ -31,6 +32,7 @@ fn format_client_output(
     )
 }
 
+/// Render the multi-client indicator, or nothing when this is the only client.
 pub async fn render(session_attached: u32, window_active_clients: u32) -> anyhow::Result<String> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),

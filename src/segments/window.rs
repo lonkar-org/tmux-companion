@@ -110,23 +110,33 @@ const DIR_LOGOS: &[DirLogo] = &[
     }, //  root
 ];
 
+/// Everything tmux knows about one window, as its format strings report it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowArgs {
+    /// Whether this is the active window.
     #[serde(default)]
     pub current: bool,
+    /// Window index (`#{window_index}`).
     pub index: u32,
+    /// tmux's own window id (`#{window_id}`).
     #[serde(default)]
     pub window_id: Option<String>,
+    /// Window name, when it was renamed away from the process name.
     #[serde(default)]
     pub name: Option<String>,
+    /// The active pane's current directory.
     #[serde(default)]
     pub path: Option<PathBuf>,
+    /// The command running in the active pane.
     #[serde(default)]
     pub process: Option<String>,
+    /// The directory the window was created in.
     #[serde(default)]
     pub start_path: Option<PathBuf>,
+    /// tmux's window flags (`#{window_flags}`): zoomed, bell, activity.
     #[serde(default)]
     pub flags: Option<String>,
+    /// Index of the last window, so the renderer knows which one ends the row.
     #[serde(default)]
     pub last: u32,
     /// Number of panes in the window (`#{window_panes}`)
@@ -137,6 +147,7 @@ pub struct WindowArgs {
     pub pane_index: u32,
 }
 
+/// Render one window's status, abbreviating the path and picking its icon.
 pub fn render(args: &WindowArgs, dir_aliases: &HashMap<PathBuf, String>) -> String {
     let home = dirs_home();
     let path = args.path.as_deref().unwrap_or(Path::new("/"));

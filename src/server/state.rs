@@ -25,12 +25,18 @@ pub const REPO_CHECK_TTL: Duration = Duration::from_secs(300);
 /// does not move fast enough to matter.
 pub const BATTERY_TTL: Duration = Duration::from_secs(30);
 
+/// Everything the server keeps between requests: the bandwidth previous
+/// sample, the directory aliases, and the three caches.
+///
+/// Dies with the process, which is the intended lifetime: one cold `git
+/// status` after a restart costs 51 ms, once.
 pub struct ServerState {
     /// Previous cumulative rx/tx counters, for the bandwidth delta.
     pub net_previous: Option<NetSample>,
     /// The last bandwidth string rendered, replayed when two samples arrive too
     /// close together to divide by (see `segments::network`).
     pub net_last_render: String,
+    /// Directory-to-label overrides for the window segment.
     pub dir_aliases: HashMap<PathBuf, String>,
     /// Cached battery render with the time it was computed.
     pub battery_cache: Option<(String, Instant)>,
@@ -45,6 +51,7 @@ pub struct ServerState {
 /// impossible to hold the guard across an `.await`.  See the lock-discipline
 /// invariant in `CLAUDE.md`.
 impl ServerState {
+    /// Fresh state with empty caches and the aliases loaded from disk.
     pub fn new() -> Self {
         Self {
             net_previous: None,
@@ -58,26 +65,31 @@ impl ServerState {
 
     // ── git status ───────────────────────────────────────────────────────────
 
+    /// A parsed status for `path`, if one was stored less than `ttl` ago.
     pub fn git_cached(&self, path: &PathBuf, ttl: Duration) -> Option<GitStatus> {
         self.git_cache.get(path, ttl)
     }
 
+    /// Store a freshly parsed status.
     pub fn git_store(&mut self, path: PathBuf, status: GitStatus, ttl: Duration) {
         self.git_cache.insert(path, status, ttl);
     }
 
     // ── is-inside-work-tree ──────────────────────────────────────────────────
 
+    /// Whether `path` is inside a work tree, if that was answered recently.
     pub fn repo_cached(&self, path: &PathBuf) -> Option<bool> {
         self.repo_check.get(path, REPO_CHECK_TTL)
     }
 
+    /// Remember whether `path` is inside a work tree, including a no.
     pub fn repo_store(&mut self, path: PathBuf, inside: bool) {
         self.repo_check.insert(path, inside, REPO_CHECK_TTL);
     }
 
     // ── battery ──────────────────────────────────────────────────────────────
 
+    /// The last battery render, if it is still fresh.
     pub fn battery_cached(&self) -> Option<String> {
         self.battery_cache
             .as_ref()
@@ -85,6 +97,7 @@ impl ServerState {
             .map(|(s, _)| s.clone())
     }
 
+    /// Store a battery render with the time it was computed.
     pub fn battery_store(&mut self, rendered: String) {
         self.battery_cache = Some((rendered, Instant::now()));
     }

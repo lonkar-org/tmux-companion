@@ -1,3 +1,5 @@
+//! Network bandwidth: a counter read, the arithmetic that turns two reads
+//! into a rate, and the IEC formatting that keeps the segment narrow.
 use std::time::{Duration, Instant};
 
 use crate::tmux::icons::{ARROW_LEFT, RATE_GIB, RATE_KIB, RATE_MIB};
@@ -12,8 +14,11 @@ pub const MIN_ELAPSED: Duration = Duration::from_millis(200);
 /// A cumulative counter reading and the instant it was taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetSample {
+    /// Cumulative bytes received.
     pub rx: u64,
+    /// Cumulative bytes sent.
     pub tx: u64,
+    /// When the counters were read.
     pub at: Instant,
 }
 

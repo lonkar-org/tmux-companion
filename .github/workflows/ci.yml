@@ -54,3 +54,15 @@ jobs:
 
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    env:
+      # `missing_docs` is a warn-level lint in lib.rs; this is what makes an
+      # undocumented public item fail a pull request rather than pile up.
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo doc --no-deps

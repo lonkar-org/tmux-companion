@@ -1,3 +1,5 @@
+//! Git status: running the command, parsing porcelain v2, and rendering it
+//! into a tmux segment.
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -52,12 +54,18 @@ static BRANCH_TYPES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ]
 });
 
+/// File counts for one side of the index: staged, or unstaged.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Area {
+    /// Files with content changes.
     pub modified: i32,
+    /// Files added.
     pub added: i32,
+    /// Files deleted.
     pub deleted: i32,
+    /// Files renamed.
     pub renamed: i32,
+    /// Files copied.
     pub copied: i32,
 }
 
@@ -78,25 +86,41 @@ impl Area {
     }
 }
 
+/// One parsed `git status --porcelain=v2 --branch --show-stash`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GitStatus {
+    /// Commits this branch has that its upstream does not.
     pub ahead: i32,
+    /// Commits the upstream has that this branch does not.
     pub behind: i32,
+    /// Branch name, or empty on a detached head.
     pub branch: String,
+    /// Short commit hash of HEAD.
     pub commit: String,
+    /// The upstream branch no longer exists.
     pub is_gone: bool,
+    /// The branch has no upstream yet.
     pub is_new: bool,
+    /// Counts for the index.
     pub staged: Area,
+    /// Number of stash entries.
     pub stashed: i32,
+    /// Counts for the work tree.
     pub unstaged: Area,
+    /// Files with merge conflicts.
     pub unmerged: i32,
+    /// Untracked files.
     pub untracked: i32,
+    /// Upstream branch name.
     pub upstream: String,
+    /// Whether the last remote operation succeeded.
     pub remote_success: bool,
+    /// Whether a fetch or push is in flight.
     pub loading: bool,
 }
 
 impl GitStatus {
+    /// Parse `git status --porcelain=v2 --branch --show-stash` output.
     pub fn parse_porcelain_v2(output: &str) -> Self {
         let mut s = Self::default();
         for line in output.lines() {
@@ -318,6 +342,7 @@ pub fn status_line_mode(s: &GitStatus, nvim_suspended: bool, no_tmux: bool) -> S
     status_line_styled(s, nvim_suspended, no_tmux, Style::Fill)
 }
 
+/// Render a status line in the given style.
 pub fn status_line_styled(
     s: &GitStatus,
     nvim_suspended: bool,
@@ -579,6 +604,7 @@ async fn fetch_git_status(path: &Path) -> anyhow::Result<GitStatus> {
 /// option cannot be silently transposed with its neighbour.
 #[derive(Debug, Clone)]
 pub struct GstOptions {
+    /// Repository path; `None` means the server's working directory.
     pub path: Option<PathBuf>,
     /// Pane pid, used only to mark a suspended nvim in the segment.
     ///
@@ -591,9 +617,13 @@ pub struct GstOptions {
     /// Skip the cache read.  The fresh result is still written back, so the
     /// next ordinary call is warm.
     pub force: bool,
+    /// Fill, outline or outline-bright.
     pub style: Style,
+    /// Omit the trailing end cap, which is what the combined side needs.
     pub no_cap: bool,
+    /// Middle-ellipsize a branch name longer than this.
     pub branch_max_len: Option<usize>,
+    /// Draw the git glyph before the branch name.
     pub branch_icon: bool,
     /// How long a cached status stays fresh.
     pub ttl: Duration,
@@ -614,6 +644,7 @@ impl Default for GstOptions {
     }
 }
 
+/// Render the git segment, serving from the cache unless `opts.force` is set.
 pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
     let cap = if opts.no_cap { Some("") } else { None };
