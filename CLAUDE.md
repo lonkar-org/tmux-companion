@@ -66,7 +66,7 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/segments/window.rs` | path abbreviation, index icons, `render` |
 | `src/tmux/format.rs` | `Segment`, `colored_segment`, `powerline_segment`, color consts |
 | `src/tmux/icons.rs` | Nerd Font codepoints |
-| `src/proto.rs` | `Request` / `Response` serde types |
+| `src/proto.rs` | `Request` / `Response` serde types, and one args struct per command |
 
 ## Key invariants
 
@@ -119,7 +119,9 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
    a pure `fn` so it can be unit-tested.
 2. Add `pub mod <name>;` to `src/segments/mod.rs`.
 3. Handle the new `cmd` string in `src/server/handlers.rs`.
-4. Add the subcommand variant to `Cmd` in `src/cli.rs` and build the JSON args.
+4. Add the subcommand variant to `Cmd` in `src/cli.rs`, add an args struct to
+   `src/proto.rs`, and send it with `Request::build`.  The handler reads it
+   back with `req.parse_args::<YourArgs>()`; never index `req.args["key"]`.
 5. Write unit tests in the same file.
 6. If the segment belongs on the status bar, add it to the **combined**
    `status-right` response rather than giving it its own `#()` call — one more

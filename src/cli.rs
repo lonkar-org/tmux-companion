@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::proto::Request;
+use crate::proto::{ClientsArgs, GstArgs, Request, StatusRightArgs, VimBgArgs};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -136,20 +136,17 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             branch_icon,
             ttl,
         } => {
-            let req = Request {
-                cmd: "gst".into(),
-                args: serde_json::json!({
-                    "path": path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                    "pane_pid": pane_pid,
-                    "force": force,
-                    "style": style,
-                    "no_cap": no_cap,
-                    "branch_max_len": branch_max_len,
-                    "branch_icon": branch_icon,
-                    "ttl_secs": ttl,
-                }),
+            let args = GstArgs {
+                path,
+                pane_pid,
+                force,
+                style: parse_style(&style),
+                no_cap,
+                branch_max_len,
+                branch_icon,
+                ttl_secs: ttl,
             };
-            crate::client::send_and_print(req).await?;
+            crate::client::send_and_print(Request::build("gst", &args)).await?;
         }
         Cmd::StatusRight {
             path,
@@ -159,55 +156,38 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             force,
             ttl,
         } => {
-            let req = Request {
-                cmd: "status-right".into(),
-                args: serde_json::json!({
-                    "path": path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                    "style": style,
-                    "branch_max_len": branch_max_len,
-                    "branch_icon": branch_icon,
-                    "force": force,
-                    "ttl_secs": ttl,
-                }),
+            let args = StatusRightArgs {
+                path,
+                style: parse_style(&style),
+                branch_max_len,
+                branch_icon,
+                force,
+                ttl_secs: ttl,
             };
-            crate::client::send_and_print(req).await?;
+            crate::client::send_and_print(Request::build("status-right", &args)).await?;
         }
         Cmd::Preview => {
             print!("{}", crate::preview::render());
         }
         Cmd::Battery => {
-            crate::client::send_and_print(Request {
-                cmd: "battery".into(),
-                args: serde_json::Value::Object(Default::default()),
-            })
-            .await?;
+            crate::client::send_and_print(Request::build("battery", &())).await?;
         }
         Cmd::Net => {
-            crate::client::send_and_print(Request {
-                cmd: "net".into(),
-                args: serde_json::Value::Object(Default::default()),
-            })
-            .await?;
+            crate::client::send_and_print(Request::build("net", &())).await?;
         }
         Cmd::Clients {
             session_attached,
             window_active_clients,
         } => {
-            crate::client::send_and_print(Request {
-                cmd: "clients".into(),
-                args: serde_json::json!({
-                    "session_attached": session_attached,
-                    "window_active_clients": window_active_clients,
-                }),
-            })
-            .await?;
+            let args = ClientsArgs {
+                session_attached,
+                window_active_clients,
+            };
+            crate::client::send_and_print(Request::build("clients", &args)).await?;
         }
         Cmd::VimBg { pane_pid } => {
-            crate::client::send_and_print(Request {
-                cmd: "vim-bg".into(),
-                args: serde_json::json!({ "pane_pid": pane_pid }),
-            })
-            .await?;
+            crate::client::send_and_print(Request::build("vim-bg", &VimBgArgs { pane_pid }))
+                .await?;
         }
         Cmd::Window {
             current,
@@ -222,38 +202,38 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             pane_count,
             pane_index,
         } => {
-            let name_opt = if name.is_empty() { None } else { Some(name) };
-            let proc_opt = if process.is_empty() {
-                None
-            } else {
-                Some(process)
+            let args = crate::segments::window::WindowArgs {
+                current,
+                index,
+                window_id,
+                name: (!name.is_empty()).then_some(name),
+                path,
+                process: (!process.is_empty()).then_some(process),
+                start_path,
+                // The old `json!` block sent this as a bare string, so an
+                // empty `--flags` arrived as `Some("")` rather than `None`.
+                // Kept exactly, because the window renderer distinguishes them.
+                flags: Some(flags),
+                last,
+                pane_count,
+                pane_index,
             };
-            crate::client::send_and_print(Request {
-                cmd: "window".into(),
-                args: serde_json::json!({
-                    "current": current,
-                    "index": index,
-                    "window_id": window_id,
-                    "name": name_opt,
-                    "path": path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                    "process": proc_opt,
-                    "start_path": start_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                    "flags": flags,
-                    "last": last,
-                    "pane_count": pane_count,
-                    "pane_index": pane_index,
-                }),
-            })
-            .await?;
+            crate::client::send_and_print(Request::build("window", &args)).await?;
         }
         Cmd::Noop => {
-            crate::client::send_and_print(Request {
-                cmd: "noop".into(),
-                args: serde_json::Value::Object(Default::default()),
-            })
-            .await?;
+            crate::client::send_and_print(Request::build("noop", &())).await?;
         }
     }
 
     Ok(())
+}
+
+/// Map the `--style` string clap collected onto the enum the wire carries.
+///
+/// An unrecognised value falls back to the default, which is what
+/// `Style::parse` did on the server before the style crossed the wire as a
+/// string. The difference now is that the fallback happens once, in the
+/// process that saw the flag.
+fn parse_style(s: &str) -> crate::tmux::format::Style {
+    crate::tmux::format::Style::parse(s).unwrap_or_default()
 }

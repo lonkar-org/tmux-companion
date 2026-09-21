@@ -45,7 +45,8 @@ pub const FG_ON_ERROR: &str = "255";
 /// Outline = state color moves to the foreground, background becomes the bar,
 /// icon colors untouched.  OutlineBright = same, with icon colors lightened so
 /// they stay readable on the dark bar.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Style {
     Fill,
     Outline,

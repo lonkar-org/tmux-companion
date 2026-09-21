@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{
-    proto::{Request, Response},
+    proto::{ClientsArgs, GstArgs, Request, Response, StatusRightArgs, VimBgArgs},
     segments::{self, git::GstOptions},
     server::state::{DEFAULT_GST_TTL, ServerState},
 };
@@ -45,27 +45,29 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
     }
 
     let result = match req.cmd.as_str() {
-        "gst" => {
-            let opts = gst_options(&req);
-            segments::git::render(&opts, &state).await
-        }
-        "status-right" => render_right(&req, &state).await,
+        "gst" => match req.parse_args::<GstArgs>() {
+            Ok(args) => segments::git::render(&gst_options(&args), &state).await,
+            Err(e) => Err(e),
+        },
+        "status-right" => match req.parse_args::<StatusRightArgs>() {
+            Ok(args) => render_right(&args, &state).await,
+            Err(e) => Err(e),
+        },
         "battery" => battery(&state).await,
         "net" => net(&state).await,
-        "clients" => {
-            let sa = req.args["session_attached"].as_u64().unwrap_or(0) as u32;
-            let wac = req.args["window_active_clients"].as_u64().unwrap_or(0) as u32;
-            segments::clients::render(sa, wac).await
-        }
-        "vim-bg" => {
-            let pid = req.args["pane_pid"].as_u64().unwrap_or(0) as u32;
-            segments::vim_bg::render(pid).await
-        }
+        "clients" => match req.parse_args::<ClientsArgs>() {
+            Ok(a) => segments::clients::render(a.session_attached, a.window_active_clients).await,
+            Err(e) => Err(e),
+        },
+        "vim-bg" => match req.parse_args::<VimBgArgs>() {
+            Ok(a) => segments::vim_bg::render(a.pane_pid).await,
+            Err(e) => Err(e),
+        },
         "window" => {
             let dir_aliases = state.lock().await.dir_aliases.clone();
-            match serde_json::from_value::<segments::window::WindowArgs>(req.args) {
+            match req.parse_args::<segments::window::WindowArgs>() {
                 Ok(args) => Ok(segments::window::render(&args, &dir_aliases)),
-                Err(e) => Err(anyhow::anyhow!("invalid window args: {}", e)),
+                Err(e) => Err(e),
             }
         }
         // Diagnostics.  Not clap subcommands users are expected to reach for;
@@ -82,23 +84,32 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
     }
 }
 
-/// Read `gst` options out of a request, applying the same defaults the CLI does.
-fn gst_options(req: &Request) -> GstOptions {
+/// Turn the wire's `gst` arguments into the options the segment renders from.
+///
+/// The only work left here is the TTL, which travels as seconds and is used as
+/// a `Duration`. Everything else is carried by the struct itself, so a field
+/// added to one end is a compile error at the other rather than a key that
+/// quietly reads back as `None`.
+fn gst_options(args: &GstArgs) -> GstOptions {
     GstOptions {
-        path: req.args["path"].as_str().map(std::path::PathBuf::from),
-        pane_pid: req.args["pane_pid"].as_u64().map(|n| n as u32),
-        force: req.args["force"].as_bool().unwrap_or(false),
-        style: req.args["style"]
-            .as_str()
-            .and_then(crate::tmux::format::Style::parse)
-            .unwrap_or_default(),
-        no_cap: req.args["no_cap"].as_bool().unwrap_or(false),
-        branch_max_len: req.args["branch_max_len"].as_u64().map(|n| n as usize),
-        branch_icon: req.args["branch_icon"].as_bool().unwrap_or(false),
-        ttl: req.args["ttl_secs"]
-            .as_f64()
-            .map(Duration::from_secs_f64)
-            .unwrap_or(DEFAULT_GST_TTL),
+        path: args.path.clone(),
+        pane_pid: args.pane_pid,
+        force: args.force,
+        style: args.style,
+        no_cap: args.no_cap,
+        branch_max_len: args.branch_max_len,
+        branch_icon: args.branch_icon,
+        ttl: duration_from_secs(args.ttl_secs),
+    }
+}
+
+/// Seconds to a `Duration`, refusing to turn a negative or non-finite number
+/// into a panic. `Duration::from_secs_f64` panics on both.
+fn duration_from_secs(secs: f64) -> Duration {
+    if secs.is_finite() && secs >= 0.0 {
+        Duration::from_secs_f64(secs)
+    } else {
+        DEFAULT_GST_TTL
     }
 }
 
@@ -108,14 +119,22 @@ fn gst_options(req: &Request) -> GstOptions {
 /// The TTL is applied per segment, inside the individual renders — never to
 /// this assembled string.  Caching the assembly would freeze `net`, which is a
 /// rate: the bar would repeat one window's average until the entry expired.
-async fn render_right(req: &Request, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
+async fn render_right(
+    args: &StatusRightArgs,
+    state: &Arc<Mutex<ServerState>>,
+) -> anyhow::Result<String> {
     let opts = GstOptions {
+        path: args.path.clone(),
+        force: args.force,
+        style: args.style,
+        branch_max_len: args.branch_max_len,
+        branch_icon: args.branch_icon,
+        ttl: duration_from_secs(args.ttl_secs),
         // The git segment opens the right-hand side, so it never draws an end
         // cap — this is what `--no-cap` did in the old three-call conf.
         no_cap: true,
         // Deliberately not plumbed from the request: see `GstOptions::pane_pid`.
         pane_pid: None,
-        ..gst_options(req)
     };
 
     // All three run concurrently.  `net`'s expensive half is the counter read,
@@ -331,35 +350,39 @@ mod tests {
 
     // ── gst_options ──────────────────────────────────────────────────────────
 
-    fn req(args: serde_json::Value) -> Request {
+    /// The tests drive `gst_options` through the deserializer rather than
+    /// building the struct by hand, so they cover the wire shape too.
+    fn args(json: serde_json::Value) -> GstArgs {
         Request {
             cmd: "gst".into(),
-            args,
+            args: json,
         }
+        .parse_args()
+        .expect("valid gst args")
     }
 
     #[test]
     fn gst_options_default_ttl_is_five_seconds() {
-        let o = gst_options(&req(serde_json::json!({})));
+        let o = gst_options(&args(serde_json::json!({})));
         assert_eq!(o.ttl, DEFAULT_GST_TTL);
         assert_eq!(o.ttl, Duration::from_secs(5));
     }
 
     #[test]
     fn gst_options_ttl_flag_overrides_the_default() {
-        let o = gst_options(&req(serde_json::json!({"ttl_secs": 0.5})));
+        let o = gst_options(&args(serde_json::json!({"ttl_secs": 0.5})));
         assert_eq!(o.ttl, Duration::from_millis(500));
     }
 
     #[test]
     fn gst_options_zero_ttl_is_preserved_not_defaulted() {
-        let o = gst_options(&req(serde_json::json!({"ttl_secs": 0})));
+        let o = gst_options(&args(serde_json::json!({"ttl_secs": 0})));
         assert_eq!(o.ttl, Duration::ZERO);
     }
 
     #[test]
     fn gst_options_reads_every_flag() {
-        let o = gst_options(&req(serde_json::json!({
+        let o = gst_options(&args(serde_json::json!({
             "path": "/tmp/x",
             "pane_pid": 4242,
             "force": true,
@@ -376,28 +399,45 @@ mod tests {
     }
 
     #[test]
-    fn status_right_never_forwards_a_pane_pid() {
-        // The whole point of item 2: even if a client sends one, the combined
-        // side must not resolve it, because that means scanning every process
-        // on the machine.
+    fn a_misspelled_gst_key_is_an_error_rather_than_a_default() {
+        // The reason the typed structs exist. `branch_maxlen` used to read
+        // back as `None` and quietly render an untruncated branch.
+        let r = Request {
+            cmd: "gst".into(),
+            args: serde_json::json!({"branch_maxlen": 40}),
+        };
+        let e = r.parse_args::<GstArgs>().unwrap_err().to_string();
+        assert!(e.contains("invalid gst args"), "{e}");
+        assert!(e.contains("branch_maxlen"), "{e}");
+    }
+
+    #[test]
+    fn a_negative_ttl_falls_back_instead_of_panicking() {
+        // `Duration::from_secs_f64` panics on a negative or non-finite value,
+        // and the TTL arrives from a client this server does not control.
+        assert_eq!(duration_from_secs(-1.0), DEFAULT_GST_TTL);
+        assert_eq!(duration_from_secs(f64::NAN), DEFAULT_GST_TTL);
+        assert_eq!(duration_from_secs(f64::INFINITY), DEFAULT_GST_TTL);
+    }
+
+    #[test]
+    fn status_right_cannot_carry_a_pane_pid_at_all() {
+        // The whole point of item 2: the combined side must never resolve a
+        // pane pid, because that means scanning every process on the machine.
+        // It used to be dropped in `render_right`; now the argument struct has
+        // no such field, so a client sending one gets an error.
         let r = Request {
             cmd: "status-right".into(),
             args: serde_json::json!({"path": "/tmp/x", "pane_pid": 4242}),
         };
-        let opts = GstOptions {
-            no_cap: true,
-            pane_pid: None,
-            ..gst_options(&r)
-        };
-        assert_eq!(opts.pane_pid, None, "pane_pid must be dropped");
-        assert!(opts.no_cap, "gst opens the right side, so no end cap");
-        assert_eq!(opts.path, Some(std::path::PathBuf::from("/tmp/x")));
+        let e = r.parse_args::<StatusRightArgs>().unwrap_err().to_string();
+        assert!(e.contains("pane_pid"), "{e}");
     }
 
     #[test]
     fn standalone_gst_still_honours_a_pane_pid() {
         // The manual `gst <path> <pid>` form keeps working.
-        let o = gst_options(&req(serde_json::json!({"path": "/x", "pane_pid": 7})));
+        let o = gst_options(&args(serde_json::json!({"path": "/x", "pane_pid": 7})));
         assert_eq!(o.pane_pid, Some(7));
     }
 
