@@ -119,6 +119,8 @@ rustc they happen to have.
 
 ### The phase 0 list
 
+0. transfer the repository to the `lonkar-org` organisation, before any of
+   the following writes the URL down
 1. `cargo fmt`, fix the two clippy lints, add a `rust-toolchain.toml`
 2. a GitHub Actions workflow running `fmt --check`, `clippy -D warnings` and
    `test` on Linux, so the previous step cannot come undone
@@ -131,6 +133,18 @@ rustc they happen to have.
    `#![warn(missing_docs)]` turned on so it stays that way
 7. `LICENSE`, `CONTRIBUTING.md`, an "Adding a command" section in `CLAUDE.md`,
    and the hardcoded test count replaced with a sentence that does not rot
+
+Step 0 is first because it's free now and annoying later. `lonkar-org` is the
+namespace paired with the blog, `firacode-nfc-tweaked` and `blog-comments` are
+already there, and the business sites in it are moving to the `icf-c`
+organisation. Fewer than five clones exist, most likely from bots, so there's no
+install line in anybody's config to break. Steps 1, 2 and 7 each write the
+repository URL into something durable, the crates.io `repository` field, a CI
+badge, the clone line in `CONTRIBUTING.md`, and doing the transfer afterwards
+means editing all of them twice while a badge quietly points at a redirect. One
+thing to remember afterwards: never recreate `yogeshlonkar/tmux-companion`,
+because GitHub's redirect survives the move and dies the moment that name is
+taken again.
 
 Steps 3 and 4 are the ones with real work in them. The rest is an afternoon, and
 all of it's cheaper now than after twelve subcommands have copied the current
