@@ -195,23 +195,44 @@ Resolution order, first hit wins:
 3. `$XDG_CONFIG_HOME/tmux-companion/config.toml`, which is
    `~/.config/tmux-companion/config.toml` on a machine that doesn't set the
    variable
-4. `~/.tmux-companion.toml`
+4. `~/tmux-companion.toml`
 5. the built-in defaults, when there is no file at all
 
-<!-- @Yogesh(decide): `~/.tmux-companion.toml` or extensionless `~/.tmux-companion`? extension gets you syntax highlighting, you said the bare name -->
+Two paths rather than one because the XDG directory is where a Linux user will
+look and `~/tmux-companion.toml` is where somebody who wants it in front of
+them will put it. Both carry the `.toml` extension, so an editor highlights the
+file and `config check` can name the format in an error without guessing.
 
 `tmux-companion config path` prints the one it picked, because the commonest
 config question is which file is being read.
 
-A key the parser doesn't recognise is an error naming the key and the line,
-via `deny_unknown_fields`. A silently ignored key is the same bug class as
+A key the parser doesn't recognise is an error naming the key and the line, via
+`deny_unknown_fields`. A silently ignored key is the same bug class as
 `req.args["pane_pid"]` on a name that was never sent, and phase 0 is already
-removing that one from the wire. The daemon refuses to start on a config it
-can't parse, the client prints the error, and since the client's stdout is the
-status bar the error appears where you are already looking. `tmux-companion
-config check` exits nonzero for a pre-commit hook or CI.
+removing that one from the wire.
 
-<!-- @Yogesh(decide): refuse to start on a bad config, or start on defaults and put a warning in the bar? refusing means one typo empties the bar -->
+The daemon refuses to start on a config it can't parse. Refusing is only
+defensible if the person finds out why within seconds, so the error travels
+three ways and each one is a different amount of room:
+
+1. the daemon writes the full error to stderr and to
+   `$XDG_STATE_HOME/tmux-companion/last-error`, then exits non-zero
+2. the client that tried to start it reads that file and renders one line into
+   the status bar, which is the only surface guaranteed to be in front of
+   somebody: `config: unknown key 'colour' at line 12 — run tmux-companion
+   config check`
+3. `tmux-companion config check` prints the whole thing: the file it read, the
+   line and column, the offending line with a caret under it, and, for an
+   unknown key, the closest key that does exist
+
+The bar line is deliberately short and deliberately names the command that
+explains it, since a status bar has about 150 columns and a parse error doesn't
+fit in them. `config check` exits non-zero, so it also works in a pre-commit
+hook or in CI.
+
+`toml` carries line and column on its errors and `serde` names the field, so
+none of this needs a hand-written parser. The did-you-mean comes from an edit
+distance over the known key names, which is the one piece with any code in it.
 
 ### Reload
 
@@ -235,10 +256,22 @@ of truth with a cache in between, which is the invalidation bug this port is
 already deleting from `keys.zsh`. The file is read once by a daemon that is
 running anyway.
 
-Worth reopening if somebody arrives with a setting that has to differ per
-session, since that's the one thing a file can't express and `@` options can.
+What survives is a short whitelist, and only for settings that have to differ
+per session, which is what a file can't express at all:
 
-<!-- @Yogesh(decide): confirm no `@companion-*` options, or support a short whitelist for per-session theme -->
+| Option | Does |
+| --- | --- |
+| `@tmux-companion-theme` | the theme for this session, overriding `[theme]` |
+| `@tmux-companion-layout` | the `[[layout]]` a new window in this session starts from |
+| `@tmux-companion-status-right` | the segment list for this session's bar |
+
+Three options, flat, read once per session and cached, and not a second copy of
+the config tree. A general mapping would give you `@tmux-companion-git-parts-3`
+and `@tmux-companion-layout-window-2-command`, which is a config language built
+out of hyphens by accident, and it stops working the moment a value needs to be
+a list. Anything nested lives in the file and gets a name there, so a session
+says `@tmux-companion-layout work` and `work` is a `[[layout]]` in the file
+with as much structure inside it as it likes.
 
 ### What moves into the config, and when
 
@@ -249,7 +282,7 @@ constants it touched are settings and its row here is done.
 | --- | --- |
 | 0 | the loader, the precedence chain, `config path`, `config check`, `config dump` |
 | 0 | `[dirs]` aliases and logos, which is what kills `~/.yrl/lib/dir-aliases` and `~/g/` |
-| 0 | `[colors]`, and `[glyphs]` with a `preset` key: `nerd-font-v3` as today, `powerline`, `unicode`, `ascii`, `none`, each overridable glyph by glyph |
+| 0 | `[colors]`, and `[glyphs]` with a `preset` key and per-glyph overrides; `nerd-font-v3` and `ascii` ship here, `powerline`, `unicode` and `none` land later as data files |
 | 0 | `[git]`, `[network]`, `[battery]`, `[window]`: TTLs, thresholds, the branch lengths, and file defaults for the flags that already exist on the CLI |
 | 0 | `[status.right]`, the segment list, the separators between them and the end cap, all of which accept an empty string |
 | 0 | `[git] parts`, an ordered list of what the git segment renders, so nobody is given counts they didn't ask for |
@@ -259,8 +292,6 @@ constants it touched are settings and its row here is done.
 | 4 | `[autosave]` interval and enable, `[toggle]` window names, which come from the layout rather than from `edit` and `ai` being hardcoded |
 | 5 | `[run]` history source (zsh, bash, fish, atuin), pane side and width, animation, default dialog button, the shell commands run under |
 | 6 | `[open]` opener command, `[clipboard]` copy command for pbcopy, xclip or wl-copy |
-
-<!-- @Yogesh(check): all five glyph presets in phase 0, or ship nerd-font-v3 and ascii first and add powerline and unicode in phase 6? -->
 
 ### Glyphs, since most people don't have a Nerd Font
 
@@ -282,6 +313,13 @@ Five presets, chosen by what a font is guaranteed to carry rather than by taste:
 A preset is a starting point and not a cage: `[glyphs.icons]` overrides one
 glyph at a time, so somebody who has exactly one icon missing fixes that icon
 rather than dropping to a whole preset below.
+
+Phase 0 builds the whole mechanism and ships two of the five, `nerd-font-v3`
+and `ascii`. The mechanism is the part with code in it and a preset is a table
+of names to strings, so each one lives in its own TOML file pulled in with
+`include_str!`, and `powerline`, `unicode` and `none` arrive later as data with
+no Rust attached. That also makes a preset the easiest first contribution a
+stranger can make: a file, a test that renders it, no logic.
 
 Separators get the same treatment and the same escape hatch. The segment
 separator, the end cap and the powerline wedge each accept an empty string,
