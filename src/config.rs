@@ -102,6 +102,82 @@ pub struct Dirs {
     pub aliases: HashMap<PathBuf, String>,
 }
 
+/// One thing the git segment can draw.
+///
+/// The names are what a config file writes, so they describe what a reader
+/// sees rather than what the code calls it: `conflicts` rather than
+/// `unmerged`, `untracked` rather than `new`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitPart {
+    /// The in-flight and failed-remote block before the branch name.
+    Sync,
+    /// The branch name itself.
+    Branch,
+    /// The clean, dirty, new-branch or gone-upstream marker.
+    State,
+    /// Commits this branch has that its upstream does not.
+    Ahead,
+    /// Commits the upstream has that this branch does not.
+    Behind,
+    /// Files with merge conflicts.
+    Conflicts,
+    /// Untracked files, counted with unstaged additions as git reports them.
+    Untracked,
+    /// Deleted files in the work tree.
+    Deleted,
+    /// Renamed files in the work tree.
+    Renamed,
+    /// Copied files in the work tree.
+    Copied,
+    /// Modified files in the work tree.
+    Modified,
+    /// Everything in the index, as one group.
+    Staged,
+    /// The stash count.
+    Stash,
+}
+
+impl GitPart {
+    /// Every part, in the order the segment drew them before the list existed.
+    pub fn all() -> Vec<Self> {
+        use GitPart::*;
+        vec![
+            Sync, Branch, State, Ahead, Behind, Conflicts, Untracked, Deleted, Renamed, Copied,
+            Modified, Staged, Stash,
+        ]
+    }
+
+    /// Which group this part is rendered inside.
+    ///
+    /// Order in the config list is honoured between groups. Inside one, the
+    /// order is fixed, because a group is a single colour run and reordering
+    /// its counters would move escape sequences rather than glyphs.
+    pub fn group(self) -> Option<GitGroup> {
+        use GitPart::*;
+        match self {
+            Sync | Branch | State => None,
+            Ahead | Behind | Conflicts => Some(GitGroup::BranchInfo),
+            Untracked | Deleted | Renamed | Copied | Modified => Some(GitGroup::Unstaged),
+            Staged => Some(GitGroup::Staged),
+            Stash => Some(GitGroup::Stash),
+        }
+    }
+}
+
+/// The groups the counters are drawn in, after the branch name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GitGroup {
+    /// Ahead, behind and conflicts.
+    BranchInfo,
+    /// Work-tree counts.
+    Unstaged,
+    /// Index counts.
+    Staged,
+    /// The stash count.
+    Stash,
+}
+
 /// The git segment.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
@@ -119,6 +195,12 @@ pub struct Git {
     pub branch_max_len: usize,
     /// How many characters of the branch name's tail survive the ellipsis.
     pub branch_tail_len: usize,
+    /// What the segment draws, and in what order.
+    ///
+    /// A part left out of this list is not rendered. Somebody working in a
+    /// tree with four hundred untracked build artifacts does not want a count
+    /// of them, and somebody who never pushes does not want ahead and behind.
+    pub parts: Vec<GitPart>,
 }
 
 impl Default for Git {
@@ -128,6 +210,7 @@ impl Default for Git {
             repo_check_ttl_secs: 300.0,
             branch_max_len: 20,
             branch_tail_len: 10,
+            parts: GitPart::all(),
         }
     }
 }

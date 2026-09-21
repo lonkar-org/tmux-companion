@@ -10,6 +10,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::config::GitPart;
 use crate::server::state::{DEFAULT_GST_TTL, ServerState};
 use crate::tmux::{
     format::{
@@ -361,21 +362,69 @@ pub fn status_line_capped(
     style: Style,
     cap_glyph: Option<&'static str>,
 ) -> String {
-    status_line_render(s, nvim_suspended, no_tmux, style, cap_glyph, None, true)
+    status_line_render(
+        s,
+        nvim_suspended,
+        no_tmux,
+        &LineOpts {
+            style,
+            cap_glyph,
+            parts: &GitPart::all(),
+            ..LineOpts::default()
+        },
+    )
 }
 
 /// Innermost render; `branch_max` overrides the branch middle-ellipsis
 /// threshold (default `BRANCH_MAX_LEN`); `branch_icon` controls whether the
 /// leading git glyph (and its trailing space) precede the branch name.
+/// How one status line is drawn: the style, the cap, the branch treatment and
+/// which parts are in it.
+///
+/// A struct because the alternative was eight positional arguments, and four of
+/// them were `Option`s and `bool`s that a caller could transpose without the
+/// compiler noticing.
+#[derive(Debug, Clone)]
+pub struct LineOpts<'a> {
+    /// Fill, outline or outline-bright.
+    pub style: Style,
+    /// Override the end-cap glyph; `Some("")` draws no cap at all.
+    pub cap_glyph: Option<&'static str>,
+    /// Middle-ellipsize a branch name longer than this.
+    pub branch_max: Option<usize>,
+    /// Draw the git glyph before the branch name.
+    pub branch_icon: bool,
+    /// Which parts to draw, and in what order.
+    pub parts: &'a [GitPart],
+}
+
+impl Default for LineOpts<'static> {
+    fn default() -> Self {
+        Self {
+            style: Style::default(),
+            cap_glyph: None,
+            branch_max: None,
+            branch_icon: true,
+            parts: &[],
+        }
+    }
+}
+
+/// Render one status line.
 pub fn status_line_render(
     s: &GitStatus,
     nvim_suspended: bool,
     no_tmux: bool,
-    style: Style,
-    cap_glyph: Option<&'static str>,
-    branch_max: Option<usize>,
-    branch_icon: bool,
+    opts: &LineOpts<'_>,
 ) -> String {
+    let LineOpts {
+        style,
+        cap_glyph,
+        branch_max,
+        branch_icon,
+        parts,
+    } = *opts;
+    let has = |p: GitPart| parts.contains(&p);
     let bar_bg = if nvim_suspended { BG_TERMINAL } else { BG_BAR };
     let mut p = s.palette(style, bar_bg);
     if let Some(g) = cap_glyph {
@@ -389,7 +438,12 @@ pub fn status_line_render(
     let mut status_line = Segment::new();
     let mut remote = Segment::new();
 
-    if s.loading {
+    if !has(GitPart::Sync) {
+        // The whole in-flight and failed-remote block is skipped, but the
+        // segment still needs its opening colour run or the branch name
+        // inherits whatever tmux drew before it.
+        remote.add(colored_segment(no_tmux, p.prev_fg, bg, WHITE_SPACE));
+    } else if s.loading {
         remote.add(colored_segment(
             no_tmux,
             p.loading_fg,
@@ -424,12 +478,22 @@ pub fn status_line_render(
     remote.add(format!(
         "{}{}{}{}",
         colored_segment(no_tmux, fg, bg, ""),
-        if branch_icon { GIT } else { "" },
-        short_branch_len(&s.branch, branch_max.unwrap_or(BRANCH_MAX_LEN)),
+        if branch_icon && has(GitPart::Branch) {
+            GIT
+        } else {
+            ""
+        },
+        if has(GitPart::Branch) {
+            short_branch_len(&s.branch, branch_max.unwrap_or(BRANCH_MAX_LEN))
+        } else {
+            String::new()
+        },
         WHITE_SPACE
     ));
 
-    if s.is_new {
+    if !has(GitPart::State) {
+        // nothing: no clean tick, no dirty marker, no gone glyph
+    } else if s.is_new {
         remote.add(format!(
             "{}{}",
             colored_segment(no_tmux, p.new_fg, bg, NEW),
@@ -459,7 +523,7 @@ pub fn status_line_render(
     // branch info (ahead/behind/unmerged)
     let mut branch = Segment::new();
     branch.counter(
-        s.ahead,
+        if has(GitPart::Ahead) { s.ahead } else { 0 },
         &format!(
             "{}{}",
             colored_segment(no_tmux, p.ahead_fg, bg, AHEAD),
@@ -467,7 +531,7 @@ pub fn status_line_render(
         ),
     );
     branch.counter(
-        s.behind,
+        if has(GitPart::Behind) { s.behind } else { 0 },
         &format!(
             "{}{}",
             colored_segment(no_tmux, p.ahead_fg, bg, BEHIND),
@@ -475,7 +539,11 @@ pub fn status_line_render(
         ),
     );
     branch.counter(
-        s.unmerged,
+        if has(GitPart::Conflicts) {
+            s.unmerged
+        } else {
+            0
+        },
         &colored_segment(no_tmux, p.unmerged_fg, bg, UNMERGED),
     );
     branch.append_only(&reset);
@@ -483,20 +551,58 @@ pub fn status_line_render(
 
     // unstaged
     let mut unstaged = Segment::new();
-    unstaged.counter(s.untracked + s.unstaged.added, ADDED);
-    unstaged.counter(s.unstaged.deleted, DELETED);
-    unstaged.counter(s.unstaged.renamed, RENAMED);
-    unstaged.counter(s.unstaged.copied, COPIED);
-    unstaged.counter(s.unstaged.modified, MODIFIED);
+    // `untracked` covers unstaged additions too: that is how git reports a new
+    // file, and splitting them would count one file twice.
+    unstaged.counter(
+        if has(GitPart::Untracked) {
+            s.untracked + s.unstaged.added
+        } else {
+            0
+        },
+        ADDED,
+    );
+    unstaged.counter(
+        if has(GitPart::Deleted) {
+            s.unstaged.deleted
+        } else {
+            0
+        },
+        DELETED,
+    );
+    unstaged.counter(
+        if has(GitPart::Renamed) {
+            s.unstaged.renamed
+        } else {
+            0
+        },
+        RENAMED,
+    );
+    unstaged.counter(
+        if has(GitPart::Copied) {
+            s.unstaged.copied
+        } else {
+            0
+        },
+        COPIED,
+    );
+    unstaged.counter(
+        if has(GitPart::Modified) {
+            s.unstaged.modified
+        } else {
+            0
+        },
+        MODIFIED,
+    );
     sub.when(!unstaged.is_empty(), &unstaged.to_string());
 
     // staged
     let mut staged = Segment::new();
-    staged.counter(s.staged.added, ADDED);
-    staged.counter(s.staged.deleted, DELETED);
-    staged.counter(s.staged.renamed, RENAMED);
-    staged.counter(s.staged.copied, COPIED);
-    staged.counter(s.staged.modified, MODIFIED);
+    let staged_on = has(GitPart::Staged);
+    staged.counter(if staged_on { s.staged.added } else { 0 }, ADDED);
+    staged.counter(if staged_on { s.staged.deleted } else { 0 }, DELETED);
+    staged.counter(if staged_on { s.staged.renamed } else { 0 }, RENAMED);
+    staged.counter(if staged_on { s.staged.copied } else { 0 }, COPIED);
+    staged.counter(if staged_on { s.staged.modified } else { 0 }, MODIFIED);
     staged.prepend_only(&format!(
         "{}{}",
         colored_segment(no_tmux, p.green_fg, bg, STAGED),
@@ -506,7 +612,7 @@ pub fn status_line_render(
 
     // stash
     sub.counter(
-        s.stashed,
+        if has(GitPart::Stash) { s.stashed } else { 0 },
         &format!(
             "{}{}",
             colored_segment(no_tmux, p.stash_fg, bg, STASHED),
@@ -627,6 +733,8 @@ pub struct GstOptions {
     pub branch_icon: bool,
     /// How long a cached status stays fresh.
     pub ttl: Duration,
+    /// What the segment draws, from `[git] parts` in the config.
+    pub parts: Vec<GitPart>,
 }
 
 impl Default for GstOptions {
@@ -640,6 +748,7 @@ impl Default for GstOptions {
             branch_max_len: None,
             branch_icon: false,
             ttl: DEFAULT_GST_TTL,
+            parts: GitPart::all(),
         }
     }
 }
@@ -686,10 +795,13 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
         &status,
         nvim_suspended,
         false,
-        opts.style,
-        cap,
-        opts.branch_max_len,
-        opts.branch_icon,
+        &LineOpts {
+            style: opts.style,
+            cap_glyph: cap,
+            branch_max: opts.branch_max_len,
+            branch_icon: opts.branch_icon,
+            parts: &opts.parts,
+        },
     );
     Ok(if opts.no_cap {
         line.trim_end().to_string()
@@ -1137,6 +1249,149 @@ mod tests {
             let r = short_branch(name);
             assert_eq!(r, format!("{}{}", BRANCH, name));
         }
+    }
+
+    // ── parts ────────────────────────────────────────────────────────────────
+
+    /// A status with something in every group, so leaving a part out is
+    /// visible.
+    fn busy_status() -> GitStatus {
+        GitStatus {
+            branch: "main".into(),
+            ahead: 2,
+            behind: 3,
+            unmerged: 1,
+            untracked: 4,
+            stashed: 5,
+            remote_success: true,
+            unstaged: Area {
+                modified: 6,
+                deleted: 7,
+                ..Default::default()
+            },
+            staged: Area {
+                modified: 8,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn render_parts(parts: &[GitPart]) -> String {
+        // `branch_icon: true` to match `status_line_capped`, which is what the
+        // default-list test compares against.
+        status_line_render(
+            &busy_status(),
+            false,
+            true,
+            &LineOpts {
+                style: Style::Fill,
+                cap_glyph: Some(""),
+                parts,
+                ..LineOpts::default()
+            },
+        )
+    }
+
+    #[test]
+    fn the_default_part_list_renders_what_it_always_did() {
+        // The byte-identity promise, at the level the config touches.
+        assert_eq!(
+            render_parts(&GitPart::all()),
+            status_line_capped(&busy_status(), false, true, Style::Fill, Some(""))
+        );
+    }
+
+    #[test]
+    fn dropping_untracked_drops_its_count() {
+        let all = render_parts(&GitPart::all());
+        let without: Vec<GitPart> = GitPart::all()
+            .into_iter()
+            .filter(|p| *p != GitPart::Untracked)
+            .collect();
+        let out = render_parts(&without);
+        assert!(all.contains("4"), "the fixture should have 4 untracked");
+        assert!(!out.contains(&format!("4{ADDED}")), "{out}");
+        // and nothing else went with it
+        assert!(out.contains(&format!("6{MODIFIED}")), "{out}");
+    }
+
+    #[test]
+    fn dropping_ahead_and_behind_leaves_the_branch_name() {
+        let parts: Vec<GitPart> = GitPart::all()
+            .into_iter()
+            .filter(|p| !matches!(p, GitPart::Ahead | GitPart::Behind))
+            .collect();
+        let out = render_parts(&parts);
+        assert!(out.contains("main"), "{out}");
+        assert!(!out.contains(AHEAD), "{out}");
+        assert!(!out.contains(BEHIND), "{out}");
+    }
+
+    #[test]
+    fn a_branch_name_only_list_renders_just_that() {
+        let out = render_parts(&[GitPart::Branch]);
+        assert!(out.contains("main"), "{out}");
+        for glyph in [AHEAD, BEHIND, UNMERGED, STASHED, STAGED, MODIFIED] {
+            assert!(!out.contains(glyph), "expected no {glyph:?} in {out:?}");
+        }
+    }
+
+    #[test]
+    fn dropping_state_drops_the_clean_tick() {
+        let clean = GitStatus {
+            branch: "main".into(),
+            remote_success: true,
+            ..Default::default()
+        };
+        let with = status_line_render(
+            &clean,
+            false,
+            true,
+            &LineOpts {
+                style: Style::Fill,
+                cap_glyph: Some(""),
+                branch_icon: false,
+                parts: &GitPart::all(),
+                ..LineOpts::default()
+            },
+        );
+        let without = status_line_render(
+            &clean,
+            false,
+            true,
+            &LineOpts {
+                style: Style::Fill,
+                cap_glyph: Some(""),
+                branch_icon: false,
+                parts: &[GitPart::Branch],
+                ..LineOpts::default()
+            },
+        );
+        assert!(with.contains(CLEAN), "{with}");
+        assert!(!without.contains(CLEAN), "{without}");
+    }
+
+    #[test]
+    fn dropping_stash_drops_only_the_stash() {
+        let parts: Vec<GitPart> = GitPart::all()
+            .into_iter()
+            .filter(|p| *p != GitPart::Stash)
+            .collect();
+        let out = render_parts(&parts);
+        assert!(!out.contains(STASHED), "{out}");
+        assert!(
+            out.contains(&format!("8{MODIFIED}")),
+            "staged survives: {out}"
+        );
+    }
+
+    #[test]
+    fn an_empty_part_list_still_produces_a_segment_rather_than_a_panic() {
+        // Somebody will write `parts = []`, and the answer to that is an empty
+        // bar, not a crash.
+        let out = render_parts(&[]);
+        assert!(!out.contains("main"), "{out}");
     }
 
     // ── status_line_mode: tmux format (ports all 17 Go test cases) ────────────
@@ -1611,7 +1866,17 @@ mod tests {
     #[test]
     fn branch_icon_off_drops_glyph_and_its_space() {
         let s = s_clean();
-        let line = status_line_render(&s, false, false, Style::Outline, None, None, false);
+        let line = status_line_render(
+            &s,
+            false,
+            false,
+            &LineOpts {
+                style: Style::Outline,
+                branch_icon: false,
+                parts: &GitPart::all(),
+                ..LineOpts::default()
+            },
+        );
         assert!(!line.contains(GIT.trim()), "git glyph left over: {line}");
         // GIT's trailing space must go with it: the branch-type glyph follows
         // the color code directly, no orphaned gap.
@@ -1624,7 +1889,16 @@ mod tests {
     #[test]
     fn branch_icon_on_keeps_legacy_shape() {
         let s = s_clean();
-        let with_icon = status_line_render(&s, false, false, Style::Outline, None, None, true);
+        let with_icon = status_line_render(
+            &s,
+            false,
+            false,
+            &LineOpts {
+                style: Style::Outline,
+                parts: &GitPart::all(),
+                ..LineOpts::default()
+            },
+        );
         assert_eq!(
             with_icon,
             status_line_styled(&s, false, false, Style::Outline)

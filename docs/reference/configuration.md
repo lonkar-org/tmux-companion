@@ -100,3 +100,28 @@ How it works is worth knowing for one reason: the substitution is applied once
 to a finished segment rather than threaded through the 263 places a glyph is
 used, so a preset can only replace glyphs the default set already contains. It
 can't add a glyph somewhere there wasn't one.
+
+## Choosing what the git segment shows
+
+`[git] parts` is an ordered list, and a part left out of it isn't drawn:
+
+```toml
+[git]
+parts = ["branch", "state", "staged", "modified"]
+```
+
+Four hundred untracked build artifacts aren't information, and if you never
+push then `ahead` and `behind` are two counts you'll never read. The names are
+what a reader sees rather than what the code calls things, so it's `conflicts`
+rather than `unmerged`.
+
+The full vocabulary is in [`docs/config.example.toml`](../config.example.toml),
+and an unknown name is a config error rather than a part that silently does
+nothing.
+
+Order is honoured between groups: branch info (`ahead`, `behind`,
+`conflicts`), then the work-tree counts, then `staged`, then `stash`. Inside a
+group it's fixed, because a group is a single colour run and reordering its
+counters would move escape sequences rather than glyphs. `parts = []` renders
+an almost empty segment, which is a legitimate thing to ask for and not a
+crash.

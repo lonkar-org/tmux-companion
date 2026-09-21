@@ -54,6 +54,32 @@ branch_max_len = 20
 # How many characters of the branch name's tail survive the ellipsis.
 branch_tail_len = 10
 
+# What the segment draws, and in what order.
+#
+# A part left out is not rendered. Four hundred untracked build artifacts are
+# not information, and if you never push, "ahead" and "behind" are two counts
+# you will never read.
+#
+#   sync       the in-flight and failed-remote block before the branch name
+#   branch     the branch name itself
+#   state      the clean, dirty, new-branch or gone-upstream marker
+#   ahead      commits you have that the upstream does not
+#   behind     commits the upstream has that you do not
+#   conflicts  files with merge conflicts
+#   untracked  untracked files, counted with unstaged additions as git does
+#   deleted    deleted files in the work tree
+#   renamed    renamed files in the work tree
+#   copied     copied files in the work tree
+#   modified   modified files in the work tree
+#   staged     everything in the index, as one group
+#   stash      the stash count
+#
+# Order is honoured between groups: branch info (ahead, behind, conflicts),
+# then the work-tree counts, then staged, then stash. Inside a group the order
+# is fixed, because a group is one colour run and reordering its counters would
+# move escape sequences rather than glyphs.
+parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked", "deleted", "renamed", "copied", "modified", "staged", "stash"]
+
 [network]
 # Below this many bytes per second the bandwidth segment draws nothing. The
 # default is 20 KiB/s: a bar that reacts to every background poll is noise.

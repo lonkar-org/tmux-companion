@@ -46,7 +46,11 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
 
     let result = match req.cmd.as_str() {
         "gst" => match req.parse_args::<GstArgs>() {
-            Ok(args) => segments::git::render(&gst_options(&args), &state).await,
+            Ok(args) => {
+                let mut opts = gst_options(&args);
+                opts.parts = state.lock().await.config.git.parts.clone();
+                segments::git::render(&opts, &state).await
+            }
             Err(e) => Err(e),
         },
         "status-right" => match req.parse_args::<StatusRightArgs>() {
@@ -107,6 +111,10 @@ fn gst_options(args: &GstArgs) -> GstOptions {
         branch_max_len: args.branch_max_len,
         branch_icon: args.branch_icon,
         ttl: duration_from_secs(args.ttl_secs),
+        // Filled by the caller from the daemon's config, which this function
+        // has no access to and does not want: it stays a pure mapping from the
+        // wire to the options.
+        parts: crate::config::GitPart::all(),
     }
 }
 
@@ -142,6 +150,7 @@ async fn render_right(
         no_cap: true,
         // Deliberately not plumbed from the request: see `GstOptions::pane_pid`.
         pane_pid: None,
+        parts: state.lock().await.config.git.parts.clone(),
     };
 
     // All three run concurrently.  `net`'s expensive half is the counter read,
