@@ -79,7 +79,14 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
     };
 
     match result {
-        Ok(output) => Response::ok(output),
+        // The glyph preset is applied here, once, to whatever a segment drew.
+        // Rendering keeps using the constants in `tmux::icons` throughout; see
+        // `GlyphMap` for why the substitution lives at the edge rather than
+        // being threaded through every call site.
+        Ok(output) => {
+            let glyphs = state.lock().await.glyphs.clone();
+            Response::ok(glyphs.apply(&output).into_owned())
+        }
         Err(e) => Response::err(e),
     }
 }

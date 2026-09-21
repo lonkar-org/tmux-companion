@@ -63,3 +63,21 @@ threshold_bps = 20480
 # How long a battery reading stays fresh, in seconds. Reading it is expensive
 # and the number does not move fast enough to matter.
 ttl_secs = 30.0
+
+[glyphs]
+# Which glyph set the bar draws with.
+#
+#   nerd-font-v3   the codepoints in src/tmux/icons.rs, which need a patched
+#                  font; this is the default
+#   ascii          7-bit, for a terminal whose font nobody controls
+#
+# If your bar is a row of boxes, you do not have a Nerd Fonts v3 patch, and
+# this is the line to change rather than the thing to put up with.
+preset = "nerd-font-v3"
+
+# Replace individual glyphs, by the constant name in src/tmux/icons.rs. These
+# are applied on top of the preset, so one missing icon is a reason to fix that
+# icon rather than to drop to a whole preset below.
+[glyphs.icons]
+# STAGED = "*"
+# ARROW_RIGHT = ""

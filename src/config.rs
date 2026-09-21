@@ -30,6 +30,51 @@ pub struct Config {
     pub network: Network,
     /// The battery segment.
     pub battery: Battery,
+    /// Which glyphs the bar draws with.
+    pub glyphs: Glyphs,
+}
+
+/// Which glyphs the bar draws with.
+///
+/// The default preset assumes a Nerd Fonts v3 patch, which most people do not
+/// have, and a bar of boxes tells a new reader nothing about whether their
+/// install worked.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct Glyphs {
+    /// Which set to start from.
+    pub preset: Preset,
+    /// Replacements for individual glyphs, by the constant name in
+    /// `src/tmux/icons.rs`, applied on top of the preset.
+    ///
+    /// One missing icon is a reason to fix that icon, not to drop to a whole
+    /// preset below.
+    pub icons: HashMap<String, String>,
+}
+
+/// A named set of glyph replacements.
+///
+/// A preset is a table of names to strings in its own file, so adding one is a
+/// data change with no Rust attached.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Preset {
+    /// The Nerd Fonts v3 codepoints in `src/tmux/icons.rs`, unchanged.
+    #[default]
+    NerdFontV3,
+    /// 7-bit, for a terminal whose font nobody controls.
+    Ascii,
+}
+
+impl Preset {
+    /// The preset's replacements, empty for the default set.
+    pub fn table(self) -> HashMap<String, String> {
+        let text = match self {
+            Preset::NerdFontV3 => return HashMap::new(),
+            Preset::Ascii => include_str!("presets/ascii.toml"),
+        };
+        toml::from_str(text).expect("a shipped preset parses")
+    }
 }
 
 /// Process-wide settings.
@@ -117,6 +162,72 @@ pub struct Battery {
 impl Default for Battery {
     fn default() -> Self {
         Self { ttl_secs: 30.0 }
+    }
+}
+
+/// The glyph substitutions to apply to a rendered segment.
+///
+/// Rendering uses the constants in `src/tmux/icons.rs` throughout, and the
+/// preset is applied once to the finished string rather than threaded through
+/// 263 call sites. That keeps one vocabulary in the code, makes the default
+/// preset free — `apply` returns the input untouched — and means a preset can
+/// only replace glyphs the default set contains, which is the limitation worth
+/// knowing about.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GlyphMap {
+    /// From default glyph to replacement, longest first so a two-character
+    /// glyph is not half-matched by a one-character one.
+    pairs: Vec<(String, String)>,
+}
+
+impl GlyphMap {
+    /// Build the map for a config: the preset, then the per-icon overrides.
+    pub fn new(glyphs: &Glyphs) -> Self {
+        let mut table = glyphs.preset.table();
+        for (name, value) in &glyphs.icons {
+            table.insert(name.clone(), value.clone());
+        }
+
+        let mut pairs: Vec<(String, String)> = table
+            .into_iter()
+            .filter_map(|(name, replacement)| {
+                crate::tmux::icons::by_name(&name).map(|glyph| (glyph.to_string(), replacement))
+            })
+            .filter(|(from, to)| from != to && !from.is_empty())
+            .collect();
+        pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.0.cmp(&b.0)));
+        Self { pairs }
+    }
+
+    /// Whether this map changes anything at all.
+    pub fn is_identity(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    /// Apply the substitutions to one rendered segment.
+    ///
+    /// One pass, matching the longest glyph at each position, so replacements
+    /// never feed into each other: an `ascii` preset mapping `STAGED` to `*`
+    /// cannot then have that `*` rewritten by a later pair.
+    pub fn apply<'a>(&self, s: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.is_identity() {
+            return std::borrow::Cow::Borrowed(s);
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        'outer: while !rest.is_empty() {
+            for (from, to) in &self.pairs {
+                if let Some(stripped) = rest.strip_prefix(from.as_str()) {
+                    out.push_str(to);
+                    rest = stripped;
+                    continue 'outer;
+                }
+            }
+            let ch = rest.chars().next().expect("non-empty");
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+        std::borrow::Cow::Owned(out)
     }
 }
 
@@ -399,6 +510,117 @@ mod tests {
         let example = include_str!("../docs/config.example.toml");
         let parsed = parse(example, std::path::Path::new("config.example.toml")).unwrap();
         assert_eq!(parsed, Config::default());
+    }
+
+    // ── glyphs ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_default_preset_changes_nothing() {
+        // The promise byte-identity rests on: with no config, the substitution
+        // pass is not just a no-op, it does not even copy the string.
+        let map = GlyphMap::new(&Glyphs::default());
+        assert!(map.is_identity());
+        let rendered = format!("#[fg=colour233]{}main", crate::tmux::icons::BRANCH);
+        assert!(matches!(
+            map.apply(&rendered),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(map.apply(&rendered), rendered);
+    }
+
+    #[test]
+    fn the_ascii_preset_replaces_glyphs() {
+        let map = GlyphMap::new(&Glyphs {
+            preset: Preset::Ascii,
+            icons: HashMap::new(),
+        });
+        assert!(!map.is_identity());
+        let rendered = format!(
+            "{}main {}2",
+            crate::tmux::icons::BRANCH,
+            crate::tmux::icons::AHEAD
+        );
+        let out = map.apply(&rendered).into_owned();
+        assert!(!out.contains(crate::tmux::icons::AHEAD), "{out}");
+        assert!(out.contains("^"), "{out}");
+    }
+
+    #[test]
+    fn an_override_beats_the_preset() {
+        let map = GlyphMap::new(&Glyphs {
+            preset: Preset::Ascii,
+            icons: HashMap::from([("AHEAD".to_string(), "UP".to_string())]),
+        });
+        let out = map.apply(crate::tmux::icons::AHEAD).into_owned();
+        assert_eq!(out, "UP");
+    }
+
+    #[test]
+    fn an_override_works_without_a_preset() {
+        let map = GlyphMap::new(&Glyphs {
+            preset: Preset::NerdFontV3,
+            icons: HashMap::from([("STAGED".to_string(), "*".to_string())]),
+        });
+        assert_eq!(map.apply(crate::tmux::icons::STAGED).into_owned(), "*");
+        // and nothing else moved
+        assert_eq!(
+            map.apply(crate::tmux::icons::AHEAD).into_owned(),
+            crate::tmux::icons::AHEAD
+        );
+    }
+
+    #[test]
+    fn a_replacement_is_not_itself_replaced() {
+        // The reason `apply` is one pass with a longest-match rather than a
+        // sequence of `str::replace` calls: `STAGED` becoming `*` must not
+        // then be rewritten by whatever else maps to or from `*`.
+        let map = GlyphMap::new(&Glyphs {
+            preset: Preset::NerdFontV3,
+            icons: HashMap::from([
+                ("STAGED".to_string(), "*".to_string()),
+                ("MODIFIED".to_string(), "~".to_string()),
+            ]),
+        });
+        let rendered = format!(
+            "{}{}",
+            crate::tmux::icons::STAGED,
+            crate::tmux::icons::MODIFIED
+        );
+        assert_eq!(map.apply(&rendered).into_owned(), "*~");
+    }
+
+    #[test]
+    fn an_unknown_icon_name_is_ignored_rather_than_fatal() {
+        // A glyph that existed in an older build and was renamed should not
+        // stop the daemon: the bar loses one substitution, not its whole self.
+        let map = GlyphMap::new(&Glyphs {
+            preset: Preset::NerdFontV3,
+            icons: HashMap::from([("NOT_A_GLYPH".to_string(), "!".to_string())]),
+        });
+        assert!(map.is_identity());
+    }
+
+    #[test]
+    fn an_unknown_preset_name_is_a_config_error() {
+        let e = parse(
+            "[glyphs]\npreset = \"powerline\"\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap_err();
+        assert!(e.message.contains("powerline"), "{}", e.message);
+    }
+
+    #[test]
+    fn the_shipped_ascii_preset_names_only_real_glyphs() {
+        // A preset is data, so nothing stops a typo in it except this.
+        let table = Preset::Ascii.table();
+        assert!(!table.is_empty());
+        for name in table.keys() {
+            assert!(
+                crate::tmux::icons::by_name(name).is_some(),
+                "ascii.toml names `{name}`, which is not a glyph"
+            );
+        }
     }
 
     #[test]

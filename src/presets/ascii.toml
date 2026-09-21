@@ -1,0 +1,40 @@
+# 7-bit fallback: what the bar looks like on a machine whose font nobody
+# controls. Every value here replaces the Nerd Font glyph of the same name.
+#
+# Widths are kept to one or two columns so the bar does not reflow, and no two
+# entries are the same, because a status bar where "staged" and "modified" draw
+# the same character is a status bar with less information than a blank one.
+
+ADDED = "+"
+AHEAD = "^"
+BEHIND = "v"
+BRANCH = ""
+BUGFIX = "bug "
+CHORE = "chore "
+CLEAN = "ok"
+COPIED = "c"
+DELETED = "-"
+FAILED = "!"
+FEATURE = "feat "
+GIT = "git "
+GONE = "gone "
+HOTFIX = "hot "
+MODIFIED = "~"
+NEW = "?"
+RELEASE = "rel "
+RENAMED = "r"
+SEPARATOR = "|"
+STAGED = "*"
+STASHED = "$"
+SYNC = "..."
+TAG = "tag "
+UNMERGED = "x"
+
+ARROW_RIGHT = ""
+ARROW_LEFT = "<"
+SLANT_IN = "["
+SLANT_OUT = "]"
+
+CAP_SLASH = " /"
+CAP_CHEVRON = " >"
+CAP_EIGHTH = " |"

@@ -99,3 +99,77 @@ pub const TAG: &str = "\u{f412} ";
 pub const UNMERGED: &str = "\u{f1a98} ";
 /// A single space, named so a format string reads as what it draws.
 pub const WHITE_SPACE: &str = " ";
+
+/// Look a glyph up by the name of its constant.
+///
+/// This is what lets a config file say `STAGED = "*"`: the name in the file is
+/// the name in this module, so there is no second list of glyph names to keep
+/// in step with this one.
+pub fn by_name(name: &str) -> Option<&'static str> {
+    match name {
+        "ADDED" => Some(ADDED),
+        "AHEAD" => Some(AHEAD),
+        "ARROW_RIGHT" => Some(ARROW_RIGHT),
+        "ARROW_LEFT" => Some(ARROW_LEFT),
+        "SLANT_IN" => Some(SLANT_IN),
+        "SLANT_OUT" => Some(SLANT_OUT),
+        "RATE_KIB" => Some(RATE_KIB),
+        "RATE_MIB" => Some(RATE_MIB),
+        "RATE_GIB" => Some(RATE_GIB),
+        "CAP_SLASH" => Some(CAP_SLASH),
+        "CAP_CHEVRON" => Some(CAP_CHEVRON),
+        "CAP_RULE" => Some(CAP_RULE),
+        "CAP_EIGHTH" => Some(CAP_EIGHTH),
+        "CAP_NONE" => Some(CAP_NONE),
+        "BEHIND" => Some(BEHIND),
+        "BRANCH" => Some(BRANCH),
+        "BUGFIX" => Some(BUGFIX),
+        "CHORE" => Some(CHORE),
+        "CLEAN" => Some(CLEAN),
+        "COPIED" => Some(COPIED),
+        "DELETED" => Some(DELETED),
+        "FAILED" => Some(FAILED),
+        "FEATURE" => Some(FEATURE),
+        "GIT" => Some(GIT),
+        "GONE" => Some(GONE),
+        "HOTFIX" => Some(HOTFIX),
+        "MODIFIED" => Some(MODIFIED),
+        "NEW" => Some(NEW),
+        "RELEASE" => Some(RELEASE),
+        "RENAMED" => Some(RENAMED),
+        "SEPARATOR" => Some(SEPARATOR),
+        "STAGED" => Some(STAGED),
+        "STASHED" => Some(STASHED),
+        "SYNC" => Some(SYNC),
+        "TAG" => Some(TAG),
+        "UNMERGED" => Some(UNMERGED),
+        "WHITE_SPACE" => Some(WHITE_SPACE),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_constant_is_reachable_by_name() {
+        // The config refers to glyphs by these names, so a constant that
+        // `by_name` does not know is a glyph nobody can override.
+        for (name, expected) in [
+            ("STAGED", STAGED),
+            ("ARROW_RIGHT", ARROW_RIGHT),
+            ("CAP_NONE", CAP_NONE),
+            ("WHITE_SPACE", WHITE_SPACE),
+            ("SEPARATOR", SEPARATOR),
+        ] {
+            assert_eq!(by_name(name), Some(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_name_is_none_rather_than_a_default() {
+        assert_eq!(by_name("STAGD"), None);
+        assert_eq!(by_name(""), None);
+    }
+}

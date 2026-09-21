@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{
-    cache::TtlMap, config::Config, segments::git::GitStatus, segments::network::NetSample,
+    cache::TtlMap,
+    config::{Config, GlyphMap},
+    segments::git::GitStatus,
+    segments::network::NetSample,
 };
 
 /// Default freshness window for a cached `git status`, overridable per request
@@ -39,6 +42,11 @@ pub struct ServerState {
     /// repeated reads of config files, so reading one per render would be a
     /// poor joke. `tmux-companion reload` is what picks up an edit.
     pub config: Config,
+    /// The glyph substitutions the config asks for, resolved once at start.
+    ///
+    /// Behind an `Arc` so the response path clones a pointer rather than a
+    /// table on every request.
+    pub glyphs: std::sync::Arc<GlyphMap>,
     /// Previous cumulative rx/tx counters, for the bandwidth delta.
     pub net_previous: Option<NetSample>,
     /// The last bandwidth string rendered, replayed when two samples arrive too
@@ -68,8 +76,10 @@ impl ServerState {
     /// Fresh state carrying a config somebody already parsed.
     pub fn with_config(config: Config) -> Self {
         let config_aliases = config.dirs.aliases.clone();
+        let glyphs = std::sync::Arc::new(GlyphMap::new(&config.glyphs));
         Self {
             config,
+            glyphs,
             net_previous: None,
             net_last_render: String::new(),
             dir_aliases: if config_aliases.is_empty() {

@@ -51,9 +51,9 @@ Every key, its default and what it does is in
 from. A test asserts that every key `config dump` produces appears there, so a
 setting can't exist without being written down.
 
-The tables today are `[general]`, `[dirs.aliases]`, `[git]`, `[network]` and
-`[battery]`. The port adds `[glyphs]`, `[status.right]`, `[[layout]]` and the
-rest as each phase reaches them, and `docs/comrades-port.md` has the table
+The tables today are `[general]`, `[dirs.aliases]`, `[git]`, `[network]`,
+`[battery]` and `[glyphs]`. The port adds `[status.right]`, `[[layout]]` and the rest as each phase
+reaches them, and `docs/comrades-port.md` has the table
 saying which phase brings which.
 
 ## tmux user options
@@ -67,3 +67,36 @@ A general mapping of the config tree onto `@` options would cost a
 `@tmux-companion-layout-window-2-command`, which is a config language built out
 of hyphens by accident. Anything nested lives in the file and the option refers
 to it by name.
+
+## Glyphs, if your bar is a row of boxes
+
+The default set is Nerd Fonts v3, whose codepoints sit in the private use area,
+so a font without that patch draws boxes and a new reader can't tell whether
+the install worked. One line fixes it:
+
+```toml
+[glyphs]
+preset = "ascii"
+```
+
+`nerd-font-v3` and `ascii` ship today. A preset is a table of names to strings
+in its own file, so adding `powerline` or `unicode` later is a data change with
+no Rust in it, which also makes a preset about the easiest first patch anybody
+could send.
+
+Individual glyphs override the preset, by the constant name in
+`src/tmux/icons.rs`:
+
+```toml
+[glyphs.icons]
+STAGED = "*"
+ARROW_RIGHT = ""
+```
+
+One icon missing from your font is a reason to replace that icon rather than to
+drop to a whole preset below it.
+
+How it works is worth knowing for one reason: the substitution is applied once
+to a finished segment rather than threaded through the 263 places a glyph is
+used, so a preset can only replace glyphs the default set already contains. It
+can't add a glyph somewhere there wasn't one.
