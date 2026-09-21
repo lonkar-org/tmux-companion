@@ -76,7 +76,9 @@ only one bind wins; the loser exits.
 
 ```
 src/
-  main.rs              clap CLI (Cmd enum), dispatch to client or server
+  main.rs              argument parsing and the runtime choice
+  lib.rs               the library the binary and tests/ both link
+  cli.rs               clap CLI (Cmd enum), dispatch to client or server
   proto.rs             Request / Response serde types
   client.rs            connect-with-retry, spawn_server, send_and_print
   server/
