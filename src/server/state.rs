@@ -4,7 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{cache::TtlMap, segments::git::GitStatus, segments::network::NetSample};
+use crate::{
+    cache::TtlMap, config::Config, segments::git::GitStatus, segments::network::NetSample,
+};
 
 /// Default freshness window for a cached `git status`, overridable per request
 /// with `--ttl`.  Five seconds: long enough that a one-second status bar is
@@ -31,6 +33,12 @@ pub const BATTERY_TTL: Duration = Duration::from_secs(30);
 /// Dies with the process, which is the intended lifetime: one cold `git
 /// status` after a restart costs 51 ms, once.
 pub struct ServerState {
+    /// The configuration this daemon started with.
+    ///
+    /// Parsed once, never re-read per request: the daemon exists partly to stop
+    /// repeated reads of config files, so reading one per render would be a
+    /// poor joke. `tmux-companion reload` is what picks up an edit.
+    pub config: Config,
     /// Previous cumulative rx/tx counters, for the bandwidth delta.
     pub net_previous: Option<NetSample>,
     /// The last bandwidth string rendered, replayed when two samples arrive too
@@ -51,12 +59,24 @@ pub struct ServerState {
 /// impossible to hold the guard across an `.await`.  See the lock-discipline
 /// invariant in `CLAUDE.md`.
 impl ServerState {
-    /// Fresh state with empty caches and the aliases loaded from disk.
+    /// Fresh state with empty caches, the defaults, and the aliases loaded from
+    /// disk.
     pub fn new() -> Self {
+        Self::with_config(Config::default())
+    }
+
+    /// Fresh state carrying a config somebody already parsed.
+    pub fn with_config(config: Config) -> Self {
+        let config_aliases = config.dirs.aliases.clone();
         Self {
+            config,
             net_previous: None,
             net_last_render: String::new(),
-            dir_aliases: load_dir_aliases(),
+            dir_aliases: if config_aliases.is_empty() {
+                load_dir_aliases()
+            } else {
+                config_aliases
+            },
             battery_cache: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
@@ -64,6 +84,21 @@ impl ServerState {
     }
 
     // ── git status ───────────────────────────────────────────────────────────
+
+    /// The configured `git status` freshness window.
+    pub fn git_ttl(&self) -> Duration {
+        secs(self.config.git.ttl_secs, DEFAULT_GST_TTL)
+    }
+
+    /// The configured is-inside-work-tree freshness window.
+    pub fn repo_check_ttl(&self) -> Duration {
+        secs(self.config.git.repo_check_ttl_secs, REPO_CHECK_TTL)
+    }
+
+    /// The configured battery freshness window.
+    pub fn battery_ttl(&self) -> Duration {
+        secs(self.config.battery.ttl_secs, BATTERY_TTL)
+    }
 
     /// A parsed status for `path`, if one was stored less than `ttl` ago.
     pub fn git_cached(&self, path: &PathBuf, ttl: Duration) -> Option<GitStatus> {
@@ -79,12 +114,13 @@ impl ServerState {
 
     /// Whether `path` is inside a work tree, if that was answered recently.
     pub fn repo_cached(&self, path: &PathBuf) -> Option<bool> {
-        self.repo_check.get(path, REPO_CHECK_TTL)
+        self.repo_check.get(path, self.repo_check_ttl())
     }
 
     /// Remember whether `path` is inside a work tree, including a no.
     pub fn repo_store(&mut self, path: PathBuf, inside: bool) {
-        self.repo_check.insert(path, inside, REPO_CHECK_TTL);
+        let ttl = self.repo_check_ttl();
+        self.repo_check.insert(path, inside, ttl);
     }
 
     // ── battery ──────────────────────────────────────────────────────────────
@@ -93,7 +129,7 @@ impl ServerState {
     pub fn battery_cached(&self) -> Option<String> {
         self.battery_cache
             .as_ref()
-            .filter(|(_, t)| t.elapsed() < BATTERY_TTL)
+            .filter(|(_, t)| t.elapsed() < self.battery_ttl())
             .map(|(s, _)| s.clone())
     }
 
@@ -109,6 +145,21 @@ impl Default for ServerState {
     }
 }
 
+/// Seconds from the config to a `Duration`, falling back when the number is
+/// one `Duration::from_secs_f64` would panic on.
+fn secs(value: f64, fallback: Duration) -> Duration {
+    if value.is_finite() && value >= 0.0 {
+        Duration::from_secs_f64(value)
+    } else {
+        fallback
+    }
+}
+
+/// The pre-config alias file, read only when `[dirs.aliases]` is empty.
+///
+/// `~/.yrl/lib/dir-aliases` is a path on one laptop, and it stays supported so
+/// that upgrading does not silently drop somebody's labels, but the config
+/// table is where these belong now.
 fn load_dir_aliases() -> HashMap<PathBuf, String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let path = PathBuf::from(home).join(".yrl/lib/dir-aliases");

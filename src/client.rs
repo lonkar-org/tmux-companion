@@ -75,7 +75,28 @@ async fn connect_with_retry() -> anyhow::Result<tokio::net::UnixStream> {
             }
         }
     }
-    anyhow::bail!("server failed to start after retries")
+    // The server could not be reached and could not be started. The commonest
+    // reason by far is a config file it refused to start on, and that error is
+    // the only thing here worth putting in front of somebody.
+    match last_config_error() {
+        Some(e) => anyhow::bail!("config: {e}"),
+        None => anyhow::bail!("server failed to start after retries"),
+    }
+}
+
+/// The first line of the error the daemon last refused to start on.
+///
+/// One line, because the caller's stdout is a status bar with about 150
+/// columns in it and a parse error does not fit. The whole thing is what
+/// `tmux-companion config check` prints.
+fn last_config_error() -> Option<String> {
+    let path = crate::server::state_dir()?.join("last-error");
+    let text = std::fs::read_to_string(path).ok()?;
+    let first = text.lines().next()?.trim().to_string();
+    if first.is_empty() {
+        return None;
+    }
+    Some(format!("{first} — run tmux-companion config check"))
 }
 
 fn spawn_server() -> anyhow::Result<()> {

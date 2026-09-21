@@ -39,7 +39,19 @@ pub async fn run() -> anyhow::Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    let state = Arc::new(Mutex::new(ServerState::new()));
+    // Parsed once, here, so a broken config stops the daemon starting rather
+    // than being discovered segment by segment. The error goes to stderr and to
+    // the state file, which is where a client looks when its own start attempt
+    // produced no server.
+    let config = match crate::config::load() {
+        Ok((c, _)) => c,
+        Err(e) => {
+            record_config_error(&e);
+            return Err(anyhow::anyhow!("{e}"));
+        }
+    };
+
+    let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 
     // Pre-warm battery cache so the first tmux refresh doesn't hit the ~600ms
     // cold-start cost of IOKit initialization in the battery crate.
@@ -78,4 +90,27 @@ async fn handle_connection(
         writer.write_all(out.as_bytes()).await?;
     }
     Ok(())
+}
+
+/// Write a config error where a client can find it.
+///
+/// A daemon that refuses to start says why on stderr, and nobody sees stderr:
+/// the client that spawned it redirects all three streams to /dev/null so a
+/// status bar is not corrupted by a stray line. The file is the copy somebody
+/// can actually read, and `tmux-companion config check` prints it in full.
+fn record_config_error(e: &crate::config::ConfigError) {
+    eprintln!("tmux-companion: {e}");
+    let Some(dir) = state_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join("last-error"), format!("{e}\n"));
+}
+
+/// `$XDG_STATE_HOME/tmux-companion`, or `~/.local/state/tmux-companion`.
+pub fn state_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
+        })
+        .map(|d| d.join("tmux-companion"))
 }

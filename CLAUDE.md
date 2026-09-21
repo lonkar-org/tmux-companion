@@ -67,6 +67,7 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/tmux/format.rs` | `Segment`, `colored_segment`, `powerline_segment`, color consts |
 | `src/tmux/icons.rs` | Nerd Font codepoints |
 | `src/proto.rs` | `Request` / `Response` serde types, and one args struct per command |
+| `src/config.rs` | the TOML config: search order, parse, did-you-mean errors, `dump` |
 
 ## Key invariants
 

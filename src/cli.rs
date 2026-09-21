@@ -136,6 +136,28 @@ pub enum Cmd {
     /// Bare client round trip with no server work, for benchmarking.
     #[command(hide = true)]
     Noop,
+
+    /// Inspect the configuration file
+    Config {
+        /// What to do with it
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+/// The three questions anybody asks about a config file.
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "kebab-case")]
+pub enum ConfigAction {
+    /// Print which file is being read, and nothing else
+    Path,
+    /// Parse the file and report what is wrong with it
+    Check {
+        /// Check this file instead of searching the usual places
+        path: Option<PathBuf>,
+    },
+    /// Print every setting with its default, as a config file
+    Dump,
 }
 
 /// Run one subcommand: start the server, or send one request and print it.
@@ -241,6 +263,10 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Noop => {
             crate::client::send_and_print(Request::build("noop", &())).await?;
         }
+        // Answered in this process rather than by the daemon: the daemon holds
+        // the config it started with, and the question here is what a *fresh*
+        // read of the file says, which is what somebody debugging one wants.
+        Cmd::Config { action } => run_config(action)?,
     }
 
     Ok(())
@@ -254,4 +280,35 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
 /// process that saw the flag.
 fn parse_style(s: &str) -> crate::tmux::format::Style {
     crate::tmux::format::Style::parse(s).unwrap_or_default()
+}
+
+/// `config path`, `config check` and `config dump`.
+fn run_config(action: ConfigAction) -> anyhow::Result<()> {
+    use crate::config;
+
+    match action {
+        ConfigAction::Path => {
+            let (_, source) = config::load().unwrap_or_else(|e| {
+                // Even a broken file is the file being read, which is the
+                // question that was asked.
+                (config::Config::default(), config::Source::File(e.path))
+            });
+            println!("{source}");
+        }
+        ConfigAction::Check { path } => {
+            let result = match &path {
+                Some(p) => config::load_from(p),
+                None => config::load(),
+            };
+            match result {
+                Ok((_, source)) => println!("{source}: ok"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        ConfigAction::Dump => print!("{}", config::dump_defaults()),
+    }
+    Ok(())
 }

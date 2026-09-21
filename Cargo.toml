@@ -24,6 +24,7 @@ anyhow      = "1.0"
 regex       = "1.11"
 sysinfo     = "0.39"
 battery     = "0.7"
+toml = "1.1"
 
 [dev-dependencies]
 tempfile = "3.12"

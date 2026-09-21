@@ -1,0 +1,65 @@
+# tmux-companion configuration.
+#
+# You do not need this file. Every setting below is already the default, and a
+# machine with no config file behaves exactly as the binary did before the file
+# existed — which is a test, not a promise.
+#
+# Where it goes, first one found wins:
+#
+#   1. --config <path>
+#   2. $TMUX_COMPANION_CONFIG
+#   3. $XDG_CONFIG_HOME/tmux-companion/config.toml
+#      (~/.config/tmux-companion/config.toml when XDG_CONFIG_HOME is unset)
+#   4. ~/tmux-companion.toml
+#
+#   tmux-companion config path     which file is being read
+#   tmux-companion config check    parse it and say what is wrong
+#   tmux-companion config dump     every setting with its default
+#
+# A key the parser does not recognise is an error naming the key, the line and
+# the key you probably meant. A silently ignored setting is worse: it costs an
+# evening wondering why nothing changed.
+
+[general]
+# A file the daemon appends diagnostics to. Unset means no log.
+#
+# Worth setting while debugging a picker: inside `display-popup -E`, stderr
+# goes wherever the popup went, which is nowhere.
+# log = "~/.local/state/tmux-companion/log"
+
+# Path-to-label overrides for the window segment, replacing the abbreviated
+# path with a name of your choosing.
+#
+# This replaces ~/.yrl/lib/dir-aliases, which was a path on one laptop. That
+# file is still read when this table is empty, so upgrading drops nothing.
+[dirs.aliases]
+# "/Users/you/work/some-very-long-project" = "proj"
+
+[git]
+# How long a parsed `git status` stays fresh, in seconds. 0 disables the cache,
+# which costs a fork on every refresh. At the default, a one-second status bar
+# is served from memory four times out of five.
+ttl_secs = 5.0
+
+# How long "this path is inside a work tree" is trusted, in seconds.
+#
+# A directory's repo-ness effectively never changes, so this could be forever,
+# except that `git init` in a directory already on the bar would then stay
+# invisible until the daemon restarts.
+repo_check_ttl_secs = 300.0
+
+# Middle-ellipsize a branch name longer than this many characters.
+branch_max_len = 20
+
+# How many characters of the branch name's tail survive the ellipsis.
+branch_tail_len = 10
+
+[network]
+# Below this many bytes per second the bandwidth segment draws nothing. The
+# default is 20 KiB/s: a bar that reacts to every background poll is noise.
+threshold_bps = 20480
+
+[battery]
+# How long a battery reading stays fresh, in seconds. Reading it is expensive
+# and the number does not move fast enough to matter.
+ttl_secs = 30.0

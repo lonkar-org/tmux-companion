@@ -14,6 +14,8 @@ pub mod cache;
 pub mod cli;
 /// Talking to the server over the socket.
 pub mod client;
+/// The configuration file.
+pub mod config;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// The JSON request and response, and one args struct per command.
