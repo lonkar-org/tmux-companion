@@ -7,7 +7,9 @@ becomes the one binary the config talks to.
 
 The port is phase 1. Phase 0 is the crate it lands on, because a foundation
 that holds 2,671 lines isn't automatically one that holds twice that with a
-TUI on top.
+TUI on top. Running alongside both is a documentation track, one step per
+phase, which is what turns a personal tool into one somebody else can send a
+patch to.
 
 ## Phase 0: the ground the port lands on
 
@@ -134,6 +136,119 @@ Steps 3 and 4 are the ones with real work in them. The rest is an afternoon, and
 all of it's cheaper now than after twelve subcommands have copied the current
 shape.
 
+## The documentation track
+
+Phase 0 fixes the crate. This fixes the thing around the crate, and it runs as
+one step per phase rather than as a block at the end, because documentation
+written at the end is written from memory and reads like it.
+
+The shape is [Diátaxis](https://diataxis.fr): four kinds of document, each
+answering a different question, each failing when it tries to answer two.
+Tutorials teach a beginner by having them do something that works. How-to
+guides solve one problem for somebody who already knows what they want.
+Reference describes the machinery and nothing else. Explanation is the
+discussion that doesn't fit in any of the other three, which here is most of
+`DESIGN.md` and all of `BENCHMARKS.md`.
+
+### Where the current docs sit
+
+| File | Diátaxis mode | State |
+| --- | --- | --- |
+| `README.md` | all four at once | screenshots, a pitch, a quick start, a tmux.conf how-to, `gst` reference and server-lifecycle explanation in 155 lines |
+| `DESIGN.md` | explanation, with reference inside it | strong; the module map and the protocol are reference wearing an explanation's clothes |
+| `BENCHMARKS.md` | explanation | strong, and the best writing in the repo |
+| `CLAUDE.md` | how-to | two good guides, in a file humans don't open |
+| `docs/tmux.conf.example` | reference | good, and the only thing already in the right mode |
+
+The tutorial quadrant is empty. Nothing takes a stranger from a clone to a
+status bar they can see, which is the one document that decides whether anybody
+else ever runs this.
+
+The reference quadrant is scattered. Ten subcommands carry roughly thirty flags
+and no page lists them; the JSON wire format is described in prose in
+`DESIGN.md` and defined in `proto.rs`; the two environment variables that exist,
+`TMUX_COMPANION_SOCK` and `HOME`, are documented nowhere.
+
+### Requirements, which are currently wrong
+
+`README.md` line 140 says "Requires Rust 1.82+ (edition 2024)". Edition 2024
+needs 1.85, so the stated minimum can't build the crate. `Cargo.toml` has no
+`rust-version` field, so nothing checks it either, and cargo reports a type
+error in the edition rather than a clear message about the toolchain.
+
+`Cargo.toml` is also missing `description`, `license`, `repository`, `readme`,
+`keywords` and `categories`, which is the whole of the crates.io metadata and
+the reason the crate can't be published as it stands.
+
+Nothing states a minimum tmux version. That's survivable today and isn't after
+the port, because `display-popup -E` is tmux 3.2 and every picker depends on it.
+The nerd-font requirement is stated but not named, so a reader can't tell which
+font or which version supplies the glyphs.
+
+### Target tree
+
+```
+README.md            front door: what it is, the screenshots, one link per mode
+CONTRIBUTING.md      how to build, test, lint and open a pull request
+CHANGELOG.md         keep-a-changelog, one entry per phase
+LICENSE
+docs/
+  tutorial/
+    getting-started.md      clone to a visible status bar, no prior knowledge
+  how-to/
+    integrate-tmux-conf.md
+    add-a-segment.md        moved out of CLAUDE.md
+    add-a-command.md        written while doing it, not before
+    change-icons.md         moved out of CLAUDE.md
+    run-the-benchmarks.md
+  reference/
+    cli.md                  every subcommand and flag
+    protocol.md             the JSON request and response
+    configuration.md        environment, tmux user options, state files
+    modules.md              the module map, moved out of DESIGN.md
+    requirements.md         Rust, tmux, fonts, platforms
+  explanation/
+    architecture.md         DESIGN.md minus the reference parts
+    performance.md          BENCHMARKS.md
+```
+
+`CLAUDE.md` stays where it is and shrinks to the invariants, which is the part
+that's genuinely for an agent rather than a person.
+
+### One step per phase
+
+The rule is that a phase isn't finished until its row is done. The work lands
+next to the code that motivated it, which is the only time anybody knows what to
+write.
+
+| Phase | Documentation step |
+| --- | --- |
+| 0 | `LICENSE`, `CONTRIBUTING.md`, the `docs/` skeleton, `reference/requirements.md` with a verified minimum, `rust-version` and the rest of the crates.io metadata in `Cargo.toml`, `README.md` cut down to a front door |
+| 1 `theme gen` | `reference/cli.md` started with the first subcommand, and the contrast arithmetic written up in `explanation/` while it's fresh |
+| 2 `keys`, `cheatsheet` | `how-to/add-a-command.md`, written from having just done it twice, and `tutorial/getting-started.md` extended to the first picker |
+| 3 `project` | `reference/configuration.md`, which is where the theme map and the project map file formats finally get written down |
+| 4 `autosave`, `toggle` | `explanation/architecture.md` updated for daemon-owned background tasks, since that's a change in what the daemon is |
+| 5 `theme`, `run` | a themes tutorial, because choosing a theme is the one thing in here a new user will want on day one |
+| 6 the rest | `reference/protocol.md` finalised, `reference/modules.md` regenerated, `CHANGELOG.md` closed for the port |
+
+### What makes it enforceable
+
+Documentation that isn't checked goes stale at the speed of the code, so three
+of these get a CI job rather than a good intention:
+
+- `cargo doc --no-deps -D warnings` with `#![warn(missing_docs)]`, so a new
+  public item can't land undocumented
+- a link checker over `docs/`, so a moved file fails the build rather than
+  rotting into a 404
+- a test that diffs `tmux-companion --help` and each subcommand's `--help`
+  against `reference/cli.md`, so the CLI reference can't drift from the CLI
+
+The rest of the gold-standard list is small and mechanical: a code of conduct, a
+pull request template naming the three commands a contributor should run before
+pushing, an issue template that asks for the tmux and binary versions, a release
+workflow that attaches built binaries to a tag, and `cargo deny` in CI once
+there's a licence to enforce.
+
 ## What already exists, and why that matters
 
 The port is cheaper than the line count suggests, because most of the hard
@@ -242,6 +357,9 @@ stays on the binding.
 4. `autosave` and `toggle`, small, and `autosave` gets structurally better
 5. `theme` and `run`, the two biggest pickers
 6. `open`, `close-project`, the probes and the tmux.conf logic
+
+Each of these carries the documentation row from the table above, and is not
+finished without it.
 
 ## What this costs
 
