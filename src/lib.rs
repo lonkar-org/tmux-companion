@@ -8,6 +8,8 @@
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
+/// Fetching repositories in the background, so ahead and behind mean something.
+pub mod autofetch;
 /// Timestamped map with a reader-supplied TTL.
 pub mod cache;
 /// The cheat sheet of hand-written bindings.

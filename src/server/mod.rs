@@ -77,7 +77,18 @@ pub async fn run() -> anyhow::Result<()> {
         tokio::spawn(crate::tasks::autosave_loop(script, interval));
     }
 
+    let autofetch = config.git.autofetch.clone();
     let state = Arc::new(Mutex::new(ServerState::with_config(config)));
+
+    // Off unless asked for: this is the only part of the tool that talks to a
+    // network, and a daemon quietly reaching a remote is not a surprise
+    // anybody should get from a status bar.
+    if autofetch.enabled {
+        tokio::spawn(crate::autofetch::autofetch_loop(
+            Arc::clone(&state),
+            autofetch,
+        ));
+    }
 
     // Pre-warm battery cache so the first tmux refresh doesn't hit the ~600ms
     // cold-start cost of IOKit initialization in the battery crate.

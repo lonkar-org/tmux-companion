@@ -784,6 +784,49 @@ pub struct Git {
     /// tree with four hundred untracked build artifacts does not want a count
     /// of them, and somebody who never pushes does not want ahead and behind.
     pub parts: Vec<GitPart>,
+    /// Fetching in the background so ahead and behind mean something.
+    #[serde(default)]
+    pub autofetch: Autofetch,
+}
+
+/// Fetching the repositories the bar has drawn, on a timer in the daemon.
+///
+/// The ahead and behind counts are wrong until somebody fetches, and a status
+/// bar reporting a stale number confidently is worse than one reporting
+/// nothing. Off by default all the same: this is the only thing in the tool
+/// that touches the network, and a daemon that quietly starts talking to a
+/// remote is not a surprise anybody should get from a status bar.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Autofetch {
+    /// Whether to fetch at all.
+    pub enabled: bool,
+    /// Seconds between passes over the repositories the bar has drawn.
+    pub interval_secs: u64,
+    /// How long one repository gets before it is given up on.
+    ///
+    /// A fetch that hangs is the failure that matters: it holds the pass open
+    /// and every repository behind it goes unfetched. The non-interactive
+    /// environment stops the usual cause, a credential or passphrase prompt on
+    /// a terminal that is not there, and this catches the rest.
+    pub timeout_secs: u64,
+    /// How long a repository stays on the list after the bar last drew it.
+    ///
+    /// Without this the daemon would fetch every repository visited since it
+    /// started, forever, which on a long-lived daemon is a slowly growing bill
+    /// paid to remotes nobody is looking at.
+    pub remember_secs: u64,
+}
+
+impl Default for Autofetch {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 600,
+            timeout_secs: 20,
+            remember_secs: 3600,
+        }
+    }
 }
 
 impl Default for Git {
@@ -794,6 +837,7 @@ impl Default for Git {
             branch_max_len: 20,
             branch_tail_len: 10,
             parts: GitPart::all(),
+            autofetch: Autofetch::default(),
         }
     }
 }

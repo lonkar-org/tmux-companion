@@ -63,6 +63,31 @@ impl<K: Eq + Hash, V: Clone> TtlMap<K, V> {
         self.insert_at(key, value, ttl, Instant::now());
     }
 
+    /// The keys written less than `ttl` ago, in no particular order.
+    ///
+    /// Reading the whole map rather than one key, which the caches do not need
+    /// and the autofetch task does: it has to walk what the bar has drawn
+    /// lately, and the TTL is what keeps that list from being every repository
+    /// visited since the daemon started.
+    pub fn fresh_keys_at(&self, ttl: Duration, now: Instant) -> Vec<K>
+    where
+        K: Clone,
+    {
+        self.entries
+            .iter()
+            .filter(|(_, (_, written))| now.duration_since(*written) < ttl)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    /// [`TtlMap::fresh_keys_at`] against the current clock.
+    pub fn fresh_keys(&self, ttl: Duration) -> Vec<K>
+    where
+        K: Clone,
+    {
+        self.fresh_keys_at(ttl, Instant::now())
+    }
+
     /// Number of stored entries, fresh or not.  Exists so the tests can prove
     /// the sweep actually evicts rather than merely hiding expired entries.
     /// How many entries are stored, expired ones included.
@@ -216,6 +241,32 @@ mod tests {
         m.insert_at(p.clone(), true, TTL, t0);
         assert_eq!(m.get_at(&p, TTL, t0 + secs(1)), Some(true));
         assert_eq!(m.get_at(&PathBuf::from("/tmp/other"), TTL, t0), None);
+    }
+
+    #[test]
+    fn fresh_keys_leaves_out_the_stale_ones() {
+        let t0 = Instant::now();
+        let mut m = TtlMap::new();
+        m.insert_at("old".to_string(), 1u32, TTL, t0);
+        m.insert_at("new".to_string(), 2u32, TTL, t0 + secs(4));
+        let mut keys = m.fresh_keys_at(TTL, t0 + secs(6));
+        keys.sort();
+        assert_eq!(keys, vec!["new".to_string()]);
+    }
+
+    #[test]
+    fn fresh_keys_uses_the_ttl_it_is_given_and_not_the_one_at_write_time() {
+        let t0 = Instant::now();
+        let mut m = TtlMap::new();
+        m.insert_at("k".to_string(), 1u32, secs(60), t0);
+        assert_eq!(m.fresh_keys_at(secs(10), t0 + secs(3)).len(), 1);
+        assert!(m.fresh_keys_at(secs(2), t0 + secs(3)).is_empty());
+    }
+
+    #[test]
+    fn fresh_keys_on_an_empty_map_is_empty() {
+        let m: TtlMap<String, u32> = TtlMap::new();
+        assert!(m.fresh_keys(TTL).is_empty());
     }
 
     #[test]

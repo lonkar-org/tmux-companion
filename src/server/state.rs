@@ -60,6 +60,13 @@ pub struct ServerState {
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
     repo_check: TtlMap<PathBuf, bool>,
+    /// Repository roots the bar has drawn, for the autofetch task.
+    ///
+    /// Separate from `repo_check`, which also holds every path that turned out
+    /// not to be a repository and is keyed by the pane's directory rather than
+    /// by the root. This one holds roots, so two panes in the same tree are one
+    /// fetch.
+    seen_repos: TtlMap<PathBuf, ()>,
     /// Key bindings, with the config mtime they were built from.
     ///
     /// Not a `TtlMap`: bindings change when the config is sourced and never
@@ -98,6 +105,7 @@ impl ServerState {
             battery_cache: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
+            seen_repos: TtlMap::new(),
             keys: None,
         }
     }
@@ -110,6 +118,22 @@ impl ServerState {
     }
 
     /// The configured is-inside-work-tree freshness window.
+    /// Note that the bar drew a repository, so the autofetch task knows about
+    /// it.
+    ///
+    /// Synchronous like every other method here: it is one map write, and the
+    /// rule that no `ServerState` method can suspend is what makes the
+    /// deadlock in the combined `status-right` handler impossible to write.
+    pub fn note_repo(&mut self, root: PathBuf, remember: Duration) {
+        self.seen_repos.insert(root, (), remember);
+    }
+
+    /// The repository roots drawn within `remember`.
+    pub fn repos_to_fetch(&self, remember: Duration) -> Vec<PathBuf> {
+        self.seen_repos.fresh_keys(remember)
+    }
+
+    /// How long "this path is inside a work tree" stays trusted.
     pub fn repo_check_ttl(&self) -> Duration {
         secs(self.config.git.repo_check_ttl_secs, REPO_CHECK_TTL)
     }

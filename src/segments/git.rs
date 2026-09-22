@@ -766,6 +766,18 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
         return Ok(String::new());
     }
 
+    // Tell the autofetch task this tree exists. Recorded here rather than
+    // behind the status cache, because a bar refreshing once a second is a
+    // cache hit almost every time and a repository nobody had to re-read is
+    // exactly the one still being looked at.
+    {
+        let mut s = state.lock().await;
+        let remember = std::time::Duration::from_secs(s.config.git.autofetch.remember_secs.max(1));
+        if s.config.git.autofetch.enabled {
+            s.note_repo(path.clone(), remember);
+        }
+    }
+
     let nvim_suspended = match opts.pane_pid {
         Some(p) => crate::segments::vim_bg::has_suspended_nvim(p)
             .await

@@ -182,6 +182,38 @@ one pid means enumerating the whole process table, which measured 16.25 ms of
 server CPU per call. Bind it to a key, or put it on the bar knowing what it
 costs.
 
+### Fetching in the background
+
+The ahead and behind counts are only as fresh as your last fetch, and a bar
+saying "up to date" because nothing has fetched in a week is worse than a bar
+saying nothing, because the first one gets believed.
+
+```toml
+[git.autofetch]
+enabled = true
+interval_secs = 600
+```
+
+It's off by default and that's deliberate rather than shy: this is the only
+part of tmux-companion that touches a network, and a daemon quietly reaching a
+remote is not a surprise anybody should get from a status bar.
+
+The fetch runs with `GIT_TERMINAL_PROMPT=0`, empty askpass helpers and
+`ssh -oBatchMode=yes`, because a prompt on a daemon doesn't fail, it waits, and
+it would wait every interval for as long as the daemon runs. `timeout_secs`
+catches whatever gets past that and kills the git behind it. Repositories are
+fetched one at a time, since the point is that the counts are right by the time
+you look and not that they're right quickly.
+
+Only repositories the bar has actually drawn get fetched, and only for
+`remember_secs` after it last drew one, so a daemon running for a month doesn't
+end up fetching everything you visited in that month. Two panes in two
+subdirectories of one tree are resolved to one root and fetched once.
+
+The plugin this comes from is
+[thepante/tmux-git-autofetch](https://github.com/thepante/tmux-git-autofetch).
+It's alive and it's worth installing if you aren't running this.
+
 ## What a new project session starts with
 
 `[[layout]]` is the windows, and `[project] layout` picks which one:

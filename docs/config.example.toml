@@ -80,6 +80,28 @@ branch_tail_len = 10
 # move escape sequences rather than glyphs.
 parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked", "deleted", "renamed", "copied", "modified", "staged", "stash"]
 
+[git.autofetch]
+# Fetch the repositories the bar has drawn, on a timer inside the daemon, so
+# the ahead and behind counts mean something. A status bar reporting a stale
+# number confidently is worse than one reporting nothing.
+#
+# Off by default, and deliberately. This is the only part of tmux-companion
+# that touches the network, and a daemon quietly reaching a remote is not a
+# surprise anybody should get from a status bar. The plugin this idea comes
+# from is thepante/tmux-git-autofetch, which is alive and worth installing if
+# you are not running this.
+enabled = false
+# Seconds between passes.
+interval_secs = 600
+# How long one repository gets before it is given up on and its git killed. A
+# fetch that hangs holds the pass open and everything behind it goes unfetched;
+# the fetch runs with every credential and passphrase prompt disabled, which
+# stops the usual cause, and this catches the rest.
+timeout_secs = 20
+# How long a repository stays on the list after the bar last drew it. Without
+# it the daemon would keep fetching everything visited since it started.
+remember_secs = 3600
+
 [network]
 # Below this many bytes per second the bandwidth segment draws nothing. The
 # default is 20 KiB/s: a bar that reacts to every background poll is noise.
