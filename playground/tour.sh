@@ -20,7 +20,7 @@ RULE=$'\033[38;5;240m'
 # this file. branch, battery, ssh, and the separator between segments.
 GLYPHS=$(printf '     \U000f062c branch    \uf240 battery    \U000f08c0 ssh    \ue0bc separator')
 
-TOTAL=15
+TOTAL=16
 n=0
 skipped=0
 
@@ -82,6 +82,33 @@ EOF
 fi
 
 # ── 1 ───────────────────────────────────────────────────────────────────────
+begin "⌨️ " "Two keyboard things, or nothing below works"
+cat <<EOF
+${BOLD}If you are running this inside tmux${OFF}
+
+Ctrl-b goes to the tmux you were already in, not to this one, so every step
+below will look broken. Either run the container in a terminal outside tmux,
+which is what the rest of this assumes, or press the prefix twice:
+
+    ${KEY}Ctrl-b Ctrl-b ?${OFF}   instead of   ${KEY}Ctrl-b ?${OFF}
+
+${BOLD}If you are on macOS${OFF}
+
+Alt-s and Alt-a are two of the bindings here, and Terminal.app and iTerm2
+send an accented character for Option rather than Meta until you tell them
+otherwise:
+
+    Terminal.app   Settings, Profiles, Keyboard, "Use Option as Meta key"
+    iTerm2         Settings, Profiles, Keys, Left Option key: Esc+
+    Ghostty        macos-option-as-alt = true
+
+You can skip that for now. The playground also binds both to the prefix:
+${KEY}prefix P${OFF} for the project picker and ${KEY}prefix A${OFF} for the toggle.
+EOF
+hint "step 1: outside tmux, and Option sending Meta on macOS"
+wait_for
+
+# ── 2 ───────────────────────────────────────────────────────────────────────
 begin "🔤" "Fonts, before anything else"
 cat <<EOF
 The status bar is drawn with Nerd Font glyphs. Fonts are rendered by the
@@ -101,10 +128,10 @@ terminal's font:
 The second is the one this was built against. Everything else in the tour
 works without the font; it just reads worse.
 EOF
-hint "step 1: can you see the glyphs above, or boxes?"
+hint "step 2: can you see the glyphs above, or boxes?"
 wait_for
 
-# ── 2 ───────────────────────────────────────────────────────────────────────
+# ── 3 ───────────────────────────────────────────────────────────────────────
 begin "📊" "What the bar is telling you"
 cat <<EOF
 Look at the bottom line, left to right:
@@ -125,10 +152,10 @@ The whole right side is ${BOLD}one${OFF} subprocess per redraw. That is the poin
 the tool: tmux spawns a shell for every ${DIM}#()${OFF} on the bar, which is 14.6 ms of
 CPU each, so five segments in five calls cost more than computing all five.
 EOF
-hint "step 2: read the status bar, bottom of the screen"
+hint "step 3: read the status bar, bottom of the screen"
 wait_for
 
-# ── 3 ───────────────────────────────────────────────────────────────────────
+# ── 4 ───────────────────────────────────────────────────────────────────────
 begin "❓" "Every binding, searchable"
 cat <<EOF
 tmux already knows every key you have bound and the note attached to it.
@@ -137,20 +164,20 @@ This reads them back and lets you type at them.
 Try searching for ${BOLD}pane${OFF}, or ${BOLD}copy${OFF}. Escape closes it.
 EOF
 keys "prefix  ?"
-hint "step 3: press prefix then ? to search every key binding"
+hint "step 4: press prefix then ? to search every key binding"
 wait_for
 
-# ── 4 ───────────────────────────────────────────────────────────────────────
+# ── 5 ───────────────────────────────────────────────────────────────────────
 begin "🃏" "The cheat sheet"
 cat <<EOF
 The same bindings, grouped into four boxes and sorted by how often you have
 actually pressed them. The order changes as you use it.
 EOF
 keys "prefix  Ctrl-c"
-hint "step 4: prefix then Ctrl-c for the cheat sheet"
+hint "step 5: prefix then Ctrl-c for the cheat sheet"
 wait_for
 
-# ── 5 ───────────────────────────────────────────────────────────────────────
+# ── 6 ───────────────────────────────────────────────────────────────────────
 begin "🚀" "One session per project"
 cat <<EOF
 The project picker lists live sessions first, then every directory zoxide
@@ -162,11 +189,11 @@ There are five projects in ~/projects. ${BOLD}Open sparrow-cli.${OFF}
 It opens with two windows because ~/.config/tmux-companion/config.toml says
 so: an editor, and a window split into a log graph and a status.
 EOF
-keys "Alt-s        then type: sparrow"
-hint "step 5: Alt-s, then open the sparrow-cli project"
+keys "Alt-s        then type: sparrow        (or prefix P)"
+hint "step 6: Alt-s, then open the sparrow-cli project"
 wait_for 'tmux has-session -t sparrow-cli' "there is no sparrow-cli session yet"
 
-# ── 6 ───────────────────────────────────────────────────────────────────────
+# ── 7 ───────────────────────────────────────────────────────────────────────
 begin "🔁" "Switching between them"
 cat <<EOF
 Press it again. sparrow-cli and playground are both live now, so they are at
@@ -174,11 +201,11 @@ the top of the list, with their directories underneath.
 
 This is the whole navigation model: one key, one list, no window manager.
 EOF
-keys "Alt-s        then pick playground"
-hint "step 6: Alt-s again, switch back to playground"
+keys "Alt-s        then pick playground     (or prefix P)"
+hint "step 7: Alt-s again, switch back to playground"
 wait_for
 
-# ── 7 ───────────────────────────────────────────────────────────────────────
+# ── 8 ───────────────────────────────────────────────────────────────────────
 begin "🪟" "A new window, here or anywhere"
 before=$(windows_now)
 cat <<EOF
@@ -191,10 +218,10 @@ Open one in ${BOLD}~/projects/lantern-docs${OFF} and watch the git segment chang
 repo has a detached HEAD, so the bar names the commit rather than a branch.
 EOF
 keys "prefix  c      then type: lantern"
-hint "step 7: prefix then c, open a window in lantern-docs"
+hint "step 8: prefix then c, open a window in lantern-docs"
 wait_for "[ \"\$(windows_now)\" -gt $before ]" "no new window yet"
 
-# ── 8 ───────────────────────────────────────────────────────────────────────
+# ── 9 ───────────────────────────────────────────────────────────────────────
 begin "⚡" "Run something beside what you are doing"
 cat <<EOF
 A command from your shell history, in a pane that slides in next to the one
@@ -203,10 +230,10 @@ you are in, and asks before it closes so you can read what it said.
 The history in here has ten commands in it. Try ${BOLD}git log${OFF}.
 EOF
 keys "prefix  e"
-hint "step 8: prefix then e, run something from history"
+hint "step 9: prefix then e, run something from history"
 wait_for
 
-# ── 9 ───────────────────────────────────────────────────────────────────────
+# ── 10 ──────────────────────────────────────────────────────────────────────
 begin "🎨" "A colour per project"
 cat <<EOF
 Six themes ship, each with a lighter and a darker sibling that
@@ -220,10 +247,10 @@ property of the session, not of the server, which is what lets one project
 be blue while another is green.
 EOF
 keys "prefix  Ctrl-t      in playground, then again in sparrow-cli"
-hint "step 9: prefix then Ctrl-t, pick a theme in each session"
+hint "step 10: prefix then Ctrl-t, pick a theme in each session"
 wait_for
 
-# ── 10 ──────────────────────────────────────────────────────────────────────
+# ── 11 ──────────────────────────────────────────────────────────────────────
 begin "🧰" "Toggle the tools away"
 cat <<EOF
 One key to go to the tool window this session keeps, and the same key to go
@@ -232,11 +259,11 @@ machine mine holds an agent.
 
 Try it in sparrow-cli, which has both windows.
 EOF
-keys "Alt-a"
-hint "step 10: Alt-a to toggle the tool window, Alt-a to come back"
+keys "Alt-a                                 (or prefix A)"
+hint "step 11: Alt-a to toggle the tool window, Alt-a to come back"
 wait_for
 
-# ── 11 ──────────────────────────────────────────────────────────────────────
+# ── 12 ──────────────────────────────────────────────────────────────────────
 begin "📐" "The layout a project comes back with"
 cat <<EOF
 Arrange sparrow-cli however you like: split a pane, open a window, move
@@ -250,10 +277,10 @@ on, config or no config.
 Closing captures before anything is asked to quit, so a clean exit and a
 save are the same keystroke.
 EOF
-hint "step 11: rearrange sparrow-cli, prefix S to save, prefix X to close, Alt-s to reopen"
+hint "step 12: rearrange sparrow-cli, prefix S to save, prefix X to close, Alt-s to reopen"
 wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/projects/*.toml' "nothing saved yet: prefix S in the sparrow-cli session"
 
-# ── 12 ──────────────────────────────────────────────────────────────────────
+# ── 13 ──────────────────────────────────────────────────────────────────────
 begin "🔍" "Copy mode, and jumping by prompt"
 cat <<EOF
 tmux has had next-prompt and previous-prompt since 3.3 and they do nothing
@@ -269,10 +296,10 @@ Run a few commands first so there is something to jump between, then:
     ${KEY}v${OFF} then ${KEY}y${OFF}       select, and yank to the system clipboard
     ${KEY}q${OFF}              out
 EOF
-hint "step 12: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
+hint "step 13: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
 wait_for
 
-# ── 13 ──────────────────────────────────────────────────────────────────────
+# ── 14 ──────────────────────────────────────────────────────────────────────
 begin "🔗" "Open what is under the cursor"
 cat <<EOF
 In the playground session:
@@ -286,10 +313,10 @@ A file opens in the editor at that line. A URL opens in a browser, which
 this container does not have, so it will tell you so rather than pretending.
 EOF
 keys "prefix  [      select the path      o"
-hint "step 13: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
+hint "step 14: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
 wait_for
 
-# ── 14 ──────────────────────────────────────────────────────────────────────
+# ── 15 ──────────────────────────────────────────────────────────────────────
 begin "🌳" "Five repositories, five different bars"
 cat <<EOF
 Each project is in a different state on purpose. Walk through them in the
@@ -305,10 +332,10 @@ playground session and watch only the git segment:
 A git status costs about 51 ms cold. It is cached for five seconds, per
 directory, which is why walking through these is instant the second time.
 EOF
-hint "step 14: cd through the five projects, watch the git segment"
+hint "step 15: cd through the five projects, watch the git segment"
 wait_for
 
-# ── 15 ──────────────────────────────────────────────────────────────────────
+# ── 16 ──────────────────────────────────────────────────────────────────────
 begin "🏁" "That is the tour"
 cat <<EOF
 ${OK}Done.${OFF}$( [ "$skipped" -gt 0 ] && printf ' %s(%d skipped)%s' "$DIM" "$skipped" "$OFF" )

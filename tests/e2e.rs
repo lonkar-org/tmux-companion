@@ -574,3 +574,53 @@ fn a_session_created_before_any_theme_exists_says_nothing() {
         "creating a session complained about a missing theme: {messages}"
     );
 }
+
+/// The left side has to be set, not appended to.
+///
+/// `docs/tmux.conf.full.example` only ever ran `set -ga status-left`, so it
+/// appended to tmux's default `[#S] ` under the default status-left-length of
+/// 10. The session name came out cut in half as `[playgroun`, and everything
+/// appended after it -- the clock, the clients segment -- was past the limit
+/// and never drawn at all.
+#[test]
+fn the_left_side_shows_a_whole_session_name_and_what_follows_it() {
+    let Some(t) = Tmux::start("leftside") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("leftside", &dir);
+
+    let left = t.tmux(&["show", "-gv", "status-left"]);
+    assert!(
+        !left.starts_with("[#S]"),
+        "the left side is still tmux's default with things appended: {left:?}"
+    );
+    assert!(
+        left.contains("#S"),
+        "the left side does not show the session name: {left:?}"
+    );
+
+    let length: usize = t
+        .tmux(&["show", "-gv", "status-left-length"])
+        .parse()
+        .unwrap_or(0);
+    assert!(
+        length >= left.len().min(40),
+        "status-left-length is {length}, which truncates what the config draws"
+    );
+
+    // Long enough to be cut by the default of 10, so the test fails on the
+    // actual symptom rather than on the setting behind it.
+    t.tmux(&["rename-session", "-t", "leftside", "a-long-session-name"]);
+    let rendered = t.tmux(&[
+        "display-message",
+        "-t",
+        "a-long-session-name",
+        "-p",
+        "#{T:status-left}",
+    ]);
+    assert!(
+        rendered.contains("a-long-session-name"),
+        "the session name is truncated on the bar: {rendered:?}"
+    );
+}

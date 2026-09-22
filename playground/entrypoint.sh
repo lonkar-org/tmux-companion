@@ -23,6 +23,24 @@ fi
 
 CONF="$HOME/.config/tmux/tmux.conf"
 
+# Running this inside tmux means every prefix key is caught by the outer
+# server before the playground ever sees it, and the tour reads as broken
+# rather than as nested. Say so once, up front, rather than letting somebody
+# work it out from keys that do nothing.
+if [ -n "${TMUX:-}" ]; then
+  cat <<'NESTED'
+
+  You are already inside tmux, so Ctrl-b goes to that server, not to this one.
+
+  Either run this in a terminal outside tmux, which is what the tour assumes,
+  or press the prefix twice to reach the playground: Ctrl-b Ctrl-b ? instead
+  of Ctrl-b ?.
+
+NESTED
+  printf '  Press Enter to carry on nested, or Ctrl-c to come back outside. '
+  read -r _ || true
+fi
+
 # The tour first and detached, so it is already waiting on step one by the
 # time anyone goes looking for it.
 tmux -f "$CONF" new-session -d -s instructions -n tour -c "$HOME" \

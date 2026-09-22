@@ -52,12 +52,15 @@ pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
 
 /// Assemble the right-hand side from a configured segment list.
 ///
-/// A separator is drawn whether or not the segment after it rendered anything,
-/// which is what the tmux.conf literals did: they sat in the format string
-/// unconditionally, so a non-repo pane on a quiet network still drew the wedge
-/// in front of an absent battery. Dropping the separator with its segment
-/// would be a tidier bar and a different one, and the pinned tests exist to
-/// catch exactly that kind of silent improvement.
+/// A separator belongs to the segment after it and is drawn only when that
+/// segment rendered something. The tmux.conf literals this replaced sat in the
+/// format string unconditionally, so a machine with no battery -- a desktop, a
+/// container -- ended every redraw with a powerline wedge pointing at nothing
+/// and a grey block behind it, which reads as a rendering fault rather than as
+/// an absent segment.
+///
+/// The pinned tests below still assert the exact bytes for the case that
+/// matters, which is every segment present.
 pub fn assemble_right_with(
     right: &crate::config::StatusRight,
     gst: &str,
@@ -73,6 +76,9 @@ pub fn assemble_right_with(
             SegmentName::Net => net,
             SegmentName::Battery => battery,
         };
+        if rendered.is_empty() {
+            continue;
+        }
         out.push_str(&crate::config::expand_glyphs(&segment.separator_before));
         out.push_str(rendered);
     }
@@ -428,6 +434,29 @@ mod tests {
     }
 
     #[test]
+    fn a_segment_that_rendered_nothing_takes_its_separator_with_it() {
+        // A container and a desktop both have no battery, and the wedge in
+        // front of it was drawn anyway: a powerline separator pointing at
+        // nothing, with a grey block behind it, at the right-hand edge of
+        // every redraw.
+        let out = assemble_right("<G>", "<N>", "");
+        assert!(
+            !out.contains(ARROW_RIGHT),
+            "wedge drawn in front of an absent battery: {out:?}"
+        );
+        assert_eq!(out, "<G><N> ");
+
+        // Present, and it is drawn exactly as before.
+        let out = assemble_right("<G>", "<N>", "<B>");
+        assert_eq!(out, format!("<G><N>{}<B> ", sep()));
+    }
+
+    #[test]
+    fn an_empty_bar_is_a_space_rather_than_a_row_of_separators() {
+        assert_eq!(assemble_right("", "", ""), " ");
+    }
+
+    #[test]
     fn separator_sits_between_net_and_battery_only() {
         let out = assemble_right("<G>", "<N>", "<B>");
         let separator = sep();
@@ -438,15 +467,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_segments_still_produce_the_literals() {
+    fn a_segment_that_rendered_keeps_its_separator_whatever_is_missing() {
         // A non-repo pane on a quiet network: gst and net are both empty, and
-        // the battery segment must still be separated and spaced correctly.
+        // the battery is there and still separated and spaced correctly. The
+        // separator belongs to the segment after it, not to the one before.
         assert_eq!(assemble_right("", "", "BAT"), format!("{}BAT ", sep()));
-    }
-
-    #[test]
-    fn all_empty_is_just_the_literals() {
-        assert_eq!(assemble_right("", "", ""), format!("{} ", sep()));
     }
 
     #[test]

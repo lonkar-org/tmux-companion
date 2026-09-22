@@ -19,6 +19,32 @@ scripts/playground.sh shell      # a shell in the image, no tour
 scripts/playground.sh smoke      # check the image is what the tour claims
 ```
 
+## Run it outside tmux
+
+If you start the container from inside a tmux session, `Ctrl-b` goes to that
+server and the playground never sees it, so every binding in the tour looks
+broken. Use a terminal that is not already in tmux.
+
+Nested anyway, press the prefix twice: `Ctrl-b Ctrl-b ?` reaches the inner
+tmux. The entrypoint says so and waits before attaching when it sees `$TMUX`.
+
+## Option as Meta, on macOS
+
+Two of the bindings are `Alt-s` and `Alt-a`. Terminal.app and iTerm2 send an
+accented character for Option until they are told otherwise:
+
+| | |
+| --- | --- |
+| Terminal.app | Settings, Profiles, Keyboard, "Use Option as Meta key" |
+| iTerm2 | Settings, Profiles, Keys, Left Option key: `Esc+` |
+| Ghostty | `macos-option-as-alt = true` |
+| Alacritty, kitty, WezTerm | already send it |
+
+The playground binds the same two to the prefix as well, so `prefix P` opens
+the project picker and `prefix A` toggles, and nothing has to be configured
+before the tour works. Those two are playground scaffolding; the shipped
+config uses the Alt keys.
+
 ## What you land in
 
 Two tmux sessions. You start in `playground`, a shell in
@@ -29,7 +55,7 @@ prefix then i     the tour            (prefix is Ctrl-b)
 Alt-s             the project picker
 ```
 
-The tour is fifteen steps. Each one says what to press, sets the step on a
+The tour is sixteen steps. Each one says what to press, sets the step on a
 second status line so it is still in front of you after you have switched
 sessions, and waits for Enter. Some steps check that the thing actually
 happened and say so when it did not; `s` skips one and `q` leaves the tour for

@@ -51,10 +51,35 @@ set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
 set -ga status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 set -g  status-right-length 150
 
+# ── The left side ───────────────────────────────────────────────────────────
+#
+# This has to be `set`, not `set -ga`. Appending to a status-left nobody set
+# appends to tmux's default, which is `[#S] ` under a status-left-length of
+# 10, so the session name comes out cut in half as `[playgroun` and everything
+# appended after it is past the limit and never drawn at all.
+#
+# No subprocess here: the session name is tmux's own, and the colours are the
+# options `theme apply` writes, so picking a theme repaints this block without
+# anything having to run.
+set -g  status-left "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
+
+# The hostname, only when this server was started over ssh, because on a local
+# machine it is a word you already know.
+if-shell '[ -n "$SSH_CONNECTION" ]' \
+  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
+
+set -ga status-left "#[fg=color240,bg=color233] %H:%M:%S"
+# A gap, so the window list does not start against the clock.
+set -ga status-left "#[fg=color235,bg=color233] "
+
 # ── Other clients attached ──────────────────────────────────────────────────
 #
 # A third #() call. Cheap to compute at 4.93 ms and it still costs a spawn.
 set -ga status-left "#(tmux-companion clients #{session_attached} #{window_active_clients})"
+
+# Long enough for the session name, an ssh hostname and the clock. The default
+# is 10, which is shorter than most session names on their own.
+set -g  status-left-length 80
 
 # ── Windows drawn by the companion ──────────────────────────────────────────
 #
