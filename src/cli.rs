@@ -943,23 +943,27 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let items: Vec<crate::picker::Item> = rows
-        .iter()
-        .map(|r| {
-            let mark = match r.kind {
-                Kind::Session => "session",
-                Kind::Directory => "dir    ",
-            };
+    let mut items: Vec<crate::picker::Item> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let mark = match r.kind {
+            Kind::Session => "session",
+            Kind::Directory => "dir    ",
+        };
+        items.push(
             crate::picker::Item::with_preview(
                 format!(
                     "{mark}  {:<24} {}",
                     r.label,
                     crate::project::short_path(&r.path, &home)
                 ),
-                r.path.clone(),
+                project_preview(r).await,
             )
-        })
-        .collect();
+            // The project's own theme colour, so the list reads the way the
+            // status bar does. A project with no colour in the map stays the
+            // default rather than being given one.
+            .in_colour(r.colour.clone()),
+        );
+    }
 
     let chrome = crate::picker::Chrome {
         title: "[ Project ]".into(),
@@ -1070,6 +1074,38 @@ pub enum ProjectAction {
     Show,
 }
 
+/// What the project picker shows beside a row.
+///
+/// A session with an `ai` window shows that window's screen, so the picker
+/// answers "what is the agent doing over there" without switching to it. That
+/// was the whole point of the preview in the script this replaced, and it is
+/// the reason the preview is worth having at all. Anything else falls back to
+/// a directory listing, which is all there is to say about a project that is
+/// not open yet.
+async fn project_preview(row: &crate::project::Row) -> String {
+    use crate::project::Kind;
+    if row.kind == Kind::Session {
+        let target = format!("={}", row.label);
+        let windows = tmux_capture(&["list-windows", "-t", &target, "-F", "#{window_name}"]).await;
+        if windows.lines().any(|w| w.trim() == "ai") {
+            // -e keeps the colours the agent drew.
+            let screen = tmux_capture(&[
+                "capture-pane",
+                "-p",
+                "-e",
+                "-t",
+                &format!("={}:ai", row.label),
+            ])
+            .await;
+            let tail = crate::project::tail_of_screen(&screen, 40);
+            if !tail.is_empty() {
+                return tail;
+            }
+        }
+    }
+    crate::project::listing_of(std::path::Path::new(&row.path), 40)
+}
+
 /// `new-window`: pick a directory, open a window there.
 ///
 /// The tmux default for prefix+c opens a window in the pane's directory and
@@ -1107,7 +1143,7 @@ async fn run_new_window() -> anyhow::Result<()> {
     let prefill = crate::project::short_path(&pane_dir, &home);
     let chrome = crate::picker::Chrome {
         title: "[ New window at ]".into(),
-        footer: "enter opens a window   ctrl-u clears the query   type a path zoxide has not seen   esc cancels".into(),
+        footer: "enter opens a window   ctrl-u clears it   type a path zoxide has not seen   esc cancels".into(),
         preview_title: "[ Directory ]".into(),
     };
 
@@ -1613,6 +1649,42 @@ async fn dialog(code: i32, _config: &crate::config::Config) -> crate::run::Choic
     }
 }
 
+/// Take the terminal back before reading from it.
+///
+/// The command ran under an interactive shell, and an interactive shell does
+/// job control: it puts the command in its own process group, hands that group
+/// the terminal with `tcsetpgrp`, and does not hand it back when the command
+/// exits. This process is then in a background process group, where touching
+/// the terminal's attributes is an error rather than a wait, so
+/// `enable_raw_mode` fails with `EIO`, `read_choice` returns `None`, the
+/// default is taken and the pane closes about a second after it opened.
+///
+/// It only showed up for commands that fork. A shell builtin never gets a
+/// process group of its own, so the terminal never moves and the dialog waits
+/// the way it is supposed to, which is why `echo` behaved and `seq` did not.
+///
+/// `SIGTTOU` is ignored across the call because `tcsetpgrp` from a background
+/// group raises it, and the default action is to stop this process: the pane
+/// would hang instead of closing, which is a worse bug than the one being
+/// fixed.
+fn reclaim_terminal() {
+    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    use nix::unistd::{getpgrp, tcsetpgrp};
+
+    let Ok(tty) = std::fs::File::open("/dev/tty") else {
+        return;
+    };
+    let ignore = SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty());
+    // Safety: installing a handler for one signal around one call, and the
+    // previous action is put back before returning.
+    let previous = unsafe { sigaction(Signal::SIGTTOU, &ignore) };
+    let _ = tcsetpgrp(&tty, getpgrp());
+    if let Ok(previous) = previous {
+        // Safety: restoring exactly what was there a moment ago.
+        let _ = unsafe { sigaction(Signal::SIGTTOU, &previous) };
+    }
+}
+
 /// One keypress, mapped to a choice. `None` means Enter or anything else,
 /// which takes the default.
 fn read_choice() -> Option<crate::run::Choice> {
@@ -1622,6 +1694,7 @@ fn read_choice() -> Option<crate::run::Choice> {
         terminal::{disable_raw_mode, enable_raw_mode},
     };
 
+    reclaim_terminal();
     if enable_raw_mode().is_err() {
         return None;
     }

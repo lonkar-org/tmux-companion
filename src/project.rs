@@ -1157,3 +1157,96 @@ mod window_tests {
         );
     }
 }
+
+// ── what the picker shows beside a row ───────────────────────────────────────
+
+/// Trim trailing blank lines and keep the last `max`.
+///
+/// A captured pane ends in whatever blank rows the prompt left behind, so the
+/// interesting output would otherwise sit at the top of the preview with empty
+/// space under it. Dropping the blanks first puts the newest line at the
+/// bottom, which is where somebody looks.
+pub fn tail_of_screen(text: &str, max: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+    let kept: &[&str] = match last {
+        Some(i) => &lines[..=i],
+        None => &[],
+    };
+    let start = kept.len().saturating_sub(max);
+    kept[start..].join("\n")
+}
+
+/// A directory listing, for a project that is not open yet.
+///
+/// Sorted, because `read_dir` order is whatever the filesystem says and a
+/// preview that reshuffles between two looks at the same directory reads as a
+/// bug.
+pub fn listing_of(dir: &std::path::Path, max: usize) -> String {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return String::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let shown = names.len().min(max);
+    let mut out = names[..shown].join("\n");
+    if names.len() > shown {
+        out.push_str(&format!("\n… and {} more", names.len() - shown));
+    }
+    out
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_line_ends_up_at_the_bottom() {
+        // A captured pane ends in the blank rows a prompt left behind.
+        let screen = "first\nsecond\nthird\n\n\n   \n";
+        assert_eq!(tail_of_screen(screen, 10), "first\nsecond\nthird");
+    }
+
+    #[test]
+    fn only_the_last_lines_are_kept() {
+        let screen = (1..=20)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(tail_of_screen(&screen, 3), "18\n19\n20");
+    }
+
+    #[test]
+    fn a_screen_of_nothing_previews_as_nothing() {
+        assert_eq!(tail_of_screen("\n\n   \n", 5), "");
+        assert_eq!(tail_of_screen("", 5), "");
+    }
+
+    #[test]
+    fn a_listing_is_sorted_so_two_looks_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in ["zebra", "apple", "mango"] {
+            std::fs::write(dir.path().join(n), "").unwrap();
+        }
+        assert_eq!(listing_of(dir.path(), 10), "apple\nmango\nzebra");
+    }
+
+    #[test]
+    fn a_long_listing_says_how_much_it_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..12 {
+            std::fs::write(dir.path().join(format!("f{i:02}")), "").unwrap();
+        }
+        let out = listing_of(dir.path(), 4);
+        assert_eq!(out.lines().count(), 5);
+        assert!(out.ends_with("… and 8 more"), "{out}");
+    }
+
+    #[test]
+    fn a_directory_that_is_not_there_previews_as_nothing() {
+        assert_eq!(listing_of(std::path::Path::new("/no/such/dir"), 5), "");
+    }
+}

@@ -170,7 +170,7 @@ libraries.
 
 ```sh
 cargo build --release      # target/release/tmux-companion, about 4 MB
-cargo test                 # 620 unit tests and 22 integration tests
+cargo test                 # 639 unit, 22 integration, 5 end-to-end against a real tmux
 
 # on a machine somebody is using, keep off every core
 nice -n 15 cargo build --release -j 4

@@ -22,6 +22,13 @@ pub struct Item {
     pub label: String,
     /// Shown in the preview pane under the list. Empty means no preview.
     pub preview: String,
+    /// The colour to draw the label in. `None` leaves it the default.
+    ///
+    /// Carried as the string the source produced, a tmux `colourNNN` or a
+    /// `#rrggbb`, and turned into a terminal colour at draw time. Keeping the
+    /// string means the item type does not drag a ratatui type into every
+    /// module that builds one.
+    pub colour: Option<String>,
 }
 
 impl Item {
@@ -30,6 +37,7 @@ impl Item {
         Self {
             label: label.into(),
             preview: String::new(),
+            colour: None,
         }
     }
 
@@ -38,8 +46,40 @@ impl Item {
         Self {
             label: label.into(),
             preview: preview.into(),
+            colour: None,
         }
     }
+
+    /// The same item, drawn in a colour.
+    pub fn in_colour(mut self, colour: Option<String>) -> Self {
+        self.colour = colour.filter(|c| !c.trim().is_empty());
+        self
+    }
+}
+
+/// A tmux colour string as a terminal colour.
+///
+/// Understands the two spellings tmux itself writes: `colour29` and `#rrggbb`.
+/// Anything else is `None` rather than a guess, because a colour nobody can
+/// parse should leave the row readable instead of painting it something
+/// arbitrary.
+pub fn colour_of(spec: &str) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    let s = spec.trim();
+    if let Some(hex) = s.strip_prefix('#')
+        && hex.len() == 6
+        && let Ok(v) = u32::from_str_radix(hex, 16)
+    {
+        return Some(Color::Rgb(
+            ((v >> 16) & 0xff) as u8,
+            ((v >> 8) & 0xff) as u8,
+            (v & 0xff) as u8,
+        ));
+    }
+    let digits = s
+        .strip_prefix("colour")
+        .or_else(|| s.strip_prefix("color"))?;
+    digits.parse::<u8>().ok().map(Color::Indexed)
 }
 
 /// What the picker is showing and where the cursor is.
@@ -258,7 +298,10 @@ pub fn draw(frame: &mut Frame, picker: &Picker, chrome: &Chrome) {
     let items: Vec<ListItem> = picker
         .matches()
         .iter()
-        .map(|i| ListItem::new(i.label.clone()))
+        .map(|i| match i.colour.as_deref().and_then(colour_of) {
+            Some(c) => ListItem::new(i.label.clone()).style(Style::default().fg(c)),
+            None => ListItem::new(i.label.clone()),
+        })
         .collect();
     let mut state = ListState::default();
     if !picker.is_empty() {
@@ -363,7 +406,10 @@ fn run_inner(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<O
         match key.code {
             KeyCode::Esc => break Outcome::Cancelled,
             KeyCode::Char('c' | 'd') if ctrl => break Outcome::Cancelled,
-            KeyCode::Char('a') if ctrl => picker.clear_query(),
+            // ctrl-u is the readline habit for "wipe the line" and what the
+            // scripts this replaced used. ctrl-a stays because it was the
+            // only clear this picker had and fingers have learned it.
+            KeyCode::Char('a' | 'u') if ctrl => picker.clear_query(),
             // alt-enter asks for exactly what was typed, even when something
             // matched: the history has `cargo test` in it and you want
             // `cargo test --release`.
@@ -527,6 +573,38 @@ mod tests {
         let p = picker(&["alpha"], "something new");
         assert_eq!(p.selected_index(), None);
         assert_eq!(p.query(), "something new");
+    }
+
+    #[test]
+    fn a_tmux_colour_is_understood_in_both_spellings_tmux_writes() {
+        use ratatui::style::Color;
+        assert_eq!(colour_of("colour29"), Some(Color::Indexed(29)));
+        assert_eq!(colour_of("color131"), Some(Color::Indexed(131)));
+        assert_eq!(colour_of("#ff8800"), Some(Color::Rgb(255, 136, 0)));
+        assert_eq!(colour_of(" colour7 "), Some(Color::Indexed(7)));
+    }
+
+    #[test]
+    fn an_unreadable_colour_leaves_the_row_alone_rather_than_guessing() {
+        assert_eq!(colour_of(""), None);
+        assert_eq!(colour_of("puce"), None);
+        assert_eq!(colour_of("#abc"), None);
+        assert_eq!(colour_of("colour999"), None, "outside the 256-colour range");
+    }
+
+    #[test]
+    fn an_item_has_no_colour_until_one_is_given() {
+        assert_eq!(Item::new("x").colour, None);
+        assert_eq!(
+            Item::new("x")
+                .in_colour(Some("colour29".into()))
+                .colour
+                .as_deref(),
+            Some("colour29")
+        );
+        // An empty string is the project map saying it has no colour for this
+        // one, and it must not become a colour nobody can parse.
+        assert_eq!(Item::new("x").in_colour(Some("  ".into())).colour, None);
     }
 
     #[test]

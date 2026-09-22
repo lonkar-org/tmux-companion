@@ -101,13 +101,17 @@ bind -N "custom: project forget this project's saved layout" M-S \
 #
 # Then jumping between prompts in copy mode costs nothing at all, because tmux
 # is doing it. C-p and C-n are a suggestion; pick whatever is free for you.
-bind -T copy-mode-vi C-p send-keys -X previous-prompt
-bind -T copy-mode-vi C-n send-keys -X next-prompt
+bind -N "custom: copy jump to the previous prompt" -T copy-mode-vi C-p \
+  send-keys -X previous-prompt
+bind -N "custom: copy jump to the next prompt" -T copy-mode-vi C-n \
+  send-keys -X next-prompt
 
 # ── Copy mode, opening what is under the cursor ─────────────────────────────
-bind -T copy-mode-vi o send-keys -X copy-selection-no-clear \; \
+bind -N "custom: copy open what is selected" -T copy-mode-vi o \
+  send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion open -s"
-bind -T copy-mode-vi y send-keys -X copy-selection-no-clear \; \
+bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
+  send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion clipboard"
 
 # ── Logic that used to live in this file ────────────────────────────────────
@@ -115,7 +119,8 @@ bind -T copy-mode-vi y send-keys -X copy-selection-no-clear \; \
 # The clipboard was two if-shell branches on `uname`, and zoom was a run-shell
 # wrapping an if-shell, which is tmux shelling out to ask tmux how many panes
 # there are. Neither's a thing a config file should be doing.
-bind z run-shell "tmux-companion zoom"
+bind -N "custom: pane zoom this one, or the window when it is alone" z \
+  run-shell "tmux-companion zoom"
 
 # ── The theme, applied when a session is created ────────────────────────────
 set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_id}\"'"

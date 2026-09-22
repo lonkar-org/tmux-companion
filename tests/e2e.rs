@@ -1,0 +1,454 @@
+//! End-to-end tests against a real tmux.
+//!
+//! The unit tests assert values. These assert behaviour, which is a different
+//! question and the one that kept being answered wrong: every bug found by
+//! using this tool rather than testing it was invisible to 639 unit tests.
+//!
+//! A command that was never wired to a subcommand. A picker footer promising a
+//! key nobody implemented. A line in the shipped example config that made the
+//! whole right-hand side render empty. A dialog that answered itself because
+//! raw mode failed. All of them pass every unit test in the repository, because
+//! none of them is a wrong value.
+//!
+//! Each test gets its own tmux server on its own socket, its own config, state
+//! and daemon socket, and tears the lot down afterwards. Nothing here can see
+//! the tmux the developer is sitting in, and the sockets live directly in
+//! `/tmp` because a unix socket address holds 103 bytes and a path under a long
+//! temporary directory silently falls back to the live daemon.
+//!
+//! They skip rather than fail when tmux is not installed, so `cargo test` still
+//! works on a machine without it.
+
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    time::{Duration, Instant},
+};
+
+/// A private tmux server, a private daemon socket and a sandbox to run in.
+struct Tmux {
+    socket: String,
+    sandbox: PathBuf,
+    binary: PathBuf,
+}
+
+impl Tmux {
+    /// Start a server with the config this repository ships.
+    ///
+    /// The shipped example rather than a minimal one on purpose: it is the
+    /// file people copy, and nothing else in the repository ever ran it.
+    fn start(name: &str) -> Option<Self> {
+        if Command::new("tmux").arg("-V").output().is_err() {
+            eprintln!("skipping {name}: no tmux on this machine");
+            return None;
+        }
+        let binary = target_binary()?;
+        let sandbox = std::env::temp_dir().join(format!("tce2e-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(sandbox.join("bin")).ok()?;
+        std::fs::create_dir_all(sandbox.join("state")).ok()?;
+        std::fs::create_dir_all(sandbox.join("config/tmux-companion")).ok()?;
+        // On PATH under its own name, because the example config calls
+        // `tmux-companion` and that is the thing under test.
+        let _ = std::os::unix::fs::symlink(&binary, sandbox.join("bin/tmux-companion"));
+
+        let t = Tmux {
+            socket: format!("tce2e{name}{}", std::process::id()),
+            sandbox,
+            binary,
+        };
+        Some(t)
+    }
+
+    /// The environment every command here runs in.
+    fn env(&self, cmd: &mut Command) {
+        let path = format!(
+            "{}:{}",
+            self.sandbox.join("bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        cmd.env("PATH", path)
+            .env("XDG_CONFIG_HOME", self.sandbox.join("config"))
+            .env("XDG_STATE_HOME", self.sandbox.join("state"))
+            .env("_ZO_DATA_DIR", self.sandbox.join("zoxide"))
+            .env(
+                "TMUX_COMPANION_SOCK",
+                format!("/tmp/tce2e{}.sock", std::process::id()),
+            )
+            .env("PS1", "demo %# ")
+            .env("PROMPT", "demo %# ");
+    }
+
+    /// One tmux command against this server.
+    fn tmux(&self, args: &[&str]) -> String {
+        let mut cmd = Command::new("tmux");
+        cmd.arg("-L").arg(&self.socket).args(args);
+        self.env(&mut cmd);
+        match cmd.output() {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim_end().to_string(),
+            Err(_) => String::new(),
+        }
+    }
+
+    /// The binary itself, outside tmux.
+    fn run(&self, args: &[&str]) -> (String, String, bool) {
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(args);
+        self.env(&mut cmd);
+        match cmd.output() {
+            Ok(o) => (
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+                o.status.success(),
+            ),
+            Err(e) => (String::new(), e.to_string(), false),
+        }
+    }
+
+    /// Create a session running the shipped example config.
+    fn session(&self, name: &str, dir: &Path) {
+        let conf = repo_root().join("docs/tmux.conf.full.example");
+        self.tmux(&[
+            "-f",
+            &conf.display().to_string(),
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-c",
+            &dir.display().to_string(),
+            "-x",
+            "120",
+            "-y",
+            "32",
+        ]);
+    }
+
+    /// What a pane currently shows.
+    fn capture(&self, target: &str) -> String {
+        self.tmux(&["capture-pane", "-p", "-t", target])
+    }
+
+    /// Wait for something to become true, so a slow machine does not turn a
+    /// working feature into a failing test.
+    fn until(&self, secs: u64, mut f: impl FnMut(&Self) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            if f(self) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+}
+
+impl Drop for Tmux {
+    fn drop(&mut self) {
+        self.tmux(&["kill-server"]);
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("__shutdown");
+        self.env(&mut cmd);
+        let _ = cmd.output();
+        let _ = std::fs::remove_dir_all(&self.sandbox);
+    }
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn target_binary() -> Option<PathBuf> {
+    // The test binary lives in target/<profile>/deps, so the binary under test
+    // is two directories up.
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.parent()?.join("tmux-companion");
+    candidate.exists().then_some(candidate)
+}
+
+/// A git repository with something for the bar to draw.
+fn repo_with_changes(root: &Path) -> PathBuf {
+    let dir = root.join("acme-api");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let git = |args: &[&str]| {
+        let _ = Command::new("git").args(args).current_dir(&dir).output();
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "demo@example.com"]);
+    git(&["config", "user.name", "Demo"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "first"]);
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n// changed\n").unwrap();
+    dir
+}
+
+// ── the tests ────────────────────────────────────────────────────────────────
+
+/// Every `#(...)` the example config puts on the bar, with tmux's format
+/// specifiers replaced by something real.
+///
+/// `#{E:status-right}` is not a way to check this: it expands formats and does
+/// not run `#()` at all, so a bar that draws nothing looks identical to one
+/// that draws perfectly.
+fn bar_commands(conf: &str, repo: &Path) -> Vec<Vec<String>> {
+    let pid = std::process::id().to_string();
+    let repo = repo.display().to_string();
+    let mut out = Vec::new();
+    for line in conf.lines() {
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        let mut rest = line;
+        while let Some(start) = rest.find("#(") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find(')') else { break };
+            let call = &after[..end];
+            rest = &after[end..];
+            if !call.contains("tmux-companion") {
+                continue;
+            }
+            let call = call
+                .replace("#{pane_current_path}", &repo)
+                .replace("#{pane_pid}", &pid)
+                .replace("#{session_attached}", "1")
+                .replace("#{window_active_clients}", "1");
+            // Anything still in #{...} is a format this test has no value for,
+            // and inventing one would exercise a command nobody runs.
+            if call.contains("#{") {
+                continue;
+            }
+            let args: Vec<String> = call
+                .split_whitespace()
+                .skip(1)
+                .map(str::to_string)
+                .collect();
+            if !args.is_empty() {
+                out.push(args);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn every_bar_command_in_the_example_config_actually_runs() {
+    // `docs/tmux.conf.full.example` once passed #{pane_pid} to `status-right`,
+    // which takes a path and nothing else, so clap rejected the extra argument
+    // and everybody who copied that file got a blank right-hand side. Nothing
+    // in the repository ran it until a recording did.
+    let Some(t) = Tmux::start("bar") else { return };
+    let dir = repo_with_changes(&t.sandbox);
+    let conf = std::fs::read_to_string(repo_root().join("docs/tmux.conf.full.example")).unwrap();
+
+    let calls = bar_commands(&conf, &dir);
+    assert!(calls.len() >= 3, "only found {} #() calls", calls.len());
+
+    for call in calls {
+        let args: Vec<&str> = call.iter().map(String::as_str).collect();
+        let (out, err, ok) = t.run(&args);
+        assert!(
+            ok,
+            "the bar runs `tmux-companion {}`, which failed:\n{err}",
+            call.join(" ")
+        );
+        if call[0] == "status-right" {
+            assert!(
+                !out.trim().is_empty(),
+                "`status-right` succeeded and drew nothing"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_binding_in_the_example_names_a_subcommand_that_exists() {
+    // `zoxide-window.zsh` was bound to prefix+c and the port recorded it as
+    // done without ever building the command, so the key had nothing to call
+    // and the feature was lost rather than ported. A checklist cannot catch
+    // that; asking the binary can.
+    let Some(t) = Tmux::start("binds") else {
+        return;
+    };
+    let conf = std::fs::read_to_string(repo_root().join("docs/tmux.conf.full.example")).unwrap();
+
+    let mut checked = 0;
+    // Comments mention the binary in prose, and prose is not a call.
+    let code: String = conf
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for word in code.split_whitespace().collect::<Vec<_>>().windows(2) {
+        if !word[0].ends_with("tmux-companion") {
+            continue;
+        }
+        let sub = word[1].trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        if sub.is_empty() || sub.starts_with('-') {
+            continue;
+        }
+        let (_, err, ok) = t.run(&[sub, "--help"]);
+        assert!(
+            ok,
+            "the example config calls `tmux-companion {sub}`, which is not a subcommand:\n{err}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 8,
+        "only {checked} calls found, the parser is wrong"
+    );
+}
+
+#[test]
+fn the_run_pane_waits_for_an_answer_instead_of_closing_itself() {
+    // The command runs under an interactive shell, which hands the terminal to
+    // its own process group and does not hand it back, leaving this process in
+    // the background where enabling raw mode is an error. Every failure path
+    // in the dialog takes the default, which is Close, so the pane shut about
+    // a second after it opened. It only bit commands that fork, so a builtin
+    // looked fine and `seq` did not.
+    let Some(t) = Tmux::start("dialog") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("dialog", &dir);
+
+    let exe = t.binary.display().to_string();
+    t.tmux(&[
+        "split-window",
+        "-d",
+        "-t",
+        "dialog:0",
+        "-c",
+        &dir.display().to_string(),
+        &format!("{exe} run --exec 'seq 1 5'"),
+    ]);
+
+    let panes = |t: &Tmux| t.tmux(&["list-panes", "-t", "dialog:0"]).lines().count();
+    assert!(t.until(10, |t| panes(t) == 2), "the run pane never opened");
+    assert!(
+        t.until(5, |t| t
+            .tmux(&["list-panes", "-t", "dialog:0", "-F", "#{pane_id}"])
+            .lines()
+            .any(|p| t.capture(p).contains("[C]lose"))),
+        "the dialog never drew"
+    );
+
+    // The point of the test: still there after the moment it used to vanish in.
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(
+        panes(&t),
+        2,
+        "the run pane closed on its own; the dialog answered itself"
+    );
+}
+
+#[test]
+fn a_new_window_opens_where_the_pane_was() {
+    // prefix+c with nothing typed is "another window here", which is what
+    // tmux's own binding meant before a picker replaced it.
+    let Some(t) = Tmux::start("newwin") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("newwin", &dir);
+
+    let exe = t.binary.display().to_string();
+    t.tmux(&[
+        "split-window",
+        "-d",
+        "-t",
+        "newwin:0",
+        "-c",
+        &dir.display().to_string(),
+        &format!("{exe} new-window"),
+    ]);
+    assert!(
+        t.until(10, |t| t
+            .tmux(&["list-panes", "-t", "newwin:0", "-F", "#{pane_id}"])
+            .lines()
+            .any(|p| t.capture(p).contains("New window at"))),
+        "the picker never drew"
+    );
+
+    let pane = t
+        .tmux(&["list-panes", "-t", "newwin:0", "-F", "#{pane_id}"])
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .to_string();
+    t.tmux(&["send-keys", "-t", &pane, "Enter"]);
+
+    assert!(
+        t.until(10, |t| t
+            .tmux(&["list-windows", "-t", "newwin"])
+            .lines()
+            .count()
+            == 2),
+        "enter on the prefilled query opened no window"
+    );
+    let dirs = t.tmux(&[
+        "list-panes",
+        "-s",
+        "-t",
+        "newwin",
+        "-F",
+        "#{pane_current_path}",
+    ]);
+    assert!(
+        dirs.lines().any(|d| d.ends_with("acme-api")),
+        "the new window did not open in the pane's directory: {dirs}"
+    );
+}
+
+#[test]
+fn project_builds_the_windows_the_layout_asks_for() {
+    let Some(t) = Tmux::start("layout") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[project]\nzoxide = false\n\n[[layout]]\nname = \"default\"\n\n  [[layout.window]]\n  name = \"edit\"\n\n  [[layout.window]]\n  name = \"tests\"\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("layout", &dir);
+
+    let other = t.sandbox.join("payments-api");
+    std::fs::create_dir_all(&other).unwrap();
+    let exe = t.binary.display().to_string();
+    t.tmux(&[
+        "send-keys",
+        "-t",
+        "layout:0",
+        &format!("{exe} project {}", other.display()),
+        "Enter",
+    ]);
+
+    assert!(
+        t.until(15, |t| t
+            .tmux(&["has-session", "-t", "=payments-api"])
+            .is_empty()
+            && !t
+                .tmux(&[
+                    "list-windows",
+                    "-t",
+                    "=payments-api",
+                    "-F",
+                    "#{window_name}"
+                ])
+                .is_empty()),
+        "the session was never created"
+    );
+    let windows = t.tmux(&[
+        "list-windows",
+        "-t",
+        "=payments-api",
+        "-F",
+        "#{window_name}",
+    ]);
+    let names: Vec<&str> = windows.lines().collect();
+    assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
+}

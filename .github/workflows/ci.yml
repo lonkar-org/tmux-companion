@@ -34,6 +34,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # tests/e2e.rs drives a real tmux on its own socket. Without one those
+      # tests skip themselves, which is worse than failing: the suite that
+      # exists to catch behaviour would go quiet and nobody would notice.
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y tmux
+          else
+            brew list tmux >/dev/null 2>&1 || brew install tmux
+          fi
+      - run: tmux -V
+
       # rust-toolchain.toml pins the version; this installs it on a runner
       # whose preinstalled Rust is something else.
       - run: rustup show active-toolchain || rustup toolchain install
