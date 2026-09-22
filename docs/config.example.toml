@@ -107,3 +107,35 @@ preset = "nerd-font-v3"
 [glyphs.icons]
 # STAGED = "*"
 # ARROW_RIGHT = ""
+
+[status.right]
+# Whether the right-hand side ends with a space. tmux draws it flush to the
+# terminal edge, and without this the last glyph sits against the border.
+trailing_space = true
+
+# The segments, in the order they are drawn, each with the tmux markup that
+# goes in front of it.
+#
+# `separator_before = ""` means nothing between this segment and the one
+# before it, which is a real preference and was not expressible at all while
+# the literals lived in tmux.conf.
+#
+# `{NAME}` expands to the glyph of that name in src/tmux/icons.rs, so this file
+# stays readable in an editor with no patched font. A name that does not exist
+# is left as you wrote it rather than dropped, because a separator rendering
+# `{ARROW_RIGH}` is a typo you can see.
+#
+# A separator is drawn whether or not the segment after it rendered anything,
+# which is what the tmux.conf literals did.
+
+[[status.right.segments]]
+name = "git"
+separator_before = ""
+
+[[status.right.segments]]
+name = "net"
+separator_before = ""
+
+[[status.right.segments]]
+name = "battery"
+separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"

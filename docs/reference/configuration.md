@@ -52,8 +52,7 @@ from. A test asserts that every key `config dump` produces appears there, so a
 setting can't exist without being written down.
 
 The tables today are `[general]`, `[dirs.aliases]`, `[git]`, `[network]`,
-`[battery]` and `[glyphs]`. The port adds `[status.right]`, `[[layout]]` and the rest as each phase
-reaches them, and `docs/comrades-port.md` has the table
+`[battery]`, `[glyphs]` and `[status.right]`. The port adds `[[layout]]` and the rest as each phase reaches them, and `docs/comrades-port.md` has the table
 saying which phase brings which.
 
 ## tmux user options
@@ -125,3 +124,33 @@ group it's fixed, because a group is a single colour run and reordering its
 counters would move escape sequences rather than glyphs. `parts = []` renders
 an almost empty segment, which is a legitimate thing to ask for and not a
 crash.
+
+## Building the right-hand side
+
+`[[status.right.segments]]` is the list of segments and what goes in front of
+each one:
+
+```toml
+[[status.right.segments]]
+name = "git"
+separator_before = ""
+
+[[status.right.segments]]
+name = "battery"
+separator_before = " | "
+```
+
+That drops the bandwidth segment and puts a plain pipe before the battery.
+`separator_before = ""` means nothing at all between two segments, which is a
+preference nobody could express while the literals lived in `tmux.conf`.
+
+`{NAME}` in a separator expands to the glyph of that name in
+`src/tmux/icons.rs`, so the file stays readable in an editor with no patched
+font, and a name that doesn't exist is left as you wrote it rather than
+dropped — a separator rendering `{ARROW_RIGH}` is a typo you can see.
+
+Two things worth knowing. A separator is drawn whether or not the segment
+after it rendered anything, because that's what the `tmux.conf` literals did: a
+non-repo pane on a quiet network still drew the wedge in front of an absent
+battery. And `trailing_space` exists because tmux draws the right side flush
+to the terminal edge, so without it the last glyph sits against the border.

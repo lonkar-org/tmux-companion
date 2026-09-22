@@ -23,6 +23,11 @@ static REQ_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 /// and only a diff against the real `tmux.conf` caught it.  Built from the
 /// icons constant rather than a pasted codepoint so it tracks a change to the
 /// glyph (see CLAUDE.md's ARROW_RIGHT invariant).
+/// Only the tests call this now: the live separator comes from
+/// `[status.right]`, whose default carries the same literal as a template.
+/// Kept as the independent definition those tests check the config default
+/// against, so the two cannot drift apart unnoticed.
+#[cfg(test)]
 pub fn right_separator() -> String {
     format!(
         "#[reverse,fg=color237]{}#[bg=color237,none]",
@@ -35,8 +40,46 @@ pub fn right_separator() -> String {
 /// Pure, so the exact bytes — including the literals that used to live in
 /// `tmux.conf` between the `#()` calls, and the trailing space that closed the
 /// line — are pinned by unit tests rather than by eyeballing the status bar.
+/// Assemble the right-hand side the way the hardcoded version did.
+///
+/// Test-only for the same reason as `right_separator`: production assembles
+/// from the configured list, and this is what the pinned byte-for-byte tests
+/// compare that against.
+#[cfg(test)]
 pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
-    format!("{gst}{net}{}{battery} ", right_separator())
+    assemble_right_with(&crate::config::StatusRight::default(), gst, net, battery)
+}
+
+/// Assemble the right-hand side from a configured segment list.
+///
+/// A separator is drawn whether or not the segment after it rendered anything,
+/// which is what the tmux.conf literals did: they sat in the format string
+/// unconditionally, so a non-repo pane on a quiet network still drew the wedge
+/// in front of an absent battery. Dropping the separator with its segment
+/// would be a tidier bar and a different one, and the pinned tests exist to
+/// catch exactly that kind of silent improvement.
+pub fn assemble_right_with(
+    right: &crate::config::StatusRight,
+    gst: &str,
+    net: &str,
+    battery: &str,
+) -> String {
+    use crate::config::SegmentName;
+
+    let mut out = String::new();
+    for segment in &right.segments {
+        let rendered = match segment.name {
+            SegmentName::Git => gst,
+            SegmentName::Net => net,
+            SegmentName::Battery => battery,
+        };
+        out.push_str(&crate::config::expand_glyphs(&segment.separator_before));
+        out.push_str(rendered);
+    }
+    if right.trailing_space {
+        out.push(' ');
+    }
+    out
 }
 
 pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response {
@@ -187,7 +230,9 @@ async fn render_right(
     // A failing segment must not blank the whole side, but it must not vanish
     // silently either — a permanently empty git segment is otherwise
     // indistinguishable from a directory that is not a repository.
-    Ok(assemble_right(
+    let right = state.lock().await.config.status.right.clone();
+    Ok(assemble_right_with(
+        &right,
         &segment_or_empty("gst", gst),
         &net,
         &segment_or_empty("battery", battery),
@@ -343,6 +388,113 @@ mod tests {
     #[test]
     fn all_empty_is_just_the_literals() {
         assert_eq!(assemble_right("", "", ""), format!("{} ", sep()));
+    }
+
+    #[test]
+    fn the_configured_default_separator_is_the_conf_literal() {
+        // `right_separator` is the independent definition and the config
+        // default is a template; this is what stops them drifting.
+        let right = crate::config::StatusRight::default();
+        let battery = right
+            .segments
+            .iter()
+            .find(|s| s.name == crate::config::SegmentName::Battery)
+            .expect("battery is on the default side");
+        assert_eq!(
+            crate::config::expand_glyphs(&battery.separator_before),
+            right_separator()
+        );
+    }
+
+    // ── configured sides ─────────────────────────────────────────────────────
+
+    #[test]
+    fn the_default_side_is_the_hardcoded_one() {
+        // `assemble_right` is now `assemble_right_with` against the defaults,
+        // so this is the test that keeps those two from drifting apart.
+        let right = crate::config::StatusRight::default();
+        assert_eq!(
+            assemble_right_with(&right, "G", "N", "B"),
+            assemble_right("G", "N", "B")
+        );
+    }
+
+    #[test]
+    fn a_segment_can_be_left_off_the_side_entirely() {
+        use crate::config::{RightSegment, SegmentName, StatusRight};
+        let right = StatusRight {
+            segments: vec![RightSegment {
+                name: SegmentName::Git,
+                separator_before: String::new(),
+            }],
+            trailing_space: true,
+        };
+        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "G ");
+    }
+
+    #[test]
+    fn segments_can_be_reordered() {
+        use crate::config::{RightSegment, SegmentName, StatusRight};
+        let right = StatusRight {
+            segments: vec![
+                RightSegment {
+                    name: SegmentName::Battery,
+                    separator_before: String::new(),
+                },
+                RightSegment {
+                    name: SegmentName::Git,
+                    separator_before: String::new(),
+                },
+            ],
+            trailing_space: false,
+        };
+        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "BG");
+    }
+
+    #[test]
+    fn an_empty_separator_means_nothing_between_two_segments() {
+        use crate::config::{RightSegment, SegmentName, StatusRight};
+        let right = StatusRight {
+            segments: vec![
+                RightSegment {
+                    name: SegmentName::Net,
+                    separator_before: String::new(),
+                },
+                RightSegment {
+                    name: SegmentName::Battery,
+                    separator_before: String::new(),
+                },
+            ],
+            trailing_space: false,
+        };
+        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "NB");
+    }
+
+    #[test]
+    fn a_separator_expands_glyph_placeholders() {
+        use crate::config::{RightSegment, SegmentName, StatusRight};
+        let right = StatusRight {
+            segments: vec![RightSegment {
+                name: SegmentName::Battery,
+                separator_before: "<{ARROW_RIGHT}>".to_string(),
+            }],
+            trailing_space: false,
+        };
+        assert_eq!(
+            assemble_right_with(&right, "G", "N", "B"),
+            format!("<{}>B", crate::tmux::icons::ARROW_RIGHT)
+        );
+    }
+
+    #[test]
+    fn the_trailing_space_can_be_turned_off() {
+        let right = crate::config::StatusRight {
+            trailing_space: false,
+            ..Default::default()
+        };
+        let with = assemble_right("G", "N", "B");
+        let without = assemble_right_with(&right, "G", "N", "B");
+        assert_eq!(with, format!("{without} "));
     }
 
     #[test]

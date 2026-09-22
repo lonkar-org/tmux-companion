@@ -32,6 +32,114 @@ pub struct Config {
     pub battery: Battery,
     /// Which glyphs the bar draws with.
     pub glyphs: Glyphs,
+    /// What the status bar puts where.
+    pub status: Status,
+}
+
+/// What the status bar puts where.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct Status {
+    /// The right-hand side, which is the one served in a single call.
+    pub right: StatusRight,
+}
+
+/// The right-hand side of the status bar.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct StatusRight {
+    /// The segments, in the order they are drawn.
+    pub segments: Vec<RightSegment>,
+    /// Whether the side ends with a space.
+    ///
+    /// tmux draws the right side flush to the edge, and without this the last
+    /// glyph sits against the terminal border.
+    pub trailing_space: bool,
+}
+
+impl Default for StatusRight {
+    fn default() -> Self {
+        Self {
+            segments: vec![
+                RightSegment {
+                    name: SegmentName::Git,
+                    separator_before: String::new(),
+                },
+                RightSegment {
+                    name: SegmentName::Net,
+                    separator_before: String::new(),
+                },
+                RightSegment {
+                    name: SegmentName::Battery,
+                    // The literal that sat between the `net` and `battery`
+                    // `#()` calls in the old configuration, reproduced byte for
+                    // byte. The `{ARROW_RIGHT}` is load-bearing: dropping it
+                    // silently removes the powerline wedge in front of the
+                    // battery, which cost one character out of 252 and was
+                    // caught only by a diff against the real tmux.conf.
+                    separator_before: "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
+                        .to_string(),
+                },
+            ],
+            trailing_space: true,
+        }
+    }
+}
+
+/// One segment on a side of the status bar.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RightSegment {
+    /// Which segment to draw.
+    pub name: SegmentName,
+    /// tmux markup drawn before this segment, when the segment renders
+    /// anything at all.
+    ///
+    /// `{NAME}` expands to the glyph of that name in `src/tmux/icons.rs`, so
+    /// the file stays readable in an editor with no patched font. An empty
+    /// string means nothing between this segment and the one before it, which
+    /// is a real preference and was not expressible before.
+    #[serde(default)]
+    pub separator_before: String,
+}
+
+/// A segment the right-hand side can draw.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SegmentName {
+    /// Git status.
+    Git,
+    /// Bandwidth.
+    Net,
+    /// Battery.
+    Battery,
+}
+
+/// Expand `{NAME}` placeholders to the glyphs they name.
+///
+/// An unknown name is left as it was written rather than dropped: a separator
+/// that renders `{ARROW_RIGH}` is a typo somebody can see, and one that
+/// silently renders nothing is a typo they cannot.
+pub fn expand_glyphs(template: &str) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open..];
+        match rest.find('}') {
+            Some(close) => {
+                let name = &rest[1..close];
+                match crate::tmux::icons::by_name(name) {
+                    Some(glyph) => out.push_str(glyph),
+                    None => out.push_str(&rest[..=close]),
+                }
+                rest = &rest[close + 1..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Which glyphs the bar draws with.
@@ -704,6 +812,33 @@ mod tests {
                 "ascii.toml names `{name}`, which is not a glyph"
             );
         }
+    }
+
+    #[test]
+    fn a_glyph_placeholder_expands_to_its_glyph() {
+        assert_eq!(
+            expand_glyphs("a{ARROW_RIGHT}b"),
+            format!("a{}b", crate::tmux::icons::ARROW_RIGHT)
+        );
+    }
+
+    #[test]
+    fn an_unknown_placeholder_is_left_visible_rather_than_dropped() {
+        // A separator that renders `{ARROW_RIGH}` is a typo somebody can see.
+        // One that silently renders nothing is a typo they cannot.
+        assert_eq!(expand_glyphs("a{ARROW_RIGH}b"), "a{ARROW_RIGH}b");
+    }
+
+    #[test]
+    fn an_unclosed_brace_is_left_alone() {
+        assert_eq!(expand_glyphs("a{ARROW_RIGHT"), "a{ARROW_RIGHT");
+        assert_eq!(expand_glyphs("{"), "{");
+    }
+
+    #[test]
+    fn text_with_no_placeholder_is_untouched() {
+        assert_eq!(expand_glyphs("#[fg=colour233]"), "#[fg=colour233]");
+        assert_eq!(expand_glyphs(""), "");
     }
 
     #[test]
