@@ -455,20 +455,25 @@ fn project_builds_the_windows_the_layout_asks_for() {
         "Enter",
     ]);
 
+    // Wait for both windows, not for the session: a layout builds its windows
+    // one `new-window` at a time, so a check that only waits for the session
+    // to exist reads the list halfway through building it and fails on a busy
+    // machine while passing on a quiet one.
     assert!(
         t.until(15, |t| t
             .tmux(&["has-session", "-t", "=payments-api"])
             .is_empty()
-            && !t
-                .tmux(&[
-                    "list-windows",
-                    "-t",
-                    "=payments-api",
-                    "-F",
-                    "#{window_name}"
-                ])
-                .is_empty()),
-        "the session was never created"
+            && t.tmux(&[
+                "list-windows",
+                "-t",
+                "=payments-api",
+                "-F",
+                "#{window_name}"
+            ])
+            .lines()
+            .count()
+                == 2),
+        "the session never got both of the layout's windows"
     );
     let windows = t.tmux(&[
         "list-windows",
@@ -479,4 +484,93 @@ fn project_builds_the_windows_the_layout_asks_for() {
     ]);
     let names: Vec<&str> = windows.lines().collect();
     assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
+}
+
+/// The `session-created` hook in the example config has to paint a session
+/// somebody has never picked a theme for, because that is every session until
+/// they do.
+///
+/// It did not. The fallback named `blue`, `magenta`, `orange` and `grey`, none
+/// of which `theme init` writes, so a fresh install got an unpainted bar and
+/// "No such file or directory" once per session.
+#[test]
+fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
+    let Some(t) = Tmux::start("themehook") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+
+    // What a new user runs, in the order the docs give it.
+    let (_, err, ok) = t.run(&["theme", "init"]);
+    assert!(ok, "theme init failed: {err}");
+    let (_, err, ok) = t.run(&[
+        "theme",
+        "gen",
+        "--apply",
+        "--shades",
+        "--background",
+        "#121212",
+    ]);
+    assert!(ok, "theme gen failed: {err}");
+
+    t.session("painted", &dir);
+
+    // The hook is a `run-shell`, which tmux runs without waiting for it, so
+    // the option appears a moment after the session does.
+    t.until(5, |t| {
+        !t.tmux(&["show", "-t", "painted", "-v", "@theme-session-name-bg"])
+            .is_empty()
+    });
+
+    let bg = t.tmux(&["show", "-t", "painted", "-v", "@theme-session-name-bg"]);
+    assert!(
+        bg.starts_with("colour"),
+        "the hook left the session unpainted: @theme-session-name-bg was {bg:?}"
+    );
+
+    // Session scope, not server scope: a global value here is the bug where
+    // the last session created repaints every other one.
+    let global = t.tmux(&["show", "-gv", "@theme-session-name-bg"]);
+    assert!(
+        global.is_empty() || global != bg,
+        "the theme was set globally, so every session shares it: {global:?}"
+    );
+
+    // An empty target, which is what `#{session_id}` expands to under tmux
+    // 3.5, has to mean the session that was named rather than whichever one
+    // happens to be current. Under 3.5 the hook painted the wrong session and
+    // left the new one bare.
+    t.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "second",
+        "-c",
+        &dir.display().to_string(),
+    ]);
+    t.tmux(&["set", "-t", "second", "-u", "@theme-session-name-bg"]);
+    let (_, err, ok) = t.run(&["theme", "apply", "second", "-t", ""]);
+    assert!(ok, "theme apply with an empty target failed: {err}");
+    let second = t.tmux(&["show", "-t", "second", "-v", "@theme-session-name-bg"]);
+    assert!(
+        second.starts_with("colour"),
+        "an empty target painted something other than the named session: {second:?}"
+    );
+}
+
+/// With no themes on disk at all there is nothing to source, and that is a
+/// normal state rather than an error to put on somebody's terminal.
+#[test]
+fn a_session_created_before_any_theme_exists_says_nothing() {
+    let Some(t) = Tmux::start("themenone") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("quiet", &dir);
+
+    let messages = t.tmux(&["show-messages"]);
+    assert!(
+        !messages.contains("No such file"),
+        "creating a session complained about a missing theme: {messages}"
+    );
 }

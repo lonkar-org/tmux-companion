@@ -48,6 +48,16 @@ somewhere you weren't looking.
 
 Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
+## Try it first
+
+```sh
+docker run --rm -it ghcr.io/lonkar-org/tmux-companion:playground
+```
+
+tmux, the binary, five fake projects and a guided tour through the bindings, in
+a container that goes away when you leave it. Nothing is mounted from your
+machine. [docs/how-to/playground.md](docs/how-to/playground.md).
+
 ## Install
 
 ```sh
@@ -158,6 +168,7 @@ Measured on one machine, with the method beside the numbers in
 | [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
 | [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
 | [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
+| [docs/how-to/playground.md](docs/how-to/playground.md) | a container to try it in, and the tour inside it |
 | [docs/how-to/install.md](docs/how-to/install.md) | the three ways in, and how to remove it |
 | [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |

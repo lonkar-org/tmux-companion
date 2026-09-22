@@ -508,27 +508,32 @@ pub fn rows(dir: &Path) -> Vec<ThemeRow> {
 
 /// The theme a session should get, before any picker is involved.
 ///
-/// The project map first, so a project keeps its colour across restarts. Only
-/// when nothing claims it do the namespace rules decide.
+/// The project map first, so a project keeps its colour across restarts. Then
+/// the namespace map from the config, then the configured default. `None` when
+/// none of them names a file that is there.
+///
+/// Returning an `Option` rather than a path is the whole point: this runs from
+/// the `session-created` hook, once per session, and a path that does not exist
+/// became a "No such file or directory" on the terminal every time somebody
+/// opened a session. A theme nobody has chosen is a normal state, not an error.
 pub fn theme_for_session(
     session: &str,
     map: &std::collections::HashMap<String, String>,
+    config: &crate::config::Theme,
     dir: &Path,
-) -> PathBuf {
-    if let Some(name) = map.get(session) {
-        let path = dir.join(format!("{name}.tmux"));
-        if path.is_file() {
-            return path;
-        }
-    }
+) -> Option<PathBuf> {
     let namespace = session.split('/').next().unwrap_or(session);
-    let fallback = match namespace {
-        "w" => "blue",
-        "a" => "magenta",
-        "y" => "orange",
-        _ => "grey",
-    };
-    dir.join(format!("{fallback}.tmux"))
+    let candidates = [
+        map.get(session),
+        config.namespace.get(namespace),
+        Some(&config.default),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .filter(|name| !name.is_empty())
+        .map(|name| dir.join(format!("{name}.tmux")))
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
@@ -644,34 +649,88 @@ mod picker_tests {
 
         let map = std::collections::HashMap::from([("w/thing".to_string(), "indigo".to_string())]);
         assert_eq!(
-            theme_for_session("w/thing", &map, &dir),
-            dir.join("indigo.tmux")
+            theme_for_session("w/thing", &map, &crate::config::Theme::default(), &dir),
+            Some(dir.join("indigo.tmux"))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_namespace_decides_when_nothing_claims_the_session() {
-        let dir = Path::new("/themes");
+        let dir = std::env::temp_dir().join(format!("tc-ns-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        for stem in ["slate", "plum", "ink"] {
+            std::fs::write(dir.join(format!("{stem}.tmux")), "set @theme-name X\n").expect("write");
+        }
         let empty = std::collections::HashMap::new();
-        assert_eq!(theme_for_session("w/x", &empty, dir), dir.join("blue.tmux"));
+        let config = crate::config::Theme {
+            default: "ink".to_string(),
+            namespace: std::collections::HashMap::from([
+                ("w".to_string(), "slate".to_string()),
+                ("a".to_string(), "plum".to_string()),
+            ]),
+        };
+
         assert_eq!(
-            theme_for_session("a/x", &empty, dir),
-            dir.join("magenta.tmux")
+            theme_for_session("w/x", &empty, &config, &dir),
+            Some(dir.join("slate.tmux"))
         );
-        assert_eq!(theme_for_session("y", &empty, dir), dir.join("orange.tmux"));
         assert_eq!(
-            theme_for_session("other", &empty, dir),
-            dir.join("grey.tmux")
+            theme_for_session("a/x", &empty, &config, &dir),
+            Some(dir.join("plum.tmux"))
         );
+        // No namespace rule, so the default.
+        assert_eq!(
+            theme_for_session("other", &empty, &config, &dir),
+            Some(dir.join("ink.tmux"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_mapped_theme_that_is_not_there_falls_back_rather_than_failing() {
+        let dir = std::env::temp_dir().join(format!("tc-gone-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("ink.tmux"), "set @theme-name Ink\n").expect("write");
+
         let map = std::collections::HashMap::from([("x".to_string(), "gone".to_string())]);
         assert_eq!(
-            theme_for_session("x", &map, Path::new("/nowhere")),
-            Path::new("/nowhere").join("grey.tmux")
+            theme_for_session("x", &map, &crate::config::Theme::default(), &dir),
+            Some(dir.join("ink.tmux"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nothing_on_disk_means_nothing_to_source_rather_than_an_error() {
+        // The session-created hook runs this for every session. Before the
+        // themes exist -- which is every session until `theme init` is run --
+        // every one of them printed a missing-file error.
+        assert_eq!(
+            theme_for_session(
+                "anything",
+                &std::collections::HashMap::new(),
+                &crate::config::Theme::default(),
+                Path::new("/nowhere"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_empty_default_leaves_a_session_unpainted() {
+        let config = crate::config::Theme {
+            default: String::new(),
+            namespace: std::collections::HashMap::new(),
+        };
+        assert_eq!(
+            theme_for_session(
+                "x",
+                &std::collections::HashMap::new(),
+                &config,
+                Path::new("/nowhere"),
+            ),
+            None
         );
     }
 }

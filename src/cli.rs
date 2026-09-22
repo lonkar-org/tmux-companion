@@ -1712,12 +1712,26 @@ fn theme_list_colours(plain: bool) -> anyhow::Result<()> {
 }
 
 /// `theme apply`: the session-created hook's half, with no picker.
+///
+/// Silent when there is no theme to apply. This runs once per session created,
+/// so anything it prints lands on somebody's terminal at the moment they open a
+/// session, and "no theme yet" is the state every install starts in.
 fn theme_apply(session: &str, target: Option<String>, dir: &std::path::Path) -> anyhow::Result<()> {
     let map = std::fs::read_to_string(dir.join("_project-map.tsv"))
         .map(|t| crate::project::parse_project_map(&t))
         .unwrap_or_default();
-    let path = crate::theme::theme_for_session(session, &map, dir);
-    source_theme(&path, target.as_deref());
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    // An empty target is what `#{session_id}` expands to under tmux 3.5, which
+    // does not resolve it inside a `run-shell` the way 3.7 does. Without this
+    // the theme was sourced with no target at all, so it landed on whichever
+    // session happened to be current -- which, at `session-created` time, is
+    // not the session being created.
+    let target = target
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| session.to_string());
+    if let Some(path) = crate::theme::theme_for_session(session, &map, &config.theme, dir) {
+        source_theme(&path, Some(&target));
+    }
     Ok(())
 }
 

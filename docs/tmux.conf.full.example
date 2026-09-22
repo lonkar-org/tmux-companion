@@ -135,4 +135,13 @@ bind -N "custom: pane zoom this one, or the window when it is alone" z \
   run-shell "tmux-companion zoom"
 
 # ── The theme, applied when a session is created ────────────────────────────
-set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_id}\"'"
+#
+# The session name twice, not #{session_id}: tmux 3.5 leaves #{session_id}
+# empty inside a run-shell and 3.7 resolves it, so the id version painted
+# whichever session was current instead of the one being created. The binary
+# falls back to the name when the target is empty, so an older copy of this
+# line still works.
+#
+# With no themes on disk this does nothing and says nothing, which is the state
+# every install is in until `tmux-companion theme init` is run.
+set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'"

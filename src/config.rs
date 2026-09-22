@@ -57,6 +57,39 @@ pub struct Config {
     pub run: Run,
     /// Copying to the system clipboard.
     pub clipboard: Clipboard,
+    /// Which theme a session gets before anybody picks one.
+    #[serde(default)]
+    pub theme: Theme,
+}
+
+/// The theme a session is given when it is created.
+///
+/// The `session-created` hook runs `theme apply` for every new session, which
+/// means this decides the colour of a session nobody has picked a theme for.
+/// It used to be four hardcoded names (`blue`, `magenta`, `orange`, `grey`)
+/// carried over from the shell scripts this replaced, and none of them is a
+/// theme `theme init` writes, so a fresh install painted nothing and printed
+/// "No such file or directory" once per session instead.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Theme {
+    /// The theme every unclaimed session gets. Empty leaves them unpainted.
+    pub default: String,
+    /// A theme per session-name prefix, where the prefix is everything before
+    /// the first `/`: `w/api` and `w/web` both match `w`. A session the map
+    /// in `_project-map.tsv` already claims wins over this.
+    pub namespace: std::collections::HashMap<String, String>,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            // One of the six `theme init` writes. Picked because it is the
+            // quietest of them, being a session colour rather than a choice.
+            default: "ink".to_string(),
+            namespace: std::collections::HashMap::new(),
+        }
+    }
 }
 
 /// How to copy to the system clipboard.
@@ -526,6 +559,7 @@ impl Default for Config {
             autosave: Autosave::default(),
             run: Run::default(),
             clipboard: Clipboard::default(),
+            theme: Theme::default(),
         }
     }
 }

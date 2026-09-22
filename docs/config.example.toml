@@ -426,3 +426,30 @@ shell = "zsh"
 # This was two if-shell branches on `uname` in tmux.conf. One binary picking
 # the right command is one less thing the Linux branch has to special-case.
 # copy = "xclip -selection clipboard"
+
+[theme]
+# Which theme a session gets before anybody has picked one.
+#
+# The example config sets a `session-created` hook that runs `theme apply` for
+# every new session, so this decides the colour of a session that nothing else
+# claims. A session a project map already claims keeps its own colour; this is
+# only the answer for the rest.
+#
+# `theme init` writes six: ember, pine, slate, plum, sand and ink, each with a
+# lighter and a darker sibling once `theme gen --shades` has run. Name one of
+# those, or one of your own.
+#
+# Empty leaves unclaimed sessions unpainted, which is also what happens when
+# the theme named here is not on disk: there is nothing to source and nothing
+# is said about it, because this runs once per session created and a message
+# here lands on the terminal at the moment somebody opens a session.
+default = "ink"
+
+# A theme per session-name prefix, where the prefix is everything before the
+# first `/`, so `w/api` and `w/web` both match `w`. Useful when session names
+# already carry a namespace; skip it otherwise and every session takes the
+# default above.
+#
+# [theme.namespace]
+# w = "slate"
+# a = "plum"
