@@ -26,5 +26,7 @@ pub mod proto;
 pub mod segments;
 /// The daemon.
 pub mod server;
+/// Theme colour arithmetic and the files it writes.
+pub mod theme;
 /// tmux's own formatting language.
 pub mod tmux;

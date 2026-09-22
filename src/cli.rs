@@ -151,11 +151,41 @@ pub enum Cmd {
     /// Print what somebody would otherwise have to ask you for
     Doctor,
 
+    /// Theme tools
+    Theme {
+        /// What to do
+        #[command(subcommand)]
+        action: ThemeAction,
+    },
+
     /// Inspect the configuration file
     Config {
         /// What to do with it
         #[command(subcommand)]
         action: ConfigAction,
+    },
+}
+
+/// What `theme` can do.
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "kebab-case")]
+pub enum ThemeAction {
+    /// Compute each theme's readable text colour and a visible border
+    Gen {
+        /// Write the files. Without this, report what would change and touch
+        /// nothing
+        #[arg(long)]
+        apply: bool,
+        /// Also mint a lighter and a darker sibling of each cube colour
+        #[arg(long)]
+        shades: bool,
+        /// Where the theme files are
+        #[arg(long, default_value = "~/.config/tmux/themes")]
+        themes: String,
+        /// The terminal background to measure borders against, as #rrggbb.
+        /// Read from ghostty when not given
+        #[arg(long)]
+        background: Option<String>,
     },
 }
 
@@ -287,6 +317,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         // read of the file says, which is what somebody debugging one wants.
         Cmd::Config { action } => run_config(action)?,
         Cmd::Doctor => crate::doctor::run().await?,
+        Cmd::Theme { action } => run_theme(action)?,
     }
 
     Ok(())
@@ -331,4 +362,152 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
         ConfigAction::Dump => print!("{}", config::dump_defaults()),
     }
     Ok(())
+}
+
+/// `theme gen`.
+fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
+    let ThemeAction::Gen {
+        apply,
+        shades,
+        themes,
+        background,
+    } = action;
+
+    let dir = expand_tilde(&themes);
+    let (bg, source) = match background.as_deref().map(crate::theme::parse_hex) {
+        Some(Some(c)) => (c, "--background".to_string()),
+        Some(None) => anyhow::bail!("--background wants #rrggbb"),
+        None => crate::theme::terminal_background(),
+    };
+
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tmux"))
+        .filter(|p| {
+            !p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+        })
+        .collect();
+    files.sort();
+
+    let mut themes_parsed = Vec::new();
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if let Some(t) = crate::theme::parse_theme(path, &text) {
+            themes_parsed.push(t);
+        }
+    }
+
+    println!("{} themes", themes_parsed.len());
+    println!("background {:?} from {}", bg, source);
+
+    let mut changed = 0usize;
+    let mut needs_light = Vec::new();
+    let mut lifted = Vec::new();
+    for theme in &themes_parsed {
+        let (fg, ratio) = crate::theme::readable_on(theme.index);
+        let (border, bratio) = crate::theme::border_for(theme.index, bg);
+        let stem = theme
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if fg == crate::theme::TEXT_LIGHT {
+            needs_light.push((stem.clone(), theme.index, ratio));
+        }
+        if border != theme.index {
+            lifted.push((stem, theme.index, border, bratio));
+        }
+        if let Some(text) = crate::theme::with_computed_colours(theme, bg) {
+            changed += 1;
+            if apply {
+                std::fs::write(&theme.path, text)?;
+            }
+        }
+    }
+
+    // Sorted by stem rather than left in directory order: `blue` reads before
+    // `blue-dark` in a report and after it in a directory listing, and the
+    // report is the thing a person reads.
+    needs_light.sort_by(|a, b| a.0.cmp(&b.0));
+    lifted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    println!(
+        "\n-- text colour: {} of {} themes need {}, and were painting dark text on a dark block",
+        needs_light.len(),
+        themes_parsed.len(),
+        crate::theme::TEXT_LIGHT
+    );
+    for (stem, index, ratio) in &needs_light {
+        println!("   {stem:<22} colour{index:<4} light contrast {ratio:.1}");
+    }
+
+    println!(
+        "\n-- borders: {} of {} themes need a lighter active pane border to clear {:.1}:1 on {:?}",
+        lifted.len(),
+        themes_parsed.len(),
+        crate::theme::BORDER_MIN,
+        bg
+    );
+    for (stem, index, border, ratio) in &lifted {
+        println!("   {stem:<22} colour{index:<4} -> colour{border:<4} {ratio:.1}");
+    }
+
+    println!(
+        "\n{} @theme-color-on-main and @theme-color-border into {changed} files",
+        if apply { "wrote" } else { "would write" }
+    );
+
+    if shades {
+        let mut taken: std::collections::HashSet<u8> =
+            themes_parsed.iter().map(|t| t.index).collect();
+        let mut made = Vec::new();
+        let mut by_name = themes_parsed.clone();
+        by_name.sort_by(|a, b| a.name.cmp(&b.name));
+        for theme in &by_name {
+            for (label, index) in crate::theme::shades(theme.index) {
+                if !taken.insert(index) {
+                    continue;
+                }
+                let stem = format!(
+                    "{}-{label}",
+                    theme
+                        .path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                );
+                let target = dir.join(format!("{stem}.tmux"));
+                if apply && !target.exists() {
+                    std::fs::write(&target, crate::theme::shade_file(theme, label, index, bg))?;
+                }
+                made.push((stem, index));
+            }
+        }
+        println!(
+            "\n-- shades: {} {}",
+            if apply { "wrote" } else { "would write" },
+            made.len()
+        );
+        for (stem, index) in &made {
+            println!("   {stem:<22} colour{index}");
+        }
+    }
+
+    Ok(())
+}
+
+/// `~` to the home directory, because a default path in `--help` reads better
+/// with a tilde in it than with somebody's username.
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => match std::env::var_os("HOME") {
+            Some(home) => std::path::PathBuf::from(home).join(rest),
+            None => std::path::PathBuf::from(path),
+        },
+        None => std::path::PathBuf::from(path),
+    }
 }

@@ -23,7 +23,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 
 | # | Item | Status |
 | --- | --- | --- |
-| 1 | `theme gen` | todo |
+| 1 | `theme gen` | done — report matches the python on all 76 themes |
 | 2 | `keys`, `cheatsheet` | todo |
 | 3 | `project` | todo |
 | 4 | `autosave`, `toggle` | todo |
