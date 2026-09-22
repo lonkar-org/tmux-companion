@@ -251,6 +251,21 @@ async fn tmux_sessions() -> String {
 }
 
 /// `zoxide query -l`, empty when zoxide is not installed.
+/// The directories zoxide knows, most frecent first.
+///
+/// `new-window` wants the paths and nothing else, where the project picker
+/// wants them merged with live sessions and coloured, so the shared part stops
+/// here.
+pub async fn zoxide_dirs() -> Vec<String> {
+    zoxide_list()
+        .await
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 async fn zoxide_list() -> String {
     let out = tokio::process::Command::new("zoxide")
         .args(["query", "-l"])
@@ -967,5 +982,178 @@ mod session_building {
         assert_eq!(expand_home("~", "/home/me"), "/home/me");
         assert_eq!(expand_home("/etc", "/home/me"), "/etc");
         assert_eq!(expand_home("relative", "/home/me"), "relative");
+    }
+}
+
+// ── a window, rather than a session ──────────────────────────────────────────
+
+/// What `new-window` should do once somebody has chosen or typed something.
+///
+/// Separated from the picker and from tmux so the resolution order is testable,
+/// which matters because it has three fallbacks and the interesting one is the
+/// case where nothing was typed at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowTarget {
+    /// Open a window here.
+    Open(String),
+    /// Somebody typed a path that is not a directory.
+    NoSuchDirectory(String),
+    /// Nothing to do.
+    Cancelled,
+}
+
+/// Resolve a picker outcome into the directory a new window should open in.
+///
+/// `prefill` is the shortened form of the pane's own directory, which is what
+/// the query starts on. Enter with the query untouched means "another window
+/// here", and the pane's real path is used rather than the shortened one,
+/// because shortening throws away characters that cannot be put back: on this
+/// machine `~/l/yogesh.lonkar.org` has lost the `lonkar-org` it came from.
+pub fn window_target(
+    outcome: &crate::picker::Outcome,
+    rows: &[String],
+    prefill: &str,
+    pane_dir: &str,
+    home: &str,
+) -> WindowTarget {
+    match outcome {
+        crate::picker::Outcome::Cancelled => WindowTarget::Cancelled,
+        crate::picker::Outcome::Chosen(i) => match rows.get(*i) {
+            Some(path) => WindowTarget::Open(path.clone()),
+            None => WindowTarget::Cancelled,
+        },
+        crate::picker::Outcome::Typed(query) => {
+            let q = query.trim();
+            if q.is_empty() {
+                return WindowTarget::Cancelled;
+            }
+            if q == prefill {
+                return WindowTarget::Open(pane_dir.to_string());
+            }
+            // The same order the project picker uses, so one rule covers both
+            // keys rather than two that drift.
+            match resolve_typed(q, pane_dir, home) {
+                Some(dir) => WindowTarget::Open(dir),
+                None => WindowTarget::NoSuchDirectory(q.to_string()),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use crate::picker::Outcome;
+
+    const HOME: &str = "/home/me";
+
+    #[test]
+    fn picking_a_row_opens_its_real_path_not_its_label() {
+        let rows = vec!["/home/me/work/api".to_string()];
+        assert_eq!(
+            window_target(&Outcome::Chosen(0), &rows, "~/w/api", "/tmp", HOME),
+            WindowTarget::Open("/home/me/work/api".to_string())
+        );
+    }
+
+    #[test]
+    fn enter_on_the_untouched_query_is_another_window_here() {
+        // The whole point of prefilling: prefix and enter, nothing typed.
+        assert_eq!(
+            window_target(
+                &Outcome::Typed("~/w/api".into()),
+                &[],
+                "~/w/api",
+                "/home/me/work/api",
+                HOME
+            ),
+            WindowTarget::Open("/home/me/work/api".to_string())
+        );
+    }
+
+    #[test]
+    fn the_pane_directory_wins_over_expanding_the_shortened_form() {
+        // `~/l/yogesh.lonkar.org` cannot be expanded back: the `l` stands for
+        // a directory whose name is gone. Resolving the prefill as a path
+        // would either miss or, worse, find something else.
+        let target = window_target(
+            &Outcome::Typed("~/l/thing".into()),
+            &[],
+            "~/l/thing",
+            "/home/me/lonkar-org/thing",
+            HOME,
+        );
+        assert_eq!(
+            target,
+            WindowTarget::Open("/home/me/lonkar-org/thing".to_string())
+        );
+    }
+
+    #[test]
+    fn a_row_index_that_is_not_there_does_nothing() {
+        assert_eq!(
+            window_target(&Outcome::Chosen(7), &[], "~", "/tmp", HOME),
+            WindowTarget::Cancelled
+        );
+    }
+
+    #[test]
+    fn cancelling_does_nothing() {
+        assert_eq!(
+            window_target(&Outcome::Cancelled, &[], "~", "/tmp", HOME),
+            WindowTarget::Cancelled
+        );
+    }
+
+    #[test]
+    fn an_empty_query_does_nothing_rather_than_opening_home() {
+        assert_eq!(
+            window_target(&Outcome::Typed("   ".into()), &[], "~/x", "/tmp", HOME),
+            WindowTarget::Cancelled
+        );
+    }
+
+    #[test]
+    fn a_typed_path_that_is_not_a_directory_is_reported_rather_than_guessed() {
+        assert_eq!(
+            window_target(
+                &Outcome::Typed("nowhere-at-all".into()),
+                &[],
+                "~/x",
+                "/tmp",
+                HOME
+            ),
+            WindowTarget::NoSuchDirectory("nowhere-at-all".to_string())
+        );
+    }
+
+    #[test]
+    fn a_directory_zoxide_has_never_seen_opens_when_it_is_typed_in_full() {
+        // The list is visits, so a repository cloned five minutes ago is not
+        // in it. This is the only way in.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().display().to_string();
+        assert_eq!(
+            window_target(&Outcome::Typed(path.clone()), &[], "~/x", "/tmp", HOME),
+            WindowTarget::Open(std::fs::canonicalize(&path).unwrap().display().to_string())
+        );
+    }
+
+    #[test]
+    fn a_relative_path_resolves_against_the_pane_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("child");
+        std::fs::create_dir(&sub).unwrap();
+        let out = window_target(
+            &Outcome::Typed("child".into()),
+            &[],
+            "~/x",
+            &dir.path().display().to_string(),
+            HOME,
+        );
+        assert_eq!(
+            out,
+            WindowTarget::Open(std::fs::canonicalize(&sub).unwrap().display().to_string())
+        );
     }
 }

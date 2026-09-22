@@ -60,6 +60,11 @@ bind -N "custom: help search every key binding" ? \
   display-popup -E -w 80% -h 60% "tmux-companion keys"
 bind -N "custom: help cheat sheet of my bindings" C-c \
   display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
+# tmux's own prefix+c opens a window in the pane's directory and gives you no
+# say in it. This keeps that as the zero-keystroke case, since the query starts
+# on that directory, and adds the frecency list and any path typed in full.
+bind -N "custom: window new one here, or at any directory" c \
+  display-popup -E -w 65% -h 65% "tmux-companion new-window"
 bind -N "custom: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
 bind -N "custom: window run a command from history" e \

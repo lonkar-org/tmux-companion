@@ -204,6 +204,13 @@ pub enum Cmd {
         no_save: bool,
     },
 
+    /// Open a new window, here or at any directory
+    ///
+    /// The query starts on the pane's own directory, so pressing the key and
+    /// then enter is "another window here" and nothing has to be typed for the
+    /// common case. A directory zoxide has never seen can be typed in full.
+    NewWindow,
+
     /// Print the shell code that emits the OSC 133 prompt marks
     ///
     /// tmux's own next-prompt and previous-prompt do nothing until a shell
@@ -505,6 +512,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             discard,
             no_save,
         } => run_close_project(session, discard, !no_save).await?,
+        Cmd::NewWindow => run_new_window().await?,
         Cmd::ShellInit { shell } => run_shell_init(shell)?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
         Cmd::Zoom => run_zoom().await?,
@@ -1060,6 +1068,68 @@ pub enum ProjectAction {
     Forget,
     /// Which layout this project gets, and which file decided
     Show,
+}
+
+/// `new-window`: pick a directory, open a window there.
+///
+/// The tmux default for prefix+c opens a window in the pane's directory and
+/// gives you no say in it. This keeps that as the zero-keystroke case and adds
+/// the rest: the frecency list, and any path at all typed in full.
+async fn run_new_window() -> anyhow::Result<()> {
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    // Asking tmux rather than reading the process's own directory: a popup
+    // inherits the pane's directory, but a binding run with -d somewhere else
+    // does not, and the answer has to be the pane somebody is looking at.
+    let pane_dir = {
+        let d = tmux_display("#{pane_current_path}").await;
+        if std::path::Path::new(&d).is_dir() {
+            d
+        } else {
+            std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| home.clone())
+        }
+    };
+
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let paths: Vec<String> = if config.project.zoxide {
+        crate::project::zoxide_dirs().await
+    } else {
+        Vec::new()
+    };
+
+    let items: Vec<crate::picker::Item> = paths
+        .iter()
+        .map(|p| crate::picker::Item::with_preview(crate::project::short_path(p, &home), p.clone()))
+        .collect();
+
+    let prefill = crate::project::short_path(&pane_dir, &home);
+    let chrome = crate::picker::Chrome {
+        title: "[ New window at ]".into(),
+        footer: "enter opens a window   ctrl-u clears the query   type a path zoxide has not seen   esc cancels".into(),
+        preview_title: "[ Directory ]".into(),
+    };
+
+    let outcome = crate::picker::run_with_query(items, &prefill, &chrome)?;
+    match crate::project::window_target(&outcome, &paths, &prefill, &pane_dir, &home) {
+        crate::project::WindowTarget::Cancelled => Ok(()),
+        crate::project::WindowTarget::NoSuchDirectory(q) => {
+            tmux(&[
+                "display-message",
+                &format!("new window: no such directory: {q}"),
+            ])
+            .await;
+            Ok(())
+        }
+        crate::project::WindowTarget::Open(dir) => {
+            // Counted as a visit, the same as `z` would, so opening a window
+            // somewhere twice floats it up the list next time.
+            crate::project::record_visit(&dir).await;
+            tmux(&["new-window", "-c", &dir]).await;
+            Ok(())
+        }
+    }
 }
 
 /// `shell-init`: print the prompt-mark hook for a shell.

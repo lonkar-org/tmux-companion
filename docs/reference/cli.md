@@ -98,6 +98,7 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | Command | Does |
 | --- | --- |
 | `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `-s` scans the tmux selection, `-n` prints what it would open |
+| `new-window` | Pick a directory and open a window there. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
 | `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform |

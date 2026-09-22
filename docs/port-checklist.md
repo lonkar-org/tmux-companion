@@ -59,5 +59,10 @@ Said plainly rather than left to be discovered.
 - `probe keys` reports what crossterm decided a keypress was rather than the
   raw bytes, because by the time this code runs the parse has happened. What it
   prints is what any program acting on the key will see.
-- `zoxide-window.zsh` is inside `project` rather than a command of its own: it
-  was the same list with a different verb on the end.
+- `zoxide-window.zsh` was recorded here as folded into `project`, "the same
+  list with a different verb on the end". That was wrong: `project` makes and
+  switches sessions and never grew the window verb, so prefix+c had nothing to
+  bind to and the feature was dropped rather than ported. It came back as
+  `new-window`, which is the same list, the same resolution order for a typed
+  path, and the pane's own directory prefilled so the key and enter mean what
+  tmux's own prefix+c meant.
