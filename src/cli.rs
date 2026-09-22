@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::proto::{ClientsArgs, GstArgs, Request, StatusRightArgs, VimBgArgs};
+use crate::proto::{ClientsArgs, GstArgs, Request, ShJobsArgs, StatusRightArgs};
 use clap::{Parser, Subcommand};
 
 /// The parsed command line.
@@ -90,7 +90,18 @@ pub enum Cmd {
         window_active_clients: u32,
     },
 
-    /// Background nvim indicator segment
+    /// Jobs stopped or running under a pane
+    ShJobs {
+        /// Pane whose descendants to look through
+        pane_pid: u32,
+    },
+
+    /// Background nvim indicator segment.
+    ///
+    /// Deprecated: this is `sh-jobs` with one hardcoded job. Kept for one
+    /// release because it is in at least one tmux.conf, and hidden so a new
+    /// reader is not offered two names for the same thing.
+    #[command(hide = true)]
     VimBg {
         /// Pane whose descendants to look through
         pane_pid: u32,
@@ -225,8 +236,13 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             };
             crate::client::send_and_print(Request::build("clients", &args)).await?;
         }
+        Cmd::ShJobs { pane_pid } => {
+            crate::client::send_and_print(Request::build("sh-jobs", &ShJobsArgs { pane_pid }))
+                .await?;
+        }
         Cmd::VimBg { pane_pid } => {
-            crate::client::send_and_print(Request::build("vim-bg", &VimBgArgs { pane_pid }))
+            eprintln!("tmux-companion: `vim-bg` is now `sh-jobs`; the old name works for now");
+            crate::client::send_and_print(Request::build("sh-jobs", &ShJobsArgs { pane_pid }))
                 .await?;
         }
         Cmd::Window {

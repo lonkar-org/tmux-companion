@@ -139,3 +139,37 @@ separator_before = ""
 [[status.right.segments]]
 name = "battery"
 separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
+
+# Jobs stopped or running under a pane, drawn by `tmux-companion sh-jobs`.
+#
+# This was `vim-bg`, which asked one question with one answer baked in: is
+# there a suspended nvim under this pane. If you suspend vim, or claude, or a
+# cargo watch, this is the table that makes the segment say so.
+#
+# The cost is why it is not on the status bar by default: finding the children
+# of one pid means enumerating the whole process table, which measured 16.25 ms
+# of server CPU per call. Bind it to a key, or accept the cost knowingly.
+[sh_jobs]
+# `stopped` counts only jobs suspended with ctrl-z, which is what vim-bg meant.
+# `any` also counts jobs running in the background.
+states = "stopped"
+
+# How many icons a busy pane may put on the bar.
+max = 3
+
+# The table, in priority order: the first entry whose pattern matches a process
+# name wins. `match` is a regular expression, so "^vim$" does not match nvim.
+# An unparseable pattern costs that row its icon and nothing else.
+#
+#   [[sh_jobs.job]]
+#   match = "^claude$"
+#   icon = "󰚩 "
+#   color = "#d97757"
+#
+# `icon` may contain `{NAME}` placeholders, which expand to the glyph of that
+# name in src/tmux/icons.rs. `color` is a tmux colour; leave it out when the
+# icon carries its own markup, as the default entry does.
+[[sh_jobs.job]]
+match = "nvim"
+icon = "#[fg=#0262a8,bg=colour235,none] n#[fg=#539035]󰕷im#[fg=colour235,bg=colour233]"
+color = ""

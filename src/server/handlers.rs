@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{
-    proto::{ClientsArgs, GstArgs, Request, Response, StatusRightArgs, VimBgArgs},
+    proto::{ClientsArgs, GstArgs, Request, Response, ShJobsArgs, StatusRightArgs},
     segments::{self, git::GstOptions},
     server::state::{DEFAULT_GST_TTL, ServerState},
 };
@@ -106,8 +106,14 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             Ok(a) => segments::clients::render(a.session_attached, a.window_active_clients).await,
             Err(e) => Err(e),
         },
-        "vim-bg" => match req.parse_args::<VimBgArgs>() {
-            Ok(a) => segments::vim_bg::render(a.pane_pid).await,
+        // `vim-bg` is the old name for the same request. A daemon from an
+        // older build answers it too, which is what keeps an upgrade from
+        // needing the two halves restarted together.
+        "sh-jobs" | "vim-bg" => match req.parse_args::<ShJobsArgs>() {
+            Ok(a) => {
+                let config = state.lock().await.config.sh_jobs.clone();
+                segments::sh_jobs::render(a.pane_pid, &config).await
+            }
             Err(e) => Err(e),
         },
         "window" => {

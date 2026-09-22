@@ -7,7 +7,9 @@ pub mod clients;
 pub mod git;
 /// Bandwidth rate.
 pub mod network;
-/// Suspended-editor marker.
+/// Jobs stopped or running under a pane.
+pub mod sh_jobs;
+/// Suspended-editor marker. Superseded by [`sh_jobs`].
 pub mod vim_bg;
 /// Window status, with path abbreviation and per-directory icons.
 pub mod window;

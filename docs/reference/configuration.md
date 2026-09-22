@@ -52,7 +52,7 @@ from. A test asserts that every key `config dump` produces appears there, so a
 setting can't exist without being written down.
 
 The tables today are `[general]`, `[dirs.aliases]`, `[git]`, `[network]`,
-`[battery]`, `[glyphs]` and `[status.right]`. The port adds `[[layout]]` and the rest as each phase reaches them, and `docs/comrades-port.md` has the table
+`[battery]`, `[glyphs]`, `[status.right]` and `[sh_jobs]`. The port adds `[[layout]]` and the rest as each phase reaches them, and `docs/comrades-port.md` has the table
 saying which phase brings which.
 
 ## tmux user options
@@ -154,3 +154,30 @@ because that's what the `tmux.conf` literals did: a non-repo pane on a quiet
 network still drew the wedge in front of an absent battery. And
 `trailing_space` exists because tmux draws the right side flush to the terminal
 edge, so without it the last glyph sits against the border.
+
+## Jobs under a pane
+
+`tmux-companion sh-jobs <pane_pid>` says what's stopped or running under a
+pane. It was `vim-bg`, which asked one question with one answer compiled in, so
+anybody suspending `vim` or `claude` or a `cargo watch` got nothing at all.
+
+```toml
+[[sh_jobs.job]]
+match = "^claude$"
+icon = "󰚩 "
+color = "#d97757"
+```
+
+`match` is a regular expression against the process name, so `^vim$` doesn't
+match `nvim`, and the first entry that matches wins. An unparseable pattern
+costs that row its icon and nothing else, because the pattern came from a file
+and one bad row shouldn't take down a daemon. `states = "any"` counts
+background jobs as well as stopped ones, and `max` bounds what a busy pane can
+put on the bar.
+
+The old name still works for one release and prints a line saying so.
+
+Cost is why this isn't on the status bar by default: finding the children of
+one pid means enumerating the whole process table, which measured 16.25 ms of
+server CPU per call. Bind it to a key, or put it on the bar knowing what it
+costs.

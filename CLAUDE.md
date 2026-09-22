@@ -62,7 +62,8 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/segments/battery.rs` | ioreg plist parse, `format_battery_output` |
 | `src/segments/network.rs` | `sample` (counter read), `rate`/`advance` (pure arithmetic), IEC format |
 | `src/segments/clients.rs` | tmux list-clients, `format_client_output` |
-| `src/segments/vim_bg.rs` | pgrep+ps, `is_suspended_nvim` |
+| `src/segments/sh_jobs.rs` | jobs under a pane, the config job table, `format_jobs` |
+| `src/segments/vim_bg.rs` | deprecated shim over `sh_jobs`, kept one release |
 | `src/segments/window.rs` | path abbreviation, index icons, `render` |
 | `src/tmux/format.rs` | `Segment`, `colored_segment`, `powerline_segment`, color consts |
 | `src/tmux/icons.rs` | Nerd Font codepoints |

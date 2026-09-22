@@ -1,48 +1,34 @@
-//! The suspended-editor marker: whether this pane has an `nvim` stopped in
-//! the background.
-const VIM_OUTPUT: &str =
-    "#[fg=#0262a8,bg=colour235,none] n#[fg=#539035]󰕷im#[fg=colour235,bg=colour233]";
+//! The old name for [`crate::segments::sh_jobs`].
+//!
+//! `vim-bg` asked one question with one answer baked in. The module stays for
+//! one release because `has_suspended_nvim` is what the git segment calls when
+//! a pane pid is passed by hand, and because deleting a name somebody has in
+//! their tmux.conf is a separate decision from replacing it.
 
 /// Whether a stopped `nvim` is a descendant of this pane.
 ///
 /// Enumerates the whole process table, which is why the combined status side
 /// never asks: it cost 18.5 ms of the segment's 26.0 ms.
 pub async fn has_suspended_nvim(pane_pid: u32) -> anyhow::Result<bool> {
-    Ok(tokio::task::spawn_blocking(move || {
-        use sysinfo::{Pid, ProcessesToUpdate, System};
-        let mut sys = System::new();
-        sys.refresh_processes(ProcessesToUpdate::All, true);
-        let parent = Pid::from_u32(pane_pid);
-        sys.processes().values().any(|p| {
-            p.parent() == Some(parent)
-                && p.status() == sysinfo::ProcessStatus::Stop
-                && p.name().to_string_lossy().contains("nvim")
-        })
-    })
-    .await?)
+    crate::segments::sh_jobs::has_suspended_nvim(pane_pid).await
 }
 
-/// Render the marker, or nothing when no editor is suspended under this pane.
+/// Render the marker with the default job table.
 pub async fn render(pane_pid: u32) -> anyhow::Result<String> {
-    if has_suspended_nvim(pane_pid).await? {
-        return Ok(VIM_OUTPUT.to_string());
-    }
-    Ok(String::new())
+    crate::segments::sh_jobs::render(pane_pid, &crate::config::ShJobs::default()).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    // is_suspended_nvim() no longer exists — detection is done in-process via sysinfo.
-    // Integration coverage: run `vim-bg <pane_pid>` with/without a suspended nvim child.
-
     #[test]
-    fn output_constant_contains_color_codes() {
-        assert!(VIM_OUTPUT.contains("fg=#0262a8"));
-        assert!(VIM_OUTPUT.contains("fg=#539035"));
-        assert!(VIM_OUTPUT.contains("n"));
-        assert!(VIM_OUTPUT.contains("󰕷"));
-        assert!(VIM_OUTPUT.contains("im"));
+    fn the_old_output_constant_still_describes_what_is_drawn() {
+        // Guards the rename: whatever `sh-jobs` draws for a suspended nvim by
+        // default has to be what `vim-bg` drew.
+        let out = crate::config::ShJobs::VIM_OUTPUT;
+        assert!(out.contains("fg=#0262a8"));
+        assert!(out.contains("fg=#539035"));
+        assert!(out.contains("n"));
+        assert!(out.contains("\u{f0577}"));
+        assert!(out.contains("im"));
     }
 }

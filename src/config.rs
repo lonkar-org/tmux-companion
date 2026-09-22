@@ -34,6 +34,102 @@ pub struct Config {
     pub glyphs: Glyphs,
     /// What the status bar puts where.
     pub status: Status,
+    /// Jobs stopped or running under a pane.
+    pub sh_jobs: ShJobs,
+}
+
+/// Which stopped or background jobs the `sh-jobs` segment draws, and how.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct ShJobs {
+    /// Which job states count.
+    pub states: JobStates,
+    /// How many icons a busy pane may put on the bar.
+    pub max: usize,
+    /// The table, in priority order: the first entry whose pattern matches a
+    /// job name wins.
+    pub job: Vec<JobEntry>,
+}
+
+impl ShJobs {
+    /// What `vim-bg` drew for a suspended `nvim`, kept byte for byte so the
+    /// rename is only a rename.
+    pub const VIM_OUTPUT: &'static str =
+        "#[fg=#0262a8,bg=colour235,none] n#[fg=#539035]\u{f0577}im#[fg=colour235,bg=colour233]";
+}
+
+impl Default for ShJobs {
+    fn default() -> Self {
+        Self {
+            states: JobStates::Stopped,
+            max: 3,
+            job: vec![JobEntry {
+                match_: "nvim".to_string(),
+                icon: Self::VIM_OUTPUT.to_string(),
+                color: String::new(),
+            }],
+        }
+    }
+}
+
+/// Which job states the segment counts.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum JobStates {
+    /// Only jobs stopped with ctrl-z, which is what `vim-bg` meant.
+    #[default]
+    Stopped,
+    /// Stopped jobs and ones running in the background.
+    Any,
+}
+
+impl JobStates {
+    /// Whether a job in this state counts.
+    pub fn matches(self, stopped: bool) -> bool {
+        match self {
+            JobStates::Stopped => stopped,
+            JobStates::Any => true,
+        }
+    }
+}
+
+/// One row of the job table.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JobEntry {
+    /// A regular expression matched against the process name.
+    #[serde(rename = "match")]
+    pub match_: String,
+    /// What to draw for it. `{NAME}` expands to a glyph, as in a separator.
+    pub icon: String,
+    /// A tmux colour for the icon. Empty leaves it uncoloured, which is what
+    /// an icon carrying its own markup wants.
+    #[serde(default)]
+    pub color: String,
+}
+
+impl JobEntry {
+    /// Whether this entry claims a job of this name.
+    ///
+    /// An unparseable pattern matches nothing rather than panicking: it comes
+    /// from a config file, and one bad row should cost its own icon and not
+    /// the daemon.
+    pub fn matches(&self, name: &str) -> bool {
+        match regex::Regex::new(&self.match_) {
+            Ok(re) => re.is_match(name),
+            Err(_) => false,
+        }
+    }
+
+    /// The markup this entry draws.
+    pub fn render(&self) -> String {
+        let icon = expand_glyphs(&self.icon);
+        if self.color.is_empty() {
+            icon
+        } else {
+            format!("#[fg={}]{}", self.color, icon)
+        }
+    }
 }
 
 /// What the status bar puts where.

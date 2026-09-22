@@ -125,10 +125,13 @@ pub struct ClientsArgs {
     pub window_active_clients: u32,
 }
 
-/// Arguments for `vim-bg`, the suspended-editor marker.
+/// Arguments for `sh-jobs`, the stopped-and-background-jobs segment.
+///
+/// Also what the deprecated `vim-bg` sends: the old name is the new command
+/// with the default job table, so one struct serves both.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
-pub struct VimBgArgs {
+pub struct ShJobsArgs {
     /// The pane whose descendants to look through.
     #[serde(default)]
     pub pane_pid: u32,
