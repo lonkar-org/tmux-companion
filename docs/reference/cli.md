@@ -35,6 +35,19 @@ line saying so, and goes away after one release.
 | `config check [PATH]` | Parse it, report what's wrong, exit nonzero if it is |
 | `config dump` | Print every setting with its default, as a config file |
 
+## Pickers
+
+| Command | Does |
+| --- | --- |
+| `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels |
+
+`--all` opens with no query, `--query` sets a different one, `--refresh`
+rebuilds from tmux rather than using what the daemon holds, and `--print` lists
+the rows instead of opening the picker.
+
+The picker runs in this process rather than in the daemon, because a daemon has
+no terminal.
+
 ## Themes
 
 | Command | Does |

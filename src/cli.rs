@@ -162,6 +162,9 @@ pub enum Cmd {
         /// Rebuild from tmux rather than using what the daemon holds
         #[arg(long)]
         refresh: bool,
+        /// Print the rows and exit, instead of opening the picker
+        #[arg(long)]
+        print: bool,
     },
 
     /// Theme tools
@@ -333,13 +336,8 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             all,
             query,
             refresh,
-        } => {
-            let args = crate::proto::KeysArgs {
-                query: if all { String::new() } else { query },
-                refresh,
-            };
-            crate::client::send_and_print(Request::build("keys", &args)).await?;
-        }
+            print,
+        } => run_keys(all, query, refresh, print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
     }
@@ -534,4 +532,99 @@ fn expand_tilde(path: &str) -> std::path::PathBuf {
         },
         None => std::path::PathBuf::from(path),
     }
+}
+
+/// `keys`: fetch the rows, pick one, run it.
+///
+/// The daemon holds the rows and the picker runs here, because a daemon has no
+/// terminal. `--print` skips the picker entirely, which is what a script wants
+/// and what makes the whole path testable without a tty.
+async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyhow::Result<()> {
+    use crate::keys::KeyRow;
+
+    let args = crate::proto::KeysArgs {
+        // The picker does its own matching, so the daemon is asked for
+        // everything and the opening query is applied here. That is what makes
+        // ctrl-a able to widen beyond what was fetched.
+        query: String::new(),
+        refresh,
+    };
+    let resp = crate::client::send(Request::build("keys", &args)).await?;
+    if let Some(e) = resp.error {
+        anyhow::bail!(e);
+    }
+
+    let rows: Vec<KeyRow> = resp
+        .output
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.splitn(5, '\t');
+            Some(KeyRow {
+                table: f.next()?.to_string(),
+                key: f.next()?.to_string(),
+                shown: f.next()?.to_string(),
+                note: f.next()?.to_string(),
+                command: f.next()?.to_string(),
+            })
+        })
+        .collect();
+
+    let opening = if all { String::new() } else { query };
+
+    if print {
+        for row in crate::keys::filter(&rows, &opening) {
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                row.table, row.key, row.shown, row.note, row.command
+            );
+        }
+        return Ok(());
+    }
+
+    let items: Vec<crate::picker::Item> = rows
+        .iter()
+        .map(|r| {
+            crate::picker::Item::with_preview(
+                format!("{:<28} {}", r.shown, r.note),
+                format!("{}\n\n{}", r.shown, r.command),
+            )
+        })
+        .collect();
+
+    let chrome = crate::picker::Chrome {
+        title: "[ Keys ]".into(),
+        footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
+        preview_title: "[ What it runs ]".into(),
+    };
+
+    let Some(index) = crate::picker::run(items, &opening, &chrome)? else {
+        return Ok(());
+    };
+    let Some(row) = rows.get(index) else {
+        return Ok(());
+    };
+
+    // Recorded before it runs, because the command may replace this process's
+    // terminal and never come back to us.
+    // A broken config should not swallow a keypress somebody already made, so
+    // the defaults stand in here rather than the pick being dropped.
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    if config.usage.enabled {
+        crate::keys::record_use(&usage_path(&config), &row.table, &row.key);
+    }
+
+    tokio::process::Command::new("tmux")
+        .args(["run-shell", "-C", &row.command])
+        .status()
+        .await?;
+    Ok(())
+}
+
+/// Where the usage log lives.
+fn usage_path(config: &crate::config::Config) -> std::path::PathBuf {
+    config.usage.path.clone().unwrap_or_else(|| {
+        crate::server::state_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("keys-usage.tsv")
+    })
 }

@@ -20,6 +20,8 @@ pub mod config;
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod keys;
+/// The fuzzy picker and its state machine.
+pub mod picker;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// The JSON request and response, and one args struct per command.

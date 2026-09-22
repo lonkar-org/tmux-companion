@@ -71,6 +71,8 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/config.rs` | the TOML config: search order, parse, did-you-mean errors, `dump` |
 | `src/doctor.rs` | the report to ask an issue reporter for |
 | `src/theme.rs` | WCAG contrast, the xterm cube, theme file rewrite |
+| `src/keys.rs` | `list-keys` parse, the row cache, the usage log |
+| `src/picker.rs` | fuzzy match state machine and the ratatui screen |
 
 ## Key invariants
 

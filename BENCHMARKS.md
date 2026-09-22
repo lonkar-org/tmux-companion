@@ -187,3 +187,27 @@ crate. The headline there was not CPU but a stall: the old `net` segment hit a
 | `battery` crate replaces `ioreg`+`plist` | with a 30 s cache, ~14x less server CPU |
 | 5 s timeouts on remaining subprocesses | a hung `git` or `tmux` cannot block the server |
 | battery pre-warm at server startup | no 600 ms IOKit cold start on first refresh |
+
+## The port: `keys`
+
+Measured 2026-09-22 on this machine, the same one every other figure here came
+from.
+
+| Path | Median | Minimum |
+| --- | --- | --- |
+| `tmux-companion keys --print`, warm daemon | 8.3 ms | 7.2 ms |
+| `cat keys-cache.tsv \| fzf --filter`, the zsh equivalent | 18.8 ms | 18.6 ms |
+
+Both are the non-interactive shape of the same work: read the rows, apply the
+opening query, print what matched. The interactive halves aren't comparable
+that way, since one of them waits for a person.
+
+What the number leaves out matters as much as what it says. The 93 ms a warm
+`prefix+?` took was 50 ms of fzf starting, 33 ms of `display-popup` and about
+10 ms of everything else, so this replaces the fzf half and doesn't touch
+`display-popup`, which is tmux's own cost and isn't going anywhere.
+
+The zsh row is also flattered by its cache being warm and current. When
+`tmux.conf` is newer, that path rebuilds with six `tmux list-keys` calls at
+about 70 ms before it can show anything, and the daemon does the same work once
+per config change rather than once per keypress.

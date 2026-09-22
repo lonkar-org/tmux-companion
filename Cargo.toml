@@ -25,6 +25,8 @@ regex       = "1.11"
 sysinfo     = "0.39"
 battery     = "0.7"
 toml = "1.1"
+ratatui = "0.29.0"
+nucleo-matcher = "0.3.1"
 
 [dev-dependencies]
 tempfile = "3.12"
