@@ -184,3 +184,42 @@ enabled = true
 
 # Where the log lives. Unset means $XDG_STATE_HOME/tmux-companion/.
 # path = "~/.local/state/tmux-companion/keys-usage.tsv"
+
+[project]
+# Whether to list the directories zoxide knows.
+#
+# zoxide is an assumption rather than a requirement: with this off, the picker
+# lists live sessions and whatever you type, which is a smaller tool and still
+# a working one.
+zoxide = true
+
+# The layout a new project session starts with.
+layout = "default"
+
+# Use a different layout for projects under a path. First match wins.
+#
+#   [[project.override]]
+#   match = "~/work/*"
+#   use_layout = "work"
+
+# What a new project session starts with. The first window is selected when the
+# session opens.
+#
+# These two are `edit` and `ai` because that is what one laptop runs. Yours
+# might be vim and codex, or one window, or five, or a tail -f on a log and no
+# editor anywhere.
+[[layout]]
+name = "default"
+
+[[layout.window]]
+name = "edit"
+command = "nvim"
+# Hold the name against the running program. Without this an editor window
+# follows whatever is running and an agent window renames itself to its own
+# version string, which is how windows end up called `2.1.278`.
+hold_name = true
+
+[[layout.window]]
+name = "ai"
+command = "claude"
+hold_name = true

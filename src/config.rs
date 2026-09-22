@@ -17,7 +17,7 @@ use std::{collections::HashMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Everything the daemon and its clients can be told to do differently.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     /// Process-wide settings: logging, and where state is kept.
@@ -38,6 +38,111 @@ pub struct Config {
     pub sh_jobs: ShJobs,
     /// The record of which bindings get used.
     pub usage: Usage,
+    /// What a new project session starts with.
+    pub layout: Vec<Layout>,
+    /// Where projects come from and how they are named.
+    pub project: Project,
+}
+
+/// Where the project picker gets its rows.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Project {
+    /// Whether to list the directories zoxide knows.
+    ///
+    /// zoxide is an assumption rather than a requirement: with this off the
+    /// picker lists live sessions and whatever gets typed, which is a smaller
+    /// tool and still a working one.
+    pub zoxide: bool,
+    /// The layout a new session starts with, by name.
+    pub layout: String,
+    /// Path-prefix overrides, first match wins.
+    ///
+    /// Named with a trailing underscore because `override` is a reserved word
+    /// in Rust; the config file spells it without one.
+    #[serde(rename = "override")]
+    pub override_: Vec<LayoutOverride>,
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self {
+            zoxide: true,
+            layout: "default".to_string(),
+            override_: Vec::new(),
+        }
+    }
+}
+
+/// A layout chosen by where the project is.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutOverride {
+    /// A path prefix, with `~` meaning the home directory.
+    #[serde(rename = "match")]
+    pub match_: String,
+    /// The layout to use for a project under it.
+    pub use_layout: String,
+}
+
+/// The windows a new project session starts with.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Layout {
+    /// What this layout is called, which is what `project` and the overrides
+    /// refer to.
+    pub name: String,
+    /// The windows, in order. The first one is selected when the session opens.
+    #[serde(default)]
+    pub window: Vec<LayoutWindow>,
+}
+
+/// One window in a layout.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutWindow {
+    /// The window name, which is also what `toggle` cycles by.
+    pub name: String,
+    /// What to run in it. Empty leaves a shell.
+    #[serde(default)]
+    pub command: String,
+    /// Whether to hold the name against the running program.
+    ///
+    /// On by default because an editor window otherwise follows whatever is
+    /// running and an agent window renames itself to its own version string,
+    /// which is how windows end up called `2.1.278`.
+    #[serde(default = "yes")]
+    pub hold_name: bool,
+}
+
+/// serde needs a function for a default of `true`.
+fn yes() -> bool {
+    true
+}
+
+impl Config {
+    /// The layout to start a project at `path` with.
+    ///
+    /// An override wins over `[project] layout`, and a name nothing defines
+    /// gives an empty layout, which is a plain shell rather than an error: a
+    /// typo in a layout name should cost the windows, not the session.
+    pub fn layout_for(&self, path: &str, home: &str) -> Option<&Layout> {
+        let wanted = self
+            .project
+            .override_
+            .iter()
+            .find(|o| {
+                let prefix = match o.match_.strip_prefix("~/") {
+                    Some(rest) => format!("{home}/{rest}"),
+                    None => o.match_.clone(),
+                };
+                let prefix = prefix.trim_end_matches('*').trim_end_matches('/');
+                !prefix.is_empty() && path.starts_with(prefix)
+            })
+            .map(|o| o.use_layout.as_str())
+            .unwrap_or(&self.project.layout);
+        self.layout.iter().find(|l| l.name == wanted)
+    }
 }
 
 /// The record of which bindings get used, which orders the cheat sheet.
@@ -51,6 +156,41 @@ pub struct Usage {
     pub enabled: bool,
     /// Where the log lives. Empty means `$XDG_STATE_HOME/tmux-companion/`.
     pub path: Option<PathBuf>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            general: General::default(),
+            dirs: Dirs::default(),
+            git: Git::default(),
+            network: Network::default(),
+            battery: Battery::default(),
+            glyphs: Glyphs::default(),
+            status: Status::default(),
+            sh_jobs: ShJobs::default(),
+            usage: Usage::default(),
+            // Two windows, an editor and an agent, which is what
+            // project-session.zsh hardcoded. Somebody who wants one window, or
+            // five, or neither of these tools, changes this table.
+            layout: vec![Layout {
+                name: "default".to_string(),
+                window: vec![
+                    LayoutWindow {
+                        name: "edit".to_string(),
+                        command: "nvim".to_string(),
+                        hold_name: true,
+                    },
+                    LayoutWindow {
+                        name: "ai".to_string(),
+                        command: "claude".to_string(),
+                        hold_name: true,
+                    },
+                ],
+            }],
+            project: Project::default(),
+        }
+    }
 }
 
 impl Default for Usage {
@@ -959,6 +1099,73 @@ mod tests {
     fn text_with_no_placeholder_is_untouched() {
         assert_eq!(expand_glyphs("#[fg=colour233]"), "#[fg=colour233]");
         assert_eq!(expand_glyphs(""), "");
+    }
+
+    // ── layouts ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_default_layout_is_the_two_windows_the_script_hardcoded() {
+        let c = Config::default();
+        let l = c
+            .layout_for("/anywhere", "/home/me")
+            .expect("a default layout");
+        let names: Vec<&str> = l.window.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, vec!["edit", "ai"]);
+        assert_eq!(l.window[0].command, "nvim");
+        assert!(l.window[0].hold_name, "an editor window must keep its name");
+    }
+
+    #[test]
+    fn an_override_wins_over_the_default_layout() {
+        let text = r#"
+[project]
+layout = "default"
+
+[[project.override]]
+match = "~/work/*"
+use_layout = "work"
+
+[[layout]]
+name = "default"
+
+[[layout]]
+name = "work"
+"#;
+        let c = parse(text, std::path::Path::new("t.toml")).unwrap();
+        assert_eq!(
+            c.layout_for("/home/me/work/thing", "/home/me")
+                .map(|l| l.name.as_str()),
+            Some("work")
+        );
+        assert_eq!(
+            c.layout_for("/home/me/other", "/home/me")
+                .map(|l| l.name.as_str()),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn a_layout_name_nothing_defines_gives_no_windows_rather_than_an_error() {
+        // A typo in a layout name should cost the windows, not the session.
+        let text = "[project]\nlayout = \"nope\"\n";
+        let c = parse(text, std::path::Path::new("t.toml")).unwrap();
+        assert!(c.layout_for("/anywhere", "/home/me").is_none());
+    }
+
+    #[test]
+    fn an_empty_layout_is_a_plain_shell() {
+        let text = "[[layout]]\nname = \"bare\"\n\n[project]\nlayout = \"bare\"\n";
+        let c = parse(text, std::path::Path::new("t.toml")).unwrap();
+        let l = c.layout_for("/anywhere", "/home/me").expect("bare exists");
+        assert!(l.window.is_empty());
+    }
+
+    #[test]
+    fn the_override_key_is_spelled_without_the_underscore_in_the_file() {
+        // `override` is reserved in Rust and is not in TOML.
+        let text = "[[project.override]]\nmatch = \"/a\"\nuse_layout = \"x\"\n";
+        let c = parse(text, std::path::Path::new("t.toml")).unwrap();
+        assert_eq!(c.project.override_.len(), 1);
     }
 
     #[test]

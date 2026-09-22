@@ -181,3 +181,45 @@ Cost is why this isn't on the status bar by default: finding the children of
 one pid means enumerating the whole process table, which measured 16.25 ms of
 server CPU per call. Bind it to a key, or put it on the bar knowing what it
 costs.
+
+## What a new project session starts with
+
+`[[layout]]` is the windows, and `[project] layout` picks which one:
+
+```toml
+[[layout]]
+name = "default"
+
+  [[layout.window]]
+  name = "edit"
+  command = "nvim"
+
+  [[layout.window]]
+  name = "ai"
+  command = "claude"
+```
+
+Those two names are what one laptop runs. Yours might be vim and codex, or one
+window, or five, or a `tail -f` on a log and no editor anywhere. A layout with
+no windows in it is a plain shell, which is what somebody who wants none of
+this gets by writing nothing.
+
+`[[project.override]]` sends projects under a path to a different layout, first
+match wins:
+
+```toml
+[[project.override]]
+match = "~/work/*"
+use_layout = "work"
+```
+
+A layout name nothing defines costs the windows rather than the session: you
+get a shell and no error, because a typo shouldn't stop you opening a project.
+
+`hold_name` keeps a window's name against the running program, and it's on by
+default for a reason. Without it an editor window follows whatever is running,
+and an agent window renames itself to its own version string, which is how
+windows end up called `2.1.278`.
+
+`[project] zoxide = false` drops the directory list, leaving live sessions and
+whatever you type. zoxide is an assumption here rather than a requirement.

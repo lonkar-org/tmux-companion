@@ -25,7 +25,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | --- | --- | --- |
 | 1 | `theme gen` | done — report matches the python on all 76 themes |
 | 2 | `keys`, `cheatsheet` | done — both render what the zsh did, bar the two bindings tmux stopped reporting |
-| 3 | `project` | todo |
+| 3 | `project` | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows |
 | 4 | `autosave`, `toggle` | todo |
 | 5 | `theme`, `run` | todo |
 | 6 | `open`, `close-project`, the probes, the tmux.conf logic | todo |

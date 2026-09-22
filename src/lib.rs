@@ -26,6 +26,8 @@ pub mod keys;
 pub mod picker;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
+/// Projects: one session each.
+pub mod project;
 /// The JSON request and response, and one args struct per command.
 pub mod proto;
 /// The things the status bar can draw.

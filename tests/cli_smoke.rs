@@ -36,7 +36,8 @@ fn gst_takes_an_optional_path_and_a_ttl() {
 
 #[test]
 fn an_unknown_subcommand_is_an_error_not_a_default() {
-    // `keys` used to be the example here and is a real command now, which is
-    // the port arriving rather than the test going stale.
-    assert!(Cli::try_parse_from(["tmux-companion", "cheatsheet"]).is_err());
+    // Deliberately a name no subcommand will ever take. This test has gone
+    // stale twice by naming something the port then implemented: first `keys`,
+    // then `cheatsheet`.
+    assert!(Cli::try_parse_from(["tmux-companion", "not-a-subcommand-and-never-will-be"]).is_err());
 }

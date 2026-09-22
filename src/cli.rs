@@ -167,6 +167,15 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// Switch to a project, or start one
+    Project {
+        /// Go straight to this directory instead of opening the picker
+        dir: Option<String>,
+        /// Print the rows and exit
+        #[arg(long)]
+        print: bool,
+    },
+
     /// A cheat sheet of the bindings you wrote, in four boxes
     Cheatsheet {
         /// Print and exit instead of waiting for a keypress
@@ -345,6 +354,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             refresh,
             print,
         } => run_keys(all, query, refresh, print).await?,
+        Cmd::Project { dir, print } => run_project(dir, print).await?,
         Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
@@ -711,4 +721,191 @@ fn wait_for_a_key() {
         }
     }
     let _ = disable_raw_mode();
+}
+
+/// `project`: pick a project, then switch to its session or build one.
+async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
+    use crate::project::Kind;
+
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    // Straight to a directory, which is what the shell alias does.
+    if let Some(dir) = dir {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let Some(path) = crate::project::resolve_typed(&dir, &cwd, &home) else {
+            anyhow::bail!("no such directory: {dir}");
+        };
+        return open_project(&path, &config, &home).await;
+    }
+
+    let rows = crate::project::collect(&config, &home).await;
+
+    if print {
+        for row in &rows {
+            println!(
+                "{}\t{}\t{}\t{}",
+                match row.kind {
+                    Kind::Session => "session",
+                    Kind::Directory => "dir",
+                },
+                row.label,
+                crate::project::short_path(&row.path, &home),
+                row.colour.clone().unwrap_or_default()
+            );
+        }
+        return Ok(());
+    }
+
+    let items: Vec<crate::picker::Item> = rows
+        .iter()
+        .map(|r| {
+            let mark = match r.kind {
+                Kind::Session => "session",
+                Kind::Directory => "dir    ",
+            };
+            crate::picker::Item::with_preview(
+                format!(
+                    "{mark}  {:<24} {}",
+                    r.label,
+                    crate::project::short_path(&r.path, &home)
+                ),
+                r.path.clone(),
+            )
+        })
+        .collect();
+
+    let chrome = crate::picker::Chrome {
+        title: "[ Project ]".into(),
+        footer: "up = last session   type a path for a new one   esc cancels".into(),
+        preview_title: "[ Where ]".into(),
+    };
+
+    let Some(index) = crate::picker::run(items, "", &chrome)? else {
+        return Ok(());
+    };
+    let Some(row) = rows.get(index) else {
+        return Ok(());
+    };
+
+    match row.kind {
+        // Switched to by its own name: deriving one from the path is wrong for
+        // any session whose path is not a project directory.
+        Kind::Session => focus_session(&row.label).await,
+        Kind::Directory => open_project(&row.path, &config, &home).await,
+    }
+}
+
+/// Switch this client to a session, or attach when run from outside tmux.
+async fn focus_session(name: &str) -> anyhow::Result<()> {
+    let inside = std::env::var_os("TMUX").is_some();
+    let verb = if inside {
+        "switch-client"
+    } else {
+        "attach-session"
+    };
+    tokio::process::Command::new("tmux")
+        .args([verb, "-t", &format!("={name}")])
+        .status()
+        .await?;
+    Ok(())
+}
+
+/// Create the session for a directory if it is not there, then switch to it.
+async fn open_project(
+    path: &str,
+    config: &crate::config::Config,
+    home: &str,
+) -> anyhow::Result<()> {
+    let name = crate::project::session_name(path);
+
+    let exists = tokio::process::Command::new("tmux")
+        .args(["has-session", "-t", &format!("={name}")])
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !exists {
+        crate::project::record_visit(path).await;
+
+        let windows = config
+            .layout_for(path, home)
+            .map(|l| l.window.clone())
+            .unwrap_or_default();
+
+        match windows.split_first() {
+            Some((first, rest)) => {
+                tmux(&[
+                    "new-session",
+                    "-d",
+                    "-s",
+                    &name,
+                    "-c",
+                    path,
+                    "-n",
+                    &first.name,
+                ])
+                .await;
+                for w in rest {
+                    tmux(&[
+                        "new-window",
+                        "-d",
+                        "-t",
+                        &format!("={name}:"),
+                        "-c",
+                        path,
+                        "-n",
+                        &w.name,
+                    ])
+                    .await;
+                }
+                for w in &windows {
+                    if w.hold_name {
+                        let target = format!("={name}:{}", w.name);
+                        tmux(&[
+                            "set-window-option",
+                            "-t",
+                            &target,
+                            "automatic-rename",
+                            "off",
+                        ])
+                        .await;
+                        tmux(&["set-window-option", "-t", &target, "allow-rename", "off"]).await;
+                    }
+                }
+                for w in &windows {
+                    if !w.command.is_empty() {
+                        tmux(&[
+                            "send-keys",
+                            "-t",
+                            &format!("={name}:{}", w.name),
+                            &w.command,
+                            "C-m",
+                        ])
+                        .await;
+                    }
+                }
+                tmux(&["select-window", "-t", &format!("={name}:{}", first.name)]).await;
+            }
+            // A layout with no windows is a plain shell, which is what
+            // somebody asking for no windows asked for.
+            None => tmux(&["new-session", "-d", "-s", &name, "-c", path]).await,
+        }
+    }
+
+    focus_session(&name).await
+}
+
+/// One tmux command, ignoring a failure.
+///
+/// Each of these is a step in building a session, and a step that fails should
+/// cost its own window rather than leaving half a session and an error.
+async fn tmux(args: &[&str]) {
+    let _ = tokio::process::Command::new("tmux")
+        .args(args)
+        .status()
+        .await;
 }

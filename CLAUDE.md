@@ -74,6 +74,7 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/keys.rs` | `list-keys` parse, the row cache, the usage log |
 | `src/picker.rs` | fuzzy match state machine and the ratatui screen |
 | `src/cheatsheet.rs` | the four boxes, their ordering and the grid |
+| `src/project.rs` | session and zoxide rows, short paths, session names |
 
 ## Key invariants
 
