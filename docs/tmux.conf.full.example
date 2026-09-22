@@ -19,21 +19,25 @@ set -g status-interval 1
 
 # ── The right side ──────────────────────────────────────────────────────────
 #
+# Two calls, and the order is deliberate: tmux builds status-right left to
+# right, so the jobs marker goes first. What you suspended belongs next to the
+# branch you suspended it in, not out past the battery where it reads as part
+# of the hardware readout.
+#
+# sh-jobs is a #() of its own, so 14.6 ms/s of spawn plus 16.25 ms of server
+# CPU per call for the process-table scan. Configure what it draws in
+# [[sh_jobs.job]]. Drop this line if the marker is not worth that to you.
+set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
+
 # git, bandwidth and battery, computed concurrently and returned in one call.
 #
 # It takes a path and nothing else. There is deliberately no #{pane_pid} here:
-# a pid makes the git segment resolve suspended jobs, which enumerates every
-# process on the machine and cost 18.5 ms of that segment's 26.0. The marker is
-# given up on the bar on purpose, and `gst <path> <pid>` still shows it by hand.
-# The next block is the cheaper way to put jobs on the bar.
-set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
-set -g status-right-length 150
-
-# ── Jobs stopped under this pane ────────────────────────────────────────────
-#
-# A second #() call, so 14.6 ms/s of spawn, plus 16.25 ms of server CPU per
-# call for the process-table scan. Configure what it draws in [[sh_jobs.job]].
-set -ga status-right "#(tmux-companion sh-jobs #{pane_pid})"
+# a pid makes the git segment resolve suspended jobs too, which enumerates
+# every process on the machine and cost 18.5 ms of that segment's 26.0. That
+# marker is given up here on purpose, the line above is the cheaper way to get
+# it, and `gst <path> <pid>` still shows it by hand.
+set -ga status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+set -g  status-right-length 150
 
 # ── Other clients attached ──────────────────────────────────────────────────
 #
