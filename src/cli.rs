@@ -2085,10 +2085,25 @@ async fn run_open(
             } else {
                 "xdg-open"
             };
-            tokio::process::Command::new(opener)
-                .arg(url)
+            // A machine with no opener is an ordinary thing -- a server, a
+            // container, a minimal install -- and the raw `No such file or
+            // directory (os error 2)` names the wrong file, the opener rather
+            // than the URL. Say which URL could not be opened, so it can at
+            // least be copied out by hand.
+            if let Err(e) = tokio::process::Command::new(opener)
+                .arg(&url)
                 .status()
-                .await?;
+                .await
+            {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "tmux-companion: no {opener} on this machine, so this was not opened:"
+                    );
+                    eprintln!("  {url}");
+                } else {
+                    return Err(e.into());
+                }
+            }
         }
         Target::File { path, line, column } => {
             let at = match (line, column) {

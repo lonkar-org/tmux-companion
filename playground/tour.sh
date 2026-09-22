@@ -26,9 +26,14 @@ rule()  { printf '%s%s%s\n' "$RULE" "──────────────�
 keys()  { printf '\n    %s%s%s\n' "$KEY" "$*" "$OFF"; }
 hint()  { tmux set -g @playground-step "$*" 2>/dev/null || true; }
 
+# What the heading and the prompt call where you are. The main tour sets it
+# per step; the basics track sets its own, so `1.3` is visibly a detour rather
+# than a step of the sixteen.
+LABEL=""
+
 begin() {              # begin <icon> <title>
   clear
-  printf '%s%s  %s%s %s(step %d of %d)%s\n' "$BOLD" "$1" "$2" "$OFF" "$DIM" "$n" "$TOTAL" "$OFF"
+  printf '%s%s  %s%s %s(%s)%s\n' "$BOLD" "$1" "$2" "$OFF" "$DIM" "$LABEL" "$OFF"
   rule
   printf '\n'
 }
@@ -43,16 +48,18 @@ begin() {              # begin <icon> <title>
 # caller is a loop over step numbers and going back means handing it one.
 wait_for() {
   local verify="${1:-}" missing="${2:-}"
+  : "${EXTRA_KEYS:=}"
   while true; do
     # The step number rides on the prompt as well as on the heading: a long
     # step scrolls its own heading off a 24-line pane, and then nothing on
     # screen says which step you are on.
-    printf '\n%sstep %d/%d   [Enter] done   [b] back   [s] skip   [q] quit%s ' \
-      "$DIM" "$n" "$TOTAL" "$OFF"
+    printf '\n%s%s   [Enter] done   [b] back   [s] skip   [q] quit%s%s ' \
+      "$DIM" "$LABEL" "$OFF" "$EXTRA_KEYS"
     IFS= read -r answer || { answer=q; printf '\n'; }
     case "$answer" in
       q|Q) return 3 ;;
       b|B) return 2 ;;
+      t|T) [ -n "$EXTRA_KEYS" ] && return 4 ;;
       s|S) skipped=$(( skipped + 1 )); return 0 ;;
       "")  if [ -z "$verify" ] || eval "$verify" >/dev/null 2>&1; then
              return 0
@@ -92,6 +99,256 @@ EOF
   exec zsh
 fi
 
+# ── tmux basics, the optional detour ───────────────────────────────────────
+#
+# Offered at step 1 and skipped by default, because somebody who already uses
+# tmux does not want to be taught it. Nine short screens: four that explain
+# the model with a diagram, four to press the keys, one to close.
+#
+# No checks anywhere in here. A person finding out what a pane is should not
+# also be failing an assertion.
+
+basics_01() {
+LABEL="tmux basics 1.1 of 1.9"
+begin "🧩" "What tmux actually is"
+cat <<EOF
+Not a terminal. Not a shell. tmux is a ${BOLD}server${OFF} that owns your programs,
+and a ${BOLD}client${OFF} that draws them.
+
+    your terminal                the tmux server
+   ┌─────────────────┐          ┌────────────────────────┐
+   │  $ tmux attach  │ ───────▶ │  nvim                  │
+   │                 │ ◀─────── │  a build, still going  │
+   │  draws, types   │  keys    │  three shells          │
+   └─────────────────┘  pixels  └────────────────────────┘
+       ${DIM}a client${OFF}                 ${DIM}started once, outlives every client${OFF}
+
+The programs belong to the server. Your terminal is a window onto them, and
+windows can be closed and opened again without the programs noticing.
+
+That one sentence is the whole reason tmux exists. Everything else in here is
+a consequence of it.
+EOF
+wait_for
+}
+
+basics_02() {
+LABEL="tmux basics 1.2 of 1.9"
+begin "🗝" "The prefix, and why there is one"
+cat <<EOF
+tmux and the program you are running both want your keystrokes. tmux takes
+one key for itself and passes on everything else.
+
+    ${KEY}Ctrl-b${OFF}          "the next key is for tmux"
+    ${KEY}Ctrl-b  c${OFF}       tmux reads the c
+    ${DIM}c${OFF}               your shell reads the c
+
+That key is called the ${BOLD}prefix${OFF}. Ctrl-b is the default; a lot of people move
+it to Ctrl-a or Ctrl-Space, and this playground leaves it at Ctrl-b so that
+what you read elsewhere matches what you press here.
+
+If you ever need to send a real Ctrl-b to the program underneath, press it
+twice. That is also how you reach tmux when it is running inside tmux.
+EOF
+wait_for
+}
+
+basics_03() {
+LABEL="tmux basics 1.3 of 1.9"
+begin "🗂" "Sessions, windows, panes"
+cat <<EOF
+Three levels, and they nest. Learning which is which is most of learning
+tmux.
+
+  ${BOLD}session${OFF}  "orchard-api"          one project. Detach and attach this.
+    │
+    ├─ ${BOLD}window${OFF} 1  "edit"          one screenful. Like a tab.
+    │    ┌───────────┬──────────┐
+    │    │  ${BOLD}pane${OFF}     │  ${BOLD}pane${OFF}    │    a pane is one shell, one
+    │    │  nvim     │  shell   │    program, one rectangle
+    │    └───────────┴──────────┘
+    │
+    └─ ${BOLD}window${OFF} 2  "git"
+         ┌─────────────────────────┐
+         │  git log --graph        │
+         └─────────────────────────┘
+
+A ${BOLD}pane${OFF} is a rectangle with one program in it.
+A ${BOLD}window${OFF} is a full screen, split into panes.
+A ${BOLD}session${OFF} is a set of windows, and the thing you attach to and detach from.
+
+The status bar at the bottom lists the windows of the session you are in.
+Look at it now: this session has one window called ${BOLD}tour${OFF}.
+EOF
+wait_for
+}
+
+basics_04() {
+LABEL="tmux basics 1.4 of 1.9"
+begin "🔌" "Detach, the part that matters"
+cat <<EOF
+Closing a terminal kills what was running in it. Detaching does not.
+
+  ${BOLD}while you are attached${OFF}              ${BOLD}after prefix d${OFF}
+  ┌─────────────────────────┐           ┌─────────────────────────┐
+  │  client: your terminal  │           │  ${DIM}(no client at all)${OFF}     │
+  └────────────┬────────────┘           └─────────────────────────┘
+  ┌────────────┴────────────┐           ┌─────────────────────────┐
+  │  server: nvim, a build  │ ${DIM}the same${OFF}  │  server: nvim, a build  │
+  └─────────────────────────┘           └─────────────────────────┘
+
+    ${KEY}prefix d${OFF}        detach: leave everything running
+    ${DIM}tmux attach${OFF}     come back to it
+
+This is what an ssh connection dropping looks like from the server's side:
+the client went away. Nothing else happened. You ssh back in, run
+${DIM}tmux attach${OFF}, and the build you started two hours ago is still scrolling.
+
+You will press it in a moment. It is safe in here.
+EOF
+wait_for
+}
+
+basics_05() {
+LABEL="tmux basics 1.5 of 1.9"
+begin "✂️ " "Your turn: split a pane"
+cat <<EOF
+Nothing is checked from here on. Press things and see what happens.
+
+    ${KEY}prefix  %${OFF}       split this pane left and right
+    ${KEY}prefix  "${OFF}       split it top and bottom
+    ${KEY}prefix  o${OFF}       go to the next pane
+    ${KEY}prefix  ← → ↑ ↓${OFF}   go to the pane in that direction
+    ${KEY}prefix  x${OFF}       close this pane, after asking
+    ${KEY}prefix  z${OFF}       make this pane full screen, and again to put it back
+
+The tour is running in one of these panes, so splitting will squash it. That
+is fine: ${KEY}prefix z${OFF} on this pane makes it readable again, and ${KEY}prefix x${OFF}
+closes the one you made.
+
+${DIM}Those chords are tmux's own, not this tool's. They work in any tmux.${OFF}
+EOF
+wait_for
+}
+
+basics_06() {
+LABEL="tmux basics 1.6 of 1.9"
+begin "🗃" "Your turn: windows"
+cat <<EOF
+A window is a whole screen, and the status bar at the bottom lists them.
+
+    ${KEY}prefix  c${OFF}       make a new window
+    ${KEY}prefix  n${OFF}       next window
+    ${KEY}prefix  p${OFF}       previous window
+    ${KEY}prefix  1${OFF}       window 1, and 2 for window 2, and so on
+    ${KEY}prefix  ,${OFF}       rename this window
+    ${KEY}prefix  &${OFF}       close this window, after asking
+
+Make one, watch the status bar grow a second entry, then come back with
+${KEY}prefix 1${OFF}.
+
+${DIM}In this playground prefix c is bound to something better, which asks where${OFF}
+${DIM}to open it. Step 8 of the main tour is about that. Everything else here is${OFF}
+${DIM}stock tmux.${OFF}
+EOF
+wait_for
+}
+
+basics_07() {
+LABEL="tmux basics 1.7 of 1.9"
+begin "🔌" "Your turn: detach and come back"
+cat <<EOF
+The one to actually feel.
+
+    ${KEY}prefix  d${OFF}       detach
+
+You will land back at a plain shell with a line explaining what just
+happened, and pressing Enter there attaches you again. Everything in here,
+including this tour and where you are in it, will be exactly as you left it.
+
+${DIM}Outside a container you would type${OFF} tmux attach ${DIM}to come back, or${OFF}
+${DIM}tmux attach -t <name> ${DIM}when there is more than one session.${OFF}
+EOF
+wait_for
+}
+
+basics_08() {
+LABEL="tmux basics 1.8 of 1.9"
+begin "📜" "Scrolling back"
+cat <<EOF
+The mouse wheel works because this playground turns the mouse on, but the
+keyboard way is worth knowing, because it is also how you copy text.
+
+    ${KEY}prefix  [${OFF}       enter copy mode: now the arrows and PgUp scroll
+    ${KEY}q${OFF}              leave copy mode
+    ${KEY}/${OFF}              search backwards, then ${KEY}n${OFF} for the next hit
+
+In copy mode the pane is frozen and you are looking at its history, which is
+2000 lines here and 20000 in most configs. The program underneath keeps
+running; you are reading a scrollback, not pausing it.
+
+Step 13 of the main tour builds on this.
+EOF
+wait_for
+}
+
+basics_09() {
+LABEL="tmux basics 1.9 of 1.9"
+begin "🎓" "That is tmux"
+cat <<EOF
+Four ideas and about a dozen keys:
+
+    a ${BOLD}server${OFF} owns your programs, a ${BOLD}client${OFF} draws them
+    ${BOLD}prefix${OFF} then a key talks to tmux instead of to your shell
+    ${BOLD}session › window › pane${OFF}, nesting in that order
+    ${BOLD}detach${OFF} leaves it all running
+
+tmux's own list of every binding is ${KEY}prefix ?${OFF}, and it is a long unsorted
+page. The next step of the main tour is a searchable version of it, which is
+where this tool starts.
+
+${BOLD}If you want more than nine screens${OFF}
+
+    https://learntmux.dev      42 tasks against a real tmux in the browser
+    https://tmuxai.dev/tmux-getting-started/    a written walkthrough
+
+${BOLD}Opening one of those from in here${OFF}, which is also the last tmux thing worth
+knowing: you copy it out of the terminal without touching the mouse.
+
+    ${KEY}prefix  [${OFF}       into copy mode
+    ${KEY}k${OFF} ${KEY}j${OFF} ${KEY}h${OFF} ${KEY}l${OFF}         up, down, left, right, because this config sets
+                   ${DIM}setw -g mode-keys vi${OFF}. Without that line it is emacs keys.
+    ${KEY}w${OFF} ${KEY}b${OFF}            forward and back a word
+    ${KEY}v${OFF}              start selecting, then move to the end of the URL
+    ${KEY}y${OFF}              yank it to the system clipboard
+    ${KEY}o${OFF}              open it, which is this tool rather than tmux
+
+${KEY}o${OFF} on a selected URL opens a browser, and on a ${DIM}path:line${OFF} it opens your
+editor at that line. There is no browser inside this container, so it will
+say so rather than pretend; on your own machine it opens.
+
+${DIM}The rest of the tour assumes exactly what you have just read and nothing${OFF}
+${DIM}more.${OFF}
+EOF
+wait_for
+}
+
+# The detour's own loop, the same shape as the main one.
+run_basics() {
+  local steps=(basics_01 basics_02 basics_03 basics_04 basics_05 basics_06 \
+               basics_07 basics_08 basics_09)
+  local j=0
+  while [ "$j" -lt "${#steps[@]}" ]; do
+    "${steps[$j]}"
+    case "$?" in
+      2) [ "$j" -gt 0 ] && j=$(( j - 1 )) ;;
+      3) return 3 ;;
+      *) j=$(( j + 1 )) ;;
+    esac
+  done
+  return 0
+}
+
 # ── 1 ──────────────────────────────────────────────────────────────────────
 step_01() {
 begin "⌨️ " "Two keyboard things, or nothing below works"
@@ -116,8 +373,18 @@ otherwise:
 
 You can skip that for now. The playground also binds both to the prefix:
 ${KEY}prefix P${OFF} for the project picker and ${KEY}prefix A${OFF} for the toggle.
+
+${BOLD}New to tmux?${OFF}
+
+The rest of this assumes you know what a pane is and what the prefix does.
+There are nine short screens that explain it, four of them diagrams and four
+of them keys to press, and then you come back here and carry on.
+
+    ${KEY}t${OFF}        tmux basics first
+    ${KEY}Enter${OFF}    skip it, I use tmux
 EOF
-hint "step 1: outside tmux, and Option sending Meta on macOS"
+hint "step 1: press t for tmux basics, or Enter to carry on"
+EXTRA_KEYS="   ${KEY}[t] tmux basics${OFF}${DIM}"
 wait_for
 }
 
@@ -477,11 +744,21 @@ TOTAL=${#STEPS[@]}
 i=0
 while [ "$i" -lt "$TOTAL" ]; do
   n=$(( i + 1 ))
+  LABEL="step $n of $TOTAL"
   "${STEPS[$i]}"
-  case "$?" in
+  answer=$?
+  # Offered by one step only, and cleared straight away so the key does
+  # nothing on the other fifteen.
+  EXTRA_KEYS=""
+  case "$answer" in
     2) [ "$i" -gt 0 ] && i=$(( i - 1 )) ;;
     3) printf '\n%sThe tour is over. Run `tour` to start it again.%s\n' "$DIM" "$OFF"
        exec zsh ;;
+    4) run_basics || {
+         printf '\n%sThe tour is over. Run `tour` to start it again.%s\n' "$DIM" "$OFF"
+         exec zsh
+       }
+       i=$(( i + 1 )) ;;
     *) i=$(( i + 1 )) ;;
   esac
 done

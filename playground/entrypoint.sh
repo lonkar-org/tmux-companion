@@ -60,4 +60,29 @@ tmux set -g destroy-unattached off
 # somebody in a shell with no idea what any of the keys were, and the only
 # thing telling them was a line on a status bar they had not been told to read
 # yet.
-exec tmux attach -t instructions
+#
+# In a loop, because `prefix d` is the single most important thing tmux does
+# and the basics track asks somebody to press it. `exec tmux attach` would
+# make detaching end the container, which teaches the opposite of the lesson:
+# the whole point is that the server is still there when the client is gone.
+while true; do
+  tmux attach -t instructions
+  # Nothing left to attach to: every session was closed, so there is nothing
+  # to come back to either.
+  tmux has-session -t instructions 2>/dev/null || break
+
+  cat <<'DETACHED'
+
+  You detached. tmux is still running, with everything in it exactly as you
+  left it: the shells, the editors, the half-finished commands.
+
+  This is what survives an ssh drop, a closed laptop and a terminal you quit
+  by accident. Nothing was saved, because nothing stopped.
+
+DETACHED
+  printf '  [Enter] to attach again, or type exit to leave the container: '
+  IFS= read -r answer || break
+  case "$answer" in
+    exit | quit | q) break ;;
+  esac
+done

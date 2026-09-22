@@ -55,6 +55,13 @@ prefix then i     the tour            (prefix is Ctrl-b)
 Alt-s             the project picker
 ```
 
+Step one offers a detour: press `t` for nine screens of tmux itself — what a
+server and a client are, what the prefix is for, how sessions, windows and
+panes nest, and what detaching actually does, with a diagram for each and four
+screens of keys to press. Nothing in the detour is checked. It ends with
+[learntmux.dev](https://learntmux.dev), which is 42 tasks against a real tmux
+in the browser, and returns you to step two.
+
 The tour is sixteen steps. Each one says what to press, sets the step on a
 second status line so it is still in front of you after you have switched
 sessions, and waits for Enter. Some steps check that the thing actually
