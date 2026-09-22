@@ -50,6 +50,13 @@ boxes:
 preset = "ascii"
 ```
 
+## Contrast
+
+Text on a theme's own block clears WCAG 2.1 AA, 4.5:1 for body text, and an
+active pane border clears 3:1 against your terminal's real background.
+`theme gen` reports anything that doesn't and `--apply` fixes it.
+[how-to/themes.md](../how-to/themes.md) has the detail.
+
 ## Platforms
 
 Four binaries are published per release, one per target:

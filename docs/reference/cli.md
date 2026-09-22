@@ -82,6 +82,7 @@ nothing to keep from starting twice.
 | --- | --- |
 | `theme pick` | Choose a theme and apply it. `-r SESSION` remembers it for a session instead, `-t TARGET` applies it somewhere specific, `--print` lists and exits |
 | `theme apply SESSION` | Apply the theme that session should have, from the project map or the namespace rules. This is what the session-created hook calls |
+| `theme init` | Write six starter colours and the two files that apply them, into the themes directory this machine's tmux actually reads. Overwrites nothing |
 | `theme gen` | Report which themes need a different text colour or a more visible border |
 | `theme gen --apply` | Write `@theme-color-on-main` and `@theme-color-border` into each theme file |
 | `theme gen --shades` | Also mint a lighter and a darker sibling of each cube colour |

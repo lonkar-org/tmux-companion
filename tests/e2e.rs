@@ -263,6 +263,34 @@ fn every_bar_command_in_the_example_config_actually_runs() {
 }
 
 #[test]
+fn both_example_configs_set_the_background_the_segments_draw_against() {
+    // `segments/window.rs` hardcodes BG_BAR as colour233 and lifts the current
+    // window to 236 on top of it. Neither example set `status-style`, so
+    // tmux's default green showed through everywhere a segment did not reach,
+    // which is most of the bar.
+    let Some(t) = Tmux::start("style") else {
+        return;
+    };
+    for name in ["docs/tmux.conf.example", "docs/tmux.conf.full.example"] {
+        let conf = repo_root().join(name);
+        t.tmux(&[
+            "-f",
+            &conf.display().to_string(),
+            "new-session",
+            "-d",
+            "-s",
+            "style",
+        ]);
+        let style = t.tmux(&["display-message", "-p", "-t", "style", "#{status-style}"]);
+        assert!(
+            style.contains("233"),
+            "{name} leaves the bar at {style:?}, and the segments draw against colour233"
+        );
+        t.tmux(&["kill-session", "-t", "style"]);
+    }
+}
+
+#[test]
 fn every_binding_in_the_example_names_a_subcommand_that_exists() {
     // `zoxide-window.zsh` was bound to prefix+c and the port recorded it as
     // done without ever building the command, so the key had nothing to call

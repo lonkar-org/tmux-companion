@@ -36,7 +36,7 @@ everything my tmux used to shell out for talks to it instead.
 | `project save` | capture this session's panes as the layout it reopens with |
 | `run` | pick from shell history, run it in a pane that slides out |
 | `open` | open the URL or `file:line:col` under your cursor |
-| `theme pick` | 76 themes with a swatch each, applied on the spot |
+| `theme pick` | your themes with a swatch each, applied on the spot; `theme init` writes six to start |
 | `shell-init` | the prompt marks tmux's `next-prompt` has waited for since 3.3 |
 | `sh-jobs` | what's suspended under this pane, with your icons |
 | `doctor` | everything a bug report needs, in one screen |
@@ -144,8 +144,10 @@ Measured on one machine, with the method beside the numbers in
 - It won't restore your sessions on its own. It saves them on a timer, and
   restoring stays on a key you press, cause an automatic restore would
   resurrect a stale layout over a session you'd already started working in.
-- It's not a theme pack. It applies themes and doesn't compete with catppuccin
-  or rose-pine.
+- It's not a theme pack. `theme init` writes six colours and the two files that
+  apply them, `theme gen --shades` turns those into eighteen with the contrast
+  computed against your terminal, and after that the palette is yours. It
+  doesn't compete with catppuccin or rose-pine.
 
 ## Documentation
 
@@ -157,6 +159,7 @@ Measured on one machine, with the method beside the numbers in
 | [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
 | [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
 | [docs/how-to/install.md](docs/how-to/install.md) | the three ways in, and how to remove it |
+| [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |

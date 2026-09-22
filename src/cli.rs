@@ -330,8 +330,8 @@ pub enum ThemeAction {
         #[arg(short = 'r')]
         register: Option<String>,
         /// Where the theme files are
-        #[arg(long, default_value = "~/.config/tmux/themes")]
-        themes: String,
+        #[arg(long)]
+        themes: Option<String>,
         /// List the themes and exit, instead of opening the picker
         #[arg(long)]
         print: bool,
@@ -345,8 +345,19 @@ pub enum ThemeAction {
         #[arg(short = 't')]
         target: Option<String>,
         /// Where the theme files are
-        #[arg(long, default_value = "~/.config/tmux/themes")]
-        themes: String,
+        #[arg(long)]
+        themes: Option<String>,
+    },
+
+    /// Write the starter themes and the two files that apply them
+    ///
+    /// Nothing is overwritten. Run `theme gen --apply --shades` afterwards to
+    /// mint a lighter and a darker sibling of each and to measure the borders
+    /// against this terminal's background.
+    Init {
+        /// Where the files go
+        #[arg(long)]
+        themes: Option<String>,
     },
 
     /// Compute each theme's readable text colour and a visible border
@@ -359,8 +370,8 @@ pub enum ThemeAction {
         #[arg(long)]
         shades: bool,
         /// Where the theme files are
-        #[arg(long, default_value = "~/.config/tmux/themes")]
-        themes: String,
+        #[arg(long)]
+        themes: Option<String>,
         /// The terminal background to measure borders against, as #rrggbb.
         /// Read from ghostty when not given
         #[arg(long)]
@@ -589,15 +600,16 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
             register,
             themes,
             print,
-        } => return theme_pick(target, register, &expand_tilde(&themes), print),
+        } => return theme_pick(target, register, &themes_dir_or(themes), print),
         ThemeAction::Apply {
             session,
             target,
             themes,
-        } => return theme_apply(&session, target, &expand_tilde(&themes)),
+        } => return theme_apply(&session, target, &themes_dir_or(themes)),
+        ThemeAction::Init { themes } => return theme_init(&themes_dir_or(themes)),
     };
 
-    let dir = expand_tilde(&themes);
+    let dir = themes_dir_or(themes);
     let (bg, source) = match background.as_deref().map(crate::theme::parse_hex) {
         Some(Some(c)) => (c, "--background".to_string()),
         Some(None) => anyhow::bail!("--background wants #rrggbb"),
@@ -706,7 +718,16 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
                 );
                 let target = dir.join(format!("{stem}.tmux"));
                 if apply && !target.exists() {
-                    std::fs::write(&target, crate::theme::shade_file(theme, label, index, bg))?;
+                    std::fs::write(
+                        &target,
+                        crate::theme::shade_file(
+                            theme,
+                            label,
+                            index,
+                            bg,
+                            &dir.display().to_string(),
+                        ),
+                    )?;
                 }
                 made.push((stem, index));
             }
@@ -726,6 +747,19 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
 
 /// `~` to the home directory, because a default path in `--help` reads better
 /// with a tilde in it than with somebody's username.
+/// The themes directory a `--themes` flag asked for, or the one this machine
+/// actually uses.
+///
+/// Resolved rather than defaulted in clap, because the answer depends on
+/// whether this machine keeps its tmux config under XDG or at `~/.tmux.conf`,
+/// and a default string printed in `--help` would be a lie on half of them.
+fn themes_dir_or(flag: Option<String>) -> std::path::PathBuf {
+    match flag {
+        Some(p) => expand_tilde(&p),
+        None => crate::theme::default_themes_dir(),
+    }
+}
+
 fn expand_tilde(path: &str) -> std::path::PathBuf {
     match path.strip_prefix("~/") {
         Some(rest) => match std::env::var_os("HOME") {
@@ -1470,6 +1504,68 @@ fn theme_pick(
     }
 
     source_theme(&row.path, target.as_deref());
+    Ok(())
+}
+
+/// `theme init`: write the starter themes and the machinery that applies them.
+///
+/// Refuses to overwrite. Somebody running this twice, or running it beside
+/// themes they already wrote, should get the files they are missing and keep
+/// everything they have; the alternative is a command that can quietly undo an
+/// afternoon's work.
+fn theme_init(dir: &std::path::Path) -> anyhow::Result<()> {
+    use crate::theme::{BASE_THEMES, apply_file, base_theme_file, readable_on, reset_file};
+
+    std::fs::create_dir_all(dir)?;
+
+    let mut written = Vec::new();
+    let mut kept = Vec::new();
+    let mut write = |name: String, body: String| -> anyhow::Result<()> {
+        let path = dir.join(&name);
+        if path.exists() {
+            kept.push(name);
+            return Ok(());
+        }
+        std::fs::write(&path, body)?;
+        written.push(name);
+        Ok(())
+    };
+
+    write("_reset.tmux".to_string(), reset_file())?;
+    write("_apply.tmux".to_string(), apply_file())?;
+    for (stem, label, index) in BASE_THEMES {
+        write(
+            format!("{stem}.tmux"),
+            base_theme_file(stem, label, index, &dir.display().to_string()),
+        )?;
+    }
+
+    println!("{}", dir.display());
+    for name in &written {
+        let index = BASE_THEMES
+            .iter()
+            .find(|(s, _, _)| format!("{s}.tmux") == *name)
+            .map(|(_, _, i)| *i);
+        match index {
+            Some(i) => {
+                let (fg, ratio) = readable_on(i);
+                println!("  wrote  {name:<16} colour{i} with {fg} at {ratio:.1}:1");
+            }
+            None => println!("  wrote  {name}"),
+        }
+    }
+    for name in &kept {
+        println!("  kept   {name:<16} already there, left alone");
+    }
+    if written.is_empty() {
+        println!("\nNothing to do: every file was already there.");
+        return Ok(());
+    }
+    println!(
+        "\nNext: tmux-companion theme gen --apply --shades\n\
+         That mints a lighter and a darker sibling of each colour and measures\n\
+         every border against this terminal's background."
+    );
     Ok(())
 }
 

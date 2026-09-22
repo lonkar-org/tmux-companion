@@ -53,6 +53,15 @@ if-shell '[ -n "$SSH_CONNECTION" ]' \
 set -ga status-left  "#[fg=color240,bg=color233] %H:%M:%S"
 set -ga status-left  "#[fg=color235,bg=color233] "
 
+
+# ── The bar itself ──────────────────────────────────────────────────────────
+#
+# Not optional. The segments draw their own backgrounds against colour233,
+# which `src/segments/window.rs` calls BG_BAR, and the current window rises to
+# 236 on top of it. Leave this out and tmux's default green shows through
+# everywhere a segment does not reach, which is most of the bar.
+set -g  status-style bg=colour233,fg=colour251
+
 # ── Right: one call, three segments ─────────────────────────────────────────
 #
 # `status-right` returns git status, bandwidth and battery computed
