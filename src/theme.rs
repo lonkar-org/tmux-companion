@@ -937,9 +937,9 @@ pub fn reset_file() -> String {
      # A theme that leaves an option out would otherwise inherit it from\n\
      # whichever theme ran before, so switching from one to another would\n\
      # carry a stray colour across.\n\n\
-     set -g @theme-color-main-1 colour245\n\
-     set -g @theme-color-on-main colour16\n\
-     set -g @theme-color-border colour238\n"
+     set @theme-color-main-1 colour245\n\
+     set @theme-color-on-main colour16\n\
+     set @theme-color-border colour238\n"
         .to_string()
 }
 
@@ -958,21 +958,27 @@ pub fn apply_file() -> String {
      # resolves the reference when the option is set, which is once per theme\n\
      # change rather than once per redraw.\n\
      #\n\
+     # No -g on any of these, and that is the difference between a theme and a\n\
+     # wallpaper. `set -g` writes one value for the whole server, so the last\n\
+     # session to start would paint every other one and a project could not\n\
+     # have its own colour. Without -g, and sourced with `-t`, each session\n\
+     # keeps its own.\n\
+     #\n\
      # Everything below is a choice. Delete what you do not want coloured.\n\n\
      # The session name block on the left of the status bar.\n\
-     set -gF @theme-session-name-bg \"#{@theme-color-main-1}\"\n\
-     set -gF @theme-session-name-fg \"#{@theme-color-on-main}\"\n\n\
+     set -F @theme-session-name-bg \"#{@theme-color-main-1}\"\n\
+     set -F @theme-session-name-fg \"#{@theme-color-on-main}\"\n\n\
      # The border around the pane you are in. `theme gen` picks this colour to\n\
      # clear 3:1 against your terminal background, which is what makes it\n\
      # visible without being a grey that says nothing.\n\
-     set -gF pane-active-border-style \"fg=#{@theme-color-border}\"\n\n\
+     set -F pane-active-border-style \"fg=#{@theme-color-border}\"\n\n\
      # The window you are on, in the window list.\n\
-     set -gF window-status-current-style \"fg=#{@theme-color-main-1},bold\"\n\n\
+     set -wF window-status-current-style \"fg=#{@theme-color-main-1},bold\"\n\n\
      # tmux's own messages and prompts.\n\
-     set -gF message-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n\
-     set -gF message-command-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n\n\
+     set -F message-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n\
+     set -F message-command-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n\n\
      # Copy mode's selection and its indicator.\n\
-     set -gF mode-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n"
+     set -wF mode-style \"bg=#{@theme-color-main-1},fg=#{@theme-color-on-main}\"\n"
         .to_string()
 }
 
