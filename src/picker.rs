@@ -1,34 +1,69 @@
-//! The picker: a fuzzy-matched list in a terminal, and the state machine
-//! behind it.
+//! The picker: a fuzzy-matched list in a terminal, shared by every chooser in
+//! the tool.
 //!
-//! It replaces fzf, which cost 50 ms of the 93 ms a warm `prefix+?` took. The
-//! state machine is separate from the drawing on purpose: filtering, ordering,
-//! moving a selection and editing a query are the parts with behaviour worth
-//! pinning, and none of them need a terminal to test.
+//! This is [skim] driving the screen, which is fzf ported to Rust and used here
+//! as a library rather than as a process. The spawn is what cost 50 ms of the
+//! 93 ms a warm `prefix+?` used to take, and a library has no spawn; what the
+//! port adds over the hand-written picker it replaces is fzf's whole keymap,
+//! its preview window, and a layout that is a setting rather than a shape
+//! compiled into one function.
+//!
+//! The parts worth pinning are here rather than in skim: how a row's columns
+//! are measured so every line agrees, and how a tmux colour becomes a terminal
+//! one. Both are pure, and both are what went wrong before -- the rows used to
+//! be laid out with `{:<22}` over strings holding ANSI escapes, so the padding
+//! was computed across bytes the terminal never draws and no two lines landed
+//! in the same place.
 //!
 //! This runs in the **client** process, not the daemon. A daemon has no
 //! terminal, and the whole point of a picker is that it owns one for as long as
 //! somebody is looking at it.
+//!
+//! [skim]: https://github.com/skim-rs/skim
 
-use nucleo_matcher::{
-    Matcher, Utf32Str,
-    pattern::{CaseMatching, Normalization, Pattern},
+use std::{borrow::Cow, sync::Arc};
+
+use ratatui::{
+    style::{Color, Style},
+    text::{Line, Span},
+};
+use skim::{
+    DisplayContext, ItemPreview, PreviewContext, RankCriteria, Skim, SkimItem, SkimItemReceiver,
+    SkimItemSender, SkimOptions,
+    tui::{
+        Direction as PreviewDirection, Size,
+        options::{PreviewLayout, TuiLayout},
+    },
 };
 
 /// One row a picker can show.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Item {
-    /// What the matcher searches and the list shows.
+    /// What the matcher searches, and what the row shows when it has no
+    /// columns of its own.
     pub label: String,
-    /// Shown in the preview pane under the list. Empty means no preview.
+    /// Shown in the preview pane. Empty means this row has nothing to show.
     pub preview: String,
-    /// The colour to draw the label in. `None` leaves it the default.
+    /// The colour to draw the row's text in. `None` leaves it the default.
     ///
     /// Carried as the string the source produced, a tmux `colourNNN` or a
     /// `#rrggbb`, and turned into a terminal colour at draw time. Keeping the
     /// string means the item type does not drag a ratatui type into every
     /// module that builds one.
     pub colour: Option<String>,
+    /// The row split into columns, aligned against every other row's.
+    ///
+    /// A label built with `{:<22}` cannot line up once anything in it is
+    /// styled: the padding is counted over bytes the terminal does not draw,
+    /// so the column lands somewhere different on every line. Handing the
+    /// parts over separately lets the width be measured across all of them.
+    pub columns: Vec<String>,
+    /// A solid block of this colour at the start of the row.
+    ///
+    /// Separate from `colour`, which tints the text: a row can carry a
+    /// project's colour as a block and stay readable, which colouring a whole
+    /// line on a dark bar does not manage.
+    pub swatch: Option<String>,
 }
 
 impl Item {
@@ -36,8 +71,7 @@ impl Item {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            preview: String::new(),
-            colour: None,
+            ..Self::default()
         }
     }
 
@@ -46,7 +80,7 @@ impl Item {
         Self {
             label: label.into(),
             preview: preview.into(),
-            colour: None,
+            ..Self::default()
         }
     }
 
@@ -55,6 +89,83 @@ impl Item {
         self.colour = colour.filter(|c| !c.trim().is_empty());
         self
     }
+
+    /// The same item, drawn as columns that line up with every other row's.
+    ///
+    /// The label is left alone, so what a caller reads back does not change
+    /// with how the row was laid out.
+    pub fn in_columns(mut self, columns: Vec<impl Into<String>>) -> Self {
+        self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The same item, with a solid colour block in front of it.
+    pub fn with_swatch(mut self, colour: Option<String>) -> Self {
+        self.swatch = colour.filter(|c| !c.trim().is_empty());
+        self
+    }
+
+    /// The cells this row draws: its columns, or its label when it has none.
+    fn cells(&self) -> Vec<&str> {
+        if self.columns.is_empty() {
+            vec![self.label.as_str()]
+        } else {
+            self.columns.iter().map(String::as_str).collect()
+        }
+    }
+}
+
+/// The gap between two columns, in cells.
+const COLUMN_GAP: usize = 2;
+
+/// How wide each column has to be for every row's to line up.
+///
+/// The widest cell in each column, and nothing cleverer: a column nobody fills
+/// costs nothing, and one long row widening a column is what anybody reading a
+/// table expects to happen.
+pub fn column_widths(rows: &[Vec<&str>]) -> Vec<usize> {
+    let mut widths: Vec<usize> = Vec::new();
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            let w = cell.chars().count();
+            match widths.get_mut(i) {
+                Some(slot) => *slot = (*slot).max(w),
+                None => widths.push(w),
+            }
+        }
+    }
+    widths
+}
+
+/// Lay one row out against the widths every row shares.
+///
+/// The last column is not padded: trailing spaces would be matched against and
+/// would widen the row past what it needs.
+pub fn lay_out(cells: &[&str], widths: &[usize]) -> String {
+    let mut out = String::new();
+    for (i, cell) in cells.iter().enumerate() {
+        out.push_str(cell);
+        let last = i + 1 == cells.len();
+        if !last {
+            let pad = widths
+                .get(i)
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(cell.chars().count());
+            out.push_str(&" ".repeat(pad + COLUMN_GAP));
+        }
+    }
+    out
+}
+
+/// Every row laid out against one set of column widths.
+///
+/// Pure, and the thing the ragged-column bug lived in, so it is tested
+/// directly rather than through a terminal.
+pub fn laid_out(items: &[Item]) -> Vec<String> {
+    let cells: Vec<Vec<&str>> = items.iter().map(Item::cells).collect();
+    let widths = column_widths(&cells);
+    cells.iter().map(|row| lay_out(row, &widths)).collect()
 }
 
 /// A tmux colour string as a terminal colour.
@@ -63,8 +174,7 @@ impl Item {
 /// Anything else is `None` rather than a guess, because a colour nobody can
 /// parse should leave the row readable instead of painting it something
 /// arbitrary.
-pub fn colour_of(spec: &str) -> Option<ratatui::style::Color> {
-    use ratatui::style::Color;
+pub fn colour_of(spec: &str) -> Option<Color> {
     let s = spec.trim();
     if let Some(hex) = s.strip_prefix('#')
         && hex.len() == 6
@@ -82,170 +192,63 @@ pub fn colour_of(spec: &str) -> Option<ratatui::style::Color> {
     digits.parse::<u8>().ok().map(Color::Indexed)
 }
 
-/// What the picker is showing and where the cursor is.
-#[derive(Debug, Clone)]
-pub struct Picker {
-    items: Vec<Item>,
-    query: String,
-    /// Indices into `items`, best match first.
-    matches: Vec<usize>,
-    /// Position within `matches`, not within `items`.
-    cursor: usize,
-    matcher: Matcher,
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/// Where the preview sits relative to the list.
+///
+/// A setting rather than a shape baked into the drawing, because the right
+/// answer depends on what is being previewed: a theme wants a tall pane beside
+/// a narrow list, a command wants a couple of lines under a wide one, and a
+/// directory wants nothing at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Preview {
+    /// No preview pane, whatever the rows carry.
+    None,
+    /// Beside the list, on the right.
+    #[default]
+    Right,
+    /// Under the list.
+    Bottom,
+    /// Above the list.
+    Top,
+    /// Beside the list, on the left.
+    Left,
 }
 
-impl Picker {
-    /// A picker over these items, with an opening query.
-    pub fn new(items: Vec<Item>, query: &str) -> Self {
-        let mut p = Self {
-            items,
-            query: query.to_string(),
-            matches: Vec::new(),
-            cursor: 0,
-            matcher: Matcher::new(nucleo_matcher::Config::DEFAULT),
-        };
-        p.refilter();
-        p
-    }
-
-    /// Re-run the match, keeping the cursor inside the results.
-    fn refilter(&mut self) {
-        let trimmed = self.query.trim();
-        if trimmed.is_empty() {
-            self.matches = (0..self.items.len()).collect();
-        } else {
-            let pattern = Pattern::parse(trimmed, CaseMatching::Ignore, Normalization::Smart);
-            let mut scored: Vec<(u32, usize, usize)> = self
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(i, item)| {
-                    let mut buf = Vec::new();
-                    let haystack = Utf32Str::new(&item.label, &mut buf);
-                    pattern
-                        .score(haystack, &mut self.matcher)
-                        .map(|s| (s, item.label.chars().count(), i))
-                })
-                .collect();
-            // Best score first, then the shorter row, then the order the rows
-            // arrived in.
-            //
-            // The length tie-break is doing real work: nucleo scores `zoom`
-            // and `a long way to say zoom` identically at 114, because the
-            // match inside each is the same, and a picker where the exact
-            // answer sits below a sentence containing it is a picker people
-            // stop trusting. Arrival order settles what is left, and for
-            // `keys` that is alphabetical by note rather than arbitrary.
-            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-            self.matches = scored.into_iter().map(|(_, _, i)| i).collect();
+impl Preview {
+    fn direction(self) -> Option<PreviewDirection> {
+        match self {
+            Preview::None => None,
+            Preview::Right => Some(PreviewDirection::Right),
+            Preview::Bottom => Some(PreviewDirection::Down),
+            Preview::Top => Some(PreviewDirection::Up),
+            Preview::Left => Some(PreviewDirection::Left),
         }
-        self.cursor = self.cursor.min(self.matches.len().saturating_sub(1));
-    }
-
-    /// The current query.
-    pub fn query(&self) -> &str {
-        &self.query
-    }
-
-    /// The rows currently matching, in the order they are shown.
-    pub fn matches(&self) -> Vec<&Item> {
-        self.matches.iter().map(|i| &self.items[*i]).collect()
-    }
-
-    /// How many rows match.
-    pub fn len(&self) -> usize {
-        self.matches.len()
-    }
-
-    /// How many rows there are in total, matched or not.
-    pub fn item_count(&self) -> usize {
-        self.items.len()
-    }
-
-    /// Whether nothing matches.
-    pub fn is_empty(&self) -> bool {
-        self.matches.is_empty()
-    }
-
-    /// Where the cursor is, within the matches.
-    pub fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    /// The item under the cursor.
-    pub fn selected(&self) -> Option<&Item> {
-        self.matches.get(self.cursor).map(|i| &self.items[*i])
-    }
-
-    /// The index into the original list of the item under the cursor, which is
-    /// what a caller needs to act on the pick.
-    pub fn selected_index(&self) -> Option<usize> {
-        self.matches.get(self.cursor).copied()
-    }
-
-    /// Add a character to the query.
-    pub fn push(&mut self, c: char) {
-        self.query.push(c);
-        self.cursor = 0;
-        self.refilter();
-    }
-
-    /// Remove the last character of the query.
-    pub fn backspace(&mut self) {
-        self.query.pop();
-        self.cursor = 0;
-        self.refilter();
-    }
-
-    /// Empty the query, which is how the tmux defaults are revealed.
-    pub fn clear_query(&mut self) {
-        self.query.clear();
-        self.cursor = 0;
-        self.refilter();
-    }
-
-    /// Move the cursor down, wrapping at the end.
-    ///
-    /// Wrapping because the list is short and somebody holding the key down
-    /// should not have to notice it stopped.
-    pub fn down(&mut self) {
-        if self.matches.is_empty() {
-            return;
-        }
-        self.cursor = (self.cursor + 1) % self.matches.len();
-    }
-
-    /// Move the cursor up, wrapping at the start.
-    pub fn up(&mut self) {
-        if self.matches.is_empty() {
-            return;
-        }
-        self.cursor = match self.cursor {
-            0 => self.matches.len() - 1,
-            n => n - 1,
-        };
     }
 }
 
-// ── Drawing and running ──────────────────────────────────────────────────────
-
-use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-};
-
-/// How a picker is labelled and what its footer says.
+/// How a picker is laid out and labelled.
+///
+/// One of these drives every picker in the tool. What differs between them is
+/// the title, the footer and what the preview is called; the shape comes from
+/// `[picker]` in the config, so changing it changes all of them at once rather
+/// than five call sites drifting apart.
 #[derive(Debug, Clone)]
 pub struct Chrome {
-    /// Drawn on the border, e.g. `[ Keys ]`.
+    /// Drawn above the list, e.g. `[ Keys ]`.
     pub title: String,
-    /// The line under the list, saying which keys do what.
+    /// The line saying which keys do what.
     pub footer: String,
-    /// Label over the preview pane. Empty hides the pane.
+    /// Label over the preview pane. Empty hides the pane whatever the layout
+    /// says, which is what a picker with nothing to show sets.
     pub preview_title: String,
+    /// Where the preview pane goes.
+    pub preview: Preview,
+    /// The preview's share of the popup, as a percentage.
+    pub preview_percent: u16,
+    /// What sits in front of the query.
+    pub prompt: String,
 }
 
 impl Default for Chrome {
@@ -254,95 +257,81 @@ impl Default for Chrome {
             title: "[ Pick ]".into(),
             footer: "enter picks   ctrl-a clears the filter   esc cancels".into(),
             preview_title: String::new(),
+            preview: Preview::Right,
+            preview_percent: 55,
+            prompt: "> ".into(),
         }
     }
 }
 
-/// Draw one frame.
-///
-/// Split out so a test can render into a `TestBackend` buffer and assert on
-/// what a person would see, rather than on the fact that a function was called.
-pub fn draw(frame: &mut Frame, picker: &Picker, chrome: &Chrome) {
-    let show_preview = !chrome.preview_title.is_empty()
-        && picker.selected().is_some_and(|i| !i.preview.is_empty());
-
-    let constraints: Vec<Constraint> = if show_preview {
-        vec![
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(6),
-            Constraint::Length(1),
-        ]
-    } else {
-        vec![
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ]
-    };
-    let areas = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(frame.area());
-
-    let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(picker.query()),
-        Span::styled(
-            format!("   {}/{}", picker.len(), picker.item_count()),
-            Style::default().add_modifier(Modifier::DIM),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(prompt), areas[0]);
-
-    let items: Vec<ListItem> = picker
-        .matches()
-        .iter()
-        .map(|i| match i.colour.as_deref().and_then(colour_of) {
-            Some(c) => ListItem::new(i.label.clone()).style(Style::default().fg(c)),
-            None => ListItem::new(i.label.clone()),
-        })
-        .collect();
-    let mut state = ListState::default();
-    if !picker.is_empty() {
-        state.select(Some(picker.cursor()));
+impl Chrome {
+    /// Take the shape from the config, leaving the labels alone.
+    pub fn laid_out_by(mut self, layout: &crate::config::PickerLayout) -> Self {
+        self.preview = layout.preview;
+        self.preview_percent = layout.preview_percent.clamp(20, 80);
+        self
     }
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(chrome.title.clone()),
-            )
-            .highlight_symbol("> ")
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
-        areas[1],
-        &mut state,
-    );
-
-    if show_preview {
-        let text = picker
-            .selected()
-            .map(|i| i.preview.clone())
-            .unwrap_or_default();
-        frame.render_widget(
-            Paragraph::new(text).wrap(Wrap { trim: false }).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(chrome.preview_title.clone()),
-            ),
-            areas[2],
-        );
-    }
-
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            chrome.footer.clone(),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        areas[areas.len() - 1],
-    );
 }
+
+// ── The rows skim draws ──────────────────────────────────────────────────────
+
+/// One row, as skim sees it.
+struct Row {
+    /// Index into the list the caller handed over, which is what it gets back.
+    index: usize,
+    /// The row laid out, with every column at the width they all share.
+    text: String,
+    /// Tint for the row's text.
+    colour: Option<Color>,
+    /// Solid block drawn in front of the row.
+    swatch: Option<Color>,
+    /// What the preview pane shows for this row.
+    preview: String,
+    /// Whether any row in this list has a swatch, so the ones without still
+    /// line up with the ones that do.
+    swatch_column: bool,
+}
+
+impl SkimItem for Row {
+    fn text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.text)
+    }
+
+    fn display(&self, context: DisplayContext) -> Line<'_> {
+        // skim highlights the characters the query matched, so the line is
+        // built from its own rather than from scratch.
+        let mut line = context.to_line(Cow::Borrowed(&self.text));
+
+        // A tint applies only where skim has not already coloured something,
+        // so the match highlight stays visible on a coloured row.
+        if let Some(c) = self.colour {
+            for span in &mut line.spans {
+                if span.style.fg.is_none() {
+                    span.style = span.style.fg(c);
+                }
+            }
+        }
+
+        if self.swatch_column {
+            let block = match self.swatch {
+                Some(c) => Span::styled("\u{2588}\u{2588} ", Style::default().fg(c)),
+                None => Span::raw("   "),
+            };
+            line.spans.insert(0, block);
+        }
+        line
+    }
+
+    fn preview(&self, _context: PreviewContext) -> ItemPreview {
+        if self.preview.is_empty() {
+            ItemPreview::Text(String::new())
+        } else {
+            ItemPreview::AnsiText(self.preview.clone())
+        }
+    }
+}
+
+// ── Running one ──────────────────────────────────────────────────────────────
 
 /// What somebody did with the picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,7 +339,7 @@ pub enum Outcome {
     /// Picked a row, by index into the original list.
     Chosen(usize),
     /// Pressed enter on a query that matched nothing, or asked for the query
-    /// itself with alt-enter.
+    /// itself.
     ///
     /// This is the only way to run a command that was never in the history, or
     /// to open a directory zoxide has never seen.
@@ -359,376 +348,324 @@ pub enum Outcome {
     Cancelled,
 }
 
-/// Show the picker and give back the query as well as the pick.
-pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Outcome> {
-    run_inner(items, query, chrome)
-}
-
 /// Show the picker and wait for a decision.
 ///
-/// Returns the index into the original list, or `None` when somebody cancelled.
-/// The terminal is put back the way it was found on every path out, including
-/// the error one, because a picker that leaves a terminal in raw mode is worse
-/// than no picker.
+/// Returns the index into the original list, or `None` when somebody cancelled
+/// or typed something that was not on it.
 pub fn run(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Option<usize>> {
-    Ok(match run_inner(items, query, chrome)? {
+    Ok(match run_with_query(items, query, chrome)? {
         Outcome::Chosen(i) => Some(i),
         _ => None,
     })
 }
 
-/// The loop both entry points share.
-fn run_inner(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Outcome> {
-    use ratatui::crossterm::{
-        event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-        execute,
-        terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-    };
+/// Show the picker and give back the query as well as the pick.
+pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Outcome> {
+    if items.is_empty() && query.trim().is_empty() {
+        return Ok(Outcome::Cancelled);
+    }
 
-    let mut picker = Picker::new(items, query);
+    let laid = laid_out(&items);
+    let swatch_column = items.iter().any(|i| i.swatch.is_some());
 
-    enable_raw_mode()?;
-    let mut out = std::io::stderr();
-    execute!(out, EnterAlternateScreen)?;
-    let backend = ratatui::backend::CrosstermBackend::new(out);
-    let mut terminal = ratatui::Terminal::new(backend)?;
+    let rows: Vec<Arc<dyn SkimItem>> = items
+        .iter()
+        .zip(laid)
+        .enumerate()
+        .map(|(index, (item, text))| {
+            Arc::new(Row {
+                index,
+                text,
+                colour: item.colour.as_deref().and_then(colour_of),
+                swatch: item.swatch.as_deref().and_then(colour_of),
+                preview: item.preview.clone(),
+                swatch_column,
+            }) as Arc<dyn SkimItem>
+        })
+        .collect();
 
-    let outcome = loop {
-        terminal.draw(|f| draw(f, &picker, chrome))?;
-        let Event::Key(key) = event::read()? else {
-            continue;
+    // One send of the whole list: everything is already in memory, so there
+    // is nothing to stream and nothing to wait for.
+    let (tx, rx): (SkimItemSender, SkimItemReceiver) = skim::prelude::unbounded();
+    let _ = tx.send(rows);
+    drop(tx);
+
+    // On its own thread, because skim wants a tokio runtime and the client
+    // runs on a `current_thread` one: skim calls `block_in_place` when it
+    // finds a handle, and that panics on a current-thread runtime. Off the
+    // runtime entirely it builds the one it wants, and the client keeps the
+    // cheap runtime it has for everything else.
+    //
+    // The options are built on that thread rather than moved onto it:
+    // `SkimOptions` holds `Rc`s and so is not `Send`. What crosses is the
+    // chrome, the query and the previewable flag, which are all plain data.
+    let chrome = chrome.clone();
+    let query = query.to_string();
+    let previewable = previewable(&chrome, &items);
+    let output = std::thread::spawn(move || {
+        Skim::run_with(options_with(&chrome, &query, previewable), Some(rx))
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("the picker thread panicked"))?
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if output.is_abort {
+        return Ok(Outcome::Cancelled);
+    }
+
+    match output.selected_items.first() {
+        Some(selected) => match (**selected).as_any().downcast_ref::<Row>() {
+            Some(row) => Ok(Outcome::Chosen(row.index)),
+            // Cannot happen: every item sent is a `Row`. Answering with the
+            // query rather than panicking, because a picker that panics takes
+            // the terminal down with it.
+            None => Ok(Outcome::Typed(output.query)),
+        },
+        // Nothing matched, so what was typed is the answer.
+        None => Ok(Outcome::Typed(output.query)),
+    }
+}
+
+/// The skim options one picker runs with.
+///
+/// Only the tests call this: the picker itself builds them on its own thread,
+/// because `SkimOptions` holds `Rc`s and cannot cross one.
+#[cfg(test)]
+fn options_for(chrome: &Chrome, query: &str, items: &[Item]) -> SkimOptions {
+    options_with(chrome, query, previewable(chrome, items))
+}
+
+/// Whether this list has a preview pane at all.
+///
+/// A picker whose rows carry nothing to show gets the full width for its list
+/// rather than half a popup of empty box.
+fn previewable(chrome: &Chrome, items: &[Item]) -> bool {
+    !chrome.preview_title.is_empty()
+        && chrome.preview != Preview::None
+        && items.iter().any(|i| !i.preview.is_empty())
+}
+
+/// The options themselves, once the preview question is settled.
+fn options_with(chrome: &Chrome, query: &str, previewable: bool) -> SkimOptions {
+    // Built by mutation rather than by a struct literal: `SkimOptions` has
+    // private fields, so `..Default::default()` cannot reach past them.
+    let mut options = SkimOptions::default();
+
+    // The query starts filled for the pickers that open on a directory, and
+    // ctrl-u clears it, which is the readline habit.
+    options.query = Some(query.to_string());
+    options.prompt = chrome.prompt.clone();
+    options.header = Some(chrome.title.clone());
+    // The query on top with the list growing down from it, which is fzf's
+    // `--reverse` and the way this was drawn before. `options.reverse` is the
+    // flag the command line parses; `layout` is what the drawing reads, and
+    // setting only the first leaves the list growing up off the bottom.
+    options.layout = TuiLayout::Reverse;
+    // Fill the popup tmux opened. Anything less leaves a band of the pane's
+    // old contents showing through under the picker.
+    options.height = "100%".to_string();
+    // Best score first, then the shorter row, then the order they arrived in.
+    // The length tie-break is doing real work: `zoom` and `a long way to say
+    // zoom` score the same, and a picker where the exact answer sits below a
+    // sentence containing it is one people stop trusting. Arrival order
+    // settles the rest, which for `keys` is alphabetical by note.
+    options.tiebreak = vec![
+        RankCriteria::Score,
+        RankCriteria::Length,
+        RankCriteria::Index,
+    ];
+
+    if previewable && let Some(direction) = chrome.preview.direction() {
+        // A preview command has to be set for the pane to exist at all, and
+        // for skim to ask each row what it shows. It is never run: a row
+        // answering with `AnsiText` is already "ready", so the command is
+        // skipped. `true` rather than an empty string so that a row which
+        // somehow answers `Global` runs something harmless.
+        options.preview = Some("true".to_string());
+        options.preview_window = PreviewLayout {
+            direction,
+            size: Size::Percent(chrome.preview_percent),
+            wrap: true,
+            ..Default::default()
         };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        match key.code {
-            KeyCode::Esc => break Outcome::Cancelled,
-            KeyCode::Char('c' | 'd') if ctrl => break Outcome::Cancelled,
-            // ctrl-u is the readline habit for "wipe the line" and what the
-            // scripts this replaced used. ctrl-a stays because it was the
-            // only clear this picker had and fingers have learned it.
-            KeyCode::Char('a' | 'u') if ctrl => picker.clear_query(),
-            // alt-enter asks for exactly what was typed, even when something
-            // matched: the history has `cargo test` in it and you want
-            // `cargo test --release`.
-            KeyCode::Enter if alt => break Outcome::Typed(picker.query().to_string()),
-            KeyCode::Enter => {
-                break match picker.selected_index() {
-                    Some(i) => Outcome::Chosen(i),
-                    // Nothing matched, so the query is the answer.
-                    None => Outcome::Typed(picker.query().to_string()),
-                };
-            }
-            KeyCode::Down => picker.down(),
-            KeyCode::Up => picker.up(),
-            KeyCode::Char('n') if ctrl => picker.down(),
-            KeyCode::Char('p') if ctrl => picker.up(),
-            KeyCode::Backspace => picker.backspace(),
-            KeyCode::Char(c) if !ctrl => picker.push(c),
-            _ => {}
-        }
-    };
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    Ok(outcome)
+    }
+    options
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn picker(labels: &[&str], query: &str) -> Picker {
-        Picker::new(labels.iter().map(|l| Item::new(*l)).collect(), query)
+    // ── laying rows out ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_column_is_as_wide_as_its_widest_cell() {
+        let rows = vec![
+            vec!["session", "tmux-companion"],
+            vec!["dir", "y"],
+            vec!["dir", "a-much-longer-name"],
+        ];
+        assert_eq!(column_widths(&rows), vec![7, 18]);
     }
 
     #[test]
-    fn an_empty_query_matches_everything() {
-        let p = picker(&["alpha", "beta", "gamma"], "");
-        assert_eq!(p.len(), 3);
-    }
-
-    #[test]
-    fn a_query_filters_to_what_matches() {
-        let p = picker(
-            &["custom: reload config", "Break pane", "custom: zoom"],
-            "custom",
+    fn every_row_puts_its_second_column_in_the_same_place() {
+        // The bug this replaces: the label was padded with `{:<22}` over a
+        // string holding ANSI escapes, so the padding counted bytes the
+        // terminal never draws and no two rows lined up.
+        let items = vec![
+            Item::new("a").in_columns(vec!["session", "tmux-companion"]),
+            Item::new("b").in_columns(vec!["dir", "y"]),
+            Item::new("c").in_columns(vec!["dir", "notes"]),
+        ];
+        let laid = laid_out(&items);
+        assert_eq!(
+            laid,
+            vec![
+                "session  tmux-companion".to_string(),
+                "dir      y".to_string(),
+                "dir      notes".to_string(),
+            ]
         );
-        assert_eq!(p.len(), 2);
     }
 
     #[test]
-    fn matching_is_fuzzy_rather_than_a_substring() {
-        // The reason for a matcher rather than `contains`: nobody types the
-        // whole note.
-        let p = picker(&["custom: reload tmux.conf"], "rldcnf");
-        assert_eq!(p.len(), 1, "expected a fuzzy hit");
+    fn the_last_column_is_not_padded() {
+        // Trailing spaces would be matched against, and would push the row
+        // wider than anything in it.
+        let items = vec![
+            Item::new("a").in_columns(vec!["dir", "short"]),
+            Item::new("b").in_columns(vec!["dir", "a-much-longer-name"]),
+        ];
+        for row in laid_out(&items) {
+            assert_eq!(row.trim_end(), row, "row was padded: {row:?}");
+        }
     }
 
     #[test]
-    fn matching_ignores_case() {
-        let p = picker(&["Break pane to a new window"], "BREAK");
-        assert_eq!(p.len(), 1);
+    fn a_row_without_columns_lays_out_as_its_label() {
+        let items = vec![Item::new("just a label")];
+        assert_eq!(laid_out(&items), vec!["just a label".to_string()]);
     }
 
-    #[test]
-    fn a_query_that_matches_nothing_leaves_an_empty_list() {
-        let p = picker(&["alpha"], "zzzz");
-        assert!(p.is_empty());
-        assert_eq!(p.selected(), None);
-        assert_eq!(p.selected_index(), None);
-    }
+    // ── colours ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn the_exact_answer_beats_a_sentence_containing_it() {
-        // nucleo scores both of these 114, because the match inside each is
-        // the same. Without the length tie-break the picker puts the sentence
-        // first, which is how people stop trusting a picker.
-        let p = picker(&["a long way to say zoom", "zoom"], "zoom");
-        assert_eq!(p.matches()[0].label, "zoom");
-    }
-
-    #[test]
-    fn ties_keep_the_order_the_rows_arrived_in() {
-        // For `keys` that order is alphabetical by note, so a tie is not
-        // arbitrary and must not be shuffled.
-        let p = picker(&["custom: aaa", "custom: bbb", "custom: ccc"], "custom");
-        let labels: Vec<&str> = p.matches().iter().map(|i| i.label.as_str()).collect();
-        assert_eq!(labels, vec!["custom: aaa", "custom: bbb", "custom: ccc"]);
-    }
-
-    #[test]
-    fn typing_narrows_and_resets_the_cursor() {
-        let mut p = picker(&["alpha", "beta", "balloon"], "");
-        p.down();
-        assert_eq!(p.cursor(), 1);
-        p.push('b');
-        assert_eq!(p.cursor(), 0, "a new query should start at the top");
-        assert_eq!(p.len(), 2);
-    }
-
-    #[test]
-    fn backspace_widens_again() {
-        let mut p = picker(&["alpha", "beta"], "");
-        p.push('b');
-        assert_eq!(p.len(), 1);
-        p.backspace();
-        assert_eq!(p.len(), 2);
-    }
-
-    #[test]
-    fn clearing_the_query_shows_everything_again() {
-        // This is ctrl-a in the binding: the opening query hides tmux's own
-        // hundred noted defaults, and this is how you get them back.
-        let mut p = picker(&["custom: mine", "Break pane"], "custom");
-        assert_eq!(p.len(), 1);
-        p.clear_query();
-        assert_eq!(p.len(), 2);
-        assert_eq!(p.query(), "");
-    }
-
-    #[test]
-    fn the_cursor_wraps_at_both_ends() {
-        let mut p = picker(&["a", "b", "c"], "");
-        p.up();
-        assert_eq!(p.cursor(), 2, "up from the top wraps to the bottom");
-        p.down();
-        assert_eq!(p.cursor(), 0, "down from the bottom wraps to the top");
-    }
-
-    #[test]
-    fn moving_in_an_empty_list_does_nothing() {
-        let mut p = picker(&["alpha"], "zzz");
-        p.down();
-        p.up();
-        assert_eq!(p.cursor(), 0);
-        assert!(p.is_empty());
-    }
-
-    #[test]
-    fn the_cursor_survives_a_query_that_shortens_the_list() {
-        let mut p = picker(&["aaa", "aab", "aac"], "");
-        p.down();
-        p.down();
-        assert_eq!(p.cursor(), 2);
-        p.push('b');
-        assert!(p.cursor() < p.len().max(1), "cursor must stay in range");
-    }
-
-    #[test]
-    fn the_selected_index_points_into_the_original_list() {
-        // What a caller acts on: the row, not the position on screen.
-        let p = picker(&["zero", "one", "two"], "two");
-        assert_eq!(p.selected_index(), Some(2));
-        assert_eq!(p.selected().map(|i| i.label.as_str()), Some("two"));
-    }
-
-    #[test]
-    fn a_query_that_matches_nothing_is_still_an_answer() {
-        // The picker cannot test its own key handling without a terminal, so
-        // this pins the decision the handler makes: with no selection, the
-        // query is what the caller gets.
-        let p = picker(&["alpha"], "something new");
-        assert_eq!(p.selected_index(), None);
-        assert_eq!(p.query(), "something new");
-    }
-
-    #[test]
-    fn a_tmux_colour_is_understood_in_both_spellings_tmux_writes() {
-        use ratatui::style::Color;
+    fn a_palette_index_and_a_hex_both_resolve() {
         assert_eq!(colour_of("colour29"), Some(Color::Indexed(29)));
-        assert_eq!(colour_of("color131"), Some(Color::Indexed(131)));
-        assert_eq!(colour_of("#ff8800"), Some(Color::Rgb(255, 136, 0)));
-        assert_eq!(colour_of(" colour7 "), Some(Color::Indexed(7)));
+        assert_eq!(colour_of("color29"), Some(Color::Indexed(29)));
+        assert_eq!(colour_of("#ff8700"), Some(Color::Rgb(0xff, 0x87, 0x00)));
     }
 
     #[test]
-    fn an_unreadable_colour_leaves_the_row_alone_rather_than_guessing() {
+    fn an_unreadable_colour_leaves_the_row_alone() {
+        assert_eq!(colour_of("chartreuse"), None);
         assert_eq!(colour_of(""), None);
-        assert_eq!(colour_of("puce"), None);
-        assert_eq!(colour_of("#abc"), None);
-        assert_eq!(colour_of("colour999"), None, "outside the 256-colour range");
+        assert_eq!(colour_of("#ff87"), None);
     }
 
     #[test]
-    fn an_item_has_no_colour_until_one_is_given() {
-        assert_eq!(Item::new("x").colour, None);
-        assert_eq!(
-            Item::new("x")
-                .in_colour(Some("colour29".into()))
-                .colour
-                .as_deref(),
-            Some("colour29")
-        );
-        // An empty string is the project map saying it has no colour for this
-        // one, and it must not become a colour nobody can parse.
+    fn a_blank_colour_is_not_a_colour() {
         assert_eq!(Item::new("x").in_colour(Some("  ".into())).colour, None);
-    }
-
-    #[test]
-    fn an_item_can_carry_a_preview() {
-        let p = Picker::new(
-            vec![Item::with_preview("prefix ?", "run-shell -C keys")],
-            "",
-        );
+        assert_eq!(Item::new("x").with_swatch(Some(String::new())).swatch, None);
         assert_eq!(
-            p.selected().map(|i| i.preview.as_str()),
-            Some("run-shell -C keys")
-        );
-    }
-}
-
-#[cfg(test)]
-mod render_tests {
-    use super::*;
-    use ratatui::{Terminal, backend::TestBackend};
-
-    /// Render one frame into a buffer and give back what it says, line by line.
-    fn rendered(picker: &Picker, chrome: &Chrome, w: u16, h: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("test terminal");
-        terminal
-            .draw(|f| draw(f, picker, chrome))
-            .expect("draws a frame");
-        let buffer = terminal.backend().buffer().clone();
-        (0..h)
-            .map(|y| {
-                (0..w)
-                    .map(|x| buffer[(x, y)].symbol().to_string())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect()
-    }
-
-    fn items() -> Vec<Item> {
-        vec![
-            Item::with_preview(
-                "custom: reload config",
-                "source-file ~/.config/tmux/tmux.conf",
-            ),
-            Item::with_preview("custom: zoom the pane", "resize-pane -Z"),
-            Item::new("Break pane to a new window"),
-        ]
-    }
-
-    #[test]
-    fn the_list_shows_the_rows_that_match() {
-        let p = Picker::new(items(), "custom");
-        let out = rendered(&p, &Chrome::default(), 60, 12).join("\n");
-        assert!(out.contains("reload config"), "{out}");
-        assert!(out.contains("zoom the pane"), "{out}");
-        assert!(!out.contains("Break pane"), "{out}");
-    }
-
-    #[test]
-    fn the_prompt_shows_the_query_and_how_much_it_narrowed() {
-        let p = Picker::new(items(), "custom");
-        let first = rendered(&p, &Chrome::default(), 60, 12)[0].clone();
-        assert!(first.contains("> custom"), "{first}");
-        assert!(first.contains("2/3"), "{first}");
-    }
-
-    #[test]
-    fn the_cursor_is_visible_as_a_marker() {
-        let mut p = Picker::new(items(), "");
-        p.down();
-        let out = rendered(&p, &Chrome::default(), 60, 12).join("\n");
-        assert!(
-            out.contains("> custom: zoom"),
-            "no marker on row two:\n{out}"
+            Item::new("x").in_colour(Some("colour4".into())).colour,
+            Some("colour4".to_string())
         );
     }
 
-    #[test]
-    fn the_title_and_footer_are_drawn() {
-        let chrome = Chrome {
-            title: "[ Keys ]".into(),
-            footer: "enter runs it".into(),
-            preview_title: String::new(),
-        };
-        let out = rendered(&Picker::new(items(), ""), &chrome, 60, 12).join("\n");
-        assert!(out.contains("[ Keys ]"), "{out}");
-        assert!(out.contains("enter runs it"), "{out}");
-    }
+    // ── options ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn a_preview_pane_shows_what_the_row_would_run() {
+    fn the_preview_pane_is_off_when_no_row_has_one() {
         let chrome = Chrome {
-            preview_title: "[ What it runs ]".into(),
+            preview_title: "[ Where ]".into(),
             ..Chrome::default()
         };
-        let out = rendered(&Picker::new(items(), "reload"), &chrome, 60, 16).join("\n");
-        assert!(out.contains("[ What it runs ]"), "{out}");
-        assert!(out.contains("source-file"), "{out}");
+        let items = vec![Item::new("a"), Item::new("b")];
+        assert!(options_for(&chrome, "", &items).preview.is_none());
     }
 
     #[test]
-    fn a_row_with_nothing_to_preview_gets_no_pane() {
+    fn the_preview_pane_is_off_when_the_layout_says_none() {
         let chrome = Chrome {
-            preview_title: "[ What it runs ]".into(),
+            preview_title: "[ Where ]".into(),
+            preview: Preview::None,
             ..Chrome::default()
         };
-        let out = rendered(&Picker::new(items(), "Break"), &chrome, 60, 16).join("\n");
-        assert!(!out.contains("[ What it runs ]"), "{out}");
+        let items = vec![Item::with_preview("a", "something")];
+        assert!(options_for(&chrome, "", &items).preview.is_none());
     }
 
     #[test]
-    fn an_empty_result_still_draws_a_usable_screen() {
-        // Somebody typing nonsense should see an empty list and their query,
-        // not a panic and a terminal left in raw mode.
-        let p = Picker::new(items(), "zzzzzz");
-        let out = rendered(&p, &Chrome::default(), 60, 12);
-        assert!(out[0].contains("0/3"), "{:?}", out[0]);
+    fn the_layout_decides_which_side_the_preview_is_on() {
+        let items = vec![Item::with_preview("a", "something")];
+        for (preview, expected) in [
+            (Preview::Right, PreviewDirection::Right),
+            (Preview::Left, PreviewDirection::Left),
+            (Preview::Bottom, PreviewDirection::Down),
+            (Preview::Top, PreviewDirection::Up),
+        ] {
+            let chrome = Chrome {
+                preview_title: "[ Where ]".into(),
+                preview,
+                preview_percent: 40,
+                ..Chrome::default()
+            };
+            let options = options_for(&chrome, "", &items);
+            assert!(options.preview.is_some(), "{preview:?} drew no pane");
+            assert_eq!(options.preview_window.direction, expected, "{preview:?}");
+            assert_eq!(
+                options.preview_window.size,
+                Size::Percent(40),
+                "{preview:?}"
+            );
+        }
     }
 
     #[test]
-    fn a_narrow_terminal_does_not_panic() {
-        // display-popup geometry is somebody else's decision, so the picker
-        // has to survive whatever it is given.
-        let p = Picker::new(items(), "");
-        let _ = rendered(&p, &Chrome::default(), 12, 4);
+    fn an_absurd_preview_share_is_clamped_rather_than_obeyed() {
+        let layout = crate::config::PickerLayout {
+            preview: Preview::Right,
+            preview_percent: 99,
+        };
+        assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 80);
+
+        let layout = crate::config::PickerLayout {
+            preview: Preview::Right,
+            preview_percent: 1,
+        };
+        assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 20);
+    }
+
+    #[test]
+    fn the_query_sits_above_the_list_rather_than_below_it() {
+        // `options.reverse` is the flag the command line parses and the
+        // drawing never reads; setting only that left the list growing up off
+        // the bottom of the popup.
+        let options = options_for(&Chrome::default(), "", &[Item::new("a")]);
+        assert_eq!(options.layout, TuiLayout::Reverse);
+    }
+
+    #[test]
+    fn the_opening_query_is_carried_into_the_picker() {
+        let options = options_for(&Chrome::default(), "~/src", &[Item::new("a")]);
+        assert_eq!(options.query.as_deref(), Some("~/src"));
+    }
+
+    #[test]
+    fn the_shorter_row_wins_a_tie() {
+        // Not a behaviour this module implements any more, but one it must
+        // keep asking for: without it `zoom` sorts below `a long way to say
+        // zoom`, which both score the same.
+        let options = options_for(&Chrome::default(), "", &[Item::new("a")]);
+        assert_eq!(
+            options.tiebreak,
+            vec![
+                RankCriteria::Score,
+                RankCriteria::Length,
+                RankCriteria::Index
+            ]
+        );
     }
 }

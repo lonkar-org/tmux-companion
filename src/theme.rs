@@ -469,6 +469,24 @@ impl ThemeRow {
             self.colour
         )
     }
+
+    /// The row as the picker searches it.
+    ///
+    /// No swatch and no padding: `swatch` returns a string of ANSI escapes,
+    /// and a label built around it is padded over bytes the terminal never
+    /// draws, which is why the theme list came out ragged. The block is drawn
+    /// by the picker now, from the colour rather than from a string.
+    pub fn search_text(&self) -> String {
+        format!("{} {}", self.name, self.colour)
+    }
+
+    /// The row as columns the picker lines up for itself.
+    pub fn columns(&self) -> Vec<String> {
+        let hex = resolve_colour(&self.colour)
+            .map(|(r, g, b)| format!("#{r:02x}{g:02x}{b:02x}"))
+            .unwrap_or_default();
+        vec![self.name.clone(), self.colour.clone(), hex]
+    }
 }
 
 /// Read the themes directory, skipping the `_`-prefixed helpers.

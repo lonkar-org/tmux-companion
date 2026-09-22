@@ -63,6 +63,32 @@ pub struct Config {
     /// What the status bar itself looks like, which the segments draw against.
     #[serde(default)]
     pub bar: Bar,
+    /// How every picker is laid out.
+    #[serde(default)]
+    pub picker: PickerLayout,
+}
+
+/// How the pickers are laid out.
+///
+/// One setting for all of them, because five pickers that each drift into
+/// their own shape are five things to learn rather than one.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct PickerLayout {
+    /// Where the preview pane goes, or `none` for no preview at all.
+    pub preview: crate::picker::Preview,
+    /// The preview's share of the popup, as a percentage. Clamped to 20-80:
+    /// outside that one half of the split is too narrow to read.
+    pub preview_percent: u16,
+}
+
+impl Default for PickerLayout {
+    fn default() -> Self {
+        Self {
+            preview: crate::picker::Preview::Right,
+            preview_percent: 55,
+        }
+    }
 }
 
 /// The bar the segments are drawn on.
@@ -597,6 +623,7 @@ impl Default for Config {
             clipboard: Clipboard::default(),
             theme: Theme::default(),
             bar: Bar::default(),
+            picker: PickerLayout::default(),
         }
     }
 }

@@ -14,12 +14,17 @@ use std::collections::HashMap;
 
 /// The tables worth listing.
 ///
-/// `copy-mode-vi` and `copy-mode-emacs` are absent on purpose. Their `-N`
-/// listing answers with nothing from a normal client and with one `g` note
-/// under `run-shell`, and tmux then prints that single line to the client's
-/// message area, which was the flash on every config reload. The `my-keys`
-/// rows already read `copy-mode  g <key>`, so nothing is lost.
-pub const TABLES: [&str; 3] = ["prefix", "root", "my-keys"];
+/// `copy-mode-vi` was left out on the grounds that its `-N` listing answered
+/// with nothing useful and made tmux flash a line in the message area. That is
+/// not what tmux 3.7 does: it answers with exactly the notes somebody wrote,
+/// and leaving it out meant every `-T copy-mode-vi` binding in the shipped
+/// example config -- the prompt jumps, `o` to open the selection, `y` to yank
+/// -- was missing from the key search and left the cheat sheet's copy-mode box
+/// empty.
+///
+/// `copy-mode-emacs` stays out: a config binds one or the other, and listing
+/// both would show every copy binding twice.
+pub const TABLES: [&str; 4] = ["prefix", "root", "my-keys", "copy-mode-vi"];
 
 /// One binding, with everything the picker shows and runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,9 +105,24 @@ pub fn parse_commands(listing: &str, table: &str) -> Vec<(String, String)> {
         if command.is_empty() {
             continue;
         }
-        out.push((key.to_string(), command));
+        out.push((unescape_key(key), command));
     }
     out
+}
+
+/// The key as `list-keys -N` writes it.
+///
+/// `list-keys` escapes the nine characters that would otherwise be ambiguous
+/// in a command it is printing -- `\;` `\'` `\"` `\{` `\}` `\#` `\%` `\~`
+/// `\$` -- and `list-keys -N` does not. A row is kept only when its key is
+/// found in the notes, so without this every one of those nine was silently
+/// dropped: `prefix %` and `prefix "`, the two split bindings tmux ships,
+/// were missing from the key search and from the cheat sheet.
+fn unescape_key(key: &str) -> String {
+    match key.strip_prefix('\\') {
+        Some(rest) if rest.chars().count() == 1 => rest.to_string(),
+        _ => key.to_string(),
+    }
 }
 
 /// How a chord is written for a reader.
@@ -467,5 +487,40 @@ bind-key    -T prefix M-x     display-popup -E something
         let rows = vec![row("root", "M-s", "Choose a session")];
         assert_eq!(filter(&rows, "M-s").len(), 1);
         assert_eq!(filter(&rows, "m-s").len(), 1, "case should not matter");
+    }
+}
+
+#[cfg(test)]
+mod escaped_key_tests {
+    use super::*;
+
+    #[test]
+    fn the_keys_list_keys_escapes_still_find_their_notes() {
+        // `list-keys` escapes these nine; `list-keys -N` does not. Joining the
+        // two listings by key therefore dropped every one of them, including
+        // both of tmux's own split bindings.
+        let commands = concat!(
+            "bind-key    -T prefix \\%      split-window -h\n",
+            "bind-key    -T prefix \\\"      split-window -v\n",
+            "bind-key    -T prefix c       new-window\n",
+        );
+        let notes = concat!(
+            "C-b %       Split window horizontally\n",
+            "C-b \"       Split window vertically\n",
+            "C-b c       Create a new window\n",
+        );
+        let rows = rows_for_table("prefix", notes, commands);
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"%"), "no % binding: {keys:?}");
+        assert!(keys.contains(&"\""), "no \" binding: {keys:?}");
+        assert_eq!(rows.len(), 3, "{keys:?}");
+    }
+
+    #[test]
+    fn a_backslash_that_is_the_key_itself_is_left_alone() {
+        assert_eq!(unescape_key("\\%"), "%");
+        assert_eq!(unescape_key("C-b"), "C-b");
+        // A two-character escape is a key; anything longer is not one.
+        assert_eq!(unescape_key("\\abc"), "\\abc");
     }
 }

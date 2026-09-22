@@ -49,8 +49,15 @@ tmux -f "$CONF" new-session -d -s instructions -n tour -c "$HOME" \
 tmux new-session -d -s playground -n shell -c "$HOME/projects/orchard-api" \
   '/opt/playground/tour.sh welcome'
 
+# The tour reads this to know whether a step has been done yet.
+tmux set -g @playground-step "starting"
+
 # A session that outlives its only window would leave the container running
 # with nothing in it.
 tmux set -g destroy-unattached off
 
-exec tmux attach -t playground
+# Attached to the tour, not to the playground. Landing in the playground put
+# somebody in a shell with no idea what any of the keys were, and the only
+# thing telling them was a line on a status bar they had not been told to read
+# yet.
+exec tmux attach -t instructions

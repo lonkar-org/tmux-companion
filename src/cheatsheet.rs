@@ -86,7 +86,97 @@ pub fn boxes(rows: &[KeyRow], usage: &HashMap<(String, String), usize>) -> [Vec<
                 .then_with(|| a.note.cmp(&b.note))
         });
     }
+
+    top_up(&mut out, rows);
     out
+}
+
+/// The fewest entries a box should have before tmux's own bindings are used
+/// to fill it out.
+const MIN_PER_BOX: usize = 3;
+
+/// Fill a thin box with tmux's own noted bindings.
+///
+/// A config that binds one pane key leaves the Panes box with one line in it
+/// and three quarters of the sheet blank, which reads as broken rather than as
+/// sparse. tmux ships notes for about a hundred of its own bindings, and the
+/// ones that belong in a thin box are better than the empty space.
+///
+/// Custom bindings keep their place at the top: they are the point of the
+/// sheet, and these are only what is left over.
+fn top_up(out: &mut [Vec<Entry>; 4], rows: &[KeyRow]) {
+    let mut spare: [Vec<Entry>; 4] = Default::default();
+    for row in rows {
+        if row.note.starts_with(CUSTOM) {
+            continue;
+        }
+        let Some(box_index) = box_for_own(&row.note) else {
+            continue;
+        };
+        spare[box_index].push(Entry {
+            shown: row.shown.clone(),
+            note: row.note.clone(),
+            count: 0,
+        });
+    }
+    for (entries, mut extra) in out.iter_mut().zip(spare) {
+        if entries.len() >= MIN_PER_BOX {
+            continue;
+        }
+        // By how ordinary the binding is, then alphabetical. Straight
+        // alphabetical put "Break pane to a new window" and "Clear the marked
+        // pane" in the Panes box and left both splits out, which is the wrong
+        // three to show somebody learning tmux.
+        extra.sort_by_key(|e| (rank(&e.note), e.note.to_lowercase()));
+        extra.dedup_by(|a, b| a.note == b.note);
+        let room = MIN_PER_BOX.saturating_sub(entries.len());
+        entries.extend(extra.into_iter().take(room));
+    }
+}
+
+/// How ordinary one of tmux's own bindings is: lower is shown first.
+///
+/// An explicit order rather than a keyword test, because a test gets this
+/// wrong in ways that are hard to see: "Break pane to a new window" contains
+/// "new ", so a rule that promoted anything with "new" in it promoted exactly
+/// the binding it was written to demote.
+fn rank(note: &str) -> usize {
+    const ORDER: [&str; 8] = [
+        "split window",
+        "select pane",
+        "select window",
+        "resize",
+        "next window",
+        "previous window",
+        "new window",
+        "copy mode",
+    ];
+    let n = note.to_lowercase();
+    ORDER
+        .iter()
+        .position(|w| n.contains(w))
+        .unwrap_or(ORDER.len())
+}
+
+/// Which box one of tmux's own notes belongs in, or `None` when it is not
+/// clearly any of them.
+///
+/// tmux's notes are sentences rather than the `custom: group thing` shape, so
+/// this reads the words instead of the first one. Unmatched goes nowhere: the
+/// fourth box is for a binding somebody wrote and did not categorise, and
+/// filling it with tmux's leftovers would bury them.
+fn box_for_own(note: &str) -> Option<usize> {
+    let n = note.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    if has(&["pane", "split window", "layout", "zoom"]) {
+        Some(0)
+    } else if has(&["window", "session", "client"]) {
+        Some(1)
+    } else if has(&["copy", "search", "paste", "buffer"]) {
+        Some(2)
+    } else {
+        None
+    }
 }
 
 /// Pad or cut a string to exactly `width` columns.
@@ -181,14 +271,18 @@ mod tests {
     }
 
     #[test]
-    fn only_bindings_somebody_wrote_are_on_the_sheet() {
+    fn bindings_somebody_wrote_come_first_whatever_else_is_on_the_sheet() {
+        // This used to assert that tmux's own bindings never appear at all,
+        // which left a config with one pane binding showing one line and three
+        // empty boxes. They appear now, under the written ones and only where
+        // a box would otherwise be nearly empty.
         let rows = vec![
             row("prefix", "z", "prefix z", "custom: pane zoom"),
             row("prefix", "!", "prefix !", "Break pane to a new window"),
         ];
         let b = boxes(&rows, &HashMap::new());
-        assert_eq!(b[0].len(), 1);
-        assert_eq!(b.iter().map(|v| v.len()).sum::<usize>(), 1);
+        assert_eq!(b[0][0].note, "pane zoom", "{:?}", b[0]);
+        assert!(b[0].len() > 1, "the box was not filled out: {:?}", b[0]);
     }
 
     #[test]
@@ -339,5 +433,78 @@ mod tests {
         for title in TITLES {
             assert!(sheet.contains(title.trim()), "{title} missing");
         }
+    }
+}
+
+#[cfg(test)]
+mod top_up_tests {
+    use super::*;
+
+    fn row(table: &str, key: &str, note: &str) -> KeyRow {
+        KeyRow {
+            shown: crate::keys::shown_for(table, key),
+            table: table.to_string(),
+            key: key.to_string(),
+            note: note.to_string(),
+            command: "whatever".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_box_with_one_binding_is_filled_from_tmuxs_own() {
+        // The shipped config binds one pane key, so the Panes box held one
+        // line and three quarters of the sheet was blank, which reads as
+        // broken rather than as sparse.
+        let rows = vec![
+            row("prefix", "z", "custom: pane zoom this one"),
+            row("prefix", "%", "Split window horizontally"),
+            row("prefix", "\"", "Split window vertically"),
+            row("prefix", "!", "Break pane to a new window"),
+        ];
+        let boxes = boxes(&rows, &HashMap::new());
+        let notes: Vec<&str> = boxes[0].iter().map(|e| e.note.as_str()).collect();
+        assert_eq!(notes.len(), MIN_PER_BOX, "{notes:?}");
+        assert_eq!(
+            notes[0], "pane zoom this one",
+            "custom goes first: {notes:?}"
+        );
+        assert!(
+            notes.contains(&"Split window horizontally"),
+            "the splits are the two to show: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_full_box_is_left_alone() {
+        let rows = vec![
+            row("prefix", "a", "custom: pane one"),
+            row("prefix", "b", "custom: pane two"),
+            row("prefix", "c", "custom: pane three"),
+            row("prefix", "%", "Split window horizontally"),
+        ];
+        let boxes = boxes(&rows, &HashMap::new());
+        assert_eq!(boxes[0].len(), 3);
+        assert!(boxes[0].iter().all(|e| !e.note.starts_with("Split")));
+    }
+
+    #[test]
+    fn a_new_window_does_not_outrank_a_split() {
+        // "Break pane to a new window" contains "new ", so the first attempt
+        // at this promoted exactly the binding it was written to demote.
+        assert!(rank("Split window horizontally") < rank("Break pane to a new window"));
+        assert!(rank("Select pane to the left") < rank("Clear the marked pane"));
+    }
+
+    #[test]
+    fn tmuxs_own_leftovers_do_not_fill_the_last_box() {
+        // The fourth box is for a binding somebody wrote and did not
+        // categorise. Filling it with tmux's unmatched notes would bury them.
+        let rows = vec![
+            row("prefix", "a", "custom: something uncategorised"),
+            row("prefix", "t", "Show a clock"),
+            row("prefix", "~", "Show messages"),
+        ];
+        let boxes = boxes(&rows, &HashMap::new());
+        assert_eq!(boxes[3].len(), 1, "{:?}", boxes[3]);
     }
 }

@@ -487,3 +487,17 @@ background = "color233"
 # The background behind the current window in the window list. Only the
 # `window` segment draws this, and only when that segment is turned on.
 current_window_background = "color236"
+
+[picker]
+# How every picker is laid out: the key search, the cheat sheet, the project
+# list, the run history and the theme list all take their shape from here, so
+# one setting changes all of them rather than five drifting apart.
+#
+# Where the preview pane goes: right, left, bottom, top, or none for no
+# preview at all. A picker whose rows have nothing to preview gets the whole
+# width for its list whatever this says.
+preview = "right"
+
+# The preview's share of the popup, as a percentage. Clamped to 20-80, because
+# outside that one half of the split is too narrow to read.
+preview_percent = 55

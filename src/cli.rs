@@ -860,17 +860,24 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
         .iter()
         .map(|r| {
             crate::picker::Item::with_preview(
-                format!("{:<28} {}", r.shown, r.note),
+                format!("{} {}", r.shown, r.note),
                 format!("{}\n\n{}", r.shown, r.command),
             )
+            // Two columns rather than one padded string: the picker measures
+            // them across every row, so the notes line up whatever the widest
+            // chord turns out to be.
+            .in_columns(vec![r.shown.clone(), r.note.clone()])
         })
         .collect();
 
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
         footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
         preview_title: "[ What it runs ]".into(),
-    };
+        ..Default::default()
+    }
+    .laid_out_by(&config.picker);
 
     let Some(index) = crate::picker::run(items, &opening, &chrome)? else {
         return Ok(());
@@ -1022,19 +1029,21 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
             Kind::Session => "session",
             Kind::Directory => "dir    ",
         };
+        let where_it_is = crate::project::short_path(&r.path, &home);
         items.push(
             crate::picker::Item::with_preview(
-                format!(
-                    "{mark}  {:<24} {}",
-                    r.label,
-                    crate::project::short_path(&r.path, &home)
-                ),
+                format!("{mark} {} {where_it_is}", r.label),
                 project_preview(r, &config.project.preview_window).await,
             )
-            // The project's own theme colour, so the list reads the way the
-            // status bar does. A project with no colour in the map stays the
-            // default rather than being given one.
-            .in_colour(r.colour.clone()),
+            .in_columns(vec![
+                mark.trim_end().to_string(),
+                r.label.clone(),
+                where_it_is,
+            ])
+            // The project's own theme colour as a block in front of the row.
+            // Painting the whole line in it, which is what this did before,
+            // makes a dark project colour unreadable on a dark popup.
+            .with_swatch(r.colour.clone()),
         );
     }
 
@@ -1042,7 +1051,9 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         title: "[ Project ]".into(),
         footer: "up = last session   type a path for a new one   esc cancels".into(),
         preview_title: "[ Where ]".into(),
-    };
+        ..Default::default()
+    }
+    .laid_out_by(&config.picker);
 
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(());
@@ -1219,20 +1230,43 @@ async fn run_new_window() -> anyhow::Result<()> {
         Vec::new()
     };
 
-    let items: Vec<crate::picker::Item> = paths
-        .iter()
-        .map(|p| crate::picker::Item::with_preview(crate::project::short_path(p, &home), p.clone()))
-        .collect();
-
     let prefill = crate::project::short_path(&pane_dir, &home);
+
+    // The pane's own directory goes on the list, not only into the query.
+    // Without it, a directory zoxide has never seen -- which is most of them
+    // the first time somebody runs this -- prefilled a query that matched no
+    // row, so the list came up empty and the default looked broken. Enter
+    // still opens it either way; now you can also see what Enter would do.
+    let mut items: Vec<crate::picker::Item> = Vec::with_capacity(paths.len() + 1);
+    // What each row opens, in the same order as the rows, because a pick
+    // comes back as an index and the extra row below would otherwise shift
+    // every zoxide path by one.
+    let mut targets: Vec<String> = Vec::with_capacity(paths.len() + 1);
+    if !paths.iter().any(|p| p == &pane_dir) {
+        items.push(
+            crate::picker::Item::with_preview(prefill.clone(), pane_dir.clone())
+                .in_columns(vec!["here".to_string(), prefill.clone()]),
+        );
+        targets.push(pane_dir.clone());
+    }
+    for p in &paths {
+        let short = crate::project::short_path(p, &home);
+        items.push(
+            crate::picker::Item::with_preview(short.clone(), p.clone())
+                .in_columns(vec![String::new(), short]),
+        );
+        targets.push(p.clone());
+    }
     let chrome = crate::picker::Chrome {
         title: "[ New window at ]".into(),
         footer: "enter opens a window   ctrl-u clears it   type a path zoxide has not seen   esc cancels".into(),
         preview_title: "[ Directory ]".into(),
-    };
+        ..Default::default()
+    }
+    .laid_out_by(&config.picker);
 
     let outcome = crate::picker::run_with_query(items, &prefill, &chrome)?;
-    match crate::project::window_target(&outcome, &paths, &prefill, &pane_dir, &home) {
+    match crate::project::window_target(&outcome, &targets, &prefill, &pane_dir, &home) {
         crate::project::WindowTarget::Cancelled => Ok(()),
         crate::project::WindowTarget::NoSuchDirectory(q) => {
             tmux(&[
@@ -1506,9 +1540,17 @@ fn theme_pick(
 
     let items: Vec<crate::picker::Item> = rows
         .iter()
-        .map(|r| crate::picker::Item::with_preview(r.label(), theme_preview(r)))
+        .map(|r| {
+            crate::picker::Item::with_preview(r.search_text(), theme_preview(r))
+                // The colour as a block, not as a tint on the text: a theme
+                // list where every row is painted its own colour is a list
+                // where half the rows cannot be read.
+                .with_swatch(Some(r.colour.clone()))
+                .in_columns(r.columns())
+        })
         .collect();
 
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
     let chrome = crate::picker::Chrome {
         title: match &register {
             Some(s) => format!("[ Theme for {s} ]"),
@@ -1516,7 +1558,9 @@ fn theme_pick(
         },
         footer: "enter applies it   esc cancels".into(),
         preview_title: "[ Colours ]".into(),
-    };
+        ..Default::default()
+    }
+    .laid_out_by(&config.picker);
 
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(());
@@ -1797,7 +1841,9 @@ async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
         title: "[ Run command ]".into(),
         footer: "enter runs it in a side pane   esc cancels".into(),
         preview_title: String::new(),
-    };
+        ..Default::default()
+    }
+    .laid_out_by(&config.picker);
 
     // The typed query is the command when nothing matched, which is the only
     // way to run something that was never in the history.
