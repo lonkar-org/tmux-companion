@@ -83,13 +83,10 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 ## Usage
 
-<!-- @Yogesh(gif): drop the R2 URL in above this line once the bucket exists,
-     as ![usage](https://<host>/tmux-companion/usage.gif), and delete this. -->
-
-[![the pickers, in 71 seconds](https://asciinema.org/a/Ruwr7VJCeCAv5p0y.svg)](https://asciinema.org/a/Ruwr7VJCeCAv5p0y)
-
-The column down the right of the recording is the keys being pressed, so you
-can read back what did what.
+<!-- @Yogesh(video): the usage recording goes here once it is approved, about
+     100 seconds: the bar, keys, cheatsheet, project, a session made and
+     switched, run in its side pane, open and sh-jobs. Both an inline GIF from
+     media.lonkar.org and a link to the asciinema player. -->
 
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
@@ -103,11 +100,8 @@ got one.
 
 ## Configuration
 
-<!-- @Yogesh(gif): drop the R2 URL in above this line once the bucket exists,
-     as ![configuration](https://<host>/tmux-companion/configuration.gif), and
-     delete this. -->
-
-[![configuring it, in 37 seconds](https://asciinema.org/a/LZxB8RU1aXNM1TiL.svg)](https://asciinema.org/a/LZxB8RU1aXNM1TiL)
+<!-- @Yogesh(video): the configuration recording belongs on
+     docs/reference/configuration.md rather than here. -->
 
 There's no config file till you write one, and the defaults are what the binary
 did before the file existed.
