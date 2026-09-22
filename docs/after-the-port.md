@@ -145,8 +145,9 @@ naming the plugin, linking it, and saying plainly that somebody not running
 tmux-companion should install theirs. `rickstaa/tmux-notify`,
 `ofirgall/tmux-window-name`, `joshmedeski/tmux-nerd-font-window-name`,
 `thepante/tmux-git-autofetch`, `roosta/tmux-fuzzback`, `MunifTanjim/tmux-suspend`,
-`jaclu/tmux-power-zoom`, `nickdiego/tmux-pocket-pane` and
-`kristopolous/tmux-gentrify` are the current list. A two-line issue on their
+`jaclu/tmux-power-zoom`, `nickdiego/tmux-pocket-pane`,
+`kristopolous/tmux-gentrify`, `tmux-plugins/tmux-resurrect` and
+`tmux-plugins/tmux-continuum` are the current list. A two-line issue on their
 repository before shipping costs nothing, and an author who hears about it first
 usually reacts better than one who finds out from a README.
 
@@ -262,6 +263,199 @@ So `docs/how-to/things-tmux-already-does.md`, covering `pipe-pane`,
 `%if` version guards. It costs an afternoon and it probably improves more
 people's setups than any segment in the tables above.
 
+## Project layouts
+
+Three features that share one shape, and they arrive in this order because each
+one is what makes the next worth having. None of them replaces a plugin so the
+four-reason rule lands differently here: they fail rule 2 outright, since none
+of this is a status segment and none of it costs a `#()` spawn, and they pass on
+rules 1 and 3 because a timer that reads tmux is a resident process everywhere
+else in the ecosystem and because `layout_for`, `session_name`, `state_dir` and
+the `autosave` task shape were all built by the port already.
+
+### Panes in a layout
+
+`[[layout.window]]` takes a `command` and gives you one pane, which is what
+`project-session.zsh` did and what the port kept. A window is usually more than
+one pane, so the table grows a `pane` array, and the geometry comes from the
+five layout names tmux already ships:
+
+```toml
+[[layout.window]]
+name = "edit"
+layout = "main-vertical"   # or even-horizontal, even-vertical, main-horizontal, tiled
+main_size = "60%"
+
+[[layout.window.pane]]
+command = "nvim"
+focus = true
+
+[[layout.window.pane]]
+command = "claude"
+
+[[layout.window.pane]]
+cwd = "~/src"
+```
+
+`command` on the window stays as the single-pane shorthand, a `pane` array
+overrides it, and `Config::default()` does not move, so the pinned
+`assemble_right` tests and the byte-identity rule are untouched.
+
+The escape hatch for anything five preset names cannot express is a raw tmux
+layout string in the same field:
+
+```toml
+layout = "bb62,272x67,0,0{136x67,0,0,1,135x67,137,0,2}"
+```
+
+which is what `tmux list-windows -F '#{window_layout}'` prints, so you arrange
+the panes by hand with the bindings you already have and paste the result.
+tmuxinator has taken raw layout strings for years and it is the reason its own
+syntax never had to grow.
+
+What this deliberately is not is a new layout language. The survey that produced
+this section looked at tmuxinator, tmuxp, smug, teamocil, zellij and tmuxomatic,
+and the two lessons worth carrying are that everybody who tried to reference
+panes by position regretted it, because tmux renumbers panes by position the
+moment you split one, and that zellij moved its layouts off YAML and TOML to KDL
+and said why in the release notes: TOML does not nest, and layouts are nesting.
+A flat pane array under a preset name sidesteps both, covers what people
+actually run, and leaves the raw string for the rest.
+
+One implementation detail that is easy to get wrong and expensive to debug:
+create every pane as a bare shell first, then apply the layout, then send the
+commands. Commands first means `nvim` and `claude` draw themselves at the
+pre-layout geometry and repaint, which looks broken for a second on every
+session start.
+
+### Per-project layouts, and a key that saves one
+
+Once a window can hold panes, the layout worth starting a project with is the
+one you ended up with last time, and arranging it by hand and transcribing it
+into TOML is the part nobody does twice. So a binding that captures it:
+
+```
+tmux-companion project save      # capture this session, write it for this project
+tmux-companion project forget    # drop it, fall back to the named layout
+tmux-companion project show      # which layout would this directory get, and from where
+```
+
+Capture is two calls, and `-a` means the count does not depend on how many
+sessions are open:
+
+```
+tmux list-windows -a -F '#{session_path}|#{window_index}|#{window_name}|#{window_layout}'
+tmux list-panes   -a -F '#{session_path}|#{window_index}|#{pane_index}|#{pane_current_command}|#{pane_current_path}|#{pane_start_command}'
+```
+
+No new session metadata is needed for the lookup, since `#{session_path}` is the
+directory the session was created in and tmux never changes it, which is the
+same key `session_name` already maps to a name. A `@tmux-companion-project`
+session option set at spawn is worth adding anyway as belt and braces, because
+it survives a rename and it says which project a session belongs to when the
+directory was resolved through zoxide rather than typed.
+
+Resolution is three sources, most specific wins, and `save` writes to the middle
+one:
+
+```
+[[layout]] + [project] layout + [[project.override]]      what exists today
+  <  $XDG_STATE_HOME/tmux-companion/projects/<project>.toml
+  <  .tmux-companion.toml in the project root             opt-in, see below
+```
+
+One file per project rather than one shared file, so `save` never rewrites
+something a person hand-maintains, `forget` is a delete, and there is no comment
+preservation problem. The real path goes in a `path` key inside the file as the
+authority, so a filename collision is detectable instead of silent.
+
+`project show` earns its place the moment there are three sources, for the same
+reason `doctor` earns its place: a person whose session came up wrong needs to
+know which file won before they can fix anything.
+
+Capture is lossy and the tool should say so rather than pretend. A pane sitting
+at a prompt reports `pane_current_command` as `zsh`, and writing that back gives
+you a shell inside a shell on restore, so it has to be compared against `$SHELL`
+and dropped. `nvim src/config.rs` reports `nvim` with the arguments gone, and
+`pane_start_command` has the full line but is empty for any pane that was split
+interactively. An agent that renames itself to its own version string is the
+problem `hold_name` already exists for. So capture writes what it found, marks
+the panes it was unsure about, and prints the path, because a template you will
+re-run for months deserves one human pass before it is trusted.
+
+**The in-repo file is the part with a security surface.** A
+`.tmux-companion.toml` at a project root runs commands when somebody presses the
+project key, so cloning a repository you do not control and opening it would
+execute whatever that file says. This is the same problem direnv has with
+`.envrc` and vim has with `set exrc`, and both landed on the same answer: the
+file is inert until the user explicitly trusts that path. If it gets built it
+should be off by default under `[project] read_project_file`, and a trusted path
+should be recorded with the file's hash so that editing it after trusting asks
+again. This is the least-demanded of the three tiers and the only one that can
+hurt somebody, so it goes last or not at all.
+
+### The layout a project comes back with
+
+The step after saving by hand is not having to. Close a project, open it again,
+and the windows and the geometry are what they were, without any of the
+processes coming back.
+
+Layout only is the whole point and it is also what makes this cheap. Nothing
+about restoring a pane's shape can run anything, so the capture stores window
+names, the `window_layout` string and each pane's working directory, and it
+stores no commands at all. The lossy `pane_current_command` problem from the
+previous section does not exist on this path, because this path never asks.
+
+`session-closed` is not usable for the capture: by the time it fires the
+session's windows are gone and there is nothing to read. So the snapshot is
+periodic, on the `autosave_loop` shape the port already built, with a
+`client-detached` hook for the case that actually matters, and a session killed
+outright loses at most one interval. Two tmux calls per interval regardless of
+how many sessions are open, which at 60 seconds is under 0.5 ms/s, small enough
+that it does not need its own config key to turn off for cost reasons.
+
+The snapshot and the deliberate save are different files and the deliberate one
+wins:
+
+```
+projects/<project>.toml        written by `project save`, never touched by the timer
+projects/<project>.auto.toml   the rolling snapshot, layout and cwd only
+```
+
+Without that split the timer would quietly overwrite the template you sat down
+and built, which is the kind of data loss people do not forgive in a status bar
+tool.
+
+Applying it automatically looks like it contradicts what the README says about
+resurrect, and it does not, for a reason worth writing down before somebody
+raises it. The objection to automatic restore is that it resurrects a stale
+layout over a session you have already started working in. A session the project
+picker just created is empty, so there is nothing to clobber, and the stale
+layout is the only layout it has. Automatic capture is safe everywhere;
+automatic apply is safe exactly on a session that was created one moment ago,
+and that is the only place it should happen.
+
+The failure mode that does need a config key is the screen it comes back on. A
+`window_layout` string carries absolute cell geometry, so `select-layout`
+rescales it proportionally and six panes captured on a 272x67 display land on a
+120x30 laptop below the minimum pane size and come back mangled. The capture
+should store the window size it was taken at, and a restore onto something much
+smaller should fall back to `tiled` rather than insisting on the saved string.
+
+This is not a session manager and it should not grow into one. There is no
+session list, no switcher and no session naming scheme here, because `project`
+already does all three and `sesh`, `sessionx` and `t` do them for everybody
+else. The scope is the layout of a session the project picker made.
+
+Credit where it belongs: `tmux-plugins/tmux-resurrect` and
+`tmux-plugins/tmux-continuum` are alive, are the maintainers' signature work,
+and this repository already shells out to resurrect's save script for
+`autosave`. They snapshot every session for crash recovery and restore on
+demand, across the whole server, processes included. This is one project, layout
+only, applied to a session that is one second old. Different scope and different
+trigger, no code shared, and the measurement row for it names both plugins as
+the arm it is measured against, with their versions, per the rule above.
+
 ## Not this
 
 - themes. `catppuccin`, `dracula`, `rose-pine` and `tokyo-night` own that
@@ -284,3 +478,8 @@ they're smaller than any one of the pickers in the port.
 What I don't know yet is whether the notification is worth it on a machine with
 one attached client, since the whole point of it is the pane you aren't
 looking at, and I've never measured how often that actually happens to me.
+
+Panes in a layout sits outside that five and ahead of it, because it is the one
+thing here that changes a config table the port already shipped rather than
+adding a feature beside it, and because the two project-layout features under it
+have nothing to capture until a window can hold more than one pane.
