@@ -221,6 +221,34 @@ pub enum Cmd {
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "kebab-case")]
 pub enum ThemeAction {
+    /// Pick a theme and apply it
+    Pick {
+        /// Apply to this target rather than whatever is current
+        #[arg(short = 't')]
+        target: Option<String>,
+        /// Remember the pick for this session instead of applying it
+        #[arg(short = 'r')]
+        register: Option<String>,
+        /// Where the theme files are
+        #[arg(long, default_value = "~/.config/tmux/themes")]
+        themes: String,
+        /// List the themes and exit, instead of opening the picker
+        #[arg(long)]
+        print: bool,
+    },
+
+    /// Apply the theme a session should have, without asking
+    Apply {
+        /// The session to resolve a theme for
+        session: String,
+        /// Apply to this target rather than whatever is current
+        #[arg(short = 't')]
+        target: Option<String>,
+        /// Where the theme files are
+        #[arg(long, default_value = "~/.config/tmux/themes")]
+        themes: String,
+    },
+
     /// Compute each theme's readable text colour and a visible border
     Gen {
         /// Write the files. Without this, report what would change and touch
@@ -427,12 +455,25 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
 
 /// `theme gen`.
 fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
-    let ThemeAction::Gen {
-        apply,
-        shades,
-        themes,
-        background,
-    } = action;
+    let (apply, shades, themes, background) = match action {
+        ThemeAction::Gen {
+            apply,
+            shades,
+            themes,
+            background,
+        } => (apply, shades, themes, background),
+        ThemeAction::Pick {
+            target,
+            register,
+            themes,
+            print,
+        } => return theme_pick(target, register, &expand_tilde(&themes), print),
+        ThemeAction::Apply {
+            session,
+            target,
+            themes,
+        } => return theme_apply(&session, target, &expand_tilde(&themes)),
+    };
 
     let dir = expand_tilde(&themes);
     let (bg, source) = match background.as_deref().map(crate::theme::parse_hex) {
@@ -988,4 +1029,113 @@ async fn tmux_display(format: &str) -> String {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => String::new(),
     }
+}
+
+/// `theme pick`: choose one, then apply it or remember it.
+fn theme_pick(
+    target: Option<String>,
+    register: Option<String>,
+    dir: &std::path::Path,
+    print: bool,
+) -> anyhow::Result<()> {
+    let rows = crate::theme::rows(dir);
+    if rows.is_empty() {
+        anyhow::bail!("no themes in {}", dir.display());
+    }
+
+    if print {
+        for row in &rows {
+            println!(
+                "{}\t{}\t{}",
+                row.path.file_name().unwrap_or_default().to_string_lossy(),
+                row.name,
+                row.colour
+            );
+        }
+        return Ok(());
+    }
+
+    let items: Vec<crate::picker::Item> = rows
+        .iter()
+        .map(|r| crate::picker::Item::with_preview(r.label(), theme_preview(r)))
+        .collect();
+
+    let chrome = crate::picker::Chrome {
+        title: match &register {
+            Some(s) => format!("[ Theme for {s} ]"),
+            None => "[ Theme ]".to_string(),
+        },
+        footer: "enter applies it   esc cancels".into(),
+        preview_title: "[ Colours ]".into(),
+    };
+
+    let Some(index) = crate::picker::run(items, "", &chrome)? else {
+        return Ok(());
+    };
+    let row = &rows[index];
+
+    if let Some(session) = register {
+        // Remembered and not applied: the session does not exist yet, so
+        // applying here would paint whichever session happens to be current.
+        let stem = row
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let map = dir.join("_project-map.tsv");
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(map)?;
+        writeln!(f, "{session}\t{stem}")?;
+        println!("{}", row.path.display());
+        return Ok(());
+    }
+
+    source_theme(&row.path, target.as_deref());
+    Ok(())
+}
+
+/// `theme apply`: the session-created hook's half, with no picker.
+fn theme_apply(session: &str, target: Option<String>, dir: &std::path::Path) -> anyhow::Result<()> {
+    let map = std::fs::read_to_string(dir.join("_project-map.tsv"))
+        .map(|t| crate::project::parse_project_map(&t))
+        .unwrap_or_default();
+    let path = crate::theme::theme_for_session(session, &map, dir);
+    source_theme(&path, target.as_deref());
+    Ok(())
+}
+
+/// A few lines showing what a theme is made of.
+fn theme_preview(row: &crate::theme::ThemeRow) -> String {
+    let text = std::fs::read_to_string(&row.path).unwrap_or_default();
+    let settings = crate::theme::parse_settings(&text);
+    let mut keys: Vec<&String> = settings.keys().collect();
+    keys.sort();
+    keys.iter()
+        .map(|k| {
+            let v = &settings[*k];
+            format!("{} {:<26} {v}", crate::theme::swatch(v), k)
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+/// `tmux source-file`, honouring a target.
+///
+/// The target matters: `_apply.tmux` sets window options, and a window option
+/// lands on one window, so without a target the theme paints whichever window
+/// happened to be current and every other window in the session keeps the
+/// global default. That is why copy-mode selection could be readable in one
+/// window and not the next.
+fn source_theme(path: &std::path::Path, target: Option<&str>) {
+    let path = path.display().to_string();
+    let mut args: Vec<&str> = vec!["source-file"];
+    if let Some(t) = target {
+        args.push("-t");
+        args.push(t);
+    }
+    args.push(&path);
+    let _ = std::process::Command::new("tmux").args(args).status();
 }

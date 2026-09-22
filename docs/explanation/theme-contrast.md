@@ -67,3 +67,13 @@ checked by diffing the two reports rather than by reading the code twice.
 
 What it removes is the python3 dependency, and the need to remember that the
 generator lives in a different repository from the themes it writes.
+
+## Why `-t` exists on apply
+
+`_apply.tmux` sets window options: `mode-style`, both pane border styles and
+`clock-mode-colour`. A window option lands on one window, so applying a theme
+without a target paints whichever window happened to be current and leaves
+every other window in the session on the global default.
+
+That's why copy-mode selection could be readable in one window and not the next
+one along.

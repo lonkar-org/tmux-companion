@@ -334,6 +334,342 @@ pub fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
     ))
 }
 
+// ── Choosing and applying ────────────────────────────────────────────────────
+
+/// The eight base colour names tmux accepts, and their bright forms.
+const BASE_NAMES: [(&str, (u8, u8, u8)); 16] = [
+    ("black", (0x00, 0x00, 0x00)),
+    ("red", (0x80, 0x00, 0x00)),
+    ("green", (0x00, 0x80, 0x00)),
+    ("yellow", (0x80, 0x80, 0x00)),
+    ("blue", (0x00, 0x00, 0x80)),
+    ("magenta", (0x80, 0x00, 0x80)),
+    ("cyan", (0x00, 0x80, 0x80)),
+    ("white", (0xc0, 0xc0, 0xc0)),
+    ("brblack", (0x80, 0x80, 0x80)),
+    ("brred", (0xff, 0x00, 0x00)),
+    ("brgreen", (0x00, 0xff, 0x00)),
+    ("bryellow", (0xff, 0xff, 0x00)),
+    ("brblue", (0x00, 0x00, 0xff)),
+    ("brmagenta", (0xff, 0x00, 0xff)),
+    ("brcyan", (0x00, 0xff, 0xff)),
+    ("brwhite", (0xff, 0xff, 0xff)),
+];
+
+/// Resolve any colour a theme file can carry.
+///
+/// A palette index (`colour125` or `color125`), one of the base names, or a
+/// hex triplet. `default` and `terminal` resolve to nothing, because they mean
+/// "whatever the terminal says" and this cannot know that.
+pub fn resolve_colour(value: &str) -> Option<(u8, u8, u8)> {
+    let v = value.trim().to_lowercase();
+    if v.is_empty() || v == "default" || v == "terminal" {
+        return None;
+    }
+    if v.starts_with('#') {
+        return parse_hex(&v);
+    }
+    if let Some((_, rgb)) = BASE_NAMES.iter().find(|(name, _)| *name == v) {
+        return Some(*rgb);
+    }
+    let digits = v
+        .strip_prefix("colour")
+        .or_else(|| v.strip_prefix("color"))?;
+    let index: u16 = digits.parse().ok()?;
+    if index > 255 {
+        return None;
+    }
+    Some(rgb(index as u8))
+}
+
+/// An ANSI true-colour block, for a swatch in a list.
+pub fn swatch(value: &str) -> String {
+    match resolve_colour(value) {
+        Some((r, g, b)) => format!("\x1b[38;2;{r};{g};{b}m██\x1b[0m"),
+        None => "  ".to_string(),
+    }
+}
+
+/// Every `set @theme-… value` in a theme file.
+pub fn parse_settings(text: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if words
+            .first()
+            .is_none_or(|w| *w != "set" && *w != "set-option")
+        {
+            continue;
+        }
+        // Flags sit between `set` and the key, so the key is found rather than
+        // assumed to be second.
+        if let Some(i) = words.iter().position(|w| w.starts_with("@theme-"))
+            && let Some(value) = quoted_value(&words[i + 1..])
+        {
+            out.insert(words[i].to_string(), value);
+        }
+    }
+    out
+}
+
+/// The value after a key, which may be quoted and so may be several words.
+///
+/// `@theme-name "Amber Light"` is two words, and taking the first gave every
+/// shade the name of the theme it came from: 42 of 76 themes came back called
+/// `Amber` or `Azure` rather than `Amber Light` or `Azure Dark`.
+fn quoted_value(rest: &[&str]) -> Option<String> {
+    let first = rest.first()?;
+    let Some(stripped) = first.strip_prefix('"') else {
+        return Some(first.to_string());
+    };
+    if let Some(done) = stripped.strip_suffix('"') {
+        return Some(done.to_string());
+    }
+    let mut out = stripped.to_string();
+    for word in &rest[1..] {
+        out.push(' ');
+        match word.strip_suffix('"') {
+            Some(last) => {
+                out.push_str(last);
+                return Some(out);
+            }
+            None => out.push_str(word),
+        }
+    }
+    Some(out)
+}
+
+/// One row of the theme picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeRow {
+    /// The file to source.
+    pub path: PathBuf,
+    /// The theme's own name.
+    pub name: String,
+    /// Its main colour, as written.
+    pub colour: String,
+}
+
+impl ThemeRow {
+    /// The label a picker shows: a swatch, the name, and the colour resolved.
+    pub fn label(&self) -> String {
+        let hex = resolve_colour(&self.colour)
+            .map(|(r, g, b)| format!(" (#{r:02x}{g:02x}{b:02x})"))
+            .unwrap_or_default();
+        format!(
+            "{} {:<22} {}{hex}",
+            swatch(&self.colour),
+            self.name,
+            self.colour
+        )
+    }
+}
+
+/// Read the themes directory, skipping the `_`-prefixed helpers.
+pub fn rows(dir: &Path) -> Vec<ThemeRow> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<ThemeRow> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tmux"))
+        .filter(|p| {
+            !p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+        })
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let settings = parse_settings(&text);
+            Some(ThemeRow {
+                name: settings.get("@theme-name").cloned().unwrap_or_else(|| {
+                    // A theme with no name is named after its file, which is
+                    // better than an empty row nobody can pick.
+                    path.file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                }),
+                colour: settings
+                    .get("@theme-color-main-1")
+                    .cloned()
+                    .unwrap_or_default(),
+                path,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// The theme a session should get, before any picker is involved.
+///
+/// The project map first, so a project keeps its colour across restarts. Only
+/// when nothing claims it do the namespace rules decide.
+pub fn theme_for_session(
+    session: &str,
+    map: &std::collections::HashMap<String, String>,
+    dir: &Path,
+) -> PathBuf {
+    if let Some(name) = map.get(session) {
+        let path = dir.join(format!("{name}.tmux"));
+        if path.is_file() {
+            return path;
+        }
+    }
+    let namespace = session.split('/').next().unwrap_or(session);
+    let fallback = match namespace {
+        "w" => "blue",
+        "a" => "magenta",
+        "y" => "orange",
+        _ => "grey",
+    };
+    dir.join(format!("{fallback}.tmux"))
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    #[test]
+    fn a_palette_index_resolves_both_spellings() {
+        assert_eq!(resolve_colour("colour60"), Some((95, 95, 135)));
+        assert_eq!(resolve_colour("color60"), Some((95, 95, 135)));
+        assert_eq!(resolve_colour("COLOUR60"), Some((95, 95, 135)));
+    }
+
+    #[test]
+    fn a_base_name_resolves_to_the_shade_tmux_means() {
+        assert_eq!(resolve_colour("red"), Some((0x80, 0, 0)));
+        assert_eq!(resolve_colour("brred"), Some((0xff, 0, 0)));
+        assert_eq!(resolve_colour("white"), Some((0xc0, 0xc0, 0xc0)));
+    }
+
+    #[test]
+    fn a_hex_triplet_resolves() {
+        assert_eq!(resolve_colour("#af005f"), Some((0xaf, 0x00, 0x5f)));
+    }
+
+    #[test]
+    fn default_and_terminal_resolve_to_nothing() {
+        // They mean "whatever the terminal says", which this cannot know.
+        assert_eq!(resolve_colour("default"), None);
+        assert_eq!(resolve_colour("terminal"), None);
+        assert_eq!(resolve_colour(""), None);
+    }
+
+    #[test]
+    fn an_index_past_the_palette_is_not_a_colour() {
+        assert_eq!(resolve_colour("colour256"), None);
+        assert_eq!(resolve_colour("colour999"), None);
+    }
+
+    #[test]
+    fn a_swatch_is_a_block_in_the_colour_or_two_blank_columns() {
+        assert!(swatch("colour60").contains("38;2;95;95;135"));
+        assert_eq!(swatch("default"), "  ", "a blank swatch keeps the column");
+    }
+
+    #[test]
+    fn settings_are_found_past_any_flags() {
+        let text = "set -g @theme-name \"Indigo\"\nset @theme-color-main-1 colour60\n";
+        let s = parse_settings(text);
+        assert_eq!(s.get("@theme-name").map(String::as_str), Some("Indigo"));
+        assert_eq!(
+            s.get("@theme-color-main-1").map(String::as_str),
+            Some("colour60")
+        );
+    }
+
+    #[test]
+    fn a_quoted_name_survives_its_spaces() {
+        // Taking the first word gave every shade the name of the theme it came
+        // from: 42 of 76 themes came back as `Amber` rather than `Amber Light`.
+        let s = parse_settings("set @theme-name         \"Amber Light\"\n");
+        assert_eq!(
+            s.get("@theme-name").map(String::as_str),
+            Some("Amber Light")
+        );
+    }
+
+    #[test]
+    fn an_unquoted_value_is_taken_whole() {
+        let s = parse_settings("set @theme-color-main-1 colour60\n");
+        assert_eq!(
+            s.get("@theme-color-main-1").map(String::as_str),
+            Some("colour60")
+        );
+    }
+
+    #[test]
+    fn an_unclosed_quote_takes_the_rest_of_the_line_rather_than_nothing() {
+        let s = parse_settings("set @theme-name \"Amber Light\n");
+        assert_eq!(
+            s.get("@theme-name").map(String::as_str),
+            Some("Amber Light")
+        );
+    }
+
+    #[test]
+    fn a_line_that_is_not_a_setting_is_skipped() {
+        let s =
+            parse_settings("source-file \"~/.config/tmux/themes/_reset.tmux\"\n# @theme-name\n");
+        assert!(s.is_empty(), "{s:?}");
+    }
+
+    #[test]
+    fn a_row_label_carries_the_swatch_the_name_and_the_hex() {
+        let row = ThemeRow {
+            path: PathBuf::from("indigo.tmux"),
+            name: "Indigo".into(),
+            colour: "colour60".into(),
+        };
+        let label = row.label();
+        assert!(label.contains("Indigo"), "{label}");
+        assert!(label.contains("colour60"), "{label}");
+        assert!(label.contains("#5f5f87"), "{label}");
+    }
+
+    #[test]
+    fn the_project_map_decides_before_the_namespace_does() {
+        // A project keeps its colour across restarts, which is the whole point
+        // of the map.
+        let dir = std::env::temp_dir().join(format!("tc-themes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join("indigo.tmux"), "set @theme-name Indigo\n").expect("write");
+
+        let map = std::collections::HashMap::from([("w/thing".to_string(), "indigo".to_string())]);
+        assert_eq!(
+            theme_for_session("w/thing", &map, &dir),
+            dir.join("indigo.tmux")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_namespace_decides_when_nothing_claims_the_session() {
+        let dir = Path::new("/themes");
+        let empty = std::collections::HashMap::new();
+        assert_eq!(theme_for_session("w/x", &empty, dir), dir.join("blue.tmux"));
+        assert_eq!(
+            theme_for_session("a/x", &empty, dir),
+            dir.join("magenta.tmux")
+        );
+        assert_eq!(theme_for_session("y", &empty, dir), dir.join("orange.tmux"));
+        assert_eq!(
+            theme_for_session("other", &empty, dir),
+            dir.join("grey.tmux")
+        );
+    }
+
+    #[test]
+    fn a_mapped_theme_that_is_not_there_falls_back_rather_than_failing() {
+        let map = std::collections::HashMap::from([("x".to_string(), "gone".to_string())]);
+        assert_eq!(
+            theme_for_session("x", &map, Path::new("/nowhere")),
+            Path::new("/nowhere").join("grey.tmux")
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
