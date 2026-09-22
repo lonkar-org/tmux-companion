@@ -1,172 +1,172 @@
 # tmux-companion
 
-_Status bar_
+One binary that draws your tmux status bar and runs the pickers behind your
+keybindings, out of a daemon that's already warm.
 
-![screenshot-tmux-status-bar.png](./screenshot-tmux-status-bar.png)
+![the status bar](./screenshot-tmux-status-bar.png)
 
-_Left_
+## Why I wrote it
 
-![screenshot-tmux-status-bar-left.png](./screenshot-tmux-status-bar-left.png)
+My status bar spawned five processes every second to draw one line of text. I
+had built it that way over years, a script at a time, and never added the
+numbers up. When I finally measured it, the bar was costing **15.4% of one
+core**, all day, on a laptop running on battery.
 
-_Middle_
+It costs **1.8%** now.
 
-![screenshot-tmux-status-bar-middle.png](./screenshot-tmux-status-bar-middle.png)
+The reason is not that Rust is fast. It's that tmux gates `#()` to
+`status-interval` per attached client, so what a bar costs is set by how many
+commands it spawns and not by what they compute. A fork and exec is 12.4 ms of
+CPU. Computing the whole right-hand side takes 2.6 ms. Five calls a second was
+me paying the postage five times to send one letter.
 
-_Right_
+So there's one `#()` call now. Everything behind it lives in a daemon that
+keeps its caches warm, and every other thing my tmux used to shell out for
+talks to that same daemon over a unix socket: the key-binding search, the
+project switcher, the theme picker, the command runner.
 
-![screenshot-tmux-status-bar-right.png](./screenshot-tmux-status-bar-right.png)
+## What you get
 
----
+| | |
+| --- | --- |
+| `status-right` | git, bandwidth and battery in one call |
+| `keys` | fuzzy search every binding, press enter to run it |
+| `cheatsheet` | the bindings you wrote, four boxes, most-used first |
+| `project` | one session per project, sessions and zoxide in one list |
+| `run` | pick from shell history, run it in a pane that slides out |
+| `theme pick` | 76 themes with a swatch each, applied on the spot |
+| `open` | open the URL or `file:line:col` under your cursor |
+| `sh-jobs` | what's suspended under this pane, with your icons |
+| `doctor` | everything a bug report needs, in one screen |
 
-A single self-contained Rust binary that replaces a collection of shell scripts
-and a Go tool (`yrl gst`) used to drive tmux status-line segments.
-
-Instead of spawning six short-lived processes every second, tmux-companion runs
-as a persistent background daemon. Each tmux refresh sends a lightweight JSON
-request over a Unix socket and prints the result — no process startup overhead,
-no re-reading config files, no repeated disk I/O.
-
-The status bar makes **one** `#()` call. tmux gates `#()` to `status-interval`
-per attached client, so what the bar costs is set by how many distinct commands
-it spawns, not by what they compute: a fork/exec is 12.4 ms of CPU (14.6 ms
-including the shell tmux wraps jobs in), while computing the entire right-hand
-side server-side takes 2.6 ms. The whole bar costs 1.8% of one core; it used to
-cost 15.4%. See [BENCHMARKS.md](./BENCHMARKS.md).
-
-**Requires font with nerdfonts glyphs**
-
-## Segments
-
-| Subcommand           | Replaces                      | What it shows                                                 |
-| -------------------- | ----------------------------- | ------------------------------------------------------------- |
-| `status-right [PATH]`| the three calls below         | **The whole right side in one call** — git, bandwidth, battery |
-| `gst [PATH]`         | `yrl gst`                     | Powerline git-status segment                                  |
-| `window …`           | `window-status.zsh`           | Window index icon, abbreviated path, process dot, alert flags |
-| `battery`            | `battery-life.zsh`            | Battery percentage and icon (macOS)                           |
-| `net`                | `net-monitor.zsh`             | Download / upload bandwidth                                   |
-| `clients <sa> <wac>` | `check-clients.zsh`           | Other tmux clients connected to the same server               |
-| `vim-bg <pid>`       | `check-vim-in-background.zsh` | Suspended nvim in current pane                                |
-
-`status-right` is what the status bar should use. The individual segment
-commands all still work and are useful by hand; `clients` and `vim-bg` are no
-longer on the bar at all, because between them they cost two process spawns and
-a whole-process-table scan every second.
-
-All subcommands speak to the same daemon; only `server` starts the daemon
-itself, and only `preview` needs no daemon at all.
+Full list with every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Quick start
 
 ```sh
 cargo build --release
-sudo mv target/release/tmux-companion <some-dirctory-in-your-PATH>
+sudo install -m 755 target/release/tmux-companion /usr/local/bin/
 
-# Manual smoke test
-tmux-companion server &         # auto-started by clients, but you can start it explicitly
-tmux-companion gst              # git status for current directory
-tmux-companion battery
+# it starts its own daemon the first time you ask it anything
+tmux-companion gst .
+tmux-companion doctor
 ```
 
-## tmux.conf integration
-
-The full annotated block is in [docs/tmux.conf.example](./docs/tmux.conf.example).
-The short version — one `#()` call, everything else native tmux:
+Then one line in `tmux.conf`:
 
 ```tmux
-set -g  status-interval 1
-set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
-if-shell '[ -n "$SSH_CONNECTION" ]' \
-  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
-set -ga status-left  "#[fg=color240,bg=color233] %H:%M:%S"
-set -ga status-left  "#[fg=color235,bg=color233] "
-set -g  status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
 
-**Install the binary before applying the config** — it references the
-`status-right` subcommand, which older binaries do not have.
+The annotated version, with the reasoning for every line, is in
+[docs/tmux.conf.example](./docs/tmux.conf.example). Install the binary before
+you apply the config, or the right-hand side goes blank till you do.
 
-Note the absence of `#{pane_pid}`. Passing it made the git segment call
-`has_suspended_nvim`, which enumerates every process on the machine — 18.5 ms of
-the 26.0 ms the segment cost per call. The segment gives up its suspended-nvim
-marker in exchange; `tmux-companion gst <path> <pid>` still honours a pid.
+## Usage
 
-## The `gst` segment in detail
+<!-- @Yogesh(video): usage recording goes here. Suggested run: prefix+? for keys,
+     M-s for project, prefix+e for run, prefix+C-t for the theme picker. Drop it
+     in as a GIF or an mp4 link above this line and delete the comment. -->
+
+Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
+tmux has notes on its bindings and no way to search them, so the popup reads
+your `-N` strings and runs whatever you pick.
+
+![the left of the bar](./screenshot-tmux-status-bar-left.png)
+![the middle](./screenshot-tmux-status-bar-middle.png)
+![the right](./screenshot-tmux-status-bar-right.png)
+
+## Configuration
+
+<!-- @Yogesh(video): configuration recording goes here. Suggested run: no config
+     at all, then `config dump`, then a glyph preset change, then trimming
+     [git] parts. Drop it in above this line and delete the comment. -->
+
+There's no config file till you write one, and the defaults are what the binary
+did before the file existed. When you do want one:
 
 ```sh
-tmux-companion gst [PATH] [-f]
+tmux-companion config dump > ~/.config/tmux-companion/config.toml
+tmux-companion config check
 ```
 
-- `PATH` defaults to the current pane directory (`#{pane_current_path}`).
-- `-f` / `--force` — bypass the cache and fetch a fresh status. Useful for a
-  keybinding that refreshes on demand. The fresh result is still cached, so the
-  next ordinary call is warm.
-- `--ttl SECS` — how long a cached status stays fresh (default 5, `0` disables
-  caching). Applies to the git segment only; bandwidth is never cached.
-- Outputs an empty string for non-git directories (safe to use everywhere).
+If your bar is a row of boxes, you don't have a Nerd Font and this is the line:
 
-Segment anatomy (left → right):
-
-```
- <remote-ok/fail/loading>  <branch-type-icon> <branch-name>  <ahead↑ behind↓ unmerged>  <unstaged>  <staged>  <stash>
+```toml
+[glyphs]
+preset = "ascii"
 ```
 
-Background colours change with repo state:
+And if you've got four hundred untracked build artifacts, a count of them is
+not information:
 
-| State                  | Colour           |
-| ---------------------- | ---------------- |
-| Clean                  | Green (120)      |
-| New branch             | Light grey (251) |
-| Gone upstream          | Dark red (088)   |
-| Dirty / ahead / behind | Orange (209)     |
+```toml
+[git]
+parts = ["branch", "state", "staged", "modified"]
+```
 
-## Server lifecycle
+Every setting with its default is in
+[docs/config.example.toml](docs/config.example.toml), and the reasoning is in
+[docs/reference/configuration.md](docs/reference/configuration.md).
 
-The daemon holds all of its state in memory — the git-status cache, the
-is-inside-work-tree cache, the battery reading and the bandwidth previous-sample
-— and that state dies with it. That is the intended lifetime: one cold
-`git status` after a restart costs 51 ms, once.
+## What it costs
 
-The daemon starts automatically when any client subcommand is invoked and no
-server is listening on the socket yet. It runs until the system restarts or
-until it is killed explicitly. Because it lives inside the user's tmux session
-lifetime, no init-system integration is needed.
+Measured on one machine, and the numbers are in
+[BENCHMARKS.md](./BENCHMARKS.md) with the method beside them.
 
-Socket: `/tmp/tmux-companion-<uid>.sock`, or `$TMUX_COMPANION_SOCK` when set —
-which is how the benchmarks run a server beside the live one without disturbing
-the status bar you are looking at.
+| | |
+| --- | --- |
+| the recommended bar | 18.43 ms/s, 1.8% of a core |
+| the five-call bar it replaced | 153.77 ms/s, 15.4% of a core |
+| one fork and exec | 12.4 ms, or 14.6 ms as tmux runs it |
+| the whole right side, computed | 2.6 ms |
+| `keys`, warm, against `fzf --filter` | 8.3 ms against 18.8 ms |
+| a cold `git status` after a restart | 51 ms, once |
+
+That last one is the daemon's whole bargain: state lives in memory and dies
+with the process, and you pay 51 ms for it once.
+
+## What it doesn't do
+
+- It's macOS and Linux. Not Windows, and not planned: the whole thing is a unix
+  socket and a `SIGWINCH`.
+- The pickers need tmux 3.2 for `display-popup -E`. The bar itself is happy on
+  3.0.
+- It won't restore your sessions. It saves them on a timer, and restoring stays
+  on a key you press, cause an automatic restore would resurrect a stale layout
+  over a session you've already started working in.
+- It's not a theme pack. It applies themes and doesn't compete with catppuccin
+  or rose-pine.
 
 ## Documentation
 
 | | |
 | --- | --- |
+| [docs/reference/cli.md](docs/reference/cli.md) | every subcommand and flag |
+| [docs/reference/configuration.md](docs/reference/configuration.md) | the config file, and what it changes |
+| [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
+| [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
+| [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | Rust, tmux, fonts, platforms |
-| [docs/tmux.conf.example](docs/tmux.conf.example) | the recommended status-bar configuration |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what the bar costs, and how that was measured |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
-| [docs/reference/cli.md](docs/reference/cli.md) | every subcommand and flag |
-| [docs/reference/configuration.md](docs/reference/configuration.md) | the config file, and what it can change |
-| [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
-| [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with its measured cost |
 | [CHANGELOG.md](CHANGELOG.md) | what changed |
-| [docs/comrades-port.md](docs/comrades-port.md) | what was built, and why |
 
 ## Building
 
-Requires Rust 1.85 or newer, which is the first release with edition 2024. No
-system libraries needed. Full list in [docs/reference/requirements.md](docs/reference/requirements.md).
+Rust 1.85 or newer, which is the first release with edition 2024. No system
+libraries.
 
 ```sh
-cargo build --release
+cargo build --release      # target/release/tmux-companion, about 4 MB
+cargo test                 # 498 unit tests and 22 integration tests
 
-# on a machine someone is using, keep off every core:
+# on a machine somebody is using, keep off every core
 nice -n 15 cargo build --release -j 4
 ```
 
-Binary: `target/release/tmux-companion` (≈ 4.0 MB).
+Patches welcome, including the ones that tell me I got something wrong.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the three commands CI runs.
 
-## Tests
-
-```sh
-cargo test          # unit and integration tests, no external dependencies required
-```
+MIT.
