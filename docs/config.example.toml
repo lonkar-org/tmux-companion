@@ -281,6 +281,28 @@ hold_name = true
 # proportionally, so a layout captured on a wide display comes back cramped on
 # a laptop and a preset name travels better.
 
+[autoreload]
+# Watch tmux's config and source it when it changes, so an edit takes effect
+# without you reaching for the reload binding. The daemon already watches this
+# file, because the rows behind `keys` and `cheatsheet` are rebuilt when it is
+# newer than they are, so this is a stat it was going to do anyway.
+#
+# Off by default: reloading somebody's tmux config without being asked is a
+# thing that happens to their running sessions.
+#
+# The plugin this comes from is b0o/tmux-autoreload, which watches with entr or
+# inotifywait where this compares a modification time.
+enabled = false
+# Seconds between checks. One stat per file, so this can be small.
+interval_secs = 2
+# Which files to watch. Empty means the tmux config the daemon already watches,
+# which is $TMUX_COMPANION_TMUX_CONF or ~/.config/tmux/tmux.conf.
+files = []
+
+# The first pass after the daemon starts never reloads: otherwise a daemon
+# started right after a config edit would source the file at startup, which is
+# a surprise, and a loop when the config is what starts the daemon.
+
 [autosave]
 # Whether the daemon saves the session list on a timer, so a reboot does not
 # cost the layout.

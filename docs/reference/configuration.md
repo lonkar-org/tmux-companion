@@ -214,6 +214,31 @@ The plugin this comes from is
 [thepante/tmux-git-autofetch](https://github.com/thepante/tmux-git-autofetch).
 It's alive and it's worth installing if you aren't running this.
 
+### Reloading tmux's config when it changes
+
+```toml
+[autoreload]
+enabled = true
+```
+
+The daemon already stats your tmux config, because the rows behind `keys` and
+`cheatsheet` get rebuilt when the file is newer than they are, so noticing the
+same change and running `source-file` costs nothing it wasn't doing.
+
+Off by default, since reloading somebody's tmux config without being asked is a
+thing that happens to their running sessions. The first pass after the daemon
+starts never reloads, or a daemon started right after an edit would source the
+file at startup, which is a surprise and a loop when the config is what starts
+the daemon.
+
+A `source-file` that fails puts tmux's first error line in a `display-message`
+rather than the daemon's stderr, which nobody reads. A config with a syntax
+error in it is exactly when you need telling.
+
+The plugin this comes from is
+[b0o/tmux-autoreload](https://github.com/b0o/tmux-autoreload), which watches
+with `entr` or `inotifywait` where this compares a modification time.
+
 ## What a new project session starts with
 
 `[[layout]]` is the windows, and `[project] layout` picks which one:

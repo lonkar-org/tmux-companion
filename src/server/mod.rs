@@ -77,6 +77,13 @@ pub async fn run() -> anyhow::Result<()> {
         tokio::spawn(crate::tasks::autosave_loop(script, interval));
     }
 
+    if config.autoreload.enabled {
+        tokio::spawn(crate::autoreload::autoreload_loop(
+            config.autoreload.clone(),
+            crate::keys::tmux_conf_path(),
+        ));
+    }
+
     let autofetch = config.git.autofetch.clone();
     let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 

@@ -10,6 +10,8 @@
 
 /// Fetching repositories in the background, so ahead and behind mean something.
 pub mod autofetch;
+/// Sourcing tmux config when it changes on disk.
+pub mod autoreload;
 /// Timestamped map with a reader-supplied TTL.
 pub mod cache;
 /// The cheat sheet of hand-written bindings.

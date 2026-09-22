@@ -40,6 +40,9 @@ pub struct Config {
     pub usage: Usage,
     /// What a new project session starts with.
     pub layout: Vec<Layout>,
+    /// Sourcing tmux's config when it changes.
+    #[serde(default)]
+    pub autoreload: Autoreload,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -168,6 +171,32 @@ impl Autosave {
         self.script.clone().unwrap_or_else(|| {
             PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh")
         })
+    }
+}
+
+/// Sourcing tmux's config when it changes on disk.
+///
+/// Off by default, because reloading somebody's tmux config without being asked
+/// is a thing that happens to their running sessions.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Autoreload {
+    /// Whether to watch at all.
+    pub enabled: bool,
+    /// Seconds between checks. This is a `stat` per file, so it is cheap.
+    pub interval_secs: u64,
+    /// The files to watch. Empty means the tmux config the daemon already
+    /// watches for `keys`.
+    pub files: Vec<PathBuf>,
+}
+
+impl Default for Autoreload {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 2,
+            files: Vec::new(),
+        }
     }
 }
 
@@ -401,6 +430,7 @@ impl Default for Config {
                 ],
             }],
             project: Project::default(),
+            autoreload: Autoreload::default(),
             autosave: Autosave::default(),
             run: Run::default(),
             clipboard: Clipboard::default(),
