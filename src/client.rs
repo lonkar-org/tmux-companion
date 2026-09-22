@@ -9,23 +9,50 @@ use crate::proto::{Request, Response};
 /// Longest path a `sockaddr_un` can hold on macOS, minus the NUL terminator.
 const SUN_PATH_MAX: usize = 103;
 
-/// The socket this process talks to, or would listen on.
-pub fn sock_path() -> PathBuf {
+/// The socket path, or why the override cannot be used.
+///
+/// Separate from [`sock_path`] so the rule can be tested without a process
+/// that exits.
+pub fn resolve_sock_path(override_: Option<&std::ffi::OsStr>, uid: u32) -> Result<PathBuf, String> {
     // `TMUX_COMPANION_SOCK` puts a server beside the live one -- what the
     // measurements in BENCHMARKS.md use, so a benchmark run never touches the
-    // status bar the user is actually looking at.  Ignored, with a warning, if
-    // it cannot fit in a unix socket address.
-    if let Some(p) = std::env::var_os("TMUX_COMPANION_SOCK") {
-        if !p.is_empty() && p.len() <= SUN_PATH_MAX {
-            return PathBuf::from(p);
+    // status bar the user is actually looking at.
+    if let Some(p) = override_ {
+        if p.is_empty() {
+            return Err("TMUX_COMPANION_SOCK is set but empty".to_string());
         }
-        eprintln!(
-            "tmux-companion: ignoring TMUX_COMPANION_SOCK ({} bytes; limit is {SUN_PATH_MAX})",
-            p.len()
-        );
+        if p.len() > SUN_PATH_MAX {
+            return Err(format!(
+                "TMUX_COMPANION_SOCK is {} bytes and a unix socket address holds {SUN_PATH_MAX}.\n\
+                 Refusing rather than falling back to the default socket: whoever set this \n\
+                 variable wanted a server beside the live one, and quietly using the live one \n\
+                 instead is the opposite of what they asked for.\n\
+                 Try a shorter path, for example under /tmp.",
+                p.len()
+            ));
+        }
+        return Ok(PathBuf::from(p));
     }
-    let uid = nix::unistd::getuid();
-    PathBuf::from(format!("/tmp/tmux-companion-{}.sock", uid))
+    Ok(PathBuf::from(format!("/tmp/tmux-companion-{uid}.sock")))
+}
+
+/// The socket this process talks to, or would listen on.
+///
+/// Exits rather than falling back when the override is unusable. The fallback
+/// this replaces printed a warning and then connected to the default socket,
+/// which meant a test harness asking for an isolated server got the live one,
+/// and every command it sent afterwards, including a shutdown, went there.
+pub fn sock_path() -> PathBuf {
+    match resolve_sock_path(
+        std::env::var_os("TMUX_COMPANION_SOCK").as_deref(),
+        nix::unistd::getuid().as_raw(),
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("tmux-companion: {e}");
+            std::process::exit(2);
+        }
+    }
 }
 
 /// One request, one response, no printing.
@@ -174,4 +201,50 @@ fn spawn_server() -> anyhow::Result<()> {
         .stderr(std::process::Stdio::null())
         .spawn()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn no_override_is_the_default_socket_for_this_uid() {
+        assert_eq!(
+            resolve_sock_path(None, 501).unwrap(),
+            PathBuf::from("/tmp/tmux-companion-501.sock")
+        );
+    }
+
+    #[test]
+    fn a_usable_override_is_used() {
+        let p = OsStr::new("/tmp/mine.sock");
+        assert_eq!(resolve_sock_path(Some(p), 501).unwrap(), PathBuf::from(p));
+    }
+
+    #[test]
+    fn a_path_at_the_limit_is_still_usable() {
+        let p: String = std::iter::repeat_n('a', SUN_PATH_MAX).collect();
+        assert!(resolve_sock_path(Some(OsStr::new(&p)), 501).is_ok());
+    }
+
+    #[test]
+    fn an_override_too_long_is_an_error_and_not_the_default_socket() {
+        // This is the one that matters. The old behaviour warned and then
+        // connected to the default socket, so a harness asking for an isolated
+        // server silently got the live one and everything it sent afterwards,
+        // including a shutdown, went there.
+        let p: String = std::iter::repeat_n('a', SUN_PATH_MAX + 1).collect();
+        let e = resolve_sock_path(Some(OsStr::new(&p)), 501).unwrap_err();
+        assert!(e.contains("104 bytes"), "{e}");
+        assert!(!e.contains("/tmp/tmux-companion-501.sock"), "{e}");
+    }
+
+    #[test]
+    fn an_empty_override_is_an_error_rather_than_the_default() {
+        // Empty usually means a variable that was meant to be set and was not,
+        // and guessing the live socket from it is the same mistake.
+        let e = resolve_sock_path(Some(OsStr::new("")), 501).unwrap_err();
+        assert!(e.contains("empty"), "{e}");
+    }
 }
