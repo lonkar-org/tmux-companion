@@ -167,6 +167,16 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// Run a command from history in a pane beside this one
+    Run {
+        /// List the history and exit, instead of opening the picker
+        #[arg(long)]
+        print: bool,
+        /// Internal: run this command in this pane and show the exit dialog
+        #[arg(long, hide = true)]
+        exec: Option<String>,
+    },
+
     /// Move to the next window in this session's layout
     Toggle {
         /// The session to act on, which the binding passes so the key acts on
@@ -401,6 +411,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             refresh,
             print,
         } => run_keys(all, query, refresh, print).await?,
+        Cmd::Run { print, exec } => run_command(print, exec).await?,
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Project { dir, print } => run_project(dir, print).await?,
@@ -1138,4 +1149,178 @@ fn source_theme(path: &std::path::Path, target: Option<&str>) {
     }
     args.push(&path);
     let _ = std::process::Command::new("tmux").args(args).status();
+}
+
+/// `run`: pick a command from history and run it in a pane beside this one.
+async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    // The pane half: this process *is* the new pane, so it runs the command
+    // here rather than asking tmux to.
+    if let Some(command) = exec {
+        return run_in_this_pane(&command, &config).await;
+    }
+
+    let commands = crate::run::history(&config.run, &home).await;
+
+    if print {
+        for c in &commands {
+            println!("{c}");
+        }
+        return Ok(());
+    }
+
+    let items: Vec<crate::picker::Item> = commands
+        .iter()
+        .map(|c| crate::picker::Item::new(c.clone()))
+        .collect();
+
+    let chrome = crate::picker::Chrome {
+        title: "[ Run command ]".into(),
+        footer: "enter runs it in a side pane   esc cancels".into(),
+        preview_title: String::new(),
+    };
+
+    // The typed query is the command when nothing matched, which is the only
+    // way to run something that was never in the history.
+    let picked = crate::picker::run_with_query(items, "", &chrome)?;
+    let command = match picked {
+        crate::picker::Outcome::Chosen(i) => commands.get(i).cloned(),
+        crate::picker::Outcome::Typed(q) if !q.trim().is_empty() => Some(q),
+        _ => None,
+    };
+    let Some(command) = command else {
+        return Ok(());
+    };
+
+    let exe = std::env::current_exe()?;
+    let width = crate::run::pane_width(window_width().await, config.run.width_percent);
+    let opening = if config.run.slide_steps > 0 { 1 } else { width };
+
+    tmux(&[
+        "split-window",
+        "-fh",
+        "-l",
+        &opening.to_string(),
+        &format!("{} run --exec {}", exe.display(), shell_quote(&command)),
+    ])
+    .await;
+    Ok(())
+}
+
+/// Quote a command so tmux hands it back to us whole.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// The width of the window this pane is in.
+async fn window_width() -> u16 {
+    tmux_display("#{window_width}").await.parse().unwrap_or(180)
+}
+
+/// Run the command here, then offer the dialog, repeating on Restart.
+async fn run_in_this_pane(command: &str, config: &crate::config::Config) -> anyhow::Result<()> {
+    use crate::run::Choice;
+
+    let pane = std::env::var("TMUX_PANE").unwrap_or_default();
+    let target = pane.clone();
+    let width = crate::run::pane_width(window_width().await, config.run.width_percent);
+    slide(&target, 1, width, config).await;
+
+    loop {
+        println!("\x1b[2m$ \x1b[0m{command}");
+        let status = tokio::process::Command::new(&config.run.shell)
+            .args(["-ic", command])
+            .status()
+            .await;
+        let code = status.ok().and_then(|s| s.code()).unwrap_or(1);
+
+        match dialog(code, config).await {
+            Choice::Close => {
+                slide(&target, width, 1, config).await;
+                return Ok(());
+            }
+            Choice::Restart => println!(),
+            Choice::View => {
+                println!(
+                    "\x1b[2m-- read-only view: q leaves copy-mode, any key for the dialog --\x1b[0m"
+                );
+                tmux(&["copy-mode", "-t", &target]).await;
+                wait_for_a_key();
+            }
+        }
+    }
+}
+
+/// Step a pane's width, so it slides rather than appears.
+async fn slide(target: &str, from: u16, to: u16, config: &crate::config::Config) {
+    let steps = crate::run::slide_steps(from, to, config.run.slide_steps);
+    if steps.is_empty() {
+        tmux(&["resize-pane", "-t", target, "-x", &to.to_string()]).await;
+        return;
+    }
+    let gap = std::time::Duration::from_millis(config.run.slide_ms / steps.len().max(1) as u64);
+    for w in steps {
+        tmux(&["resize-pane", "-t", target, "-x", &w.to_string()]).await;
+        tokio::time::sleep(gap).await;
+    }
+}
+
+/// Ask what to do now the command has exited.
+///
+/// A popup when one can be opened, and an inline prompt when it cannot: on a
+/// tiny or detached client `display-popup` fails, and failing to ask is worse
+/// than asking plainly.
+async fn dialog(code: i32, _config: &crate::config::Config) -> crate::run::Choice {
+    use crate::run::{Choice, default_choice};
+    use std::io::Write;
+
+    let default = default_choice(code);
+    let label = if code == 0 {
+        "\x1b[32m✔ done\x1b[0m".to_string()
+    } else {
+        format!("\x1b[31m✘ exit {code}\x1b[0m")
+    };
+    let hint = match default {
+        Choice::Close => "[C]lose  [v]iew  [r]estart",
+        _ => "[c]lose  [v]iew  [R]estart",
+    };
+    print!("\n  {label}  {hint} ");
+    let _ = std::io::stdout().flush();
+
+    match read_choice() {
+        Some(c) => c,
+        None => default,
+    }
+}
+
+/// One keypress, mapped to a choice. `None` means Enter or anything else,
+/// which takes the default.
+fn read_choice() -> Option<crate::run::Choice> {
+    use crate::run::Choice;
+    use ratatui::crossterm::{
+        event::{self, Event, KeyCode},
+        terminal::{disable_raw_mode, enable_raw_mode},
+    };
+
+    if enable_raw_mode().is_err() {
+        return None;
+    }
+    let choice = loop {
+        match event::read() {
+            Ok(Event::Key(k)) => match k.code {
+                KeyCode::Char('c' | 'C') => break Some(Choice::Close),
+                KeyCode::Char('v' | 'V') => break Some(Choice::View),
+                KeyCode::Char('r' | 'R') => break Some(Choice::Restart),
+                KeyCode::Enter | KeyCode::Esc => break None,
+                _ => continue,
+            },
+            Ok(_) => continue,
+            Err(_) => break None,
+        }
+    };
+    let _ = disable_raw_mode();
+    println!();
+    choice
 }

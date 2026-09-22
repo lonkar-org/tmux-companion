@@ -243,3 +243,31 @@ interval_secs = 900
 
 # The script that does the saving. Unset means tmux-resurrect's.
 # script = "~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh"
+
+[run]
+# Where the commands come from: zsh, bash, fish or atuin.
+#
+# atuin is worth naming because anybody using it has no .zsh_history worth
+# reading: atuin keeps the history in its own database and answers through its
+# own command.
+history = "zsh"
+
+# The history file, when it is not where the shell usually puts it.
+# history_file = "~/.zsh_history"
+
+# How wide the pane is, as a percentage of the window. A percentage rather than
+# a column count, so a narrower terminal still splits sensibly.
+width_percent = 33
+
+# The pane slides out rather than appearing. tmux has no animation primitive,
+# so this is a stepped resize-pane, eased so it reads as a slide rather than a
+# jump.
+#
+# Every step sends SIGWINCH to the neighbouring pane, whose shell repaints its
+# prompt, so more steps is smoother here and flickerier next door. Zero opens
+# the pane at its full width at once.
+slide_steps = 5
+slide_ms = 150
+
+# The shell the command runs under.
+shell = "zsh"

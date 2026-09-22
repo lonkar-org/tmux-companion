@@ -76,6 +76,7 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/cheatsheet.rs` | the four boxes, their ordering and the grid |
 | `src/project.rs` | session and zoxide rows, short paths, session names |
 | `src/tasks.rs` | the autosave timer, the calendar, the toggle target |
+| `src/run.rs` | shell history parsing, the pane slide, the exit dialog |
 
 ## Key invariants
 

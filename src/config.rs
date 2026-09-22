@@ -44,6 +44,57 @@ pub struct Config {
     pub project: Project,
     /// Saving the session list on a timer.
     pub autosave: Autosave,
+    /// Running a command from history in a side pane.
+    pub run: Run,
+}
+
+/// Running a command from history in a side pane.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Run {
+    /// Where the commands come from.
+    pub history: HistorySource,
+    /// The history file, when it is not where the shell usually puts it.
+    pub history_file: Option<PathBuf>,
+    /// How wide the pane is, as a percentage of the window.
+    pub width_percent: u16,
+    /// How many steps the pane takes to slide out. Zero opens it at once.
+    pub slide_steps: u16,
+    /// How long the slide takes, in milliseconds.
+    pub slide_ms: u64,
+    /// The shell the command runs under.
+    pub shell: String,
+}
+
+impl Default for Run {
+    fn default() -> Self {
+        Self {
+            history: HistorySource::Zsh,
+            history_file: None,
+            width_percent: 33,
+            slide_steps: 5,
+            slide_ms: 150,
+            shell: "zsh".to_string(),
+        }
+    }
+}
+
+/// Which shell's history to read.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum HistorySource {
+    /// zsh, plain or extended format.
+    #[default]
+    Zsh,
+    /// bash.
+    Bash,
+    /// fish.
+    Fish,
+    /// atuin, asked through its own command.
+    ///
+    /// Worth having because anybody using atuin has no `.zsh_history` worth
+    /// reading: atuin keeps the history in its own database.
+    Atuin,
 }
 
 /// Saving the session list on a timer, so a reboot does not cost the layout.
@@ -227,6 +278,7 @@ impl Default for Config {
             }],
             project: Project::default(),
             autosave: Autosave::default(),
+            run: Run::default(),
         }
     }
 }

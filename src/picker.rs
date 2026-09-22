@@ -301,6 +301,26 @@ pub fn draw(frame: &mut Frame, picker: &Picker, chrome: &Chrome) {
     );
 }
 
+/// What somebody did with the picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Picked a row, by index into the original list.
+    Chosen(usize),
+    /// Pressed enter on a query that matched nothing, or asked for the query
+    /// itself with alt-enter.
+    ///
+    /// This is the only way to run a command that was never in the history, or
+    /// to open a directory zoxide has never seen.
+    Typed(String),
+    /// Cancelled.
+    Cancelled,
+}
+
+/// Show the picker and give back the query as well as the pick.
+pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Outcome> {
+    run_inner(items, query, chrome)
+}
+
 /// Show the picker and wait for a decision.
 ///
 /// Returns the index into the original list, or `None` when somebody cancelled.
@@ -308,6 +328,14 @@ pub fn draw(frame: &mut Frame, picker: &Picker, chrome: &Chrome) {
 /// the error one, because a picker that leaves a terminal in raw mode is worse
 /// than no picker.
 pub fn run(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Option<usize>> {
+    Ok(match run_inner(items, query, chrome)? {
+        Outcome::Chosen(i) => Some(i),
+        _ => None,
+    })
+}
+
+/// The loop both entry points share.
+fn run_inner(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Outcome> {
     use ratatui::crossterm::{
         event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
         execute,
@@ -331,11 +359,22 @@ pub fn run(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow::Result<Opt
             continue;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
-            KeyCode::Esc => break None,
-            KeyCode::Char('c' | 'd') if ctrl => break None,
+            KeyCode::Esc => break Outcome::Cancelled,
+            KeyCode::Char('c' | 'd') if ctrl => break Outcome::Cancelled,
             KeyCode::Char('a') if ctrl => picker.clear_query(),
-            KeyCode::Enter => break picker.selected_index(),
+            // alt-enter asks for exactly what was typed, even when something
+            // matched: the history has `cargo test` in it and you want
+            // `cargo test --release`.
+            KeyCode::Enter if alt => break Outcome::Typed(picker.query().to_string()),
+            KeyCode::Enter => {
+                break match picker.selected_index() {
+                    Some(i) => Outcome::Chosen(i),
+                    // Nothing matched, so the query is the answer.
+                    None => Outcome::Typed(picker.query().to_string()),
+                };
+            }
             KeyCode::Down => picker.down(),
             KeyCode::Up => picker.up(),
             KeyCode::Char('n') if ctrl => picker.down(),
@@ -478,6 +517,16 @@ mod tests {
         let p = picker(&["zero", "one", "two"], "two");
         assert_eq!(p.selected_index(), Some(2));
         assert_eq!(p.selected().map(|i| i.label.as_str()), Some("two"));
+    }
+
+    #[test]
+    fn a_query_that_matches_nothing_is_still_an_answer() {
+        // The picker cannot test its own key handling without a terminal, so
+        // this pins the decision the handler makes: with no selection, the
+        // query is what the caller gets.
+        let p = picker(&["alpha"], "something new");
+        assert_eq!(p.selected_index(), None);
+        assert_eq!(p.query(), "something new");
     }
 
     #[test]

@@ -54,6 +54,7 @@ no terminal.
 
 | Command | Does |
 | --- | --- |
+| `run` | Pick a command from history and run it in a pane beside this one. Enter runs the pick, alt-enter runs exactly what you typed, `--print` lists and exits |
 | `toggle [SESSION] [WINDOW]` | Move to the next window in this session's layout, falling back to tmux's last-window when the current window isn't in one |
 | `autosave --once` | Save the session list now |
 | `autosave --status` | Say when the last save happened |

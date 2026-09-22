@@ -30,6 +30,8 @@ pub mod preview;
 pub mod project;
 /// The JSON request and response, and one args struct per command.
 pub mod proto;
+/// Running a command from history in a side pane.
+pub mod run;
 /// The things the status bar can draw.
 pub mod segments;
 /// The daemon.

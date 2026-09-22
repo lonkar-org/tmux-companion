@@ -27,7 +27,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 2 | `keys`, `cheatsheet` | done — both render what the zsh did, bar the two bindings tmux stopped reporting |
 | 3 | `project` | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows |
 | 4 | `autosave`, `toggle` | done — autosave is a daemon task, toggle cycles the layout |
-| 5 | `theme`, `run` | in progress — `theme pick` and `theme apply` done, `run` next |
+| 5 | `theme`, `run` | done — run's history is byte-identical to `fc -ln` over 1127 commands |
 | 6 | `open`, `close-project`, the probes, the tmux.conf logic | todo |
 
 Each row also carries its documentation row from the table in
