@@ -50,6 +50,17 @@ the rows instead of opening the picker.
 The picker runs in this process rather than in the daemon, because a daemon has
 no terminal.
 
+## Sessions
+
+| Command | Does |
+| --- | --- |
+| `toggle [SESSION] [WINDOW]` | Move to the next window in this session's layout, falling back to tmux's last-window when the current window isn't in one |
+| `autosave --once` | Save the session list now |
+| `autosave --status` | Say when the last save happened |
+
+The autosave loop itself runs in the daemon, so there's nothing to start and
+nothing to keep from starting twice.
+
 ## Themes
 
 | Command | Does |

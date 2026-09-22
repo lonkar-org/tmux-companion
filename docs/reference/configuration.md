@@ -223,3 +223,27 @@ windows end up called `2.1.278`.
 
 `[project] zoxide = false` drops the directory list, leaving live sessions and
 whatever you type. zoxide is an assumption here rather than a requirement.
+
+## Saving the session list
+
+`[autosave]` is the saving half of tmux-resurrect on a timer in the daemon:
+
+```toml
+[autosave]
+enabled = true
+interval_secs = 900
+```
+
+Restoring stays on a keybinding on purpose. An automatic restore would
+resurrect a stale layout over a session you've already started working in,
+which is a worse failure than losing a layout to a reboot.
+
+It isn't tmux-continuum, which is the usual answer here, because continuum
+drives its timer by appending `#{continuum_save}` to `status-right`, and
+`status-right` is a single `#()` into this binary tuned down from five spawns a
+second. A task in the daemon leaves that alone.
+
+What the daemon removes is the bookkeeping. The zsh version needed a PID lock
+file so `prefix+r` couldn't start a second copy, a stale-lock takeover for when
+a server was killed, and a liveness check between sleeps. One daemon owns one
+task, and it stops when the daemon stops.

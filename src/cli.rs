@@ -167,6 +167,25 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// Move to the next window in this session's layout
+    Toggle {
+        /// The session to act on, which the binding passes so the key acts on
+        /// the pane it was pressed in
+        session: Option<String>,
+        /// The current window name, passed for the same reason
+        window: Option<String>,
+    },
+
+    /// The session-list autosave the daemon runs
+    Autosave {
+        /// Save now and exit
+        #[arg(long)]
+        once: bool,
+        /// Print when the last save happened
+        #[arg(long)]
+        status: bool,
+    },
+
     /// Switch to a project, or start one
     Project {
         /// Go straight to this directory instead of opening the picker
@@ -354,6 +373,8 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             refresh,
             print,
         } => run_keys(all, query, refresh, print).await?,
+        Cmd::Toggle { session, window } => run_toggle(session, window).await?,
+        Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Project { dir, print } => run_project(dir, print).await?,
         Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
         Cmd::Doctor => crate::doctor::run().await?,
@@ -908,4 +929,63 @@ async fn tmux(args: &[&str]) {
         .args(args)
         .status()
         .await;
+}
+
+/// `toggle`: move to the next window in this session's layout.
+async fn run_toggle(session: Option<String>, window: Option<String>) -> anyhow::Result<()> {
+    let session = match session {
+        Some(s) => s,
+        None => tmux_display("#{session_name}").await,
+    };
+    let current = match window {
+        Some(w) => w,
+        None => tmux_display("#{window_name}").await,
+    };
+
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let path = tmux_display("#{session_path}").await;
+    let windows: Vec<String> = config
+        .layout_for(&path, &home)
+        .map(|l| l.window.iter().map(|w| w.name.clone()).collect())
+        .unwrap_or_default();
+
+    match crate::tasks::toggle_target(&current, &windows) {
+        Some(target) => {
+            tmux(&["select-window", "-t", &format!("={session}:{target}")]).await;
+        }
+        // Not a layout session. Keep the old two-window habit working rather
+        // than printing "can't find window" at somebody.
+        None => tmux(&["last-window"]).await,
+    }
+    Ok(())
+}
+
+/// `autosave`: the timer lives in the daemon, so this is the manual half.
+async fn run_autosave(once: bool, status: bool) -> anyhow::Result<()> {
+    if status {
+        println!("{}", crate::tasks::last_save());
+        return Ok(());
+    }
+    if once {
+        let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        return crate::tasks::save_now(&config.autosave.script_path(&home)).await;
+    }
+    // Neither flag: say where the loop actually lives rather than starting a
+    // second one, which is what the zsh version needed a lock file to prevent.
+    println!("the daemon runs the autosave loop; --once saves now, --status says when it last did");
+    Ok(())
+}
+
+/// One `tmux display-message -p`, empty when tmux is not there.
+async fn tmux_display(format: &str) -> String {
+    let out = tokio::process::Command::new("tmux")
+        .args(["display-message", "-p", format])
+        .output()
+        .await;
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => String::new(),
+    }
 }

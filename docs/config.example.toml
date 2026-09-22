@@ -223,3 +223,23 @@ hold_name = true
 name = "ai"
 command = "claude"
 hold_name = true
+
+[autosave]
+# Whether the daemon saves the session list on a timer, so a reboot does not
+# cost the layout.
+#
+# This is the saving half of tmux-resurrect. Restoring stays on a keybinding on
+# purpose: an automatic restore would resurrect a stale layout over a session
+# you have already started working in, which is a worse failure than losing a
+# layout to a reboot.
+#
+# Not tmux-continuum, which is the usual answer: continuum drives its timer by
+# appending #{continuum_save} to status-right, and status-right here is a
+# single #() into this binary, tuned down from five spawns a second.
+enabled = true
+
+# Seconds between saves.
+interval_secs = 900
+
+# The script that does the saving. Unset means tmux-resurrect's.
+# script = "~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh"

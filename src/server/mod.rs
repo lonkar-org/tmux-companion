@@ -67,6 +67,16 @@ pub async fn run() -> anyhow::Result<()> {
         }
     };
 
+    // Started before the accept loop, so it runs for as long as the daemon
+    // does and stops when it stops. That is the whole of the lifetime
+    // management the zsh version needed a PID lock file for.
+    if config.autosave.enabled {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let script = config.autosave.script_path(&home);
+        let interval = std::time::Duration::from_secs(config.autosave.interval_secs.max(1));
+        tokio::spawn(crate::tasks::autosave_loop(script, interval));
+    }
+
     let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 
     // Pre-warm battery cache so the first tmux refresh doesn't hit the ~600ms

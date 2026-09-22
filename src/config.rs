@@ -42,6 +42,43 @@ pub struct Config {
     pub layout: Vec<Layout>,
     /// Where projects come from and how they are named.
     pub project: Project,
+    /// Saving the session list on a timer.
+    pub autosave: Autosave,
+}
+
+/// Saving the session list on a timer, so a reboot does not cost the layout.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Autosave {
+    /// Whether the daemon saves at all.
+    pub enabled: bool,
+    /// Seconds between saves.
+    pub interval_secs: u64,
+    /// The script that does the saving.
+    ///
+    /// tmux-resurrect's, by default. Only the saving half: restoring stays on
+    /// a keybinding, because an automatic restore would resurrect a stale
+    /// layout over a session somebody has already started working in.
+    pub script: Option<PathBuf>,
+}
+
+impl Default for Autosave {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 900,
+            script: None,
+        }
+    }
+}
+
+impl Autosave {
+    /// The save script, resolved against `home` when the config leaves it out.
+    pub fn script_path(&self, home: &str) -> PathBuf {
+        self.script.clone().unwrap_or_else(|| {
+            PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh")
+        })
+    }
 }
 
 /// Where the project picker gets its rows.
@@ -189,6 +226,7 @@ impl Default for Config {
                 ],
             }],
             project: Project::default(),
+            autosave: Autosave::default(),
         }
     }
 }
