@@ -265,13 +265,14 @@ people's setups than any segment in the tables above.
 
 ## Project layouts
 
-Three features that share one shape, and they arrive in this order because each
-one is what makes the next worth having. None of them replaces a plugin so the
-four-reason rule lands differently here: they fail rule 2 outright, since none
-of this is a status segment and none of it costs a `#()` spawn, and they pass on
-rules 1 and 3 because a timer that reads tmux is a resident process everywhere
-else in the ecosystem and because `layout_for`, `session_name`, `state_dir` and
-the `autosave` task shape were all built by the port already.
+These share one shape, and they arrive in this order because each one is what
+makes the next worth having. The four-reason rule lands almost
+entirely on rule 3 here and it is worth being straight about that: none of this
+is a status segment so it costs no `#()` spawn, nothing here is resident because
+every trigger is a keypress, and there is no runtime to remove. What it has is
+that `layout_for`, `session_name`, `state_dir` and the `project` picker were all
+built by the port already, and these three are the config table those pieces
+were shaped for.
 
 ### Panes in a layout
 
@@ -315,10 +316,10 @@ syntax never had to grow.
 
 What this deliberately is not is a new layout language. The survey that produced
 this section looked at tmuxinator, tmuxp, smug, teamocil, zellij and tmuxomatic,
-and the two lessons worth carrying are that everybody who tried to reference
-panes by position regretted it, because tmux renumbers panes by position the
-moment you split one, and that zellij moved its layouts off YAML and TOML to KDL
-and said why in the release notes: TOML does not nest, and layouts are nesting.
+and what carries over is that everybody who tried to reference panes by position
+regretted it, because tmux renumbers panes by position the moment you split one,
+and that zellij moved its layouts off YAML and TOML to KDL and said why in the
+release notes: TOML does not nest, and layouts are nesting.
 A flat pane array under a preset name sidesteps both, covers what people
 actually run, and leaves the raw string for the rest.
 
@@ -396,44 +397,54 @@ hurt somebody, so it goes last or not at all.
 
 ### The layout a project comes back with
 
-The step after saving by hand is not having to. Close a project, open it again,
-and the windows and the geometry are what they were, without any of the
-processes coming back.
+The step after saving by hand is not having to do it as a separate act. Close a
+project, open it again, and the windows and the geometry are what they were,
+without any of the processes coming back.
 
-Layout only is the whole point and it is also what makes this cheap. Nothing
-about restoring a pane's shape can run anything, so the capture stores window
-names, the `window_layout` string and each pane's working directory, and it
-stores no commands at all. The lossy `pane_current_command` problem from the
-previous section does not exist on this path, because this path never asks.
-
-`session-closed` is not usable for the capture: by the time it fires the
-session's windows are gone and there is nothing to read. So the snapshot is
-periodic, on the `autosave_loop` shape the port already built, with a
-`client-detached` hook for the case that actually matters, and a session killed
-outright loses at most one interval. Two tmux calls per interval regardless of
-how many sessions are open, which at 60 seconds is under 0.5 ms/s, small enough
-that it does not need its own config key to turn off for cost reasons.
-
-The snapshot and the deliberate save are different files and the deliberate one
-wins:
+Nothing watches for this and nothing runs on a timer. Every trigger is somebody
+pressing a key: `project save` when you want to keep the arrangement you just
+built, and a close binding that captures before it exits.
 
 ```
-projects/<project>.toml        written by `project save`, never touched by the timer
-projects/<project>.auto.toml   the rolling snapshot, layout and cwd only
+bind X run-shell 'tmux-companion project close'
 ```
 
-Without that split the timer would quietly overwrite the template you sat down
-and built, which is the kind of data loss people do not forgive in a status bar
-tool.
+`X` is free in tmux's default table, where `x` is kill-pane and `&` is
+kill-window, so the binding does not take anything away from anyone.
 
-Applying it automatically looks like it contradicts what the README says about
+The order inside that one command is the whole feature, and it is why the
+binding calls the binary rather than chaining tmux commands: capture, write the
+file, then kill the session. A `run-shell` that killed the session first would
+have nothing left to read, and two chained tmux commands leave the write racing
+the kill. One process doing them in order cannot get that wrong.
+
+Dropping the timer takes the awkward parts with it. There is no `session-closed`
+hook to work around, which matters because that hook fires after the session's
+windows are gone and there is nothing left to read. There is no periodic cost to
+measure or to give a config key for turning off. And there is no split between a
+rolling snapshot and a deliberate save, so one project has one file, `project
+save` and `project close` write the same one, and the timer that would have
+quietly overwritten a template you sat down and built does not exist.
+
+The honest cost of that choice: closing a project any other way keeps the last
+file you wrote and loses whatever you rearranged since. Killing the session,
+closing the terminal window, the last pane exiting, a reboot. Resurrect already
+covers crash recovery across the whole server and this does not try to, so the
+rule is simple enough to say in one line in the docs, which is that the layout
+is what it was when you last pressed one of the two keys.
+
+Layout only is the point and it is also what keeps this safe. Nothing about
+restoring a pane's shape can run anything, so what gets stored is window names,
+the `window_layout` string and each pane's working directory. Whether `project
+close` also records commands the way `project save` does is one flag on one
+capture function rather than a second code path.
+
+Applying it on open looks like it contradicts what the README says about
 resurrect, and it does not, for a reason worth writing down before somebody
 raises it. The objection to automatic restore is that it resurrects a stale
 layout over a session you have already started working in. A session the project
-picker just created is empty, so there is nothing to clobber, and the stale
-layout is the only layout it has. Automatic capture is safe everywhere;
-automatic apply is safe exactly on a session that was created one moment ago,
-and that is the only place it should happen.
+picker just created is empty, so there is nothing to clobber, and the saved
+layout is the only layout it has.
 
 The failure mode that does need a config key is the screen it comes back on. A
 `window_layout` string carries absolute cell geometry, so `select-layout`
@@ -450,11 +461,12 @@ else. The scope is the layout of a session the project picker made.
 Credit where it belongs: `tmux-plugins/tmux-resurrect` and
 `tmux-plugins/tmux-continuum` are alive, are the maintainers' signature work,
 and this repository already shells out to resurrect's save script for
-`autosave`. They snapshot every session for crash recovery and restore on
-demand, across the whole server, processes included. This is one project, layout
-only, applied to a session that is one second old. Different scope and different
-trigger, no code shared, and the measurement row for it names both plugins as
-the arm it is measured against, with their versions, per the rule above.
+`autosave`. They snapshot every session on a timer for crash recovery and
+restore on demand, across the whole server, processes included. This is one
+project, layout only, written when a key is pressed, applied to a session that
+is one second old. Different scope and different trigger, no code shared, and
+the measurement row for it names both plugins as the arm it is measured against,
+with their versions, per the rule above.
 
 ## Not this
 
