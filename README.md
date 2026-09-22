@@ -83,9 +83,13 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 ## Usage
 
-<!-- @Yogesh(video): usage recording goes here, about 73 seconds: the bar,
-     keys, cheatsheet, project, run, open and sh-jobs. Drop the link above this
-     line and delete the comment. -->
+<!-- @Yogesh(gif): drop the R2 URL in above this line once the bucket exists,
+     as ![usage](https://<host>/tmux-companion/usage.gif), and delete this. -->
+
+[![the pickers, in 71 seconds](https://asciinema.org/a/Ruwr7VJCeCAv5p0y.svg)](https://asciinema.org/a/Ruwr7VJCeCAv5p0y)
+
+The column down the right of the recording is the keys being pressed, so you
+can read back what did what.
 
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
@@ -99,9 +103,11 @@ got one.
 
 ## Configuration
 
-<!-- @Yogesh(video): configuration recording goes here, about 37 seconds: no
-     config at all, then `config dump`, the ascii glyph preset, the theme
-     picker and doctor. Drop it in above this line and delete the comment. -->
+<!-- @Yogesh(gif): drop the R2 URL in above this line once the bucket exists,
+     as ![configuration](https://<host>/tmux-companion/configuration.gif), and
+     delete this. -->
+
+[![configuring it, in 37 seconds](https://asciinema.org/a/LZxB8RU1aXNM1TiL.svg)](https://asciinema.org/a/LZxB8RU1aXNM1TiL)
 
 There's no config file till you write one, and the defaults are what the binary
 did before the file existed.
