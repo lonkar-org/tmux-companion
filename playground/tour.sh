@@ -312,8 +312,20 @@ ${BOLD}If you want more than nine screens${OFF}
     https://learntmux.dev      42 tasks against a real tmux in the browser
     https://tmuxai.dev/tmux-getting-started/    a written walkthrough
 
-${BOLD}Opening one of those from in here${OFF}, which is also the last tmux thing worth
-knowing: you copy it out of the terminal without touching the mouse.
+${BOLD}Try opening one of them from here${OFF}, which is the last tmux thing worth
+knowing: getting text off a terminal without touching the mouse.
+
+${WARN}Read this before you press it.${OFF} A container has no browser in it, so opening
+a URL in here cannot work and is not meant to. What you will see is:
+
+    ${DIM}tmux-companion: no xdg-open on this machine, so this was not opened:${OFF}
+    ${DIM}  https://learntmux.dev${OFF}
+
+That message ${BOLD}is${OFF} the demonstration. It says which URL it had, which means
+the selecting, the copying and the handing-over all worked, and only the last
+step -- a browser to hand it to -- was missing. On your own machine that same
+keystroke opens the page. On a server over ssh you get this message, with the
+URL ready to copy.
 
     ${KEY}prefix  [${OFF}       into copy mode
     ${KEY}k${OFF} ${KEY}j${OFF} ${KEY}h${OFF} ${KEY}l${OFF}         up, down, left, right, because this config sets
@@ -323,9 +335,9 @@ knowing: you copy it out of the terminal without touching the mouse.
     ${KEY}y${OFF}              yank it to the system clipboard
     ${KEY}o${OFF}              open it, which is this tool rather than tmux
 
-${KEY}o${OFF} on a selected URL opens a browser, and on a ${DIM}path:line${OFF} it opens your
-editor at that line. There is no browser inside this container, so it will
-say so rather than pretend; on your own machine it opens.
+The same ${KEY}o${OFF} on a ${DIM}path:line:column${OFF} -- a compiler error, a stack trace --
+opens your editor at that line instead. Step 14 does exactly that with a
+build log, and it does work in here, because the editor is right there.
 
 ${DIM}The rest of the tour assumes exactly what you have just read and nothing${OFF}
 ${DIM}more.${OFF}
