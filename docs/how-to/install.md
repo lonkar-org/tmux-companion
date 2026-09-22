@@ -90,6 +90,35 @@ One line in `tmux.conf` gets you the bar:
 set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
 
+## Starting it
+
+From a shell that is not in tmux yet:
+
+```sh
+tmux-companion start
+```
+
+That opens the project picker — live sessions first, then every directory
+zoxide knows — and attaches to what you pick. It is worth an alias, because it
+is the thing you type instead of `tmux`:
+
+```sh
+alias t='tmux-companion start'
+alias tl='tmux-companion start --last'
+```
+
+`tmux` on its own gives you a session called `0` with one bare shell in it, and
+everything here is a keystroke further on from that. If you would rather keep
+typing `tmux`, one hook makes it land in the same place:
+
+```tmux
+set-hook -g client-attached 'run-shell "tmux-companion start --hook"'
+```
+
+That opens the picker only when the session is one tmux named itself — a name
+that is all digits — with one window, one pane and a shell in it. A session you
+asked for by name, or one with anything already running, is left alone.
+
 ## Upgrading
 
 Run the install script again. It compares what's on PATH against the latest

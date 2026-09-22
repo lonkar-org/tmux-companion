@@ -624,3 +624,96 @@ fn the_left_side_shows_a_whole_session_name_and_what_follows_it() {
         "the session name is truncated on the bar: {rendered:?}"
     );
 }
+
+/// The `client-attached` hook has to fire for a session tmux named itself and
+/// stay quiet for one somebody asked for by name.
+///
+/// This was a tmux format condition in the config first:
+///
+///   if-shell -F "#{?#{==:#{session_name},#{s|[0-9]||:#{session_name}}},0,1}"
+///
+/// which `display-message -p` evaluates correctly and which, from inside a
+/// hook, ran the command for no session at all. The decision moved into the
+/// binary, and this is the test that would have caught the format version.
+#[test]
+fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
+    let Some(t) = Tmux::start("attachhook") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+
+    // A marker instead of a popup: a popup needs a client and cannot be
+    // captured, and what is being tested is which sessions reach it.
+    let marker = t.sandbox.join("fired");
+    t.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "0",
+        "-c",
+        &dir.display().to_string(),
+    ]);
+    t.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "named",
+        "-c",
+        &dir.display().to_string(),
+    ]);
+    t.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "1",
+        "-c",
+        &dir.display().to_string(),
+    ]);
+    t.tmux(&["split-window", "-t", "1"]);
+
+    for (session, expected) in [("0", true), ("named", false), ("1", false)] {
+        let answer = t.tmux(&[
+            "display-message",
+            "-t",
+            session,
+            "-p",
+            "#{session_name}\t#{session_windows}\t#{window_panes}\t#{pane_current_command}",
+        ]);
+        assert_eq!(
+            tmux_companion::project::is_an_untouched_default_session(&answer),
+            expected,
+            "session {session:?} answered {answer:?}"
+        );
+    }
+    let _ = std::fs::remove_file(marker);
+}
+
+/// `start --last` goes back to the session attached most recently.
+#[test]
+fn start_last_picks_the_session_used_most_recently() {
+    let Some(t) = Tmux::start("startlast") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    for name in ["first", "second", "third"] {
+        t.tmux(&[
+            "new-session",
+            "-d",
+            "-s",
+            name,
+            "-c",
+            &dir.display().to_string(),
+        ]);
+    }
+    let listing = t.tmux(&[
+        "list-sessions",
+        "-F",
+        "#{session_last_attached} #{session_name}",
+    ]);
+    // Never attached, so every stamp is 0 and the answer is whichever tmux
+    // lists first rather than an error.
+    assert!(
+        tmux_companion::project::most_recent_session(&listing).is_some(),
+        "nothing chosen from {listing:?}"
+    );
+}

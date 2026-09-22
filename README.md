@@ -81,6 +81,18 @@ It binds no keys and sets no options. Or clone it and run
 All three paths, with the flags and how to remove it again, are in
 [docs/how-to/install.md](docs/how-to/install.md).
 
+Then the way in, from a shell that is not in tmux yet:
+
+```sh
+tmux-companion start
+```
+
+That opens the project picker — live sessions first, then every directory
+zoxide knows — and attaches to what you choose. `tmux` on its own leaves you in
+a session called `0` with one bare shell, which is the thing this replaces.
+`start --last` goes back to whatever you were in without asking, and
+`start ~/src/thing` skips the picker.
+
 One line in `tmux.conf` gets you the bar:
 
 ```tmux

@@ -266,6 +266,25 @@ pub enum Cmd {
         status: bool,
     },
 
+    /// The way in: attach to what you were doing, or pick a project
+    ///
+    /// `tmux` on its own drops you in a session called `0` holding one bare
+    /// shell, and everything this tool does is one keystroke further on from
+    /// there. This is that keystroke, from outside tmux: it opens the same
+    /// picker `M-s` opens, with live sessions first and every directory zoxide
+    /// knows under them, and attaches to whatever is chosen.
+    Start {
+        /// Go straight to this directory instead of opening the picker
+        dir: Option<String>,
+        /// Attach to the session used most recently, without asking
+        #[arg(long, short)]
+        last: bool,
+        /// For the `client-attached` hook: open the picker only when this is a
+        /// session tmux named itself with nothing happening in it
+        #[arg(long, hide = true)]
+        hook: bool,
+    },
+
     /// Switch to a project, or start one
     Project {
         /// Save, forget or explain this project's layout
@@ -562,6 +581,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Run { print, exec } => run_command(print, exec).await?,
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
+        Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
         Cmd::Project { action, dir, print } => match action {
             Some(ProjectAction::Save { no_commands }) => run_project_save(!no_commands).await?,
             Some(ProjectAction::Forget) => run_project_forget().await?,
@@ -988,6 +1008,75 @@ fn wait_for_a_key() {
 }
 
 /// `project`: pick a project, then switch to its session or build one.
+/// `start`: the front door, for a shell that is not in tmux yet.
+///
+/// Everything here already existed behind `project`; what was missing was a
+/// name for it that reads like the first thing you type rather than like a
+/// binding you press once you are already inside.
+async fn run_start(dir: Option<String>, last: bool, hook: bool) -> anyhow::Result<()> {
+    if hook {
+        return run_start_hook().await;
+    }
+    if dir.is_some() {
+        return run_project(dir, false).await;
+    }
+    if last {
+        let listing = tmux_capture(&[
+            "list-sessions",
+            "-F",
+            "#{session_last_attached} #{session_name}",
+        ])
+        .await;
+        if let Some(name) = crate::project::most_recent_session(&listing) {
+            return focus_session(&name).await;
+        }
+        // Nothing to go back to, so ask rather than failing: `--last` on a
+        // machine that has just booted is the same situation as no flag.
+    }
+    run_project(None, false).await
+}
+
+/// `start --hook`: the `client-attached` half, which decides for itself.
+///
+/// The decision was a tmux format condition in the config first:
+///
+///   if-shell -F "#{?#{==:#{session_name},#{s|[0-9]||:#{session_name}}},0,1}" ...
+///
+/// which is right as a format -- `display-message -p` prints exactly what it
+/// should -- and never ran the command from inside a hook, for any session.
+/// Asking tmux one question and deciding here costs a few milliseconds on
+/// attach and is something that can be read and tested.
+async fn run_start_hook() -> anyhow::Result<()> {
+    let answer = tmux_capture(&[
+        "display-message",
+        "-p",
+        "#{session_name}\t#{session_windows}\t#{window_panes}\t#{pane_current_command}",
+    ])
+    .await;
+    if !crate::project::is_an_untouched_default_session(&answer) {
+        return Ok(());
+    }
+    // This binary by its own path, not the bare name. A popup runs its command
+    // through a shell whose PATH is the tmux *server's*, which was inherited
+    // from wherever the server happened to start -- often a login shell that
+    // has never seen ~/.local/bin. The popup then opened, failed to find
+    // `tmux-companion`, and closed again too fast to see.
+    let me = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "tmux-companion".to_string());
+    tmux(&[
+        "display-popup",
+        "-E",
+        "-w",
+        "80%",
+        "-h",
+        "70%",
+        &format!("{me} project"),
+    ])
+    .await;
+    Ok(())
+}
+
 async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     use crate::project::Kind;
 

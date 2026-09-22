@@ -159,6 +159,24 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 bind -N "custom: pane zoom this one, or the window when it is alone" z \
   run-shell "tmux-companion zoom"
 
+# ── Landing somewhere, when you typed plain `tmux` ──────────────────────────
+#
+# `tmux` on its own makes a session called `0` with one bare shell in it, and
+# everything here is a keystroke further on from there. From a shell the way in
+# is `tmux-companion start`, which opens the project picker and attaches to
+# what you choose; this is the same thing for anybody who types `tmux` out of
+# habit, or whose terminal is configured to run it at startup.
+#
+# It opens the picker only for a session tmux named itself -- a name that is
+# all digits -- with one window, one pane and a shell in it. A session you
+# asked for by name, or one with anything already happening in it, is left
+# alone, so this never interrupts work.
+#
+# Commented out because a popup on attach is a strong opinion. Turn it on if
+# the first thing you do after `tmux` is press M-s anyway.
+#
+# set-hook -g client-attached 'run-shell "tmux-companion start --hook"'
+
 # ── The theme, applied when a session is created ────────────────────────────
 #
 # The session name twice, not #{session_id}: tmux 3.5 leaves #{session_id}

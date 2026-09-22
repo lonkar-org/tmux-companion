@@ -1250,3 +1250,142 @@ mod preview_tests {
         assert_eq!(listing_of(std::path::Path::new("/no/such/dir"), 5), "");
     }
 }
+
+/// The session attached most recently, from `list-sessions -F
+/// '#{session_last_attached} #{session_name}'`.
+///
+/// tmux prints the timestamp as seconds since the epoch, and a session that
+/// has never been attached prints ***nothing at all*** -- an empty field, not
+/// a zero, so the line begins with the separator. Reading that as a parse
+/// failure dropped every row on a freshly started server, which is exactly the
+/// machine where `--last` is reached for. It counts as zero here, and a
+/// listing where every session is unattached still answers with one of them.
+///
+/// A session whose name contains a space still parses, because the name is
+/// everything after the first separator.
+pub fn most_recent_session(listing: &str) -> Option<String> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (stamp, name) = line.trim_end().split_once(' ')?;
+            let stamp: u64 = if stamp.is_empty() {
+                0
+            } else {
+                stamp.parse().ok()?
+            };
+            (!name.is_empty()).then_some((stamp, name.to_string()))
+        })
+        .max_by_key(|(stamp, _)| *stamp)
+        .map(|(_, name)| name)
+}
+
+#[cfg(test)]
+mod most_recent_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_timestamp_wins() {
+        let listing = "1700000000 api\n1700000900 web\n1700000500 docs\n";
+        assert_eq!(most_recent_session(listing).as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn a_session_never_attached_does_not_win_on_its_own_merits() {
+        let listing = "0 never\n1700000001 once\n";
+        assert_eq!(most_recent_session(listing).as_deref(), Some("once"));
+    }
+
+    #[test]
+    fn a_name_with_a_space_survives() {
+        let listing = "1700000000 my project\n";
+        assert_eq!(most_recent_session(listing).as_deref(), Some("my project"));
+    }
+
+    #[test]
+    fn a_server_where_nothing_has_been_attached_still_answers() {
+        // tmux prints an empty field, not a zero, for a session nobody has
+        // attached to. Treating that as unparseable dropped every row on a
+        // freshly started server.
+        let listing = " first\n second\n third\n";
+        assert!(most_recent_session(listing).is_some(), "{listing:?}");
+    }
+
+    #[test]
+    fn an_attached_session_still_beats_an_unattached_one() {
+        let listing = " never\n1700000000 once\n";
+        assert_eq!(most_recent_session(listing).as_deref(), Some("once"));
+    }
+
+    #[test]
+    fn nothing_listed_is_nothing_to_attach_to() {
+        assert_eq!(most_recent_session(""), None);
+        assert_eq!(most_recent_session("garbage\n"), None);
+    }
+}
+
+/// Whether a session is one tmux named itself and nobody has done anything in.
+///
+/// The input is one `display-message -p` answer, tab-separated: the session
+/// name, how many windows it has, how many panes the current window has, and
+/// what is running in the current pane.
+///
+/// All four have to agree, because the point is to catch exactly one case --
+/// somebody typed `tmux`, got a session called `0`, and is looking at a bare
+/// shell -- and to leave every other attach alone. A session with a name was
+/// asked for by name. A second window, a split, or a program running means
+/// something is already happening in it.
+pub fn is_an_untouched_default_session(answer: &str) -> bool {
+    let mut fields = answer.trim_end().split('\t');
+    let (Some(name), Some(windows), Some(panes), Some(command)) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return false;
+    };
+    let named_by_tmux = !name.is_empty() && name.chars().all(|c| c.is_ascii_digit());
+    let untouched = windows == "1" && panes == "1";
+    // A shell, under whatever name it was started with. Anything else is work.
+    let shell = matches!(
+        command.trim_start_matches('-'),
+        "zsh" | "bash" | "sh" | "fish" | "dash" | "ksh"
+    );
+    named_by_tmux && untouched && shell
+}
+
+#[cfg(test)]
+mod default_session_tests {
+    use super::*;
+
+    #[test]
+    fn a_session_tmux_named_itself_with_one_bare_shell_qualifies() {
+        assert!(is_an_untouched_default_session("0\t1\t1\tzsh"));
+        assert!(is_an_untouched_default_session("12\t1\t1\tbash"));
+        // A login shell prints with a leading dash.
+        assert!(is_an_untouched_default_session("0\t1\t1\t-zsh"));
+    }
+
+    #[test]
+    fn a_session_somebody_named_is_left_alone() {
+        assert!(!is_an_untouched_default_session("api\t1\t1\tzsh"));
+        assert!(!is_an_untouched_default_session("w2\t1\t1\tzsh"));
+    }
+
+    #[test]
+    fn a_session_with_work_in_it_is_left_alone() {
+        assert!(
+            !is_an_untouched_default_session("0\t2\t1\tzsh"),
+            "two windows"
+        );
+        assert!(!is_an_untouched_default_session("0\t1\t2\tzsh"), "a split");
+        assert!(
+            !is_an_untouched_default_session("0\t1\t1\tnvim"),
+            "an editor"
+        );
+    }
+
+    #[test]
+    fn an_answer_that_is_not_four_fields_decides_nothing() {
+        assert!(!is_an_untouched_default_session(""));
+        assert!(!is_an_untouched_default_session("0\t1\t1"));
+        assert!(!is_an_untouched_default_session("\t1\t1\tzsh"));
+    }
+}
