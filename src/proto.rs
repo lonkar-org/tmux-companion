@@ -1,21 +1,47 @@
 use serde::{Deserialize, Serialize};
 
-/// One line from a client: which command, and its arguments as JSON.
+/// This build, as `<version>+<build stamp>`.
+///
+/// The stamp comes from `build.rs` and changes with every compile, because
+/// during development every build carries the same version number and the
+/// question a client actually needs answered is "is the daemon running the
+/// binary I just installed".
+pub fn build_id() -> String {
+    format!(
+        "{}+{}",
+        env!("CARGO_PKG_VERSION"),
+        env!("TMUX_COMPANION_BUILD")
+    )
+}
+
+/// One line from a client: which command, its arguments, and which build sent
+/// it.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Request {
     /// Command name, matched by the server's dispatch.
     pub cmd: String,
     /// The command's own args struct, serialised.
     pub args: serde_json::Value,
+    /// The client's build id.
+    ///
+    /// Defaulted rather than required so a daemon from before this field
+    /// existed can still read a new client's request: serde ignores what it
+    /// does not know, and this side supplies nothing when the other end is
+    /// old.
+    #[serde(default)]
+    pub version: String,
 }
 
-/// One line back: what to print, or what went wrong.
+/// One line back: what to print, what went wrong, and which build answered.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     /// What the client prints, which for a segment is tmux markup.
     pub output: String,
     /// Set when the command failed; the client prints it to stderr.
     pub error: Option<String>,
+    /// The daemon's build id, empty from a daemon that predates the field.
+    #[serde(default)]
+    pub version: String,
 }
 
 impl Response {
@@ -24,6 +50,7 @@ impl Response {
         Self {
             output,
             error: None,
+            version: build_id(),
         }
     }
 
@@ -32,6 +59,7 @@ impl Response {
         Self {
             output: String::new(),
             error: Some(e.to_string()),
+            version: build_id(),
         }
     }
 }
@@ -154,6 +182,19 @@ impl Request {
         Self {
             cmd: cmd.to_string(),
             args: serde_json::to_value(args).expect("args struct is serialisable"),
+            version: build_id(),
+        }
+    }
+
+    /// A request with arguments already in JSON form.
+    ///
+    /// For the diagnostics and the tests, which have a `Value` rather than a
+    /// typed struct. Everything else goes through `build`.
+    pub fn raw(cmd: &str, args: serde_json::Value) -> Self {
+        Self {
+            cmd: cmd.to_string(),
+            args,
+            version: build_id(),
         }
     }
 
@@ -185,10 +226,7 @@ mod tests {
 
     #[test]
     fn request_serde_roundtrip() {
-        let req = Request {
-            cmd: "gst".into(),
-            args: serde_json::json!({"path": "/tmp"}),
-        };
+        let req = Request::raw("gst", serde_json::json!({"path": "/tmp"}));
         let json = serde_json::to_string(&req).unwrap();
         let decoded: Request = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.cmd, "gst");
@@ -215,10 +253,7 @@ mod tests {
 
     #[test]
     fn request_with_null_args_field() {
-        let req = Request {
-            cmd: "battery".into(),
-            args: serde_json::Value::Null,
-        };
+        let req = Request::raw("battery", serde_json::Value::Null);
         let json = serde_json::to_string(&req).unwrap();
         let decoded: Request = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.cmd, "battery");
@@ -245,10 +280,7 @@ mod tests {
 
     #[test]
     fn gst_args_defaults_match_the_cli_defaults() {
-        let req = Request {
-            cmd: "gst".into(),
-            args: serde_json::json!({}),
-        };
+        let req = Request::raw("gst", serde_json::json!({}));
         let a: GstArgs = req.parse_args().unwrap();
         assert_eq!(a.ttl_secs, 5.0);
         assert_eq!(a.style, Style::OutlineBright);
@@ -268,10 +300,7 @@ mod tests {
 
     #[test]
     fn an_unknown_key_names_the_command_and_the_key() {
-        let req = Request {
-            cmd: "clients".into(),
-            args: serde_json::json!({"session_atached": 2}),
-        };
+        let req = Request::raw("clients", serde_json::json!({"session_atached": 2}));
         let e = req.parse_args::<ClientsArgs>().unwrap_err().to_string();
         assert!(e.contains("invalid clients args"), "{e}");
         assert!(e.contains("session_atached"), "{e}");

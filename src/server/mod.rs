@@ -31,7 +31,23 @@ pub async fn run() -> anyhow::Result<()> {
     let _ = std::fs::remove_file(&sock);
 
     let listener = match UnixListener::bind(&sock) {
-        Ok(l) => l,
+        Ok(l) => {
+            // The socket is an execution surface: a request makes this process
+            // read git state today and spawn commands once `run` and `open`
+            // land, and /tmp is a directory every user on the machine can write
+            // to. 0600 means only its owner can connect.
+            //
+            // There is a window between bind and chmod. Closing it properly
+            // needs the socket created inside a 0700 directory, which is what
+            // moving to $XDG_RUNTIME_DIR would give; until then this narrows it
+            // from forever to microseconds.
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))
+            {
+                eprintln!("tmux-companion: could not restrict socket permissions: {e}");
+            }
+            l
+        }
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             // Another server raced us to the bind — exit quietly.
             return Ok(());

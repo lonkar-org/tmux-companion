@@ -34,10 +34,49 @@ pub fn sock_path() -> PathBuf {
 /// of scraping stdout, which is the whole reason an integration test over the
 /// real socket is worth having.
 pub async fn send(req: Request) -> anyhow::Result<Response> {
+    let resp = send_once(&req).await?;
+
+    // A daemon from an older build answers with an older build's behaviour,
+    // and after the port it may not know the command at all. Replace it once
+    // and retry; the retry is bounded because the new daemon reports the build
+    // that just started it.
+    if !resp.version.is_empty() && resp.version != crate::proto::build_id() {
+        eprintln!(
+            "tmux-companion: replacing daemon from build {} with {}",
+            resp.version,
+            crate::proto::build_id()
+        );
+        let _ = send_once(&Request::raw("__shutdown", serde_json::Value::Null)).await;
+        wait_for_socket_to_go().await;
+        return send_once(&req).await;
+    }
+
+    Ok(resp)
+}
+
+/// Wait for a shutting-down daemon to release the socket, briefly.
+///
+/// Bounded because the alternative is a status bar that hangs: if the old
+/// daemon will not go, the retry connects to it and the caller gets its answer,
+/// which is the same thing that happened before any of this existed.
+async fn wait_for_socket_to_go() {
+    for _ in 0..20 {
+        if tokio::net::UnixStream::connect(sock_path()).await.is_err() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// One request, one response, no version check and no daemon replaced.
+///
+/// `doctor` uses this: a diagnostic that restarts the thing it is reporting on
+/// is not a diagnostic.
+pub async fn send_once(req: &Request) -> anyhow::Result<Response> {
     let stream = connect_with_retry().await?;
     let (reader, mut writer) = stream.into_split();
 
-    let mut msg = serde_json::to_string(&req)?;
+    let mut msg = serde_json::to_string(req)?;
     msg.push('\n');
     writer.write_all(msg.as_bytes()).await?;
 
@@ -63,6 +102,7 @@ pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
 
 async fn connect_with_retry() -> anyhow::Result<tokio::net::UnixStream> {
     let sock = sock_path();
+    check_socket_owner(&sock)?;
 
     for attempt in 0..=10u32 {
         match tokio::net::UnixStream::connect(&sock).await {
@@ -97,6 +137,32 @@ fn last_config_error() -> Option<String> {
         return None;
     }
     Some(format!("{first} — run tmux-companion config check"))
+}
+
+/// Refuse to talk to a socket somebody else owns.
+///
+/// The default path is under /tmp, which every user on the machine can write
+/// to, so a socket at the expected name is not necessarily this user's daemon.
+/// Connecting to somebody else's would hand them whatever a request carries and
+/// take whatever they answered with straight to the status bar.
+fn check_socket_owner(sock: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = match std::fs::metadata(sock) {
+        Ok(m) => m,
+        // Absent is fine: the caller is about to start a server.
+        Err(_) => return Ok(()),
+    };
+    let us = nix::unistd::getuid().as_raw();
+    if meta.uid() != us {
+        anyhow::bail!(
+            "{} is owned by uid {}, not {}; refusing to use it",
+            sock.display(),
+            meta.uid(),
+            us
+        );
+    }
+    Ok(())
 }
 
 fn spawn_server() -> anyhow::Result<()> {

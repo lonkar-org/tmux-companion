@@ -843,15 +843,19 @@ socket path is the first thing to look at there, since
 
 ### An old daemon answering a new client
 
-The client starts a server when the socket is absent and does nothing when a
-server from the previous build is already listening, which today costs a stale
-render and after the port costs a `keys` request to a daemon that has never
-heard of `keys`. `proto.rs` has no version field. Phase 0 step 4 is already
-rewriting both ends of the wire, so the version goes in there: the response
-carries the daemon's version, and a client that sees a version other than its
-own kills the daemon and retries once through the reconnect path it already
-has. `docs/tmux.conf.example` currently handles this with a `pkill` line in the
-install instructions, which works exactly as long as somebody reads it.
+The client started a server when the socket was absent and did nothing when a
+server from the previous build was already listening, which cost a stale render
+and, after the port, would have cost a `keys` request to a daemon that had
+never heard of `keys`.
+
+Phase 0 step 10 closed it. Every request and response carries a build id, which
+is the version plus a stamp `build.rs` writes at compile time, because during
+development every build is 0.1.0 and the question a client needs answered is
+whether the daemon is running the binary that was just installed. A client that
+sees a different build asks the daemon to shut down, waits for the socket to
+go, and retries once. Both fields default to empty, so a new client and a
+daemon from before the field can still talk to each other, which is the case
+that matters during the upgrade itself.
 
 ### The pickers don't run in the daemon
 
@@ -866,11 +870,17 @@ fine, and the decision should be written down rather than rediscovered.
 ### No logs and no doctor
 
 A picker that misbehaves inside `display-popup -E` sends its stderr wherever
-the popup went, which is nowhere. A `[general] log` path in the config, plus
-`TMUX_COMPANION_LOG` for a one-off, and a `tmux-companion doctor` printing the
-binary version, the running daemon's version, the socket path, the config path
-in use, the tmux version and whether the configured icons render. Doctor is the
-first thing to ask for on an issue from a stranger, and it doesn't exist.
+the popup went, which is nowhere.
+
+`tmux-companion doctor` exists as of phase 0 step 10 and prints the binary and
+its build, whether a daemon is running and which build it is, the socket with
+its mode and owner, the config file in use, the glyph preset, the state
+directory with the last config error in it, the tmux version and the platform.
+It reads without starting or replacing anything, because a diagnostic that
+changes the answer while reading it is not a diagnostic.
+
+`[general] log` is in the config and nothing writes to it yet, which is the
+half still missing.
 
 ### The socket becomes an execution surface
 
@@ -878,9 +888,14 @@ This one's worth stating plainly rather than in passing. Today a request makes
 the daemon read git state and hardware counters. After `run` and `open` land, a
 request makes the daemon spawn a process as me, and the socket sits at
 `/tmp/tmux-companion-<uid>.sock`, in a directory every user on the machine can
-write to. Phase 0 should create the socket with mode 0600, check the owner and
-the mode before connecting rather than trusting the path, and prefer
-`$XDG_RUNTIME_DIR` where it exists. `open` also takes text out of a pane and
+write to.
+
+Phase 0 step 10 did the first half: the socket is chmod 0600 after bind, and a
+client checks the owner before connecting rather than trusting the path.
+`doctor` prints the mode it found, which is how the live socket turned out to
+be 0755. What is left is the window between bind and chmod, which closes
+properly only by creating the socket inside a 0700 directory, and that turns
+out to be the same change as preferring `$XDG_RUNTIME_DIR` where it exists. `open` also takes text out of a pane and
 hands it to an opener, so the extraction has to reject anything that isn't a
 URL or a `file:line:col`, and the spawn has to be a `Command` with an argument
 vector and no shell anywhere in it.

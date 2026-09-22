@@ -148,6 +148,9 @@ pub enum Cmd {
     #[command(hide = true)]
     Noop,
 
+    /// Print what somebody would otherwise have to ask you for
+    Doctor,
+
     /// Inspect the configuration file
     Config {
         /// What to do with it
@@ -283,6 +286,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         // the config it started with, and the question here is what a *fresh*
         // read of the file says, which is what somebody debugging one wants.
         Cmd::Config { action } => run_config(action)?,
+        Cmd::Doctor => crate::doctor::run().await?,
     }
 
     Ok(())

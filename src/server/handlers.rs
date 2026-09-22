@@ -127,6 +127,18 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // `noop` prices a bare client round trip and `__rusage` is how
         // BENCHMARKS.md measures per-call server CPU.
         "noop" => Ok(String::new()),
+        // How a client replaces a daemon from an older build: ask it to go,
+        // then start one. Anybody who can send this could already send any
+        // other command, and the socket is 0600.
+        "__shutdown" => {
+            tokio::spawn(async {
+                // Answer first, exit after: a client that gets no response
+                // cannot tell "it stopped" from "it was never there".
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                std::process::exit(0);
+            });
+            Ok(String::new())
+        }
         "__rusage" => rusage_line(),
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
@@ -527,12 +539,9 @@ mod tests {
     /// The tests drive `gst_options` through the deserializer rather than
     /// building the struct by hand, so they cover the wire shape too.
     fn args(json: serde_json::Value) -> GstArgs {
-        Request {
-            cmd: "gst".into(),
-            args: json,
-        }
-        .parse_args()
-        .expect("valid gst args")
+        Request::raw("gst", json)
+            .parse_args()
+            .expect("valid gst args")
     }
 
     #[test]
@@ -576,10 +585,7 @@ mod tests {
     fn a_misspelled_gst_key_is_an_error_rather_than_a_default() {
         // The reason the typed structs exist. `branch_maxlen` used to read
         // back as `None` and quietly render an untruncated branch.
-        let r = Request {
-            cmd: "gst".into(),
-            args: serde_json::json!({"branch_maxlen": 40}),
-        };
+        let r = Request::raw("gst", serde_json::json!({"branch_maxlen": 40}));
         let e = r.parse_args::<GstArgs>().unwrap_err().to_string();
         assert!(e.contains("invalid gst args"), "{e}");
         assert!(e.contains("branch_maxlen"), "{e}");
@@ -600,10 +606,10 @@ mod tests {
         // pane pid, because that means scanning every process on the machine.
         // It used to be dropped in `render_right`; now the argument struct has
         // no such field, so a client sending one gets an error.
-        let r = Request {
-            cmd: "status-right".into(),
-            args: serde_json::json!({"path": "/tmp/x", "pane_pid": 4242}),
-        };
+        let r = Request::raw(
+            "status-right",
+            serde_json::json!({"path": "/tmp/x", "pane_pid": 4242}),
+        );
         let e = r.parse_args::<StatusRightArgs>().unwrap_err().to_string();
         assert!(e.contains("pane_pid"), "{e}");
     }
@@ -623,41 +629,20 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_command_is_an_error() {
-        let r = dispatch(
-            Request {
-                cmd: "nope".into(),
-                args: serde_json::Value::Null,
-            },
-            state(),
-        )
-        .await;
+        let r = dispatch(Request::raw("nope", serde_json::Value::Null), state()).await;
         assert!(r.error.is_some());
     }
 
     #[tokio::test]
     async fn noop_succeeds_with_empty_output() {
-        let r = dispatch(
-            Request {
-                cmd: "noop".into(),
-                args: serde_json::Value::Null,
-            },
-            state(),
-        )
-        .await;
+        let r = dispatch(Request::raw("noop", serde_json::Value::Null), state()).await;
         assert!(r.error.is_none(), "{:?}", r.error);
         assert_eq!(r.output, "");
     }
 
     #[tokio::test]
     async fn rusage_probe_reports_five_counters() {
-        let r = dispatch(
-            Request {
-                cmd: "__rusage".into(),
-                args: serde_json::Value::Null,
-            },
-            state(),
-        )
-        .await;
+        let r = dispatch(Request::raw("__rusage", serde_json::Value::Null), state()).await;
         assert!(r.error.is_none(), "{:?}", r.error);
         let fields: Vec<&str> = r.output.split_whitespace().collect();
         assert_eq!(fields.len(), 5, "got {:?}", r.output);
@@ -670,10 +655,10 @@ mod tests {
     async fn gst_on_a_non_repo_path_renders_empty() {
         let dir = tempfile::tempdir().unwrap();
         let r = dispatch(
-            Request {
-                cmd: "gst".into(),
-                args: serde_json::json!({"path": dir.path().to_string_lossy()}),
-            },
+            Request::raw(
+                "gst",
+                serde_json::json!({"path": dir.path().to_string_lossy()}),
+            ),
             state(),
         )
         .await;
@@ -687,10 +672,10 @@ mod tests {
         // produced, and the trailing space — never a bare empty string.
         let dir = tempfile::tempdir().unwrap();
         let r = dispatch(
-            Request {
-                cmd: "status-right".into(),
-                args: serde_json::json!({"path": dir.path().to_string_lossy()}),
-            },
+            Request::raw(
+                "status-right",
+                serde_json::json!({"path": dir.path().to_string_lossy()}),
+            ),
             state(),
         )
         .await;
@@ -713,9 +698,11 @@ mod tests {
         // the output must not change between a cold and a warm call.
         let dir = tempfile::tempdir().unwrap();
         let st = state();
-        let make = || Request {
-            cmd: "status-right".into(),
-            args: serde_json::json!({"path": dir.path().to_string_lossy()}),
+        let make = || {
+            Request::raw(
+                "status-right",
+                serde_json::json!({"path": dir.path().to_string_lossy()}),
+            )
         };
         let a = dispatch(make(), Arc::clone(&st)).await;
         let b = dispatch(make(), Arc::clone(&st)).await;

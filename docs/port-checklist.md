@@ -17,7 +17,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 7 | `LICENSE`, `CONTRIBUTING.md`, "Adding a command", test-count sentence | done — plus crates.io metadata, docs/ skeleton, requirements.md |
 | 8 | the config loader and its tables | done (loader, errors, `config` subcommand, `[general]`, `[dirs]`, `[git]`, `[network]`, `[battery]`, `[glyphs]` with nerd-font-v3 and ascii, `[git] parts`, `[status.right]`); `[[layout]]` waits for `project` in phase 3 |
 | 9 | `vim-bg` becomes `sh-jobs` with a job table | done — `vim-bg` hidden alias for one release |
-| 10 | wire version, socket 0600, `doctor` | todo |
+| 10 | wire version, socket 0600, `doctor` | done — build stamp from build.rs, owner check, `__shutdown` |
 
 ## The port, in order
 

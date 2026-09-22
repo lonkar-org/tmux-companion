@@ -128,10 +128,7 @@ fn gst_renders_this_repository_over_the_socket() {
 #[test]
 fn an_unknown_command_comes_back_as_an_error_not_an_empty_render() {
     let server = TestServer::start("unknown");
-    let resp = server.send(Request {
-        cmd: "keys".into(),
-        args: serde_json::Value::Null,
-    });
+    let resp = server.send(Request::raw("keys", serde_json::Value::Null));
     assert_eq!(resp.output, "");
     let err = resp.error.expect("unknown command must error");
     assert!(err.contains("keys"), "{err}");
@@ -142,10 +139,10 @@ fn a_misspelled_argument_crosses_the_socket_as_a_named_error() {
     // The typed args structs are only worth anything if the error survives the
     // wire with the field name still in it.
     let server = TestServer::start("badarg");
-    let resp = server.send(Request {
-        cmd: "clients".into(),
-        args: serde_json::json!({"session_atached": 2}),
-    });
+    let resp = server.send(Request::raw(
+        "clients",
+        serde_json::json!({"session_atached": 2}),
+    ));
     let err = resp.error.expect("unknown key must error");
     assert!(err.contains("invalid clients args"), "{err}");
     assert!(err.contains("session_atached"), "{err}");
@@ -278,4 +275,88 @@ fn a_client_with_no_server_starts_one() {
         "auto-started server rendered nothing; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+#[test]
+fn the_socket_is_readable_only_by_its_owner() {
+    // The socket is an execution surface and the default path is under /tmp,
+    // which every user on the machine can write to.
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = TestServer::start("perms");
+    let mode = std::fs::metadata(&server.sock)
+        .expect("socket exists")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "socket mode is {mode:04o}");
+}
+
+#[test]
+fn a_response_carries_the_build_that_answered() {
+    let server = TestServer::start("version");
+    let resp = server.send(Request::build("noop", &()));
+    assert!(
+        !resp.version.is_empty(),
+        "a daemon should say which build it is"
+    );
+}
+
+#[test]
+fn a_client_replaces_a_daemon_from_another_build() {
+    // What an upgrade looks like: the binary on disk changed and the daemon
+    // did not. Simulated by answering as a daemon whose build id is not this
+    // one, since building a second binary inside a test is not worth it.
+    use std::io::{BufRead, BufReader, Write};
+
+    let sock =
+        std::path::PathBuf::from(format!("/tmp/tc-test-oldbuild-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&sock);
+    let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind");
+
+    let shutdown_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = std::sync::Arc::clone(&shutdown_seen);
+    let sock_for_thread = sock.clone();
+
+    let fake = std::thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.expect("accept");
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .expect("read");
+            if line.contains("__shutdown") {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+                let _ = stream
+                    .write_all(b"{\"output\":\"\",\"error\":null,\"version\":\"0.0.1+old\"}\n");
+                break;
+            }
+            let _ = stream
+                .write_all(b"{\"output\":\"old\",\"error\":null,\"version\":\"0.0.1+old\"}\n");
+        }
+        // The client waits for the socket to go before retrying.
+        let _ = std::fs::remove_file(&sock_for_thread);
+    });
+
+    let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+        .args(["gst", env!("CARGO_MANIFEST_DIR")])
+        .env("TMUX_COMPANION_SOCK", &sock)
+        .output()
+        .expect("client runs");
+    let _ = fake.join();
+
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        shutdown_seen.load(std::sync::atomic::Ordering::SeqCst),
+        "the client should have asked the old daemon to go; stderr: {err}"
+    );
+    assert!(err.contains("replacing daemon"), "{err}");
+
+    let _ = Command::new("pkill")
+        .args([
+            "-f",
+            &format!("{} server", env!("CARGO_BIN_EXE_tmux-companion")),
+        ])
+        .status();
+    let _ = std::fs::remove_file(&sock);
 }

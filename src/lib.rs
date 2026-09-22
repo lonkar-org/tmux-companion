@@ -16,6 +16,8 @@ pub mod cli;
 pub mod client;
 /// The configuration file.
 pub mod config;
+/// What to ask somebody to run before they open an issue.
+pub mod doctor;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// The JSON request and response, and one args struct per command.
