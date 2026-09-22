@@ -42,10 +42,24 @@ line saying so, and goes away after one release.
 | `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels |
 | `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--plain` prints and exits |
 | `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then what zoxide knows; `--print` lists and exits |
+| `project save` | Capture this session's windows and panes as this project's layout. `--no-commands` keeps the shape and leaves every pane a shell |
+| `project forget` | Delete this project's saved layout, so the config decides again |
+| `project show` | Which layout this project gets, which file decided, and the windows it opens |
 
 `--all` opens with no query, `--query` sets a different one, `--refresh`
 rebuilds from tmux rather than using what the daemon holds, and `--print` lists
 the rows instead of opening the picker.
+
+A saved layout wins over `[[layout]]`, because somebody pressed a key to make
+it and the config is what they had before they did. `project show` is the way to
+find out which one is in force without opening a session to see.
+
+Run `project save` from a binding rather than by typing it into a pane. Typed,
+the pane it runs in is running `tmux-companion` at the moment it looks, so that
+is the command it records for that pane.
+
+A directory whose name is `save`, `forget` or `show` has to be written as a
+path, `project ./save`, because a bare one reads as the subcommand.
 
 The picker runs in this process rather than in the daemon, because a daemon has
 no terminal.

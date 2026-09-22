@@ -63,6 +63,18 @@ bind -N "custom: project toggle the tools in this session" -n M-a \
 bind -N "custom: session close this project cleanly" X \
   confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion close-project'"
 
+# Capture this session's windows and panes as the layout this project opens
+# with next time. A saved layout wins over [[layout]] in the config, and
+# `project forget` puts the config back in charge.
+#
+# Costs nothing until pressed: two tmux calls and a file write. Bind it rather
+# than typing it, because a pane you type it into is running tmux-companion at
+# the moment it looks and that is the command it records for that pane.
+bind -N "custom: project save this layout for this project" S \
+  run-shell 'tmux-companion project save'
+bind -N "custom: project forget this project's saved layout" M-S \
+  run-shell 'tmux-companion project forget'
+
 # ── Copy mode, opening what is under the cursor ─────────────────────────────
 bind -T copy-mode-vi o send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion open -s"

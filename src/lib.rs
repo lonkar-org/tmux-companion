@@ -38,6 +38,8 @@ pub mod project;
 pub mod proto;
 /// Running a command from history in a side pane.
 pub mod run;
+/// Per-project layouts captured from a live session.
+pub mod saved;
 /// The things the status bar can draw.
 pub mod segments;
 /// The daemon.

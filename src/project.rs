@@ -364,6 +364,16 @@ pub fn session_commands(spec: &SessionSpec) -> Vec<Vec<String>> {
         "-n",
         &first.name,
     ]));
+    // Which project this session is, kept against a rename and against panes
+    // that wander somewhere else, so `project save` on this session writes to
+    // the right file.
+    out.push(args(&[
+        "set-option",
+        "-t",
+        &format!("={name}"),
+        "@tmux-companion-project",
+        path,
+    ]));
     for w in rest {
         out.push(args(&[
             "new-window",
@@ -670,13 +680,16 @@ mod session_building {
     fn the_default_layout_builds_what_it_built_before_panes_existed() {
         // The pinned sequence. A window with no `pane` table has to emit the
         // same calls in the same order as the hand-written version this
-        // replaced, including the window-level `send-keys` target.
+        // replaced, including the window-level `send-keys` target. The one
+        // addition is the `@tmux-companion-project` option, which is what lets
+        // `project save` find the right file from a renamed session.
         let c = Config::default();
         let l = c.layout_for("/w/proj", "/home/me").expect("default layout");
         assert_eq!(
             joined(&build(&l.window, 0)),
             vec![
                 "new-session -d -s proj -c /w/proj -n edit",
+                "set-option -t =proj @tmux-companion-project /w/proj",
                 "new-window -d -t =proj: -c /w/proj -n ai",
                 "set-window-option -t =proj:edit automatic-rename off",
                 "set-window-option -t =proj:edit allow-rename off",

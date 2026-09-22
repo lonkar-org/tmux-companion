@@ -239,6 +239,9 @@ pub enum Cmd {
 
     /// Switch to a project, or start one
     Project {
+        /// Save, forget or explain this project's layout
+        #[command(subcommand)]
+        action: Option<ProjectAction>,
         /// Go straight to this directory instead of opening the picker
         dir: Option<String>,
         /// Print the rows and exit
@@ -482,7 +485,12 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Run { print, exec } => run_command(print, exec).await?,
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
-        Cmd::Project { dir, print } => run_project(dir, print).await?,
+        Cmd::Project { action, dir, print } => match action {
+            Some(ProjectAction::Save { no_commands }) => run_project_save(!no_commands).await?,
+            Some(ProjectAction::Forget) => run_project_forget().await?,
+            Some(ProjectAction::Show) => run_project_show().await?,
+            None => run_project(dir, print).await?,
+        },
         Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
@@ -972,10 +980,7 @@ async fn open_project(
     if !exists {
         crate::project::record_visit(path).await;
 
-        let windows = config
-            .layout_for(path, home)
-            .map(|l| l.window.clone())
-            .unwrap_or_default();
+        let (windows, _) = crate::saved::resolve(config, crate::saved::load(path), path, home);
 
         let spec = crate::project::SessionSpec {
             name: &name,
@@ -1010,6 +1015,140 @@ async fn pane_base_index() -> usize {
         .unwrap_or(0)
 }
 
+/// What `project <verb>` does instead of opening the picker.
+///
+/// A directory whose name is one of these verbs has to be written as a path,
+/// `project ./save`, because clap reads a bare `save` as the subcommand. That
+/// is the cost of the spelling in the documentation, and it is cheaper than a
+/// flag nobody remembers.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum ProjectAction {
+    /// Capture this session's windows and panes as this project's layout
+    Save {
+        /// Record the geometry and leave every pane a plain shell
+        #[arg(long)]
+        no_commands: bool,
+    },
+    /// Delete this project's saved layout and fall back to the config
+    Forget,
+    /// Which layout this project gets, and which file decided
+    Show,
+}
+
+/// The session this is running in, and the directory it belongs to.
+///
+/// `@tmux-companion-project` is set when the project picker creates a session
+/// and it survives a rename, so it answers correctly for a session whose panes
+/// have since wandered somewhere else. `#{session_path}` is the fallback, which
+/// is right for any session tmux made without this tool.
+async fn current_project() -> anyhow::Result<(String, String)> {
+    let session = tmux_display("#{session_name}").await;
+    if session.is_empty() {
+        anyhow::bail!("not inside tmux");
+    }
+    let tagged = tmux_display("#{@tmux-companion-project}").await;
+    let path = if tagged.is_empty() {
+        tmux_display("#{session_path}").await
+    } else {
+        tagged
+    };
+    Ok((session, path))
+}
+
+/// `project save`: capture this session and write it for this project.
+async fn run_project_save(with_commands: bool) -> anyhow::Result<()> {
+    let (session, path) = current_project().await?;
+    let (saved, guessed) = capture_session(&session, &path, with_commands).await?;
+    let file = crate::saved::store_rendered(&saved, &guessed)?;
+    println!(
+        "saved {} window{} for {}\n  {}",
+        saved.window.len(),
+        if saved.window.len() == 1 { "" } else { "s" },
+        path,
+        file.display()
+    );
+    if !guessed.is_empty() {
+        println!(
+            "  {} pane{} took its command from the running process, so any arguments are gone",
+            guessed.len(),
+            if guessed.len() == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
+}
+
+/// Ask tmux what a session looks like right now.
+async fn capture_session(
+    session: &str,
+    path: &str,
+    with_commands: bool,
+) -> anyhow::Result<(crate::saved::SavedLayout, Vec<(usize, usize)>)> {
+    let target = format!("={session}");
+    let windows = tmux_capture(&[
+        "list-windows",
+        "-t",
+        &target,
+        "-F",
+        "#{window_index}\t#{window_name}\t#{window_width}\t#{window_height}\t#{window_layout}",
+    ])
+    .await;
+    let panes = tmux_capture(&[
+        "list-panes",
+        "-s",
+        "-t",
+        &target,
+        "-F",
+        "#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}",
+    ])
+    .await;
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let at = crate::tasks::format_unix(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    );
+    let real = std::fs::canonicalize(path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.to_string());
+    Ok(crate::saved::capture(&crate::saved::Capture {
+        windows: &windows,
+        panes: &panes,
+        project: path,
+        project_real: &real,
+        shell: &shell,
+        home: &home,
+        at: &at,
+        with_commands,
+    }))
+}
+
+/// `project forget`: drop this project's saved layout.
+async fn run_project_forget() -> anyhow::Result<()> {
+    let (_, path) = current_project().await?;
+    if crate::saved::forget(&path)? {
+        println!("forgot the saved layout for {path}");
+    } else {
+        println!("no saved layout for {path}");
+    }
+    Ok(())
+}
+
+/// `project show`: which layout this project gets, and which file decided.
+async fn run_project_show() -> anyhow::Result<()> {
+    let (_, path) = current_project().await?;
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let (windows, source) = crate::saved::resolve(&config, crate::saved::load(&path), &path, &home);
+    print!(
+        "{}",
+        crate::saved::describe(&path, &windows, &source, &home)
+    );
+    Ok(())
+}
+
 /// One tmux command, ignoring a failure.
 ///
 /// Each of these is a step in building a session, and a step that fails should
@@ -1035,10 +1174,8 @@ async fn run_toggle(session: Option<String>, window: Option<String>) -> anyhow::
     let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let path = tmux_display("#{session_path}").await;
-    let windows: Vec<String> = config
-        .layout_for(&path, &home)
-        .map(|l| l.window.iter().map(|w| w.name.clone()).collect())
-        .unwrap_or_default();
+    let (layout, _) = crate::saved::resolve(&config, crate::saved::load(&path), &path, &home);
+    let windows: Vec<String> = layout.iter().map(|w| w.name.clone()).collect();
 
     match crate::tasks::toggle_target(&current, &windows) {
         Some(target) => {

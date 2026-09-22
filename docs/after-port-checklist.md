@@ -8,8 +8,8 @@ commit that does it. `blocked` carries the reason on the same line.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | panes in a layout window | done — `[[layout.window.pane]]`, presets and raw layout strings, `session_commands` is pure and pinned against the pre-panes sequence |
-| 2 | `project save`, `forget`, `show`, per-project layout files | todo |
-| 3 | `project close`: capture then exit | todo |
+| 2 | `project save`, `forget`, `show`, per-project layout files | done — `src/saved.rs`, files under `$XDG_STATE_HOME/tmux-companion/projects/`, smoke-project-layout.sh covers it end to end |
+| 3 | capture before `close-project` exits | todo — folded into `close-project`, which already owns the X binding, rather than a rival command |
 | 4 | `.tmux-companion.toml` in the project root, with a trust list | held — the only item here with a security surface, and the least asked for |
 
 ## If I only pick five
