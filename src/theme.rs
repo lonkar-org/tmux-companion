@@ -1244,8 +1244,8 @@ mod add_tests {
             "{body}"
         );
         assert!(
-            !body.contains("@theme-color-border"),
-            "the border is gen's job"
+            !body.contains("set @theme-color-border"),
+            "the border is gen's job; the comment may name it, a set line may not"
         );
     }
 
