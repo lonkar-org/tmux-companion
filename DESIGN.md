@@ -1,260 +1,162 @@
 # Design
 
-## Problem
+## The problem
 
-tmux's `status-interval` fires every second.  The original setup called six
-separate programs per tick — a Go binary and five zsh scripts.  Each involves
-process-fork overhead, shell interpreter startup, and repeated reads of config
-files or system interfaces.  On a busy machine this causes visible status-line
-lag.
+A tmux config that shells out pays for the shelling out, not for the work.
 
-The goal: one persistent daemon that holds all state in memory, with clients
-that connect over a Unix socket, send one JSON line, read one JSON line, and
-exit.
+tmux gates `#()` to `status-interval` per attached client, so a bar that calls
+six programs a second costs six fork-and-execs a second whatever those programs
+compute. A fork and exec is 12.4 ms of CPU, 14.6 as tmux runs it through
+`sh -c`. Computing every segment on the bar takes 2.6 ms.
 
-## Architecture
+The same sum runs the other way for a keybinding. A popup that starts zsh, reads
+a config file and pipes into `fzf` spends most of its latency before the first
+frame, and none of that's the search.
 
-```
-┌──────────────────────────────────────────────────────┐
-│  tmux status-interval (every 1 s)                    │
-│                                                      │
-│  #(tmux-companion gst …)  #(tmux-companion battery)  │
-│         │                        │                   │
-└─────────┼────────────────────────┼───────────────────┘
-          │  Unix socket           │
-          ▼                        ▼
-┌─────────────────────────────────────────────────────┐
-│  tmux-companion server                              │
-│                                                     │
-│  tokio async runtime, one task per connection       │
-│                                                     │
-│  ServerState (Arc<Mutex<_>>)                        │
-│    net_previous:  Option<NetSample>                 │
-│    net_last_render: String                          │
-│    dir_aliases:   HashMap<PathBuf, String>          │
-│    battery_cache: Option<(String, Instant)>         │
-│    git_cache:     TtlMap<PathBuf, GitStatus>        │
-│    repo_check:    TtlMap<PathBuf, bool>             │
-└─────────────────────────────────────────────────────┘
-```
+So: one process that stays up and holds its state, and clients that connect,
+send a line, read a line and exit.
 
-### Same binary, two modes
+## Shape
+
+Same binary, two modes.
 
 ```
-tmux-companion server        # binds socket, accepts connections
-tmux-companion <cmd> [args]  # connects, sends request, prints output, exits
+tmux-companion server        # binds the socket, serves until killed
+tmux-companion <cmd> [args]  # connects, sends one line, prints, exits
 ```
 
-The client auto-starts the server on first use: it tries to connect; on failure
-it forks the server as a detached child, then retries with exponential backoff
-(up to 10 attempts, 50 ms intervals).
+The client starts the server on first use. It tries to connect; on failure it
+forks the server as a detached child and retries with backoff, ten attempts at
+50 ms.
 
-### IPC protocol
+```
+   tmux status-interval                    a keybinding
+   #(tmux-companion status-right …)        display-popup -E "tmux-companion keys"
+              │                                        │
+              └──────────── unix socket ───────────────┘
+                              │
+                    tmux-companion server
+                      tokio, one task per connection
+                      ServerState behind an Arc<Mutex<_>>
+                        caches, the bandwidth anchor, the key rows
+                      background tasks, each off by default
+```
 
-Newline-delimited JSON, one request per connection.
+The wire is newline-delimited JSON, one request per connection.
 
 ```jsonc
-// request  (client → server)
-{"cmd": "gst", "args": {"path": "/repo", "force": false}}
-
-// response (server → client)
-{"output": "#[fg=color025,bg=color120] …", "error": null}
+{"cmd": "gst", "args": {"path": "/repo"}, "version": "0.1.0+1790054855"}
+{"output": "#[fg=color025,…]", "error": null, "version": "0.1.0+1790054855"}
 ```
 
-Each connection is handled by a spawned tokio task.  The task reads one line,
-dispatches, writes one line, closes.
+Each command owns one serde struct with `deny_unknown_fields`, used by the clap
+flags, the wire and the handler. A key that was never sent used to read back as
+`None` and change behaviour in silence; now it's an error that names the field.
 
-### Singleton guarantee
+The `version` is a build stamp from `build.rs` rather than the crate version,
+during development every build carries the same version number, and the question
+a client actually needs answered is whether the daemon's running the binary that
+was just installed. A mismatch replaces the daemon and retries once.
 
-Before binding the socket, the server tries to connect to it.  If that
-succeeds, another instance is running and the new process exits immediately.
-If the connect fails, the stale socket file (if any) is removed and a fresh
-`UnixListener::bind` is attempted.  A second concurrent startup race is benign:
-only one bind wins; the loser exits.
+### Singleton
 
-## Module map
+Before binding, the server connects to its own socket. If that succeeds another
+instance is up and this one exits. If it fails, a stale socket file's removed and
+the bind attempted. Two concurrent starts are benign: one bind wins and
+the loser exits. The socket is created 0600.
 
-```
-src/
-  main.rs              argument parsing and the runtime choice
-  lib.rs               the library the binary and tests/ both link
-  cli.rs               clap CLI (Cmd enum), dispatch to client or server
-  proto.rs             Request / Response serde types
-  client.rs            connect-with-retry, spawn_server, send_and_print
-  server/
-    mod.rs             UnixListener accept loop
-    state.rs           ServerState: net_previous, dir_aliases
-    handlers.rs        req.cmd → segment fn
-  segments/
-    git.rs             git status parse + format + cache (main segment)
-    battery.rs         macOS ioreg battery
-    network.rs         netstat bandwidth delta
-    clients.rs         tmux list-clients count
-    vim_bg.rs          pgrep children, state=T + nvim
-    window.rs          window title: index icons, path abbreviation, flags
-  tmux/
-    format.rs          Segment builder, colored_segment(), powerline_segment()
-    icons.rs           Nerd Font Unicode codepoints
-  cache.rs             TtlMap: timestamped map, reader-supplied TTL
-```
+## Where work happens
 
-## Git status segment
+Three places, and which one a thing belongs in is the main design decision in
+the repository.
 
-The main segment, ported from the Go `yrl gst` command.
+**In the daemon.** Anything that returns bytes for the bar, anything with a
+cache worth keeping warm, and anything on a timer. The daemon hasn't got a terminal, so it never draws.
 
-### Caching
+**In the client.** Anything with a terminal: the pickers, the dialogs, the
+`ratatui` screens. The daemon answers with rows and the client draws them, which
+is also why a picker's testable against a `TestBackend` without a socket.
 
-Git status is cached in memory on `ServerState`, keyed by the canonicalized
-repository path, with a TTL that defaults to 5 seconds and is settable per
-request with `--ttl`.  A cache hit skips all git subprocess invocations — the
-round-trip is then socket connect → JSON deserialize → map lookup → JSON
-serialize → socket write, which costs 0.09 ms.
+**In a pure function.** Everything else. Parsing, formatting, arithmetic and
+ordering come out of the async functions that do the I/O, so they run in tests
+without a subprocess, a repository or a clock. Building a tmux session is a
+dozen ordered commands, and `session_commands` returns them as data precisely so
+the order can be asserted.
 
-`git rev-parse --is-inside-work-tree` is cached separately, for 5 minutes.  It
-sits ahead of the status cache, so before it was cached every warm call still
-paid a full `git` fork for it — 7.5 ms of the 7.6 ms a warm call cost.  A path's
-repo-ness effectively never changes; the TTL exists only so that `git init` in a
-watched directory is not misremembered until the server restarts.
+## Invariants
 
-The `--force` flag on `gst` skips the cache read (the result is still written
-back so the next normal call benefits).  `--ttl 0` disables the cache entirely.
+These are the ones that cost something to rediscover.
 
-The cache does not survive a server restart, which is the intended lifetime: one
-cold `git status` costs 51 ms, once.
+**Every `ServerState` method is synchronous.** The combined `status-right`
+handler polls its segments concurrently under `tokio::join!`, and any one of
+them holding the mutex guard across a suspension point would deadlock the
+others. Keeping them sync makes that impossible to write rather than merely discouraged. Compute first, take the lock for one statement.
 
-### Parsing
+**The TTL belongs to the reader.** `TtlMap` records when an entry was written
+and nothing else; freshness is `age < ttl` evaluated at read time with a TTL the
+caller supplies. That is what lets `--ttl` be a runtime flag, and it means there's
+no cold-start case: the first entry expires exactly like the thousandth.
+Expired entries are swept on insert, so a daemon running for weeks across many
+repositories cannot grow without bound.
 
-Runs `git status --untracked-files=all --branch --porcelain=v2` and
-`git rev-parse --path-format=absolute --git-dir` concurrently via `tokio::join!`.
-A second join concurrently resolves `is_gone` (`git branch -r`) and counts
-stash entries (line count of `.git/logs/refs/stash`).
+**Never cache the assembled bar, only its segments.** `net` is a rate. A cached
+assembly would replay one measurement window's average for as long as the entry
+lived, which reads as a frozen bar rather than a quiet network.
 
-### Formatting
+**`status-right` never passes a pane pid to the git segment.** Doing so calls
+`has_suspended_nvim`, which walks the whole process table and cost 18.5 ms of
+that segment's 26.0. The marker's given up on the bar, and it's still there from `gst <path> <pid>` by
+hand.
 
-`status_line_mode(status, no_tmux)` is a direct port of yrl's `StatusLine` Go
-function.  It builds a `Segment` (a `Vec<String>` whose elements are joined on
-`to_string()`) and calls `colored_segment` / `powerline_segment` to produce
-either `#[fg=colorXX,bg=colorYY]` (tmux format) or `\x1b[38;5;XXm\x1b[48;5;YYm`
-(ANSI/no-tmux format).
+**The assembled bar is pinned byte for byte.** `assemble_right` is pure and its
+output is asserted in full, including the literals and the trailing space, so a
+refactor that drops a separator fails a test rather than a glance. Across the
+port, `compare-output.sh` checked the same claim against the previous binary on
+every commit.
 
-One special case inherited from the Go original: in no-tmux mode,
-`colored_segment(fg, bg, ARROW_RIGHT)` emits only the color-change escape codes,
-not the arrow glyph itself.  The arrow appears only from the terminal reset
-sequence appended at the end.
+## Configuration
 
-### Branch truncation
+One TOML file, found at `~/.tmux-companion.toml` or
+`$XDG_CONFIG_HOME/tmux-companion/config.toml`, parsed once at startup and never
+per request. A daemon exists partly to stop repeated config reads, so reading one per render
+would be a poor joke. `reload` is what picks up an edit.
 
-Matches Go's `shortBranch` logic exactly:
-- Strip known prefix (`feat/`, `bugfix/`, `hotfix/`, `chore/`, `release/`) and
-  prepend the matching icon.
-- Truncate when `char_count > 20`: keep first 8 chars + `...` + last 10 chars.
-  (Go iterates byte indices 0..len-1; truncation fires when index ≥ 20, i.e.
-  when len > 20.  Tail is `branch[len-1-9:]` = last 10 chars.)
+Parsing uses `deny_unknown_fields`, and an unknown key's answered with the
+field names serde already knows, so a typo names itself. A bad file stops the
+daemon starting and says which line and what it expected, cause a status bar
+that quietly ignores half a config is worse than one that refuses to start.
 
-## Window segment
+Glyph substitution happens once at the response edge rather than at the 263
+places a glyph is written, so a preset for people who haven't got a Nerd Font is one lookup on the way out.
 
-Port of `window-status.zsh`.
+## Background tasks
 
-**Path abbreviation** (`abbreviate_path`):
-1. Strip home prefix → replace with `~`.
-2. Discard `RootDir` component; treat it as a prefix `/`.
-3. Abbreviate every component except the last to its first character
-   (dot-prefixed components keep two characters: `.c` for `.config`).
-4. Ellipsize basename at 17 chars (head 7 + `…` + tail 7).
-5. Apply dir-logo substitutions in priority order (most specific first):
-   `~/g/mysetup`, `~/g/`, `~/b/`, `~/`, `~`, `/`.
+Four, each a tokio task spawned at startup only when its config says so:
+fetching repositories the bar has drawn, sourcing tmux's config when it changes,
+naming windows from the job table, and announcing a long command that finished
+out of sight. All four default to off. A daemon that starts reaching a remote,
+renaming windows or sourcing a config on its own is a surprise, and the argument
+for one binary is that it costs less than the plugins, not that it decides more.
 
-**Dir aliases** are loaded once at server startup from `~/.yrl/lib/dir-aliases`
-into `ServerState.dir_aliases` and cloned per request.
-
-**Index icons**: 10 selected (filled) and 10 unselected (outline) number-circle
-icons.  Codepoints extracted directly from `window-status.zsh` via byte
-inspection.
-
-**Process animation**: when `process ≠ zsh` and the window is not current, the
-index color cycles through 20 colours keyed on `epoch_secs % 20`.
-
-## Network monitor
-
-`ServerState.net_previous` holds a `NetSample` — `rx_bytes`, `tx_bytes` and the
-`Instant` they were read — from the previous call.  On the first call the sample
-is stored and an empty string is returned.  On subsequent calls the delta
-divided by the elapsed time gives the throughput.  Speeds below 20 480 B/s are
-suppressed.
-
-The segment splits into three pieces, so that each is independently testable and
-the expensive one can run concurrently with the other segments:
-
-- `sample()` reads the cumulative counters via `sysinfo::Networks` (no
-  subprocess; loopback interfaces are excluded) and touches no shared state.
-- `rate(delta, elapsed)` divides, using `as_secs_f64`.  It previously used
-  `as_secs().max(1)`, which truncated: a 1.1-second interval was reported as one
-  second and every rate came out about 10% high, while any interval shorter than
-  a second was divided by a whole one and came out low.
-- `advance(previous, last_render, rx, tx, now)` is the state machine.  Below
-  200 ms of elapsed time it returns the previous rendering unchanged and
-  deliberately does *not* move the anchor, so the next call still has a
-  full-length interval to divide by.  Without that guard two clients refreshing
-  back to back would divide a handful of bytes by a few milliseconds and spike.
-
-`net` is never cached.  It is a rate, the user wants it live, and at 1.05 ms per
-call there is nothing worth caching.
-
-## Caching
-
-`src/cache.rs` holds `TtlMap<K, V>`: a `HashMap` whose values carry the `Instant`
-they were written.  Freshness is decided by the *reader* — `age < ttl`, with a
-TTL the caller supplies — which is what lets `--ttl` be a runtime flag rather
-than a constant compiled into the store, and means there is no cold-start
-special case: the first entry written expires exactly like the thousandth.
-Expired entries are swept on insert, so a server running for weeks across many
-panes and repositories cannot grow without bound.
-
-There is no database.  SQLite was removed because it earned nothing: it cost
-0.62 ms of the 27.7 ms a cached `gst` took, while `rusqlite`'s `bundled` feature
-compiled SQLite from C and was the largest single item in a clean build.
-Dropping it took 36 crates out of the dependency graph, 21 s off a clean build
-and 2.3 MB off the binary.
-
-`ServerState` carries three caches: git status (5 s, flag-settable),
-is-inside-work-tree (5 min) and battery (30 s).  Every `ServerState` method is
-synchronous, which makes it impossible to hold the mutex guard across an
-`.await` — the combined `status-right` handler polls three segments
-concurrently, and any one of them holding the guard across a suspension point
-would deadlock the others.
-
-## One `#()` call
-
-The status bar makes a single `#()` call, `status-right`, which renders the git,
-bandwidth and battery segments concurrently under `tokio::join!` and joins them
-with the tmux literals that used to sit between the separate calls in
-`tmux.conf`.  `assemble_right` is a pure function so those exact bytes are
-pinned by unit tests.
-
-The reason is measurement, not tidiness: a fork/exec costs 12.4 ms of CPU
-(14.6 ms as tmux runs it, via `sh -c`), tmux gates `#()` to `status-interval`
-per attached client per distinct command string, and the entire server-side
-computation for all three segments is 2.6 ms.  Spawn count is the whole bill.
-The TTL is applied per segment inside the call and never to the assembled
-string: `net` is a rate, and caching the assembly would replay one measurement
-window's average until the entry expired.
+This is also what replaced a detached shell loop with a PID lock file. A task
+lives as long as the process and stops when it stops, which is the whole of the
+lifetime management the zsh version needed that lock file for.
 
 ## Testing
 
-The suite runs in well under a second.  All pure functions are extracted from async render functions so
-they can run without spawning any subprocesses or reading hardware.
+620 unit tests and 22 integration tests, the whole suite under a second, no
+network and no fixtures.
 
-Key test patterns:
-- `segments/git.rs` — ports all 17 Go status_line test cases from
-  `yrl/pkg/git/statusline_test.go`, plus parsing, Area, and helper tests.
-- `cache.rs` — every method takes the current `Instant` explicitly in its `*_at`
-  form, so hit, expiry, boundary and sweep are all tested without sleeping.
-- `server/handlers.rs` — `assemble_right` is pinned byte for byte, including
-  the literals and the trailing space.
-- `segments/network.rs` — `rate` and `advance` are pure, so the fractional-second
-  arithmetic and the sub-200 ms guard are tested against an injected clock.
-- `tmux/format.rs` — verifies every `Segment` method and both output modes of
-  `colored_segment`, including the ARROW_RIGHT special case.
-- `segments/window.rs` — tests `abbreviate_path` for root, home, deep nesting,
-  dotfiles, truncation, and all dir-logo substitutions; tests `render` for icon
-  selection, color, flags, and process animation.
+The pattern throughout is that the pure core's tested and the I/O is a thin
+wrapper over it. `TtlMap` takes the instant explicitly in its `*_at` form, so
+expiry and sweeping are tested without sleeping. `rate` and `advance` in the
+network segment take an injected clock. `scan` in `open` takes an `exists`
+closure. The pickers render to a `TestBackend`.
+
+The integration tests speak to a real socket in a temporary directory rather
+than setting `TMUX_COMPANION_SOCK`, because that variable's process-global and the tests run in parallel.
+
+Where a port replaced a script, it was checked against the script rather than
+read alongside it: the theme report matches the Python on all 76 themes, `run` is
+byte-identical to `fc -ln` over 1127 commands, and `cheatsheet` lists the same
+34 bindings.

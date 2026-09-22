@@ -2,30 +2,28 @@
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
 
-One binary that draws your tmux status bar and runs the pickers behind your
-keybindings, out of a daemon that's already warm.
+One binary behind your whole tmux config. It draws the status bar, runs the
+pickers behind your keybindings, and builds your project sessions, out of a
+daemon that is already warm.
 
-![the status bar](./screenshot-tmux-status-bar.png)
+## Why
 
-## Why I wrote it
+My tmux config shelled out for everything. The bar spawned five processes a
+second. Every binding that needed to think ran a zsh script that started a
+shell, read some config, called `fzf`, and exited. I'd built it that way over
+years, a script at a time, and never added it up.
 
-My status bar spawned five processes every second to draw one line of text. I
-had built it that way over years, a script at a time, and never added the
-numbers up. When I finally measured it, the bar was costing **15.4% of one
-core**, all day, on a laptop running on battery.
+The bar alone cost 15.4% of one core, all day, on a laptop running on battery.
+It costs 1.8% now, and the pickers open in 8.3 ms instead of 18.8.
 
-It costs **1.8%** now.
+None of that's because Rust is fast. tmux gates `#()` to `status-interval` per
+attached client, so a bar costs what it spawns and not what it computes: a fork
+and exec is 12.4 ms of CPU, and computing the whole right-hand side takes 2.6.
+The same arithmetic runs the other way for a picker, where the cost was a shell
+starting up before anything showed on screen.
 
-The reason is not that Rust is fast. It's that tmux gates `#()` to
-`status-interval` per attached client, so what a bar costs is set by how many
-commands it spawns and not by what they compute. A fork and exec is 12.4 ms of
-CPU. Computing the whole right-hand side takes 2.6 ms. Five calls a second was
-me paying the postage five times to send one letter.
-
-So there's one `#()` call now. Everything behind it lives in a daemon that
-keeps its caches warm, and every other thing my tmux used to shell out for
-talks to that same daemon over a unix socket: the key-binding search, the
-project switcher, the theme picker, the command runner.
+So there's one process now. It holds its caches, answers over a unix socket, and
+everything my tmux used to shell out for talks to it instead.
 
 ## What you get
 
@@ -35,15 +33,20 @@ project switcher, the theme picker, the command runner.
 | `keys` | fuzzy search every binding, press enter to run it |
 | `cheatsheet` | the bindings you wrote, four boxes, most-used first |
 | `project` | one session per project, sessions and zoxide in one list |
+| `project save` | capture this session's panes as the layout it reopens with |
 | `run` | pick from shell history, run it in a pane that slides out |
-| `theme pick` | 76 themes with a swatch each, applied on the spot |
 | `open` | open the URL or `file:line:col` under your cursor |
+| `theme pick` | 76 themes with a swatch each, applied on the spot |
+| `shell-init` | the prompt marks tmux's `next-prompt` has waited for since 3.3 |
 | `sh-jobs` | what's suspended under this pane, with your icons |
 | `doctor` | everything a bug report needs, in one screen |
-| `project save` | capture this session's panes as the layout it reopens with |
-| `shell-init` | the prompt marks tmux's next-prompt has waited for since 3.3 |
 
-Full list with every flag: [docs/reference/cli.md](docs/reference/cli.md).
+Background tasks, all of them off till you turn them on: fetching your repositories so
+ahead and behind mean something, sourcing tmux's config when it changes, naming
+windows after what's running in them, and saying when a long command finished
+somewhere you weren't looking.
+
+Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Quick start
 
@@ -51,20 +54,18 @@ Full list with every flag: [docs/reference/cli.md](docs/reference/cli.md).
 cargo build --release
 sudo install -m 755 target/release/tmux-companion /usr/local/bin/
 
-# it starts its own daemon the first time you ask it anything
-tmux-companion gst .
 tmux-companion doctor
 ```
 
-Then one line in `tmux.conf`:
+One line in `tmux.conf` gets you the bar:
 
 ```tmux
 set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
 
-The annotated version, with the reasoning for every line, is in
-[docs/tmux.conf.example](./docs/tmux.conf.example). Install the binary before
-you apply the config, or the right-hand side goes blank till you do.
+The annotated version, with the reasoning for every line and what each feature
+costs, is [docs/tmux.conf.full.example](docs/tmux.conf.full.example). The
+smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 ## Usage
 
@@ -76,10 +77,6 @@ Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
 your `-N` strings and runs whatever you pick.
 
-![the left of the bar](./screenshot-tmux-status-bar-left.png)
-![the middle](./screenshot-tmux-status-bar-middle.png)
-![the right](./screenshot-tmux-status-bar-right.png)
-
 ## Configuration
 
 <!-- @Yogesh(video): configuration recording goes here. Suggested run: no config
@@ -87,26 +84,18 @@ your `-N` strings and runs whatever you pick.
      [git] parts. Drop it in above this line and delete the comment. -->
 
 There's no config file till you write one, and the defaults are what the binary
-did before the file existed. When you do want one:
+did before the file existed.
 
 ```sh
 tmux-companion config dump > ~/.config/tmux-companion/config.toml
 tmux-companion config check
 ```
 
-If your bar is a row of boxes, you don't have a Nerd Font and this is the line:
+If your bar's a row of boxes you don't have a Nerd Font, and this is the line:
 
 ```toml
 [glyphs]
 preset = "ascii"
-```
-
-And if you've got four hundred untracked build artifacts, a count of them is
-not information:
-
-```toml
-[git]
-parts = ["branch", "state", "staged", "modified"]
 ```
 
 Every setting with its default is in
@@ -115,8 +104,8 @@ Every setting with its default is in
 
 ## What it costs
 
-Measured on one machine, and the numbers are in
-[BENCHMARKS.md](./BENCHMARKS.md) with the method beside them.
+Measured on one machine, with the method beside the numbers in
+[BENCHMARKS.md](./BENCHMARKS.md).
 
 | | |
 | --- | --- |
@@ -127,18 +116,14 @@ Measured on one machine, and the numbers are in
 | `keys`, warm, against `fzf --filter` | 8.3 ms against 18.8 ms |
 | a cold `git status` after a restart | 51 ms, once |
 
-That last one is the daemon's whole bargain: state lives in memory and dies
-with the process, and you pay 51 ms for it once.
-
 ## What it doesn't do
 
-- It's macOS and Linux. Not Windows, and not planned: the whole thing is a unix
+- macOS and Linux. Not Windows, and not planned: the whole thing is a unix
   socket and a `SIGWINCH`.
-- The pickers need tmux 3.2 for `display-popup -E`. The bar itself is happy on
-  3.0.
-- It won't restore your sessions. It saves them on a timer, and restoring stays
-  on a key you press, cause an automatic restore would resurrect a stale layout
-  over a session you've already started working in.
+- The pickers need tmux 3.2 for `display-popup -E`. The bar is happy on 3.0.
+- It won't restore your sessions on its own. It saves them on a timer, and
+  restoring stays on a key you press, cause an automatic restore would
+  resurrect a stale layout over a session you'd already started working in.
 - It's not a theme pack. It applies themes and doesn't compete with catppuccin
   or rose-pine.
 
@@ -153,7 +138,7 @@ with the process, and you pay 51 ms for it once.
 | [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | Rust, tmux, fonts, platforms |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
-| [BENCHMARKS.md](BENCHMARKS.md) | what the bar costs, and how that was measured |
+| [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
 | [CHANGELOG.md](CHANGELOG.md) | what changed |
 
