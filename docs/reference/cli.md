@@ -98,7 +98,7 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | Command | Does |
 | --- | --- |
 | `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `-s` scans the tmux selection, `-n` prints what it would open |
-| `close-project [SESSION]` | Let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!` |
+| `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform |
 | `zoom` | Zoom the pane, or toggle the status bar when the window has only one |
 | `probe keys` | Show what the terminal sends for a key |

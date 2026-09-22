@@ -189,6 +189,9 @@ pub enum Cmd {
         /// Quit editors with :qa! and throw away unsaved work
         #[arg(long)]
         discard: bool,
+        /// Close without capturing the layout, leaving any saved one alone
+        #[arg(long)]
+        no_save: bool,
     },
 
     /// Copy to the system clipboard, whatever this platform calls it
@@ -478,7 +481,11 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             base_dir,
             dry_run,
         } => run_open(text, selection, base_dir, dry_run).await?,
-        Cmd::CloseProject { session, discard } => run_close_project(session, discard).await?,
+        Cmd::CloseProject {
+            session,
+            discard,
+            no_save,
+        } => run_close_project(session, discard, !no_save).await?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
         Cmd::Zoom => run_zoom().await?,
         Cmd::Probe { what } => run_probe(what)?,
@@ -1035,23 +1042,55 @@ pub enum ProjectAction {
     Show,
 }
 
-/// The session this is running in, and the directory it belongs to.
+/// Capture a session's layout on the way out.
+async fn save_before_close(session: &str) -> anyhow::Result<()> {
+    let path = project_of(session).await;
+    if path.is_empty() {
+        anyhow::bail!("no directory for session {session}");
+    }
+    let (saved, guessed) = capture_session(session, &path, true).await?;
+    crate::saved::store_rendered(&saved, &guessed)?;
+    Ok(())
+}
+
+/// The directory a session belongs to.
 ///
 /// `@tmux-companion-project` is set when the project picker creates a session
 /// and it survives a rename, so it answers correctly for a session whose panes
 /// have since wandered somewhere else. `#{session_path}` is the fallback, which
 /// is right for any session tmux made without this tool.
+async fn project_of(session: &str) -> String {
+    // `={session}:` and not `={session}`. `display-message -t` takes a pane,
+    // and a bare session name is not one, so the session form answers with an
+    // empty string rather than an error and the caller reads it as "no
+    // project" instead of as a mistake.
+    let target = format!("={session}:");
+    let tagged = tmux_capture(&[
+        "display-message",
+        "-p",
+        "-t",
+        &target,
+        "#{@tmux-companion-project}",
+    ])
+    .await
+    .trim()
+    .to_string();
+    if !tagged.is_empty() {
+        return tagged;
+    }
+    tmux_capture(&["display-message", "-p", "-t", &target, "#{session_path}"])
+        .await
+        .trim()
+        .to_string()
+}
+
+/// The session this is running in, and the directory it belongs to.
 async fn current_project() -> anyhow::Result<(String, String)> {
     let session = tmux_display("#{session_name}").await;
     if session.is_empty() {
         anyhow::bail!("not inside tmux");
     }
-    let tagged = tmux_display("#{@tmux-companion-project}").await;
-    let path = if tagged.is_empty() {
-        tmux_display("#{session_path}").await
-    } else {
-        tagged
-    };
+    let path = project_of(&session).await;
     Ok((session, path))
 }
 
@@ -1578,7 +1617,11 @@ async fn run_open(
 }
 
 /// `close-project`: ask every window to go, rather than killing the session.
-async fn run_close_project(session: Option<String>, discard: bool) -> anyhow::Result<()> {
+async fn run_close_project(
+    session: Option<String>,
+    discard: bool,
+    save: bool,
+) -> anyhow::Result<()> {
     use crate::close::{Farewell, farewell, parse_panes, quit_command};
 
     let session = match session {
@@ -1586,6 +1629,19 @@ async fn run_close_project(session: Option<String>, discard: bool) -> anyhow::Re
         None => tmux_display("#{session_name}").await,
     };
     let target = format!("={session}");
+
+    // Before anything is asked to quit, and not after. Once the editors have
+    // gone every pane reports the shell, so a capture taken at the end of this
+    // function would record the right geometry and none of the commands.
+    //
+    // A capture that fails is reported and does not stop the close: somebody
+    // pressed this key to close a project, and losing the layout is a smaller
+    // failure than a session that refuses to shut.
+    if save {
+        if let Err(e) = save_before_close(&session).await {
+            eprintln!("close-project: the layout was not saved: {e}");
+        }
+    }
 
     let listing = tmux_capture(&[
         "list-panes",
@@ -1613,11 +1669,7 @@ async fn run_close_project(session: Option<String>, discard: bool) -> anyhow::Re
     // the answer is to stop and leave the question on screen.
     for id in &editor_ids {
         for _ in 0..30 {
-            if tmux_capture(&["has-session", "-t", &target])
-                .await
-                .is_empty()
-                && !session_exists(&target).await
-            {
+            if !session_exists(&target).await {
                 break;
             }
             if pane_command(id).await != "nvim" {
@@ -1681,8 +1733,14 @@ async fn run_close_project(session: Option<String>, discard: bool) -> anyhow::Re
 
 /// Whether a session is still there.
 async fn session_exists(target: &str) -> bool {
+    // stdout and stderr both go nowhere. This is asked in a loop while a
+    // session is shutting down, so the answer "no" is the expected one, and
+    // letting tmux print "can't find session" to the terminal would make every
+    // successful close look like it went wrong.
     tokio::process::Command::new("tmux")
         .args(["has-session", "-t", target])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await
         .map(|s| s.success())

@@ -33,19 +33,22 @@ trap cleanup EXIT
 
 export XDG_STATE_HOME="$STATE"
 
-# Run a command inside the session and wait for it to finish, because send-keys
-# returns the moment the keys are queued and the file would not be there yet.
-in_session() {
-  local label=$1 cmd=$2
-  tmux -L "$SOCKET" send-keys -t smoke:work \
+# Run a command in a pane and wait for it to finish, because send-keys returns
+# the moment the keys are queued and the output file would not be there yet.
+in_pane() {
+  local target=$1 label=$2 cmd=$3
+  tmux -L "$SOCKET" send-keys -t "$target" \
     "XDG_STATE_HOME=$STATE $cmd > $OUT/$label 2>&1; touch $OUT/$label.done" C-m
-  for _ in $(seq 1 100); do
+  for _ in $(seq 1 150); do
     [ -f "$OUT/$label.done" ] && return 0
     sleep 0.1
   done
   echo "timed out waiting for: $cmd" >&2
   return 1
 }
+
+# save, show and forget all act on the session they run in.
+in_session() { in_pane smoke:work "$1" "$2"; }
 
 echo "== building a session with two windows and three panes =="
 tmux -L "$SOCKET" -f /dev/null new-session -d -s smoke -c "$PROJECT" -n work
@@ -75,6 +78,26 @@ in_session forget "$BIN project forget"
 cat "$OUT/forget"
 in_session show2 "$BIN project show"
 cat "$OUT/show2"
+
+echo
+echo "== close-project captures on the way out =="
+# From a second session, not from inside `smoke`. close-project tells every
+# shell in the target session to exit, and a pane running close-project on
+# itself would be told to exit while it was still working.
+tmux -L "$SOCKET" new-session -d -s driver -c "$PROJECT"
+in_pane driver "close" "$BIN close-project smoke"
+cat "$OUT/close"
+for _ in $(seq 1 100); do
+  tmux -L "$SOCKET" has-session -t smoke 2>/dev/null || break
+  sleep 0.1
+done
+if tmux -L "$SOCKET" has-session -t smoke 2>/dev/null; then
+  echo "session did not close" >&2
+  tmux -L "$SOCKET" list-panes -s -t smoke -F '#{pane_id} #{pane_current_command}' >&2
+  exit 1
+fi
+echo "session closed, and it left this behind:"
+find "$STATE" -name '*.toml' -exec cat {} \;
 
 echo
 echo "OK"
