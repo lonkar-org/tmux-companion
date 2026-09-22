@@ -11,18 +11,22 @@
 #   each extra #() on the bar        14.6 ms of CPU per second per client
 #   sh-jobs on the bar               16.25 ms of server CPU per call
 #   clients on the bar               4.93 ms per call
-#   #{pane_pid} on status-right      18.5 ms per gst call
+#   sh-jobs' process-table scan      18.5 ms when the git segment does it
 #   window in window-status-format   one process spawn per window per redraw
 #   all of it, five #() calls        153.77 ms/s, 15.4% of one core
 
 set -g status-interval 1
 
-# ── The right side, with the suspended-job marker ───────────────────────────
+# ── The right side ──────────────────────────────────────────────────────────
 #
-# Passing #{pane_pid} makes the git segment resolve suspended jobs, which means
-# enumerating every process on the machine: 18.5 ms of a 26.0 ms segment. The
-# marker is worth it to some people. It was not worth it to me.
-set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path} #{pane_pid})"
+# git, bandwidth and battery, computed concurrently and returned in one call.
+#
+# It takes a path and nothing else. There is deliberately no #{pane_pid} here:
+# a pid makes the git segment resolve suspended jobs, which enumerates every
+# process on the machine and cost 18.5 ms of that segment's 26.0. The marker is
+# given up on the bar on purpose, and `gst <path> <pid>` still shows it by hand.
+# The next block is the cheaper way to put jobs on the bar.
+set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 set -g status-right-length 150
 
 # ── Jobs stopped under this pane ────────────────────────────────────────────

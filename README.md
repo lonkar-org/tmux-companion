@@ -83,9 +83,9 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 ## Usage
 
-<!-- @Yogesh(video): usage recording goes here. Suggested run: prefix+? for keys,
-     M-s for project, prefix+e for run, prefix+C-t for the theme picker. Drop it
-     in as a GIF or an mp4 link above this line and delete the comment. -->
+<!-- @Yogesh(video): usage recording goes here, about 73 seconds: the bar,
+     keys, cheatsheet, project, run, open and sh-jobs. Drop the link above this
+     line and delete the comment. -->
 
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
@@ -99,9 +99,9 @@ got one.
 
 ## Configuration
 
-<!-- @Yogesh(video): configuration recording goes here. Suggested run: no config
-     at all, then `config dump`, then a glyph preset change, then trimming
-     [git] parts. Drop it in above this line and delete the comment. -->
+<!-- @Yogesh(video): configuration recording goes here, about 37 seconds: no
+     config at all, then `config dump`, the ascii glyph preset, the theme
+     picker and doctor. Drop it in above this line and delete the comment. -->
 
 There's no config file till you write one, and the defaults are what the binary
 did before the file existed.

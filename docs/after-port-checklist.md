@@ -61,3 +61,23 @@ Settings, Environments, New environment, name it `release`, tick Required
 reviewers and add yourself. Until that exists the publish job runs without
 waiting for anybody, so it is worth doing before the first tag rather than
 after.
+
+## Recordings
+
+The README's two video slots are filled from recordings made locally. The
+driver that makes them is not part of this repository.
+
+One finding from making them does belong here, because it was a bug in what
+this repository ships: `docs/tmux.conf.full.example` passed `#{pane_pid}` to
+`status-right`, which takes a path and nothing else, so clap rejected it and
+the whole right-hand side came up blank for anybody who copied that file. The
+invariant in `CLAUDE.md` already said `status-right` must never be passed a
+pane pid.
+
+Two more worth knowing for anybody automating tmux:
+
+- A `display-popup` pane does not appear in `list-panes -a` and `send-keys`
+  cannot reach it, so a popup can be shown in an automated session but never
+  driven or closed.
+- A separate tmux socket is not a separate configuration. Without `-f` the
+  server reads the config of whoever started it.
