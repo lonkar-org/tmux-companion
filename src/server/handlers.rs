@@ -97,7 +97,11 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         "gst" => match req.parse_args::<GstArgs>() {
             Ok(args) => {
                 let mut opts = gst_options(&args);
-                opts.parts = state.lock().await.config.git.parts.clone();
+                {
+                    let s = state.lock().await;
+                    opts.parts = s.config.git.parts.clone();
+                    opts.bar_bg = s.config.bar.background.clone();
+                }
                 segments::git::render(&opts, &state).await
             }
             Err(e) => Err(e),
@@ -123,9 +127,12 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             Err(e) => Err(e),
         },
         "window" => {
-            let dir_aliases = state.lock().await.dir_aliases.clone();
+            let (dir_aliases, bar) = {
+                let s = state.lock().await;
+                (s.dir_aliases.clone(), s.config.bar.clone())
+            };
             match req.parse_args::<segments::window::WindowArgs>() {
-                Ok(args) => Ok(segments::window::render(&args, &dir_aliases)),
+                Ok(args) => Ok(segments::window::render(&args, &dir_aliases, &bar)),
                 Err(e) => Err(e),
             }
         }
@@ -186,6 +193,7 @@ fn gst_options(args: &GstArgs) -> GstOptions {
         // has no access to and does not want: it stays a pure mapping from the
         // wire to the options.
         parts: crate::config::GitPart::all(),
+        bar_bg: crate::tmux::format::BG_BAR.to_string(),
     }
 }
 
@@ -209,6 +217,14 @@ async fn render_right(
     args: &StatusRightArgs,
     state: &Arc<Mutex<ServerState>>,
 ) -> anyhow::Result<String> {
+    // One lock, read into locals, released before the struct is built. Two
+    // `state.lock().await` calls inside one expression deadlock: the first
+    // guard is a temporary that lives until the end of the statement, so the
+    // second waits on a mutex this same task is still holding.
+    let (parts, bar_bg) = {
+        let s = state.lock().await;
+        (s.config.git.parts.clone(), s.config.bar.background.clone())
+    };
     let opts = GstOptions {
         path: args.path.clone(),
         force: args.force,
@@ -221,7 +237,8 @@ async fn render_right(
         no_cap: true,
         // Deliberately not plumbed from the request: see `GstOptions::pane_pid`.
         pane_pid: None,
-        parts: state.lock().await.config.git.parts.clone(),
+        parts,
+        bar_bg,
     };
 
     // All three run concurrently.  `net`'s expensive half is the counter read,
@@ -236,6 +253,8 @@ async fn render_right(
     let net = match net_sample {
         Ok((rx, tx)) => {
             let mut st = state.lock().await;
+            let network = st.config.network.clone();
+            let bar_bg = st.config.bar.background.clone();
             let ServerState {
                 net_previous,
                 net_last_render,
@@ -247,6 +266,8 @@ async fn render_right(
                 rx,
                 tx,
                 std::time::Instant::now(),
+                &network,
+                &bar_bg,
             )
         }
         Err(e) => {
@@ -296,6 +317,8 @@ async fn battery(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
 async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
     let (rx, tx) = segments::network::sample().await?;
     let mut st = state.lock().await;
+    let network = st.config.network.clone();
+    let bar_bg = st.config.bar.background.clone();
     let ServerState {
         net_previous,
         net_last_render,
@@ -307,6 +330,8 @@ async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
         rx,
         tx,
         std::time::Instant::now(),
+        &network,
+        &bar_bg,
     ))
 }
 

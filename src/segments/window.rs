@@ -10,8 +10,10 @@ use crate::tmux::icons::{SLANT_IN, SLANT_OUT};
 
 // Status-bar greys. The bar already steps 233 (base) → 235 (clock) → 237
 // (battery) on the right; the current window rises to 236 on the left.
-const BG_BAR: &str = "color233";
-const BG_CURRENT: &str = "color236";
+/// The default bar background, when `[bar] background` says nothing.
+pub const BG_BAR_DEFAULT: &str = "color233";
+/// The default background behind the current window.
+pub const BG_CURRENT_DEFAULT: &str = "color236";
 
 // Unselected/selected number box icons (indices 1–10).
 // Glyph names verified against the installed FiraCode Nerd Font `post` table:
@@ -66,7 +68,7 @@ const PANE_BOX: [&str; 11] = [
 // 20-color cycle for running-process animation (seconds % 20)
 //
 // Lifted in HSL, hue and saturation held, until every step clears 4.5:1 against
-// BG_CURRENT as well as BG_BAR.  17 of the 20 were below it on BG_CURRENT, the
+// BG_CURRENT_DEFAULT as well as BG_BAR_DEFAULT.  17 of the 20 were below it on BG_CURRENT_DEFAULT, the
 // middle of the ramp worst at 3.21:1, because that is where its luminance
 // passes closest to the background's.  Lightness was raised rather than white
 // mixed in, which would have faded green-to-red into olive-to-salmon.
@@ -148,7 +150,15 @@ pub struct WindowArgs {
 }
 
 /// Render one window's status, abbreviating the path and picking its icon.
-pub fn render(args: &WindowArgs, dir_aliases: &HashMap<PathBuf, String>) -> String {
+pub fn render(
+    args: &WindowArgs,
+    dir_aliases: &HashMap<PathBuf, String>,
+    bar: &crate::config::Bar,
+) -> String {
+    let (bg_bar, bg_current) = (
+        bar.background.as_str(),
+        bar.current_window_background.as_str(),
+    );
     let home = dirs_home();
     let path = args.path.as_deref().unwrap_or(Path::new("/"));
     let process = args.process.as_deref().unwrap_or("zsh");
@@ -192,8 +202,8 @@ pub fn render(args: &WindowArgs, dir_aliases: &HashMap<PathBuf, String>) -> Stri
     // caps; every other window stays flat on the bar background.
     let (final_index_color, title_color) = if args.current {
         (
-            format!("#[fg=#ffffff,bg={}]", BG_CURRENT),
-            format!("#[fg=#e3f2fd,bg={},none]", BG_CURRENT),
+            format!("#[fg=#ffffff,bg={}]", bg_current),
+            format!("#[fg=#e3f2fd,bg={},none]", bg_current),
         )
     } else if args.last == 1 {
         let ic = if running {
@@ -233,7 +243,7 @@ pub fn render(args: &WindowArgs, dir_aliases: &HashMap<PathBuf, String>) -> Stri
         String::new()
     };
 
-    let (cap_in, cap_out) = block_caps(args.current);
+    let (cap_in, cap_out) = block_caps(args.current, bg_current, bg_bar);
 
     // The block's padding must be painted with the block background, so the
     // leading space follows the colour set rather than the cap — otherwise the
@@ -259,13 +269,13 @@ pub fn render(args: &WindowArgs, dir_aliases: &HashMap<PathBuf, String>) -> Stri
 /// Both are drawn as foreground on the bar background, so the block reads as a
 /// step up from the bar rather than a separator between windows. Non-current
 /// windows get no caps at all — they stay flat and cost zero extra columns.
-fn block_caps(current: bool) -> (String, String) {
+fn block_caps(current: bool, bg_current: &str, bg_bar: &str) -> (String, String) {
     if !current {
         return (String::new(), String::new());
     }
     (
-        format!("#[fg={},bg={}]{}", BG_CURRENT, BG_BAR, SLANT_IN),
-        format!("#[fg={},bg={}]{}", BG_CURRENT, BG_BAR, SLANT_OUT),
+        format!("#[fg={},bg={}]{}", bg_current, bg_bar, SLANT_IN),
+        format!("#[fg={},bg={}]{}", bg_current, bg_bar, SLANT_OUT),
     )
 }
 
@@ -384,6 +394,12 @@ fn abbreviate_path(path: &Path, home: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shipped bar colours, which every expectation here is written
+    /// against.
+    fn bar() -> crate::config::Bar {
+        crate::config::Bar::default()
+    }
     use std::collections::HashMap;
 
     // ── icon codepoints ───────────────────────────────────────────────────────
@@ -562,7 +578,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains(SELECTED[0]), "expected selected[0] in: {out}");
         assert!(
             !out.contains(UNSELECTED[0]),
@@ -577,7 +593,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains(UNSELECTED[0]), "expected unselected[0]: {out}");
     }
 
@@ -587,7 +603,7 @@ mod tests {
             index: 2,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains(UNSELECTED[1]));
     }
 
@@ -597,7 +613,7 @@ mod tests {
             index: 10,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains(UNSELECTED[9]));
     }
 
@@ -608,7 +624,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains("#ffffff"), "expected white fg: {out}");
         assert!(out.contains("#e3f2fd"), "expected light blue title: {out}");
     }
@@ -620,7 +636,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             out.contains("#adb5bd"),
             "expected grey for last window: {out}"
@@ -633,7 +649,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             out.contains("color242"),
             "expected dim for other window: {out}"
@@ -647,7 +663,7 @@ mod tests {
             process: Some("zsh".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains("my-session"), "override name: {out}");
     }
 
@@ -658,7 +674,7 @@ mod tests {
             name: Some("zsh".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         // should show path-based title, not "zsh"
         assert!(out.contains("tmp"), "should use path: {out}");
     }
@@ -671,7 +687,7 @@ mod tests {
             path: Some(PathBuf::from("/tmp")),
             ..args_base()
         };
-        let out = render(&args, &aliases);
+        let out = render(&args, &aliases, &bar());
         assert!(out.contains("my-alias"), "alias used: {out}");
     }
 
@@ -681,7 +697,7 @@ mod tests {
             flags: Some("#".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         // Activity flag (#) → green indicator
         assert!(
             out.contains("#5fd700") || out.contains("\u{f063e}"),
@@ -695,7 +711,7 @@ mod tests {
             flags: Some("#!".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(out.contains("#ff0000"), "bell red: {out}");
     }
 
@@ -705,7 +721,7 @@ mod tests {
             flags: Some(String::new()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(!out.contains("#ff0000"), "no bell: {out}");
         assert!(!out.contains("#5fd700"), "no activity: {out}");
     }
@@ -717,7 +733,7 @@ mod tests {
             process: Some("cargo".into()), // non-zsh
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         // Should contain one of the PS_COLORS entries (hex color)
         let has_ps_color = PS_COLORS.iter().any(|c| out.contains(c));
         assert!(has_ps_color, "expected a process color: {out}");
@@ -769,7 +785,7 @@ mod tests {
             pane_index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         for icon in PANE_BOX.iter() {
             assert!(!out.contains(icon), "no pane icon expected: {out}");
         }
@@ -784,7 +800,7 @@ mod tests {
             pane_index: 2,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             visible(&out).contains(PANE_BOX[2]),
             "expected pane 2 box icon: {out}"
@@ -801,7 +817,7 @@ mod tests {
             pane_index: 2,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         for icon in PANE_BOX.iter() {
             assert!(!out.contains(icon), "no pane icon expected: {out}");
         }
@@ -817,7 +833,7 @@ mod tests {
             flags: Some("#!".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         let pane_pos = out.find(PANE_BOX[2]).expect("pane icon present");
         let alert_pos = out.find("#ff0000").expect("alert present");
         assert!(pane_pos < alert_pos, "pane suffix before alert: {out}");
@@ -827,20 +843,29 @@ mod tests {
 
     #[test]
     fn block_caps_empty_for_non_current() {
-        assert_eq!(block_caps(false), (String::new(), String::new()));
+        assert_eq!(
+            block_caps(false, BG_CURRENT_DEFAULT, BG_BAR_DEFAULT),
+            (String::new(), String::new())
+        );
     }
 
     #[test]
     fn block_caps_drawn_on_bar_background() {
-        let (cap_in, cap_out) = block_caps(true);
+        let (cap_in, cap_out) = block_caps(true, BG_CURRENT_DEFAULT, BG_BAR_DEFAULT);
         // Cap glyphs are the block colour painted over the bar colour.
         assert_eq!(
             cap_in,
-            format!("#[fg={},bg={}]{}", BG_CURRENT, BG_BAR, SLANT_IN)
+            format!(
+                "#[fg={},bg={}]{}",
+                BG_CURRENT_DEFAULT, BG_BAR_DEFAULT, SLANT_IN
+            )
         );
         assert_eq!(
             cap_out,
-            format!("#[fg={},bg={}]{}", BG_CURRENT, BG_BAR, SLANT_OUT)
+            format!(
+                "#[fg={},bg={}]{}",
+                BG_CURRENT_DEFAULT, BG_BAR_DEFAULT, SLANT_OUT
+            )
         );
     }
 
@@ -851,7 +876,7 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             out.starts_with(SLANT_IN) || out.contains(SLANT_IN),
             "opening cap: {out}"
@@ -866,14 +891,14 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         // Both the index icon and the title sit on the elevated block.
         assert!(
-            out.contains(&format!("#[fg=#ffffff,bg={}]", BG_CURRENT)),
+            out.contains(&format!("#[fg=#ffffff,bg={}]", BG_CURRENT_DEFAULT)),
             "icon on block: {out}"
         );
         assert!(
-            out.contains(&format!("#[fg=#e3f2fd,bg={},none]", BG_CURRENT)),
+            out.contains(&format!("#[fg=#e3f2fd,bg={},none]", BG_CURRENT_DEFAULT)),
             "title on block: {out}"
         );
     }
@@ -881,10 +906,10 @@ mod tests {
     #[test]
     fn render_non_current_has_no_caps_and_no_block() {
         let args = args_base();
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(!out.contains(SLANT_IN), "no opening cap: {out}");
         assert!(!out.contains(SLANT_OUT), "no closing cap: {out}");
-        assert!(!out.contains(BG_CURRENT), "no elevated bg: {out}");
+        assert!(!out.contains(BG_CURRENT_DEFAULT), "no elevated bg: {out}");
     }
 
     #[test]
@@ -899,7 +924,7 @@ mod tests {
             flags: Some("#!".into()),
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         let pane_pos = out.find(PANE_BOX[2]).expect("pane icon present");
         let alert_pos = out.find("#ff0000").expect("alert present");
         let cap_pos = out.rfind(SLANT_OUT).expect("closing cap present");
@@ -929,7 +954,7 @@ mod tests {
     fn render_output_starts_with_space() {
         // All window status outputs lead with a space (matches zsh script).
         let args = args_base();
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             visible(&out).starts_with(' '),
             "should start with space: {out:?}"
@@ -946,13 +971,13 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
-        let (cap_in, _) = block_caps(true);
+        let out = render(&args, &no_aliases(), &bar());
+        let (cap_in, _) = block_caps(true, BG_CURRENT_DEFAULT, BG_BAR_DEFAULT);
         let after_cap = out
             .strip_prefix(&cap_in)
             .expect("output opens with the cap");
         assert!(
-            after_cap.starts_with(&format!("#[fg=#ffffff,bg={}]", BG_CURRENT)),
+            after_cap.starts_with(&format!("#[fg=#ffffff,bg={}]", BG_CURRENT_DEFAULT)),
             "block colour must be set before the pad: {out}"
         );
         assert!(
@@ -968,8 +993,8 @@ mod tests {
             index: 1,
             ..args_base()
         };
-        let out = render(&args, &no_aliases());
-        let (_, cap_out) = block_caps(true);
+        let out = render(&args, &no_aliases(), &bar());
+        let (_, cap_out) = block_caps(true, BG_CURRENT_DEFAULT, BG_BAR_DEFAULT);
         let body = out
             .strip_suffix(&cap_out)
             .expect("output ends with the cap");
@@ -982,7 +1007,7 @@ mod tests {
     #[test]
     fn render_non_current_has_no_trailing_pad() {
         let args = args_base();
-        let out = render(&args, &no_aliases());
+        let out = render(&args, &no_aliases(), &bar());
         assert!(
             !out.ends_with(' '),
             "flat windows keep their original width: {out:?}"

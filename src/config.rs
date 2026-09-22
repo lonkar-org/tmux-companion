@@ -60,6 +60,42 @@ pub struct Config {
     /// Which theme a session gets before anybody picks one.
     #[serde(default)]
     pub theme: Theme,
+    /// What the status bar itself looks like, which the segments draw against.
+    #[serde(default)]
+    pub bar: Bar,
+}
+
+/// The bar the segments are drawn on.
+///
+/// Every segment here ends in a powerline cap, and a cap is two colours: the
+/// segment's, and whatever is behind it. That second one used to be the
+/// compiled-in constant `colour233`, which is the bar in one person's tmux.conf
+/// and nobody else's, so a bar set to anything else got wedges and outline
+/// backgrounds in a colour that appears nowhere on the screen.
+///
+/// Set these to whatever `status-style` says, and `tmux-companion doctor`
+/// compares the two and says so when they have drifted apart.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Bar {
+    /// The status bar's own background: `status-style bg=...`.
+    ///
+    /// Anything tmux takes, so `colour233`, `#121212`, `black` and `default`
+    /// all work. `default` leaves the terminal's background showing through,
+    /// which is what a transparent bar wants.
+    pub background: String,
+    /// The background behind the current window in the window list, which only
+    /// the `window` segment draws.
+    pub current_window_background: String,
+}
+
+impl Default for Bar {
+    fn default() -> Self {
+        Self {
+            background: crate::tmux::format::BG_BAR.to_string(),
+            current_window_background: crate::segments::window::BG_CURRENT_DEFAULT.to_string(),
+        }
+    }
 }
 
 /// The theme a session is given when it is created.
@@ -560,6 +596,7 @@ impl Default for Config {
             run: Run::default(),
             clipboard: Clipboard::default(),
             theme: Theme::default(),
+            bar: Bar::default(),
         }
     }
 }
@@ -1015,12 +1052,25 @@ pub struct Network {
     /// The default is 20 KiB/s: a bar that reacts to every background poll is
     /// noise rather than information.
     pub threshold_bps: u64,
+    /// The block the download rate is drawn on.
+    pub download_colour: String,
+    /// The block the upload rate is drawn on.
+    pub upload_colour: String,
+    /// The unit after the number: `KiB/s` in `20KiB/s`.
+    ///
+    /// Drawn dimmer than the number, so the figure reads first. The default is
+    /// a dark grey, which is a dark-bar choice: on a light bar set this to
+    /// something that is not nearly invisible.
+    pub unit_colour: String,
 }
 
 impl Default for Network {
     fn default() -> Self {
         Self {
             threshold_bps: 20_480,
+            download_colour: "#5cae36".to_string(),
+            upload_colour: "#0262a8".to_string(),
+            unit_colour: "colour237".to_string(),
         }
     }
 }

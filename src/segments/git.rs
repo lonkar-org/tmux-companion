@@ -237,7 +237,7 @@ impl GitStatus {
         }
     }
 
-    fn palette(&self, style: Style, bar_bg: &'static str) -> Palette {
+    fn palette<'a>(&self, style: Style, bar_bg: &'a str) -> Palette<'a> {
         match style {
             Style::Fill => Palette {
                 bg: self.bg(),
@@ -396,6 +396,12 @@ pub struct LineOpts<'a> {
     pub branch_icon: bool,
     /// Which parts to draw, and in what order.
     pub parts: &'a [GitPart],
+    /// The colour the status bar itself is set to.
+    ///
+    /// Every cap and every outline background is drawn against this, so a bar
+    /// that is not `colour233` gets wedges in a colour that is nowhere else on
+    /// the screen unless this follows it. `[bar] background` in the config.
+    pub bar_bg: &'a str,
 }
 
 impl Default for LineOpts<'static> {
@@ -406,6 +412,7 @@ impl Default for LineOpts<'static> {
             branch_max: None,
             branch_icon: true,
             parts: &[],
+            bar_bg: BG_BAR,
         }
     }
 }
@@ -423,9 +430,10 @@ pub fn status_line_render(
         branch_max,
         branch_icon,
         parts,
+        bar_bg,
     } = *opts;
     let has = |p: GitPart| parts.contains(&p);
-    let bar_bg = if nvim_suspended { BG_TERMINAL } else { BG_BAR };
+    let bar_bg = if nvim_suspended { BG_TERMINAL } else { bar_bg };
     let mut p = s.palette(style, bar_bg);
     if let Some(g) = cap_glyph {
         p.cap_glyph = g;
@@ -735,6 +743,12 @@ pub struct GstOptions {
     pub ttl: Duration,
     /// What the segment draws, from `[git] parts` in the config.
     pub parts: Vec<GitPart>,
+    /// The colour the status bar is set to, from `[bar] background`.
+    ///
+    /// The caps and the outline backgrounds are drawn against this. It is a
+    /// setting rather than a constant because a bar that is not `colour233`
+    /// otherwise gets a wedge in a colour that is nowhere else on the screen.
+    pub bar_bg: String,
 }
 
 impl Default for GstOptions {
@@ -749,6 +763,7 @@ impl Default for GstOptions {
             branch_icon: false,
             ttl: DEFAULT_GST_TTL,
             parts: GitPart::all(),
+            bar_bg: BG_BAR.to_string(),
         }
     }
 }
@@ -813,6 +828,7 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
             branch_max: opts.branch_max_len,
             branch_icon: opts.branch_icon,
             parts: &opts.parts,
+            bar_bg: &opts.bar_bg,
         },
     );
     Ok(if opts.no_cap {
@@ -910,9 +926,9 @@ mod tests {
         if no_tmux {
             format!("\x1b[0m\x1b[38;5;{}m{}\x1b[0m", bg, ARROW_RIGHT)
         } else {
-            // Default arrow background is "233" (status bar bg).
-            // BG_TERMINAL ("235") is used only when nvim_suspended=true.
-            powerline_segment(bg, "233", ARROW_RIGHT)
+            // The arrow is drawn against whatever the bar is set to, which is
+            // BG_BAR unless nvim_suspended puts BG_TERMINAL behind it.
+            powerline_segment(bg, BG_BAR, ARROW_RIGHT)
         }
     }
 
@@ -1417,7 +1433,7 @@ mod tests {
         };
         let line = status_line_mode(&s, false, false);
         // Loading: sync icon on blue background
-        assert!(line.contains(&format!("bg=color{}", BG_LOADING)));
+        assert!(line.contains(&format!("bg={}", BG_LOADING)));
         assert!(line.contains(SYNC));
         assert!(line.contains(GIT));
         assert!(line.contains("branch1"));
@@ -1431,7 +1447,7 @@ mod tests {
         };
         let line = status_line_mode(&s, false, false);
         // Remote fail: arrow on error background, failed icon
-        assert!(line.contains(&format!("bg=color{}", BG_ERROR)));
+        assert!(line.contains(&format!("bg={}", BG_ERROR)));
         assert!(line.contains(FAILED));
         assert!(line.contains(ARROW_RIGHT));
     }
@@ -1472,7 +1488,7 @@ mod tests {
             ..Default::default()
         };
         let line = status_line_mode(&s, false, false);
-        assert!(line.contains(&format!("bg=color{}", BG_GONE)));
+        assert!(line.contains(&format!("bg={}", BG_GONE)));
         assert!(line.contains(GONE));
     }
 
@@ -1545,7 +1561,7 @@ mod tests {
         };
         let line = status_line_mode(&s, false, false);
         let bg = BG_DEFAULT;
-        assert!(line.contains(&format!("bg=color{}", bg)));
+        assert!(line.contains(&format!("bg={}", bg)));
         assert!(line.contains("1"));
         assert!(line.contains(AHEAD));
         assert!(line.contains(&colored_segment(false, FG_DARK_BLUE, bg, AHEAD)));
@@ -1576,10 +1592,7 @@ mod tests {
         assert!(line.contains("1"), "count: {line}");
         assert!(line.contains(UNMERGED), "icon: {line}");
         // colored_segment(fg=BG_ERROR, bg=BG_DEFAULT, ...) → fg=color160
-        assert!(
-            line.contains(&format!("fg=color{}", BG_ERROR)),
-            "fg=160: {line}"
-        );
+        assert!(line.contains(&format!("fg={}", BG_ERROR)), "fg=160: {line}");
     }
 
     #[test]
@@ -1739,7 +1752,7 @@ mod tests {
             "normal arrow bg should be 233: {normal}"
         );
         assert!(
-            suspended.contains(&format!("bg=color{}]{}", BG_TERMINAL, ARROW_RIGHT)),
+            suspended.contains(&format!("bg={}]{}", BG_TERMINAL, ARROW_RIGHT)),
             "suspended arrow bg should be BG_TERMINAL: {suspended}"
         );
         assert_ne!(normal, suspended);
@@ -1762,11 +1775,11 @@ mod tests {
         let line = status_line_styled(&s, false, false, Style::Outline);
         // Clean state color moves from background to foreground.
         assert!(
-            line.contains(&format!("fg=color{},bg=color{}]", BG_CLEAN, BG_BAR)),
+            line.contains(&format!("fg={},bg={}]", BG_CLEAN, BG_BAR)),
             "state color should be the text color: {line}"
         );
         assert!(
-            !line.contains(&format!("bg=color{}]", BG_CLEAN)),
+            !line.contains(&format!("bg={}]", BG_CLEAN)),
             "no solid fill left: {line}"
         );
     }
@@ -1794,7 +1807,7 @@ mod tests {
         let line = status_line_styled(&s, false, false, Style::OutlineBright);
         assert!(line.contains(&colored_segment(false, AC_PURPLE, BG_BAR, STASHED)));
         assert!(line.contains(&colored_segment(false, AC_DARK_BLUE, BG_BAR, AHEAD)));
-        assert!(!line.contains(&format!("fg=color{}", FG_PURPLE)));
+        assert!(!line.contains(&format!("fg={}", FG_PURPLE)));
     }
 
     #[test]
@@ -1805,8 +1818,8 @@ mod tests {
         };
         let plain = status_line_styled(&s, false, false, Style::Outline);
         let bright = status_line_styled(&s, false, false, Style::OutlineBright);
-        assert!(plain.contains(&format!("fg=color{}", BG_GONE)));
-        assert!(bright.contains(&format!("fg=color{}", AC_GONE)));
+        assert!(plain.contains(&format!("fg={}", BG_GONE)));
+        assert!(bright.contains(&format!("fg={}", AC_GONE)));
     }
 
     #[test]
@@ -1820,16 +1833,10 @@ mod tests {
             false,
             Style::Outline,
         );
-        assert!(
-            !failed.contains(&format!("bg=color{}]", BG_ERROR)),
-            "{failed}"
-        );
+        assert!(!failed.contains(&format!("bg={}]", BG_ERROR)), "{failed}");
         // Outline draws the error as AC_ERROR rather than BG_ERROR: the fill
         // background reads 3.47:1 on the bar, under the 4.5 WCAG asks of text.
-        assert!(
-            failed.contains(&format!("fg=color{}", AC_ERROR)),
-            "{failed}"
-        );
+        assert!(failed.contains(&format!("fg={}", AC_ERROR)), "{failed}");
 
         let loading = status_line_styled(
             &GitStatus {
@@ -1842,13 +1849,10 @@ mod tests {
             Style::Outline,
         );
         assert!(
-            !loading.contains(&format!("bg=color{}]", BG_LOADING)),
+            !loading.contains(&format!("bg={}]", BG_LOADING)),
             "{loading}"
         );
-        assert!(
-            loading.contains(&format!("fg=color{}", BG_LOADING)),
-            "{loading}"
-        );
+        assert!(loading.contains(&format!("fg={}", BG_LOADING)), "{loading}");
     }
 
     #[test]
@@ -1937,11 +1941,8 @@ mod tests {
     fn outline_respects_nvim_suspended_bar_background() {
         let s = s_clean();
         let line = status_line_styled(&s, true, false, Style::Outline);
-        assert!(
-            line.contains(&format!("bg=color{}]", BG_TERMINAL)),
-            "{line}"
-        );
-        assert!(!line.contains(&format!("bg=color{}]", BG_BAR)), "{line}");
+        assert!(line.contains(&format!("bg={}]", BG_TERMINAL)), "{line}");
+        assert!(!line.contains(&format!("bg={}]", BG_BAR)), "{line}");
     }
 
     #[test]

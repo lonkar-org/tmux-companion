@@ -105,7 +105,21 @@ remember_secs = 3600
 [network]
 # Below this many bytes per second the bandwidth segment draws nothing. The
 # default is 20 KiB/s: a bar that reacts to every background poll is noise.
+#
+# This setting was read from the config and then ignored: the segment used a
+# constant of the same value, so changing it here did nothing at all.
 threshold_bps = 20480
+
+# The block each rate is drawn on. The number is written in the bar's own
+# background colour on top of these, which is what makes them read as blocks
+# rather than as coloured text.
+download_colour = "#5cae36"
+upload_colour = "#0262a8"
+
+# The unit after the number: `KiB/s` in `20KiB/s`, drawn dimmer so the figure
+# reads first. The default is a dark grey, which is a choice for a dark bar --
+# on a light one this is very nearly invisible, so set it to something else.
+unit_colour = "colour237"
 
 [battery]
 # How long a battery reading stays fresh, in seconds. Reading it is expensive
@@ -453,3 +467,23 @@ default = "ink"
 # [theme.namespace]
 # w = "slate"
 # a = "plum"
+
+[bar]
+# What your status bar itself looks like. Every segment here ends in a
+# powerline cap, and a cap is two colours: the segment's, and whatever is
+# behind it. That second one used to be a compiled-in `colour233`, which is one
+# person's tmux.conf and nobody else's, so a bar set to anything else got
+# wedges and outline backgrounds in a colour that appears nowhere on screen.
+#
+# Set this to whatever `status-style` says. Anything tmux takes works, so
+# `colour233`, `#121212`, `black` and `default` are all fine; `default` leaves
+# the terminal's own background showing through, which is what a transparent
+# bar wants.
+#
+# `tmux-companion doctor` reads the live `status-style` and says when the two
+# have drifted apart.
+background = "color233"
+
+# The background behind the current window in the window list. Only the
+# `window` segment draws this, and only when that segment is turned on.
+current_window_background = "color236"
