@@ -167,6 +167,13 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// A cheat sheet of the bindings you wrote, in four boxes
+    Cheatsheet {
+        /// Print and exit instead of waiting for a keypress
+        #[arg(long)]
+        plain: bool,
+    },
+
     /// Theme tools
     Theme {
         /// What to do
@@ -338,6 +345,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             refresh,
             print,
         } => run_keys(all, query, refresh, print).await?,
+        Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
     }
@@ -627,4 +635,80 @@ fn usage_path(config: &crate::config::Config) -> std::path::PathBuf {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("keys-usage.tsv")
     })
+}
+
+/// `cheatsheet`: the same rows the picker uses, laid out in four boxes.
+async fn run_cheatsheet(plain: bool) -> anyhow::Result<()> {
+    let resp =
+        crate::client::send(Request::build("keys", &crate::proto::KeysArgs::default())).await?;
+    if let Some(e) = resp.error {
+        anyhow::bail!(e);
+    }
+
+    let rows: Vec<crate::keys::KeyRow> = resp
+        .output
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.splitn(5, '\t');
+            Some(crate::keys::KeyRow {
+                table: f.next()?.to_string(),
+                key: f.next()?.to_string(),
+                shown: f.next()?.to_string(),
+                note: f.next()?.to_string(),
+                command: f.next()?.to_string(),
+            })
+        })
+        .collect();
+
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let usage = std::fs::read_to_string(usage_path(&config))
+        .map(|t| crate::keys::usage_counts(&t))
+        .unwrap_or_default();
+
+    let (cols, lines) = terminal_size();
+    print!(
+        "{}",
+        crate::cheatsheet::render(&crate::cheatsheet::boxes(&rows, &usage), cols, lines)
+    );
+
+    if !plain {
+        use std::io::Write;
+        print!("\n  any key to close ");
+        let _ = std::io::stdout().flush();
+        wait_for_a_key();
+    }
+    Ok(())
+}
+
+/// The terminal size, or a sensible guess.
+///
+/// `display-popup` gives the popup its own size, and a guess that is too small
+/// costs a cramped sheet rather than a broken one.
+fn terminal_size() -> (usize, usize) {
+    match ratatui::crossterm::terminal::size() {
+        Ok((c, l)) => (c as usize, l as usize),
+        Err(_) => (120, 40),
+    }
+}
+
+/// Block until somebody presses something, in raw mode so it takes one key
+/// rather than a whole line.
+fn wait_for_a_key() {
+    use ratatui::crossterm::{
+        event::{self, Event},
+        terminal::{disable_raw_mode, enable_raw_mode},
+    };
+
+    if enable_raw_mode().is_err() {
+        // No tty: there is nothing to wait for and nothing to restore.
+        return;
+    }
+    loop {
+        match event::read() {
+            Ok(Event::Key(_)) => break,
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+    let _ = disable_raw_mode();
 }

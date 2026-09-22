@@ -40,6 +40,7 @@ line saying so, and goes away after one release.
 | Command | Does |
 | --- | --- |
 | `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels |
+| `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--plain` prints and exits |
 
 `--all` opens with no query, `--query` sets a different one, `--refresh`
 rebuilds from tmux rather than using what the daemon holds, and `--print` lists

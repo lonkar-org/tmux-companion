@@ -61,7 +61,16 @@ run_all "$new" "$work/new.sock" "$work/new.txt"
 # `net` and `battery` are left out on purpose: a rate and a charge level differ
 # between two runs seconds apart for reasons that have nothing to do with the
 # change under test.
-if diff -u "$work/old.txt" "$work/new.txt"; then
+#
+# `status-right` carries the battery inside it, so its tail is elided at the
+# wedge that introduces the battery segment. Found the hard way: a comparison
+# failed on a percentage that had dropped by one between the two runs, which
+# is a true difference in the output and a false one about the change.
+elide_volatile() {
+  sed 's/#\[reverse,fg=color237\].*$/<battery elided>/'
+}
+
+if diff -u <(elide_volatile <"$work/old.txt") <(elide_volatile <"$work/new.txt"); then
   echo "identical: $(wc -c <"$work/new.txt" | tr -d ' ') bytes across $(grep -c -- '---' "$work/new.txt") comparisons"
 else
   echo "DIFFERS" >&2

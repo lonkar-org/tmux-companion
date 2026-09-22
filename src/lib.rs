@@ -10,6 +10,8 @@
 
 /// Timestamped map with a reader-supplied TTL.
 pub mod cache;
+/// The cheat sheet of hand-written bindings.
+pub mod cheatsheet;
 /// The command-line surface and its dispatch.
 pub mod cli;
 /// Talking to the server over the socket.
