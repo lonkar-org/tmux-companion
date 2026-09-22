@@ -147,10 +147,10 @@ preference nobody could express while the literals lived in `tmux.conf`.
 `{NAME}` in a separator expands to the glyph of that name in
 `src/tmux/icons.rs`, so the file stays readable in an editor with no patched
 font, and a name that doesn't exist is left as you wrote it rather than
-dropped — a separator rendering `{ARROW_RIGH}` is a typo you can see.
+dropped, since a separator rendering `{ARROW_RIGH}` is a typo you can see.
 
-Two things worth knowing. A separator is drawn whether or not the segment
-after it rendered anything, because that's what the `tmux.conf` literals did: a
-non-repo pane on a quiet network still drew the wedge in front of an absent
-battery. And `trailing_space` exists because tmux draws the right side flush
-to the terminal edge, so without it the last glyph sits against the border.
+A separator is drawn whether or not the segment after it rendered anything,
+because that's what the `tmux.conf` literals did: a non-repo pane on a quiet
+network still drew the wedge in front of an absent battery. And
+`trailing_space` exists because tmux draws the right side flush to the terminal
+edge, so without it the last glyph sits against the border.
