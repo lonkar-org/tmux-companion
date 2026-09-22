@@ -1,5 +1,7 @@
 # tmux-companion
 
+[![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
+
 One binary that draws your tmux status bar and runs the pickers behind your
 keybindings, out of a daemon that's already warm.
 

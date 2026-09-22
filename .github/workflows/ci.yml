@@ -4,10 +4,6 @@ name: CI
 # pull request fails here rather than in review. The toolchain comes from
 # rust-toolchain.toml, which is what keeps the formatting identical to a
 # maintainer's machine.
-#
-# @claude(badge): the README badge is deliberately not added yet. Phase 0 step
-# 0 moves this repository to lonkar-org, and a badge written before the move
-# points at a redirect. Add it in the same commit as the transfer.
 
 on:
   push:

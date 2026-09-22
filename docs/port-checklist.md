@@ -7,9 +7,9 @@ commit that does the work. `blocked` carries the reason on the same line.
 
 | # | Item | Status |
 | --- | --- | --- |
-| 0 | transfer the repository to `lonkar-org` | blocked — needs Yogesh's GitHub account |
+| 0 | transfer the repository to `lonkar-org` | done — 2026-09-22, badge added, `origin` and the crates.io `repository` field point at the new path |
 | 1 | `cargo fmt`, the two clippy lints, `rust-toolchain.toml` | done |
-| 2 | GitHub Actions: `fmt --check`, `clippy -D warnings`, `test` | done — unverified until somebody pushes; README badge waits for the transfer |
+| 2 | GitHub Actions: `fmt --check`, `clippy -D warnings`, `test` | done — badge in the README; unverified until somebody pushes |
 | 3 | `src/lib.rs`, `main.rs` down to argument parsing, `tests/` | done — main.rs 287 lines to 32 |
 | 4 | one typed args struct per command | done — output byte-identical, checked with compare-output.sh |
 | 5 | integration test over the real socket, plus the singleton | done — 9 tests in tests/socket_round_trip.rs |
@@ -36,17 +36,15 @@ Each row also carries its documentation row from the table in
 
 ## What is left
 
-Two things, and neither is code.
+The cutover, and it is not code.
 
-`lonkar-org` is still to happen, and it is the one item nothing else can do:
-the CI badge, the crates.io `repository` field and the clone line in
-`CONTRIBUTING.md` all wait behind it, and the `@claude(badge)` note in
-`.github/workflows/ci.yml` says so. Never recreate `yogeshlonkar/tmux-companion`
-afterwards: GitHub's redirect survives the move and dies the moment that name
-is taken again.
+The transfer happened on 2026-09-22, so the README badge is in, `origin` and
+the crates.io `repository` field point at `lonkar-org/tmux-companion`, and
+GitHub redirects the old path. That redirect dies the moment somebody takes
+the name back, so `yogeshlonkar/tmux-companion` must never be recreated.
 
-The cutover is the other. Every command here has been run against the live
-machine and none of them is bound to a key yet. `docs/tmux.conf.full.example`
+Every command here has been run against the live machine and none of them is
+bound to a key yet. `docs/tmux.conf.full.example`
 is what a full set of bindings looks like; the port plan's advice is to move
 one binding at a time, leave the zsh one under a different key for a week, and
 keep `comrades` in the config until its last script is gone.
