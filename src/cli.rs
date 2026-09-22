@@ -956,7 +956,7 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
                     r.label,
                     crate::project::short_path(&r.path, &home)
                 ),
-                project_preview(r).await,
+                project_preview(r, &config.project.preview_window).await,
             )
             // The project's own theme colour, so the list reads the way the
             // status bar does. A project with no colour in the map stays the
@@ -1082,25 +1082,36 @@ pub enum ProjectAction {
 /// the reason the preview is worth having at all. Anything else falls back to
 /// a directory listing, which is all there is to say about a project that is
 /// not open yet.
-async fn project_preview(row: &crate::project::Row) -> String {
+async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
     use crate::project::Kind;
     if row.kind == Kind::Session {
         let target = format!("={}", row.label);
-        let windows = tmux_capture(&["list-windows", "-t", &target, "-F", "#{window_name}"]).await;
-        if windows.lines().any(|w| w.trim() == "ai") {
-            // -e keeps the colours the agent drew.
-            let screen = tmux_capture(&[
-                "capture-pane",
-                "-p",
-                "-e",
-                "-t",
-                &format!("={}:ai", row.label),
-            ])
-            .await;
-            let tail = crate::project::tail_of_screen(&screen, 40);
-            if !tail.is_empty() {
-                return tail;
-            }
+
+        // The preferred window first, because "what is the agent doing over
+        // there" is the question worth answering without switching, and on
+        // this machine that window is called `ai`. Failing that, the window
+        // the session is currently on, so every session previews something:
+        // the script this replaced only ever looked for `ai`, and a session
+        // without one showed a directory listing whose contents were already
+        // on the row above.
+        let named = if preferred.is_empty() {
+            false
+        } else {
+            tmux_capture(&["list-windows", "-t", &target, "-F", "#{window_name}"])
+                .await
+                .lines()
+                .any(|w| w.trim() == preferred)
+        };
+        let pane = if named {
+            format!("={}:{preferred}", row.label)
+        } else {
+            target.clone()
+        };
+        // -e keeps whatever colours are on that screen.
+        let screen = tmux_capture(&["capture-pane", "-p", "-e", "-t", &pane]).await;
+        let tail = crate::project::tail_of_screen(&screen, 40);
+        if !tail.is_empty() {
+            return tail;
         }
     }
     crate::project::listing_of(std::path::Path::new(&row.path), 40)

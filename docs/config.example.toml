@@ -233,6 +233,15 @@ layout = "default"
 # These two are `edit` and `ai` because that is what one laptop runs. Yours
 # might be vim and codex, or one window, or five, or a tail -f on a log and no
 # editor anywhere.
+# Which window the picker previews for a live session. The window worth seeing
+# is the one you would have switched to in order to answer "what is happening
+# over there", which on this machine is the agent.
+#
+# A session without a window by this name previews whichever window it is
+# currently on, so every session shows something rather than only the ones that
+# happen to match. Empty means never look for a named window.
+preview_window = "ai"
+
 [[layout]]
 name = "default"
 

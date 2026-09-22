@@ -296,6 +296,17 @@ pub struct Project {
     /// in Rust; the config file spells it without one.
     #[serde(rename = "override")]
     pub override_: Vec<LayoutOverride>,
+    /// Which window the picker previews for a live session.
+    ///
+    /// The window worth seeing is the one you would have switched to in order
+    /// to answer "what is happening over there", and for this machine that is
+    /// the agent. A session without a window by this name previews whichever
+    /// window it is currently on, so every session shows something rather than
+    /// only the ones that happen to match.
+    ///
+    /// Empty means never look for a named window, and always preview the
+    /// current one.
+    pub preview_window: String,
 }
 
 impl Default for Project {
@@ -304,6 +315,7 @@ impl Default for Project {
             zoxide: true,
             layout: "default".to_string(),
             override_: Vec::new(),
+            preview_window: "ai".to_string(),
         }
     }
 }
@@ -1490,6 +1502,26 @@ mod tests {
         assert_eq!(names, vec!["edit", "ai"]);
         assert_eq!(l.window[0].command, "nvim");
         assert!(l.window[0].hold_name, "an editor window must keep its name");
+    }
+
+    #[test]
+    fn the_previewed_window_defaults_to_the_agent_and_can_be_turned_off() {
+        assert_eq!(Project::default().preview_window, "ai");
+        let c = parse(
+            "[project]\npreview_window = \"\"\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            c.project.preview_window, "",
+            "empty means the current window"
+        );
+        let c = parse(
+            "[project]\npreview_window = \"logs\"\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        assert_eq!(c.project.preview_window, "logs");
     }
 
     #[test]
