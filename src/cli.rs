@@ -194,6 +194,15 @@ pub enum Cmd {
         no_save: bool,
     },
 
+    /// Print the shell code that emits the OSC 133 prompt marks
+    ///
+    /// tmux's own next-prompt and previous-prompt do nothing until a shell
+    /// says where a prompt begins, and this is the line that tells it.
+    ShellInit {
+        /// zsh, bash or fish, defaulting to $SHELL
+        shell: Option<String>,
+    },
+
     /// Copy to the system clipboard, whatever this platform calls it
     Clipboard {
         /// Read stdin rather than the tmux buffer
@@ -486,6 +495,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             discard,
             no_save,
         } => run_close_project(session, discard, !no_save).await?,
+        Cmd::ShellInit { shell } => run_shell_init(shell)?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
         Cmd::Zoom => run_zoom().await?,
         Cmd::Probe { what } => run_probe(what)?,
@@ -1040,6 +1050,20 @@ pub enum ProjectAction {
     Forget,
     /// Which layout this project gets, and which file decided
     Show,
+}
+
+/// `shell-init`: print the prompt-mark hook for a shell.
+fn run_shell_init(shell: Option<String>) -> anyhow::Result<()> {
+    let shell = shell
+        .or_else(|| std::env::var("SHELL").ok())
+        .unwrap_or_default();
+    match crate::shell::init(&shell) {
+        Some(text) => {
+            print!("{text}");
+            Ok(())
+        }
+        None => anyhow::bail!("{}", crate::shell::unknown(&shell)),
+    }
 }
 
 /// Capture a session's layout on the way out.

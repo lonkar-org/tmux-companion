@@ -44,6 +44,8 @@ pub mod saved;
 pub mod segments;
 /// The daemon.
 pub mod server;
+/// The OSC 133 prompt marks and the shell code that emits them.
+pub mod shell;
 /// Timed work and small tmux commands.
 pub mod tasks;
 /// Theme colour arithmetic and the files it writes.

@@ -78,6 +78,19 @@ bind -N "custom: project save this layout for this project" S \
 bind -N "custom: project forget this project's saved layout" M-S \
   run-shell 'tmux-companion project forget'
 
+# ── Prompt marks, which tmux has had since 3.3 and nobody turned on ─────────
+#
+# next-prompt and previous-prompt do nothing until the shell says where a
+# prompt begins. One line in your shell rc file is the whole cost:
+#
+#   eval "$(tmux-companion shell-init zsh)"     # or bash
+#   tmux-companion shell-init fish | source     # fish
+#
+# Then jumping between prompts in copy mode costs nothing at all, because tmux
+# is doing it. C-p and C-n are a suggestion; pick whatever is free for you.
+bind -T copy-mode-vi C-p send-keys -X previous-prompt
+bind -T copy-mode-vi C-n send-keys -X next-prompt
+
 # ── Copy mode, opening what is under the cursor ─────────────────────────────
 bind -T copy-mode-vi o send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion open -s"
