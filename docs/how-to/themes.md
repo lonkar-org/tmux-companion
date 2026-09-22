@@ -17,6 +17,23 @@ each, and computes a text colour and a border for every one of them.
 Nothing is overwritten. Run `theme init` beside themes you already wrote and it
 writes only what's missing.
 
+## Making one
+
+One colour is enough:
+
+```sh
+tmux-companion theme list-colours          # every value tmux takes, painted
+tmux-companion theme add --bg colour61 --name "Indigo"
+tmux-companion theme gen --apply           # adds the border
+```
+
+`--bg` takes anything tmux does: a name, `colour0` to `colour255`, or
+`#rrggbb`. The text colour is computed from it, and `--fg` overrides that when
+you want to choose.
+
+A pair under WCAG AA is refused rather than written, with the ratio in the
+message. `--force` writes it anyway, since it's your terminal.
+
 ## Where they go
 
 Beside whichever tmux config this machine actually uses, since tmux looks for
@@ -44,7 +61,8 @@ set @theme-color-on-main  colour16
 source-file "~/.config/tmux/themes/_apply.tmux"
 ```
 
-`@theme-color-main-1` is the only line that has to be yours. `theme gen
+`@theme-color-main-1` is the only line that has to be yours, which is why
+`theme add` needs one colour and not two. `theme gen
 --apply` fills in `@theme-color-on-main`, the text colour that reads on that
 block, and `@theme-color-border`, a colour with the same hue that stays visible
 against your terminal's background.

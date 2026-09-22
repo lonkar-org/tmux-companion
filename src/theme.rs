@@ -1121,3 +1121,140 @@ mod aa_tests {
         }
     }
 }
+
+// ── making one by hand ───────────────────────────────────────────────────────
+
+/// The better of black and white on an arbitrary colour, with its ratio.
+///
+/// [`readable_on`] answers the same question for a 256-colour index. This one
+/// takes the colour itself, because `theme add` accepts `#rrggbb` and a hex
+/// colour has no index to look up.
+pub fn readable_on_rgb(bg: (u8, u8, u8)) -> (&'static str, f64) {
+    let on_dark = contrast(bg, rgb(16));
+    let on_light = contrast(bg, rgb(231));
+    if on_dark >= on_light {
+        (TEXT_DARK, on_dark)
+    } else {
+        (TEXT_LIGHT, on_light)
+    }
+}
+
+/// A theme file written from a background and, optionally, a chosen text
+/// colour.
+///
+/// The border is left out rather than guessed: it depends on the terminal's
+/// own background, which this does not know, and `theme gen --apply` fills it
+/// in on the machine that will display it.
+pub fn added_theme_file(label: &str, bg: &str, fg: &str, dir: &str) -> String {
+    format!(
+        "# {label}\n\
+         # Written by `tmux-companion theme add`. Yours to edit.\n\
+         #\n\
+         # Run `tmux-companion theme gen --apply` to add @theme-color-border,\n\
+         # which has to be measured against your terminal's own background.\n\n\
+         source-file \"{dir}/_reset.tmux\"\n\n\
+         set @theme-name         \"{label}\"\n\
+         set @theme-color-main-1 {bg}\n\
+         set @theme-color-on-main  {fg}\n\n\
+         source-file \"{dir}/_apply.tmux\"\n"
+    )
+}
+
+/// A file name for a theme called `label`.
+pub fn stem_for(label: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = true;
+    for c in label.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.extend(c.to_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// Every colour tmux will take, as rows of (value, name, rgb).
+///
+/// The sixteen names first because they are what somebody types, then the cube
+/// and the greyscale ramp by number. The named ones repeat as `colour0`
+/// upwards, which is the point: the list is what to type, not a set of
+/// distinct colours.
+pub fn all_colours() -> Vec<(String, &'static str, (u8, u8, u8))> {
+    let mut out: Vec<(String, &'static str, (u8, u8, u8))> = BASE_NAMES
+        .iter()
+        .map(|(name, rgb)| ((*name).to_string(), *name, *rgb))
+        .collect();
+    for i in 0u16..=255 {
+        let i = i as u8;
+        out.push((format!("colour{i}"), "", rgb(i)));
+    }
+    out
+}
+
+#[cfg(test)]
+mod add_tests {
+    use super::*;
+
+    #[test]
+    fn a_label_becomes_a_file_name() {
+        assert_eq!(stem_for("Ember"), "ember");
+        assert_eq!(stem_for("Tokyo Night"), "tokyo-night");
+        assert_eq!(stem_for("  Rosé  Pine  "), "ros-pine");
+        assert_eq!(stem_for("solarized/dark"), "solarized-dark");
+    }
+
+    #[test]
+    fn a_label_of_nothing_usable_is_empty_rather_than_a_pile_of_dashes() {
+        assert_eq!(stem_for("///"), "");
+        assert_eq!(stem_for(""), "");
+    }
+
+    #[test]
+    fn readable_on_rgb_agrees_with_the_index_version() {
+        for i in [16u8, 208, 114, 68, 231, 240] {
+            assert_eq!(readable_on_rgb(rgb(i)).0, readable_on(i).0, "colour{i}");
+        }
+    }
+
+    #[test]
+    fn a_hex_background_gets_a_text_colour_too() {
+        // The reason readable_on_rgb exists: #rrggbb has no index.
+        let (fg, ratio) = readable_on_rgb(parse_hex("#ff8800").unwrap());
+        assert_eq!(fg, TEXT_DARK);
+        assert!(ratio > 4.5, "{ratio}");
+    }
+
+    #[test]
+    fn the_written_file_carries_both_colours_and_sources_the_machinery() {
+        let body = added_theme_file("Tokyo Night", "colour61", "colour231", "/t/themes");
+        assert!(body.contains("set @theme-color-main-1 colour61"), "{body}");
+        assert!(
+            body.contains("set @theme-color-on-main  colour231"),
+            "{body}"
+        );
+        assert!(
+            body.contains("source-file \"/t/themes/_reset.tmux\""),
+            "{body}"
+        );
+        assert!(
+            body.contains("source-file \"/t/themes/_apply.tmux\""),
+            "{body}"
+        );
+        assert!(
+            !body.contains("@theme-color-border"),
+            "the border is gen's job"
+        );
+    }
+
+    #[test]
+    fn the_colour_list_covers_every_value_tmux_takes() {
+        let all = all_colours();
+        assert_eq!(all.len(), BASE_NAMES.len() + 256);
+        assert!(all.iter().any(|(v, _, _)| v == "colour0"));
+        assert!(all.iter().any(|(v, _, _)| v == "colour255"));
+        assert!(all.iter().any(|(v, n, _)| v == "red" && *n == "red"));
+    }
+}

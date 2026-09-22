@@ -360,6 +360,37 @@ pub enum ThemeAction {
         themes: Option<String>,
     },
 
+    /// Write a theme from a background colour, and optionally a text colour
+    ///
+    /// One colour is enough: the text colour is computed from it, and
+    /// `theme gen --apply` adds the border afterwards. Give `--fg` to choose
+    /// the text colour yourself.
+    Add {
+        /// The block's colour: a name, colourN, or #rrggbb
+        #[arg(long)]
+        bg: String,
+        /// The text on it. Computed from the background when left out
+        #[arg(long)]
+        fg: Option<String>,
+        /// What to call it. Taken from the colour when left out
+        #[arg(long)]
+        name: Option<String>,
+        /// Write it even when the pair is under WCAG AA
+        #[arg(long)]
+        force: bool,
+        /// Where the file goes
+        #[arg(long)]
+        themes: Option<String>,
+    },
+
+    /// Print every colour tmux takes, with a swatch
+    #[command(alias = "list-colors", alias = "list-all-colors")]
+    ListColours {
+        /// One per line with no swatch, for piping somewhere
+        #[arg(long)]
+        plain: bool,
+    },
+
     /// Compute each theme's readable text colour and a visible border
     Gen {
         /// Write the files. Without this, report what would change and touch
@@ -607,6 +638,14 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
             themes,
         } => return theme_apply(&session, target, &themes_dir_or(themes)),
         ThemeAction::Init { themes } => return theme_init(&themes_dir_or(themes)),
+        ThemeAction::Add {
+            bg,
+            fg,
+            name,
+            force,
+            themes,
+        } => return theme_add(&bg, fg, name, force, &themes_dir_or(themes)),
+        ThemeAction::ListColours { plain } => return theme_list_colours(plain),
     };
 
     let dir = themes_dir_or(themes);
@@ -1566,6 +1605,109 @@ fn theme_init(dir: &std::path::Path) -> anyhow::Result<()> {
          That mints a lighter and a darker sibling of each colour and measures\n\
          every border against this terminal's background."
     );
+    Ok(())
+}
+
+/// `theme add`: write a theme from one colour, or two.
+fn theme_add(
+    bg: &str,
+    fg: Option<String>,
+    name: Option<String>,
+    force: bool,
+    dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    use crate::theme::{
+        TEXT_MIN_AA, added_theme_file, contrast, readable_on_rgb, resolve_colour, stem_for, swatch,
+    };
+
+    let Some(bg_rgb) = resolve_colour(bg) else {
+        anyhow::bail!(
+            "{bg} is not a colour tmux takes.\n\
+             Try a name, colour0 to colour255, or #rrggbb; \
+             `tmux-companion theme list-colours` prints every one."
+        );
+    };
+
+    // One colour is enough, and the second is the interesting decision: pick it
+    // yourself and the contrast is yours to answer for, leave it out and the
+    // better of black and white is chosen for you.
+    let (fg_value, ratio) = match &fg {
+        Some(chosen) => {
+            let Some(fg_rgb) = resolve_colour(chosen) else {
+                anyhow::bail!("{chosen} is not a colour tmux takes");
+            };
+            (chosen.clone(), contrast(bg_rgb, fg_rgb))
+        }
+        None => {
+            let (computed, r) = readable_on_rgb(bg_rgb);
+            (computed.to_string(), r)
+        }
+    };
+
+    if ratio < TEXT_MIN_AA && !force {
+        anyhow::bail!(
+            "{} on {} is {ratio:.2}:1, under WCAG AA at {TEXT_MIN_AA}:1.\n\
+             Leave --fg out to have it chosen, pick a different pair, or pass \
+             --force to write it anyway.",
+            fg_value,
+            bg
+        );
+    }
+
+    let label = name.unwrap_or_else(|| bg.to_string());
+    let stem = stem_for(&label);
+    if stem.is_empty() {
+        anyhow::bail!("{label} leaves nothing to name a file after");
+    }
+    let path = dir.join(format!("{stem}.tmux"));
+    if path.exists() {
+        anyhow::bail!(
+            "{} is already there; delete it or pick another name",
+            path.display()
+        );
+    }
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(
+        &path,
+        added_theme_file(&label, bg, &fg_value, &dir.display().to_string()),
+    )?;
+
+    println!(
+        "{} {label}  {fg_value} on {bg} at {ratio:.1}:1{}",
+        swatch(bg),
+        if ratio < TEXT_MIN_AA {
+            "  (under AA)"
+        } else {
+            ""
+        }
+    );
+    println!("  {}", path.display());
+    println!("\nNext: tmux-companion theme gen --apply    adds the border");
+    Ok(())
+}
+
+/// `theme list-colours`: every value tmux takes, painted.
+fn theme_list_colours(plain: bool) -> anyhow::Result<()> {
+    use crate::theme::{all_colours, readable_on_rgb};
+
+    for (value, name, (r, g, b)) in all_colours() {
+        if plain {
+            println!("{value}");
+            continue;
+        }
+        let (fg, ratio) = readable_on_rgb((r, g, b));
+        // The block is painted in the colour and the label written on it, so
+        // the row shows both what it looks like and what reads on top.
+        let on = if fg == "colour16" { "30" } else { "97" };
+        println!(
+            "\x1b[48;2;{r};{g};{b}m\x1b[{on}m {value:<12} \x1b[0m  #{r:02x}{g:02x}{b:02x}               {fg} at {ratio:.1}:1{}",
+            if name.is_empty() {
+                String::new()
+            } else {
+                format!("   ({name})")
+            }
+        );
+    }
     Ok(())
 }
 
