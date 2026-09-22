@@ -144,7 +144,12 @@ the status bar you are looking at.
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what the bar costs, and how that was measured |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
-| [docs/comrades-port.md](docs/comrades-port.md) | what is being built next |
+| [docs/reference/cli.md](docs/reference/cli.md) | every subcommand and flag |
+| [docs/reference/configuration.md](docs/reference/configuration.md) | the config file, and what it can change |
+| [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
+| [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with its measured cost |
+| [CHANGELOG.md](CHANGELOG.md) | what changed |
+| [docs/comrades-port.md](docs/comrades-port.md) | what was built, and why |
 
 ## Building
 

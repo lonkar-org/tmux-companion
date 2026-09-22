@@ -33,3 +33,33 @@ commit that does the work. `blocked` carries the reason on the same line.
 Each row also carries its documentation row from the table in
 `comrades-port.md`, its config row, and its before and after numbers in
 `BENCHMARKS.md` where it replaces a script.
+
+## What is left
+
+Two things, and neither is code.
+
+`lonkar-org` is still to happen, and it is the one item nothing else can do:
+the CI badge, the crates.io `repository` field and the clone line in
+`CONTRIBUTING.md` all wait behind it, and the `@claude(badge)` note in
+`.github/workflows/ci.yml` says so. Never recreate `yogeshlonkar/tmux-companion`
+afterwards: GitHub's redirect survives the move and dies the moment that name
+is taken again.
+
+The cutover is the other. Every command here has been run against the live
+machine and none of them is bound to a key yet. `docs/tmux.conf.full.example`
+is what a full set of bindings looks like; the port plan's advice is to move
+one binding at a time, leave the zsh one under a different key for a week, and
+keep `comrades` in the config until its last script is gone.
+
+## What the port did not bring across
+
+Said plainly rather than left to be discovered.
+
+- The elaborate mock status bar `preview-tmux-theme.zsh` drew. The theme picker
+  previews a theme by listing its settings with a swatch against each, which is
+  enough to choose by and is not the same thing.
+- `probe keys` reports what crossterm decided a keypress was rather than the
+  raw bytes, because by the time this code runs the parse has happened. What it
+  prints is what any program acting on the key will see.
+- `zoxide-window.zsh` is inside `project` rather than a command of its own: it
+  was the same list with a different verb on the end.
