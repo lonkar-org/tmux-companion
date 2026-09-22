@@ -40,6 +40,8 @@ project switcher, the theme picker, the command runner.
 | `open` | open the URL or `file:line:col` under your cursor |
 | `sh-jobs` | what's suspended under this pane, with your icons |
 | `doctor` | everything a bug report needs, in one screen |
+| `project save` | capture this session's panes as the layout it reopens with |
+| `shell-init` | the prompt marks tmux's next-prompt has waited for since 3.3 |
 
 Full list with every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
@@ -162,7 +164,7 @@ libraries.
 
 ```sh
 cargo build --release      # target/release/tmux-companion, about 4 MB
-cargo test                 # 498 unit tests and 22 integration tests
+cargo test                 # 620 unit tests and 22 integration tests
 
 # on a machine somebody is using, keep off every core
 nice -n 15 cargo build --release -j 4

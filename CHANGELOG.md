@@ -7,6 +7,27 @@ entry per phase of the comrades port.
 
 ### Added
 
+- Panes in a layout window. `[[layout.window.pane]]` with a command, a cwd and
+  a focus flag, under a `layout` naming one of tmux's five presets or carrying
+  a raw tmux layout string, so a window you arranged by hand can be pasted in
+  rather than described in a new syntax.
+- `project save`, `project forget` and `project show`, which capture the
+  session you are in as that project's layout and say which file decided. A
+  saved layout wins over `[[layout]]`. `close-project` captures on the way out,
+  before anything is asked to quit.
+- `shell-init` for zsh, bash and fish, printing the OSC 133 prompt marks that
+  tmux's `next-prompt` and `previous-prompt` have been waiting for since 3.3.
+- `[git.autofetch]`, fetching the repositories the bar has drawn so ahead and
+  behind mean something. Off by default, since it is the only part of this that
+  touches a network.
+- `[autoreload]`, sourcing tmux's config when it changes, over the file the
+  daemon already stats for `keys`.
+- `[notify]`, saying when a long command finished in a pane you were not
+  looking at, with tmux's own `display-message` as the notifier so nothing has
+  to be installed.
+- `[window_names]`, naming windows from the `[[sh_jobs.job]]` table. It never
+  takes a name away from a window somebody pinned.
+
 - `keys` and `cheatsheet`, replacing the fzf-driven pair. The rows are parsed
   from `tmux list-keys` and cached against the config's mtime, so six
   `list-keys` calls happen once per config change rather than once per
@@ -42,6 +63,10 @@ entry per phase of the comrades port.
 - The socket is created 0600 and its owner is checked before a client connects.
 
 ### Fixed
+
+- `TMUX_COMPANION_SOCK` that is empty or too long for a unix socket address now
+  exits 2 instead of warning and connecting to the default socket, which meant
+  a harness asking for an isolated server quietly got the live one.
 
 - `Duration::from_secs_f64` panicked on a negative or non-finite `--ttl`, which
   arrives from a client.

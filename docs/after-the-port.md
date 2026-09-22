@@ -482,9 +482,16 @@ with their versions, per the rule above.
 
 ## If I only pick five
 
-The first release after the port: OSC 133 `shell-init`, git autofetch,
-tmux.conf autoreload, the finish notification, and the job table driving window
-names. All five are daemon-native, none of them needs new UI, and together
+Built, all five, and `docs/after-port-checklist.md` carries the state of each
+one. Every one of them is off until a config line turns it on, which was not
+the plan when this section was written and became the plan as each one landed:
+a daemon that starts fetching from a remote, renaming windows or sourcing a
+config on its own is a surprise, and the argument for the bundle is that it
+costs less than the plugins, not that it decides more.
+
+What this section said when it was a plan: the first release after the port is
+OSC 133 `shell-init`, git autofetch, tmux.conf autoreload, the finish
+notification, and the job table driving window names. All five are daemon-native, none of them needs new UI, and together
 they're smaller than any one of the pickers in the port.
 
 What I don't know yet is whether the notification is worth it on a machine with
