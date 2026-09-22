@@ -240,11 +240,90 @@ pub struct LayoutWindow {
     /// which is how windows end up called `2.1.278`.
     #[serde(default = "yes")]
     pub hold_name: bool,
+    /// How the panes are arranged.
+    ///
+    /// Either one of tmux's own five preset names, or a raw tmux layout string
+    /// of the kind `tmux list-windows -F '#{window_layout}'` prints. Nothing
+    /// here is parsed: the string is handed to `select-layout`, which is what
+    /// lets somebody arrange a window by hand and paste the result without
+    /// this file having to grow a layout language.
+    #[serde(default)]
+    pub layout: Option<String>,
+    /// `main-pane-width` for `main-vertical`, `main-pane-height` for
+    /// `main-horizontal`, ignored by the other presets.
+    ///
+    /// A percentage needs tmux 3.4; before that it has to be a cell count.
+    #[serde(default)]
+    pub main_size: Option<String>,
+    /// The panes, in creation order.
+    ///
+    /// Empty means one pane running `command`, which is every layout written
+    /// before this field existed.
+    #[serde(default)]
+    pub pane: Vec<LayoutPane>,
+}
+
+/// One pane in a layout window.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutPane {
+    /// What to run in it. Empty leaves a shell.
+    #[serde(default)]
+    pub command: String,
+    /// Where it starts, with `~` meaning the home directory. Empty means the
+    /// project directory, same as the window.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Whether this is the pane selected when the window opens.
+    ///
+    /// The first pane wins when nothing sets it, and the first pane that sets
+    /// it wins when several do, because a layout with two focused panes is a
+    /// typo rather than a question worth erroring over.
+    #[serde(default)]
+    pub focus: bool,
 }
 
 /// serde needs a function for a default of `true`.
 fn yes() -> bool {
     true
+}
+
+/// The five layout names tmux understands, which are the only strings
+/// `select-layout` will take that are not a serialised layout.
+pub const TMUX_PRESETS: [&str; 5] = [
+    "even-horizontal",
+    "even-vertical",
+    "main-horizontal",
+    "main-vertical",
+    "tiled",
+];
+
+impl LayoutWindow {
+    /// How many panes this window opens with, never zero.
+    pub fn pane_count(&self) -> usize {
+        self.pane.len().max(1)
+    }
+
+    /// The window option that `main_size` sets, if the layout is one that
+    /// reads it.
+    ///
+    /// `main-vertical` puts the main pane on the left so its size is a width;
+    /// `main-horizontal` stacks it on top so the size is a height. Every other
+    /// preset ignores both options, so this answers `None` rather than setting
+    /// something that does nothing.
+    pub fn main_size_option(&self) -> Option<&'static str> {
+        match self.layout.as_deref()? {
+            "main-vertical" => Some("main-pane-width"),
+            "main-horizontal" => Some("main-pane-height"),
+            _ => None,
+        }
+    }
+
+    /// Which pane index is selected once the window is built, counting from
+    /// zero within this window.
+    pub fn focused_pane(&self) -> usize {
+        self.pane.iter().position(|p| p.focus).unwrap_or(0)
+    }
 }
 
 impl Config {
@@ -307,11 +386,17 @@ impl Default for Config {
                         name: "edit".to_string(),
                         command: "nvim".to_string(),
                         hold_name: true,
+                        layout: None,
+                        main_size: None,
+                        pane: Vec::new(),
                     },
                     LayoutWindow {
                         name: "ai".to_string(),
                         command: "claude".to_string(),
                         hold_name: true,
+                        layout: None,
+                        main_size: None,
+                        pane: Vec::new(),
                     },
                 ],
             }],

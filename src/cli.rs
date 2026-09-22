@@ -977,67 +977,37 @@ async fn open_project(
             .map(|l| l.window.clone())
             .unwrap_or_default();
 
-        match windows.split_first() {
-            Some((first, rest)) => {
-                tmux(&[
-                    "new-session",
-                    "-d",
-                    "-s",
-                    &name,
-                    "-c",
-                    path,
-                    "-n",
-                    &first.name,
-                ])
-                .await;
-                for w in rest {
-                    tmux(&[
-                        "new-window",
-                        "-d",
-                        "-t",
-                        &format!("={name}:"),
-                        "-c",
-                        path,
-                        "-n",
-                        &w.name,
-                    ])
-                    .await;
-                }
-                for w in &windows {
-                    if w.hold_name {
-                        let target = format!("={name}:{}", w.name);
-                        tmux(&[
-                            "set-window-option",
-                            "-t",
-                            &target,
-                            "automatic-rename",
-                            "off",
-                        ])
-                        .await;
-                        tmux(&["set-window-option", "-t", &target, "allow-rename", "off"]).await;
-                    }
-                }
-                for w in &windows {
-                    if !w.command.is_empty() {
-                        tmux(&[
-                            "send-keys",
-                            "-t",
-                            &format!("={name}:{}", w.name),
-                            &w.command,
-                            "C-m",
-                        ])
-                        .await;
-                    }
-                }
-                tmux(&["select-window", "-t", &format!("={name}:{}", first.name)]).await;
-            }
-            // A layout with no windows is a plain shell, which is what
-            // somebody asking for no windows asked for.
-            None => tmux(&["new-session", "-d", "-s", &name, "-c", path]).await,
+        let spec = crate::project::SessionSpec {
+            name: &name,
+            path,
+            home,
+            pane_base: pane_base_index().await,
+            windows: &windows,
+        };
+        for cmd in crate::project::session_commands(&spec) {
+            let borrowed: Vec<&str> = cmd.iter().map(String::as_str).collect();
+            tmux(&borrowed).await;
         }
     }
 
     focus_session(&name).await
+}
+
+/// The server's `pane-base-index`, defaulting to 0 the way tmux does.
+///
+/// Read rather than assumed: a config that sets it to 1 makes every
+/// `window.0` target miss, and tmux answers a missed target by doing nothing
+/// rather than by saying so, so the session would come up with its commands
+/// quietly absent.
+async fn pane_base_index() -> usize {
+    tokio::process::Command::new("tmux")
+        .args(["show-option", "-gv", "pane-base-index"])
+        .output()
+        .await
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// One tmux command, ignoring a failure.

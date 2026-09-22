@@ -224,6 +224,41 @@ name = "ai"
 command = "claude"
 hold_name = true
 
+# A window with panes. `command` above is the shorthand for a window that holds
+# one pane; a [[layout.window.pane]] table takes over when there is more than
+# one, and the panes are created in the order they are listed here.
+#
+# [[layout.window]]
+# name = "work"
+# # One of tmux's own five names: even-horizontal, even-vertical,
+# # main-horizontal, main-vertical, tiled. Panes with nothing set here get
+# # tiled, because the shape the splits leave behind is an accident of the
+# # order they ran in.
+# layout = "main-vertical"
+# # main-pane-width for main-vertical, main-pane-height for main-horizontal,
+# # ignored by the rest. A percentage needs tmux 3.4; before that, cells.
+# main_size = "60%"
+#
+# [[layout.window.pane]]
+# command = "nvim"
+# focus = true          # the pane selected when the window opens
+#
+# [[layout.window.pane]]
+# command = "claude"
+#
+# [[layout.window.pane]]
+# cwd = "~/src"         # empty means the project directory
+#
+# `layout` also takes a raw tmux layout string, which is what
+# `tmux list-windows -F '#{window_layout}'` prints. Nothing parses it, so you
+# can arrange a window by hand with your usual bindings and paste the result:
+#
+# layout = "bb62,272x67,0,0{136x67,0,0,1,135x67,137,0,2}"
+#
+# The cell sizes in that string are absolute, and tmux rescales them
+# proportionally, so a layout captured on a wide display comes back cramped on
+# a laptop and a preset name travels better.
+
 [autosave]
 # Whether the daemon saves the session list on a timer, so a reboot does not
 # cost the layout.

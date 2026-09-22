@@ -292,6 +292,196 @@ pub async fn record_visit(dir: &str) {
         .await;
 }
 
+// ── building a session ───────────────────────────────────────────────────────
+
+/// Everything `session_commands` needs, as one struct so the signature does not
+/// grow past what clippy will accept.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionSpec<'a> {
+    /// The tmux session name.
+    pub name: &'a str,
+    /// The project directory, which is where every window starts.
+    pub path: &'a str,
+    /// Home, for expanding a `~` in a pane's `cwd`.
+    pub home: &'a str,
+    /// The server's `pane-base-index`, read once rather than assumed.
+    ///
+    /// Targeting `window.0` on a config that sets `pane-base-index 1` hits
+    /// nothing, and tmux reports that as a failed command rather than an error
+    /// anybody sees, so the session would come up with the commands silently
+    /// missing.
+    pub pane_base: usize,
+    /// The windows to build, first one selected at the end.
+    pub windows: &'a [crate::config::LayoutWindow],
+}
+
+/// `~/x` against a home directory, anything else unchanged.
+fn expand_home(dir: &str, home: &str) -> String {
+    match dir.strip_prefix("~/") {
+        Some(rest) => format!("{home}/{rest}"),
+        None if dir == "~" => home.to_string(),
+        None => dir.to_string(),
+    }
+}
+
+/// The tmux commands that build a session, in the order they have to run.
+///
+/// Pure on purpose: building a session is a dozen ordered calls whose order is
+/// the entire feature, and the only way to test an order is to be able to look
+/// at it without a tmux server in the room.
+///
+/// The order is windows, then panes, then geometry, then the commands. Commands
+/// last matters: sent before the layout is applied, a full-screen program draws
+/// itself at the pre-split size and repaints, which looks broken on every
+/// session start.
+///
+/// A window with no `pane` table emits exactly what this function emitted
+/// before panes existed, down to the window-level `send-keys` target, so an
+/// existing config builds the same session it always did.
+pub fn session_commands(spec: &SessionSpec) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let SessionSpec {
+        name,
+        path,
+        home,
+        pane_base,
+        windows,
+    } = *spec;
+
+    let Some((first, rest)) = windows.split_first() else {
+        // A layout with no windows is a plain shell, which is what somebody
+        // asking for no windows asked for.
+        return vec![args(&["new-session", "-d", "-s", name, "-c", path])];
+    };
+
+    out.push(args(&[
+        "new-session",
+        "-d",
+        "-s",
+        name,
+        "-c",
+        path,
+        "-n",
+        &first.name,
+    ]));
+    for w in rest {
+        out.push(args(&[
+            "new-window",
+            "-d",
+            "-t",
+            &format!("={name}:"),
+            "-c",
+            path,
+            "-n",
+            &w.name,
+        ]));
+    }
+
+    for w in windows {
+        let target = format!("={name}:{}", w.name);
+        let count = w.pane_count();
+
+        // Each split targets the pane made by the previous one, so the panes
+        // end up in the order the config lists them. Splitting the first pane
+        // every time would interleave them, because tmux inserts a new pane
+        // directly after the one it split.
+        for i in 1..count {
+            // Reflow before every split past the first: repeated halving runs
+            // out of rows or columns around the fourth pane, and tmux answers
+            // "no space for new pane" rather than making room.
+            if i > 1 {
+                out.push(args(&["select-layout", "-t", &target, "tiled"]));
+            }
+            let cwd = w.pane[i]
+                .cwd
+                .as_deref()
+                .map(|d| expand_home(d, home))
+                .unwrap_or_else(|| path.to_string());
+            out.push(args(&[
+                "split-window",
+                "-d",
+                "-t",
+                &format!("{target}.{}", pane_base + i - 1),
+                "-c",
+                &cwd,
+            ]));
+        }
+
+        if count > 1 {
+            if let (Some(option), Some(size)) = (w.main_size_option(), w.main_size.as_deref()) {
+                out.push(args(&["set-window-option", "-t", &target, option, size]));
+            }
+            // Tiled when nothing is asked for, because the shape left by the
+            // splits is an accident of the order they ran in.
+            let layout = w.layout.as_deref().unwrap_or("tiled");
+            out.push(args(&["select-layout", "-t", &target, layout]));
+        } else if let Some(layout) = w.layout.as_deref() {
+            out.push(args(&["select-layout", "-t", &target, layout]));
+        }
+    }
+
+    for w in windows {
+        if w.hold_name {
+            let target = format!("={name}:{}", w.name);
+            out.push(args(&[
+                "set-window-option",
+                "-t",
+                &target,
+                "automatic-rename",
+                "off",
+            ]));
+            out.push(args(&[
+                "set-window-option",
+                "-t",
+                &target,
+                "allow-rename",
+                "off",
+            ]));
+        }
+    }
+
+    for w in windows {
+        let target = format!("={name}:{}", w.name);
+        if w.pane.is_empty() {
+            if !w.command.is_empty() {
+                out.push(args(&["send-keys", "-t", &target, &w.command, "C-m"]));
+            }
+            continue;
+        }
+        for (i, p) in w.pane.iter().enumerate() {
+            if !p.command.is_empty() {
+                out.push(args(&[
+                    "send-keys",
+                    "-t",
+                    &format!("{target}.{}", pane_base + i),
+                    &p.command,
+                    "C-m",
+                ]));
+            }
+        }
+        let focused = w.focused_pane();
+        if focused != 0 {
+            out.push(args(&[
+                "select-pane",
+                "-t",
+                &format!("{target}.{}", pane_base + focused),
+            ]));
+        }
+    }
+
+    out.push(args(&[
+        "select-window",
+        "-t",
+        &format!("={name}:{}", first.name),
+    ]));
+    out
+}
+
+/// One command, owned, so the caller can hand it to a process builder.
+fn args(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|s| s.to_string()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +626,333 @@ mod tests {
         assert_eq!(resolve_typed("definitely-not-here", "/tmp", "/tmp"), None);
         assert_eq!(resolve_typed("   ", "/tmp", "/tmp"), None);
         assert_eq!(resolve_typed("", "/tmp", "/tmp"), None);
+    }
+}
+
+#[cfg(test)]
+mod session_building {
+    use super::*;
+    use crate::config::{Config, LayoutPane, LayoutWindow};
+
+    fn win(name: &str, command: &str) -> LayoutWindow {
+        LayoutWindow {
+            name: name.to_string(),
+            command: command.to_string(),
+            hold_name: true,
+            layout: None,
+            main_size: None,
+            pane: Vec::new(),
+        }
+    }
+
+    fn pane(command: &str) -> LayoutPane {
+        LayoutPane {
+            command: command.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn build(windows: &[LayoutWindow], pane_base: usize) -> Vec<Vec<String>> {
+        session_commands(&SessionSpec {
+            name: "proj",
+            path: "/w/proj",
+            home: "/home/me",
+            pane_base,
+            windows,
+        })
+    }
+
+    fn joined(cmds: &[Vec<String>]) -> Vec<String> {
+        cmds.iter().map(|c| c.join(" ")).collect()
+    }
+
+    #[test]
+    fn the_default_layout_builds_what_it_built_before_panes_existed() {
+        // The pinned sequence. A window with no `pane` table has to emit the
+        // same calls in the same order as the hand-written version this
+        // replaced, including the window-level `send-keys` target.
+        let c = Config::default();
+        let l = c.layout_for("/w/proj", "/home/me").expect("default layout");
+        assert_eq!(
+            joined(&build(&l.window, 0)),
+            vec![
+                "new-session -d -s proj -c /w/proj -n edit",
+                "new-window -d -t =proj: -c /w/proj -n ai",
+                "set-window-option -t =proj:edit automatic-rename off",
+                "set-window-option -t =proj:edit allow-rename off",
+                "set-window-option -t =proj:ai automatic-rename off",
+                "set-window-option -t =proj:ai allow-rename off",
+                "send-keys -t =proj:edit nvim C-m",
+                "send-keys -t =proj:ai claude C-m",
+                "select-window -t =proj:edit",
+            ]
+        );
+    }
+
+    #[test]
+    fn no_windows_is_a_plain_shell() {
+        assert_eq!(
+            joined(&build(&[], 0)),
+            vec!["new-session -d -s proj -c /w/proj"]
+        );
+    }
+
+    #[test]
+    fn a_window_with_no_command_sends_no_keys() {
+        let w = win("shell", "");
+        let out = joined(&build(&[w], 0));
+        assert!(!out.iter().any(|c| c.starts_with("send-keys")), "{out:?}");
+    }
+
+    #[test]
+    fn each_split_targets_the_pane_the_last_one_made() {
+        // Splitting pane 0 every time interleaves the panes, because tmux
+        // inserts a new pane directly after the one it split, so pane 3 in the
+        // config would land in the middle of the window.
+        let mut w = win("edit", "");
+        w.pane = vec![pane("a"), pane("b"), pane("c")];
+        let out = joined(&build(&[w], 0));
+        let splits: Vec<&String> = out
+            .iter()
+            .filter(|c| c.starts_with("split-window"))
+            .collect();
+        assert_eq!(
+            splits,
+            vec![
+                "split-window -d -t =proj:edit.0 -c /w/proj",
+                "split-window -d -t =proj:edit.1 -c /w/proj",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_third_pane_gets_a_reflow_before_it_so_there_is_room() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane(""), pane("")];
+        let out = joined(&build(&[w], 0));
+        let i = out
+            .iter()
+            .position(|c| c == "select-layout -t =proj:edit tiled");
+        let second = out
+            .iter()
+            .position(|c| c == "split-window -d -t =proj:edit.1 -c /w/proj")
+            .unwrap();
+        assert!(i.is_some_and(|i| i < second), "{out:?}");
+    }
+
+    #[test]
+    fn two_panes_need_no_reflow() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane("")];
+        let out = joined(&build(&[w], 0));
+        assert_eq!(
+            out.iter().filter(|c| c.starts_with("split-window")).count(),
+            1
+        );
+        // One select-layout, the final one, not an intermediate reflow.
+        assert_eq!(
+            out.iter()
+                .filter(|c| c.starts_with("select-layout"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn panes_with_no_layout_get_tiled_rather_than_whatever_the_splits_left() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane("")];
+        let out = joined(&build(&[w], 0));
+        assert!(
+            out.contains(&"select-layout -t =proj:edit tiled".to_string()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_raw_tmux_layout_string_is_passed_through_unparsed() {
+        let mut w = win("edit", "");
+        w.layout = Some("bb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}".to_string());
+        w.pane = vec![pane(""), pane("")];
+        let out = joined(&build(&[w], 0));
+        assert!(
+            out.contains(
+                &"select-layout -t =proj:edit bb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}".to_string()
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn main_size_is_a_width_for_main_vertical_and_a_height_for_main_horizontal() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane("")];
+        w.main_size = Some("60%".to_string());
+
+        w.layout = Some("main-vertical".to_string());
+        assert!(
+            joined(&build(&[w.clone()], 0))
+                .contains(&"set-window-option -t =proj:edit main-pane-width 60%".to_string())
+        );
+
+        w.layout = Some("main-horizontal".to_string());
+        assert!(
+            joined(&build(&[w.clone()], 0))
+                .contains(&"set-window-option -t =proj:edit main-pane-height 60%".to_string())
+        );
+
+        // tiled reads neither, so setting one would be a call that does
+        // nothing and a reader wondering why it is there.
+        w.layout = Some("tiled".to_string());
+        assert!(
+            !joined(&build(&[w], 0))
+                .iter()
+                .any(|c| c.contains("main-pane"))
+        );
+    }
+
+    #[test]
+    fn main_size_is_set_before_the_layout_that_reads_it() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane("")];
+        w.layout = Some("main-vertical".to_string());
+        w.main_size = Some("60%".to_string());
+        let out = joined(&build(&[w], 0));
+        let size = out
+            .iter()
+            .position(|c| c.contains("main-pane-width"))
+            .unwrap();
+        let layout = out
+            .iter()
+            .position(|c| c == "select-layout -t =proj:edit main-vertical")
+            .unwrap();
+        assert!(size < layout, "{out:?}");
+    }
+
+    #[test]
+    fn commands_are_sent_after_the_layout_is_applied() {
+        // A full-screen program started before the splits draws itself at the
+        // wrong size and repaints, which looks broken on every session start.
+        let mut w = win("edit", "");
+        w.pane = vec![pane("nvim"), pane("claude")];
+        let out = joined(&build(&[w], 0));
+        let layout = out
+            .iter()
+            .position(|c| c.starts_with("select-layout"))
+            .unwrap();
+        let first_key = out.iter().position(|c| c.starts_with("send-keys")).unwrap();
+        assert!(layout < first_key, "{out:?}");
+    }
+
+    #[test]
+    fn each_pane_gets_its_own_command_at_its_own_index() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane("nvim"), pane(""), pane("claude")];
+        let out = joined(&build(&[w], 0));
+        let keys: Vec<&String> = out.iter().filter(|c| c.starts_with("send-keys")).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "send-keys -t =proj:edit.0 nvim C-m",
+                "send-keys -t =proj:edit.2 claude C-m",
+            ]
+        );
+    }
+
+    #[test]
+    fn pane_base_index_one_shifts_every_pane_target() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane("nvim"), pane("claude")];
+        let out = joined(&build(&[w], 1));
+        assert!(
+            out.contains(&"split-window -d -t =proj:edit.1 -c /w/proj".to_string()),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(&"send-keys -t =proj:edit.1 nvim C-m".to_string()),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(&"send-keys -t =proj:edit.2 claude C-m".to_string()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn focus_selects_that_pane_and_the_first_pane_needs_no_call() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane("nvim"), pane("claude")];
+        assert!(
+            !joined(&build(&[w.clone()], 0))
+                .iter()
+                .any(|c| c.starts_with("select-pane"))
+        );
+
+        w.pane[1].focus = true;
+        assert!(joined(&build(&[w], 0)).contains(&"select-pane -t =proj:edit.1".to_string()));
+    }
+
+    #[test]
+    fn two_focused_panes_take_the_first_rather_than_erroring() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane(""), pane("")];
+        w.pane[1].focus = true;
+        w.pane[2].focus = true;
+        assert!(joined(&build(&[w], 0)).contains(&"select-pane -t =proj:edit.1".to_string()));
+    }
+
+    #[test]
+    fn a_pane_cwd_expands_a_tilde_and_otherwise_inherits_the_project() {
+        let mut w = win("edit", "");
+        w.pane = vec![pane(""), pane(""), pane("")];
+        w.pane[1].cwd = Some("~/src".to_string());
+        w.pane[2].cwd = Some("/etc".to_string());
+        let out = joined(&build(&[w], 0));
+        assert!(
+            out.contains(&"split-window -d -t =proj:edit.0 -c /home/me/src".to_string()),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(&"split-window -d -t =proj:edit.1 -c /etc".to_string()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_single_pane_window_still_honours_an_explicit_layout() {
+        // One pane and a preset is a way of saying "leave it alone but set the
+        // option", and dropping it silently would be surprising.
+        let mut w = win("edit", "nvim");
+        w.layout = Some("even-horizontal".to_string());
+        let out = joined(&build(&[w], 0));
+        assert!(
+            out.contains(&"select-layout -t =proj:edit even-horizontal".to_string()),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn hold_name_off_leaves_the_rename_options_alone() {
+        let mut w = win("edit", "nvim");
+        w.hold_name = false;
+        let out = joined(&build(&[w], 0));
+        assert!(
+            !out.iter().any(|c| c.contains("automatic-rename")),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn the_first_window_is_the_one_selected() {
+        let out = joined(&build(&[win("edit", ""), win("ai", "")], 0));
+        assert_eq!(out.last().unwrap(), "select-window -t =proj:edit");
+    }
+
+    #[test]
+    fn expand_home_leaves_a_bare_path_alone() {
+        assert_eq!(expand_home("~/src", "/home/me"), "/home/me/src");
+        assert_eq!(expand_home("~", "/home/me"), "/home/me");
+        assert_eq!(expand_home("/etc", "/home/me"), "/etc");
+        assert_eq!(expand_home("relative", "/home/me"), "relative");
     }
 }

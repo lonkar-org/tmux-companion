@@ -221,6 +221,61 @@ default for a reason. Without it an editor window follows whatever is running,
 and an agent window renames itself to its own version string, which is how
 windows end up called `2.1.278`.
 
+### Panes
+
+`command` on a window is the shorthand for a window holding one pane. A
+`[[layout.window.pane]]` table takes over when there's more than one, and the
+panes are created in the order you list them:
+
+```toml
+  [[layout.window]]
+  name = "work"
+  layout = "main-vertical"
+  main_size = "60%"
+
+    [[layout.window.pane]]
+    command = "nvim"
+    focus = true
+
+    [[layout.window.pane]]
+    command = "claude"
+
+    [[layout.window.pane]]
+    cwd = "~/src"
+```
+
+`layout` is one of tmux's own five names, `even-horizontal`, `even-vertical`,
+`main-horizontal`, `main-vertical` or `tiled`, and panes with nothing set get
+tiled, because the shape repeated splitting leaves behind is an accident of the
+order the splits ran in rather than a layout anybody chose. `main_size` sets
+`main-pane-width` under `main-vertical` and `main-pane-height` under
+`main-horizontal`, and the other three read neither, so it's ignored there
+rather than silently setting an option that does nothing. A percentage needs
+tmux 3.4; before that it has to be a cell count.
+
+`focus` is the pane selected when the window opens, the first pane when nothing
+sets it, and the first one that sets it when several do, since a layout with two
+focused panes is a typo and not a question worth refusing to start over. `cwd`
+takes a `~`, and a pane that leaves it out starts in the project directory.
+
+`layout` also takes a raw tmux layout string, which is what
+`tmux list-windows -F '#{window_layout}'` prints:
+
+```toml
+  layout = "bb62,272x67,0,0{136x67,0,0,1,135x67,137,0,2}"
+```
+
+Nothing here parses that string, it goes straight to `select-layout`, which is
+what lets you arrange a window by hand with the bindings you already have and
+paste the result instead of learning a layout language. The cell sizes in it are
+absolute and tmux rescales them proportionally, so a layout captured on a wide
+display comes back cramped on a laptop and a preset name travels better between
+screens.
+
+The commands are sent after the geometry is settled, which is deliberate: a
+full-screen program started before the splits draws itself at the pre-split size
+and then repaints, and that looks broken on every single session start.
+
 `[project] zoxide = false` drops the directory list, leaving live sessions and
 whatever you type. zoxide is an assumption here rather than a requirement.
 
