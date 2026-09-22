@@ -151,6 +151,19 @@ pub enum Cmd {
     /// Print what somebody would otherwise have to ask you for
     Doctor,
 
+    /// Searchable key bindings
+    Keys {
+        /// Show every binding, including the ones tmux ships
+        #[arg(long)]
+        all: bool,
+        /// Only bindings whose note or chord contains this
+        #[arg(long, default_value = "custom: ")]
+        query: String,
+        /// Rebuild from tmux rather than using what the daemon holds
+        #[arg(long)]
+        refresh: bool,
+    },
+
     /// Theme tools
     Theme {
         /// What to do
@@ -316,6 +329,17 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         // the config it started with, and the question here is what a *fresh*
         // read of the file says, which is what somebody debugging one wants.
         Cmd::Config { action } => run_config(action)?,
+        Cmd::Keys {
+            all,
+            query,
+            refresh,
+        } => {
+            let args = crate::proto::KeysArgs {
+                query: if all { String::new() } else { query },
+                refresh,
+            };
+            crate::client::send_and_print(Request::build("keys", &args)).await?;
+        }
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
     }

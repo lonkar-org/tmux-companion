@@ -165,6 +165,18 @@ pub struct ShJobsArgs {
     pub pane_pid: u32,
 }
 
+/// Arguments for `keys`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct KeysArgs {
+    /// Only rows whose note or chord contains this.
+    #[serde(default)]
+    pub query: String,
+    /// Rebuild from tmux even if the cached rows look current.
+    #[serde(default)]
+    pub refresh: bool,
+}
+
 /// The default `--ttl`, kept here rather than imported from `server::state` so
 /// the wire types do not depend on the server.
 fn default_ttl_secs() -> f64 {

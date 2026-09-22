@@ -60,6 +60,14 @@ pub struct ServerState {
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
     repo_check: TtlMap<PathBuf, bool>,
+    /// Key bindings, with the config mtime they were built from.
+    ///
+    /// Not a `TtlMap`: bindings change when the config is sourced and never
+    /// otherwise, so the freshness question is "is the file newer than these
+    /// rows" rather than "how old are they". That is also what deletes the
+    /// cache file, the `--build` flag and the `--refresh` flag the zsh version
+    /// needed.
+    keys: Option<(Vec<crate::keys::KeyRow>, Option<std::time::SystemTime>)>,
 }
 
 /// Every method on `ServerState` is synchronous by design: the state lives
@@ -90,6 +98,7 @@ impl ServerState {
             battery_cache: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
+            keys: None,
         }
     }
 
@@ -134,6 +143,28 @@ impl ServerState {
     }
 
     // ── battery ──────────────────────────────────────────────────────────────
+
+    // ── key bindings ─────────────────────────────────────────────────────────
+
+    /// The cached rows, if they were built from the config as it is now.
+    pub fn keys_cached(
+        &self,
+        mtime: Option<std::time::SystemTime>,
+    ) -> Option<Vec<crate::keys::KeyRow>> {
+        match &self.keys {
+            Some((rows, built_from)) if *built_from == mtime => Some(rows.clone()),
+            _ => None,
+        }
+    }
+
+    /// Store rows against the config mtime they were built from.
+    pub fn keys_store(
+        &mut self,
+        rows: Vec<crate::keys::KeyRow>,
+        mtime: Option<std::time::SystemTime>,
+    ) {
+        self.keys = Some((rows, mtime));
+    }
 
     /// The last battery render, if it is still fresh.
     pub fn battery_cached(&self) -> Option<String> {

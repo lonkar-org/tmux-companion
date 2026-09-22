@@ -36,6 +36,30 @@ pub struct Config {
     pub status: Status,
     /// Jobs stopped or running under a pane.
     pub sh_jobs: ShJobs,
+    /// The record of which bindings get used.
+    pub usage: Usage,
+}
+
+/// The record of which bindings get used, which orders the cheat sheet.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Usage {
+    /// Whether to record anything at all.
+    ///
+    /// It records what somebody presses, which is their business and not the
+    /// tool's, so turning it off is one line and nothing else changes.
+    pub enabled: bool,
+    /// Where the log lives. Empty means `$XDG_STATE_HOME/tmux-companion/`.
+    pub path: Option<PathBuf>,
+}
+
+impl Default for Usage {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None,
+        }
+    }
 }
 
 /// Which stopped or background jobs the `sh-jobs` segment draws, and how.

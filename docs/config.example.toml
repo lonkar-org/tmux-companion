@@ -173,3 +173,14 @@ max = 3
 match = "nvim"
 icon = "#[fg=#0262a8,bg=colour235,none] n#[fg=#539035]󰕷im#[fg=colour235,bg=colour233]"
 color = ""
+
+[usage]
+# Whether to record which key bindings get picked. The cheat sheet orders each
+# box by this, so the keys you actually reach for float to the top of a group.
+#
+# It records what you press, which is your business and not the tool's, so
+# turning it off is one line and nothing else changes.
+enabled = true
+
+# Where the log lives. Unset means $XDG_STATE_HOME/tmux-companion/.
+# path = "~/.local/state/tmux-companion/keys-usage.tsv"

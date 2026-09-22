@@ -18,6 +18,8 @@ pub mod client;
 pub mod config;
 /// What to ask somebody to run before they open an issue.
 pub mod doctor;
+/// Key bindings, parsed out of tmux.
+pub mod keys;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// The JSON request and response, and one args struct per command.

@@ -654,6 +654,8 @@ and it's about 38ms.
 | Subcommand | Replaces | zsh lines | Needs |
 | --- | --- | --- | --- |
 | `keys` | `keys.zsh` | 120 | matcher, TUI, `list-keys` parse, usage log |
+
+<!-- @Yogesh(decide): tmux.conf:169-170 bind C-s and C-r with -N, then tmux-resurrect re-binds both without -N and the notes are gone. Move those two binds after the plugin runs, or re-apply the notes afterwards? -->
 | `cheatsheet` | `cheatsheet.zsh` | 99 | box layout, usage counts |
 | `project` | `project-session.zsh`, `project-preview.zsh`, `zoxide-window.zsh`, `short-path.zsh` | 272 | matcher, TUI, zoxide read, theme map |
 | `theme` | `choose-tmux-theme.zsh`, `preview-tmux-theme.zsh` | 300 | matcher, colour parse, swatch render |

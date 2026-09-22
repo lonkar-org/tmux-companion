@@ -126,6 +126,10 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // Diagnostics.  Not clap subcommands users are expected to reach for;
         // `noop` prices a bare client round trip and `__rusage` is how
         // BENCHMARKS.md measures per-call server CPU.
+        "keys" => match req.parse_args::<crate::proto::KeysArgs>() {
+            Ok(a) => keys(&a, &state).await,
+            Err(e) => Err(e),
+        },
         "noop" => Ok(String::new()),
         // How a client replaces a daemon from an older build: ask it to go,
         // then start one. Anybody who can send this could already send any
@@ -324,6 +328,43 @@ fn rusage_line() -> anyhow::Result<String> {
         micros(kids.system_time()),
         REQ_COUNT.load(std::sync::atomic::Ordering::Relaxed),
     ))
+}
+
+/// Key bindings as tab-separated rows, rebuilt when the tmux config changed.
+async fn keys(
+    args: &crate::proto::KeysArgs,
+    state: &Arc<Mutex<ServerState>>,
+) -> anyhow::Result<String> {
+    let conf = crate::keys::tmux_conf_path();
+    let mtime = crate::keys::config_mtime(&conf);
+
+    let cached = if args.refresh {
+        None
+    } else {
+        state.lock().await.keys_cached(mtime)
+    };
+
+    let rows = match cached {
+        Some(rows) => rows,
+        None => {
+            // Collected outside the lock: six `tmux list-keys` calls is the
+            // slow path, and holding the mutex across it would stall every
+            // status-bar refresh behind it.
+            let fresh = crate::keys::collect().await?;
+            state.lock().await.keys_store(fresh.clone(), mtime);
+            fresh
+        }
+    };
+
+    let filtered = crate::keys::filter(&rows, &args.query);
+    let mut out = String::new();
+    for row in filtered {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            row.table, row.key, row.shown, row.note, row.command
+        ));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
