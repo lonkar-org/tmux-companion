@@ -7,6 +7,22 @@ entry per phase of the comrades port.
 
 ### Added
 
+- Released binaries for four targets: macOS on Apple silicon and Intel, Linux on
+  ARM and on Intel or AMD. The Linux pair link statically against musl, so one
+  binary runs on any distribution rather than tracking a glibc version.
+- `scripts/install.sh`, which picks the archive for the machine it runs on,
+  verifies it against the release's `checksums.txt`, and installs it. It refuses
+  rather than warns when the checksum does not match, and falls back to building
+  from source when no release fits.
+- `tmux-companion.tmux`, so tpm can install it. It binds no keys and sets no
+  options.
+- `--version`, reporting the build stamp the daemon handshake compares rather
+  than the crate version alone.
+- `.github/workflows/release.yml`: a tag builds the four binaries, and
+  publishing waits on the `release` environment so an admin approves first.
+- [docs/how-to/install.md](docs/how-to/install.md), covering all three ways in
+  and how to remove it again.
+
 - Panes in a layout window. `[[layout.window.pane]]` with a command, a cwd and
   a focus flag, under a `layout` naming one of tmux's five presets or carrying
   a raw tmux layout string, so a window you arranged by hand can be pasted in

@@ -1,1 +1,4 @@
 /target
+
+# tpm writes the install log next to the plugin
+.install.log

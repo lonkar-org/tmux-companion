@@ -7,12 +7,15 @@ use serde::{Deserialize, Serialize};
 /// question a client actually needs answered is "is the daemon running the
 /// binary I just installed".
 pub fn build_id() -> String {
-    format!(
-        "{}+{}",
-        env!("CARGO_PKG_VERSION"),
-        env!("TMUX_COMPANION_BUILD")
-    )
+    BUILD_ID.to_string()
 }
+
+/// [`build_id`] as a compile-time constant.
+///
+/// Exists because clap's `version` attribute takes a `&'static str` and cannot
+/// call a function, and having two spellings of the build id would be two
+/// things to keep in step. `build_id()` returns this.
+pub const BUILD_ID: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("TMUX_COMPANION_BUILD"));
 
 /// One line from a client: which command, its arguments, and which build sent
 /// it.
@@ -221,6 +224,19 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_constant_and_the_function_cannot_drift() {
+        // clap takes the constant and the wire handshake takes the function,
+        // so a build where they disagree would report one version and compare
+        // another.
+        assert_eq!(build_id(), BUILD_ID);
+        assert!(BUILD_ID.contains('+'), "{BUILD_ID}");
+        assert!(
+            BUILD_ID.starts_with(env!("CARGO_PKG_VERSION")),
+            "{BUILD_ID}"
+        );
+    }
 
     #[test]
     fn response_ok_has_no_error() {

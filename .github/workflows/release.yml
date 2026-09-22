@@ -1,0 +1,155 @@
+name: Release
+
+# Builds the four binaries and publishes them on a tag.
+#
+# Push a tag to start it:
+#
+#   git tag -a v0.1.0 -m "0.1.0" && git push origin v0.1.0
+#
+# or run it by hand from the Actions tab with a tag name. The build runs
+# straight away; publishing waits on the `release` environment, so an admin
+# approves before anything reaches the Releases page. Configure that once under
+# Settings, Environments, release, Required reviewers. Without the environment
+# the publish job runs unapproved, which is worth knowing before the first tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish, for example v0.1.0'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl, so one Linux binary runs on any distribution rather than
+          # tracking whichever glibc the runner happened to ship. The crate has
+          # no C dependencies, which is what makes a static link available.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          # Cross-compiled from the arm runner. Apple ships both back ends, so
+          # this needs no extra toolchain, only the target.
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
+
+      - name: Install the musl linker
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # A binary that cannot answer --version is not one worth publishing, and
+      # this is free on the three targets the runner can execute.
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: ./target/${{ matrix.target }}/release/tmux-companion --version
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          name="tmux-companion-${tag}-${{ matrix.target }}.tar.gz"
+          staging=$(mktemp -d)
+          cp "target/${{ matrix.target }}/release/tmux-companion" "$staging/"
+          cp README.md LICENSE "$staging/"
+          tar -czf "$name" -C "$staging" .
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ steps.package.outputs.name }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    # An admin approves here. Everything above has already run, so the approval
+    # is a decision about publishing and not about whether it compiles.
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      # One file, listing every archive, because scripts/install.sh refuses to
+      # install anything that is not in it.
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum ./*.tar.gz | sed 's| \./| |' > checksums.txt
+          cat checksums.txt
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes=$(mktemp)
+          {
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/$TAG/scripts/install.sh | bash"
+            echo '```'
+            echo
+            echo "It picks the archive for your machine, checks it against \`checksums.txt\` below, and installs it."
+            echo "Read the script first if you would rather not pipe it; that is a reasonable thing to want."
+            echo
+            echo "With tpm, add \`set -g @plugin '${{ github.repository }}'\` and reload."
+            echo
+            echo "## Checksums"
+            echo
+            echo '```'
+            cat assets/checksums.txt
+            echo '```'
+          } > "$notes"
+          gh release create "$TAG" assets/* \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes-file "$notes" \
+            --generate-notes

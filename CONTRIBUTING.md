@@ -59,6 +59,40 @@ Include the output of `tmux-companion --version`, your tmux version, and your
 platform. If a glyph looks wrong, say which font you're using, because the
 default preset assumes a Nerd Fonts v3 patch and you'll get boxes without one.
 
+## Cutting a release
+
+Tag it and push the tag:
+
+```sh
+git tag -a v0.1.0 -m "0.1.0" && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` builds four binaries, and publishing waits on
+the `release` environment so an admin approves before anything reaches the
+Releases page. Configure that once under Settings, Environments, release,
+Required reviewers. Without the environment the publish job runs unapproved,
+which is worth knowing before the first tag.
+
+The Actions tab can run the same workflow by hand against an existing tag.
+
+## If rustc cannot find core for a cross target
+
+```
+error[E0463]: can't find crate for `core`
+  = note: the `x86_64-unknown-linux-musl` target may not be installed
+```
+
+after `rustup target add` said it was already there, check which rustc is
+actually running:
+
+```sh
+rustc --print sysroot
+```
+
+A Homebrew Rust in `/usr/local/bin` shadows rustup's shim, and Homebrew ships
+only the host target, so every cross build fails while the host one works. Put
+`~/.cargo/bin` first on PATH.
+
 ## Licence
 
 MIT, the same as the rest of the repository. By sending a patch you're agreeing

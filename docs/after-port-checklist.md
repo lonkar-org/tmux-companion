@@ -41,3 +41,23 @@ echo one; echo two; echo three
 ```
 
 The cursor should land on each prompt line going up.
+
+## Distribution
+
+| # | Item | Status |
+| --- | --- | --- |
+| 10 | four release binaries, tag-triggered, approval-gated | done — all four targets compile here, the two macOS ones link and are the right architecture; the musl pair is CI's first run to prove |
+| 11 | `scripts/install.sh`, checksum-verified | done — shellcheck clean, exercised end to end through its build-from-source fallback |
+| 12 | tpm plugin entry point | done — `tmux-companion.tmux`, binds nothing |
+| 13 | the `release` environment with required reviewers | **needs Yogesh** — a repo settings change, see below |
+
+### The release environment
+
+`.github/workflows/release.yml` gates its publish job on an environment called
+`release`. That environment does not exist yet, and creating it is a repository
+settings change rather than something a workflow can do for itself.
+
+Settings, Environments, New environment, name it `release`, tick Required
+reviewers and add yourself. Until that exists the publish job runs without
+waiting for anybody, so it is worth doing before the first tag rather than
+after.

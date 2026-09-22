@@ -48,14 +48,28 @@ somewhere you weren't looking.
 
 Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
-## Quick start
+## Install
 
 ```sh
-cargo build --release
-sudo install -m 755 target/release/tmux-companion /usr/local/bin/
-
+curl -fsSL https://raw.githubusercontent.com/lonkar-org/tmux-companion/main/scripts/install.sh | bash
 tmux-companion doctor
 ```
+
+That downloads the binary for your machine, checks it against the checksums the
+release published, and puts it on PATH. Nothing to compile. Read the script
+first if you'd rather not pipe it, which is a fair thing to want.
+
+With [tpm](https://github.com/tmux-plugins/tpm):
+
+```tmux
+set -g @plugin 'lonkar-org/tmux-companion'
+```
+
+It binds no keys and sets no options. Or clone it and run
+`cargo build --release` yourself.
+
+All three paths, with the flags and how to remove it again, are in
+[docs/how-to/install.md](docs/how-to/install.md).
 
 One line in `tmux.conf` gets you the bar:
 
@@ -76,6 +90,12 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
 your `-N` strings and runs whatever you pick.
+
+The recordings are made with
+[firacode-nfc-tweaked](https://github.com/lonkar-org/firacode-nfc-tweaked), Fira
+Code patched with Nerd Fonts. Any v3 [Nerd Font](https://www.nerdfonts.com/font-downloads)
+draws the same glyphs, and `[glyphs] preset = "ascii"` covers you if you haven't
+got one.
 
 ## Configuration
 
@@ -136,7 +156,8 @@ Measured on one machine, with the method beside the numbers in
 | [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
 | [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
 | [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
-| [docs/reference/requirements.md](docs/reference/requirements.md) | Rust, tmux, fonts, platforms |
+| [docs/how-to/install.md](docs/how-to/install.md) | the three ways in, and how to remove it |
+| [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
@@ -154,6 +175,10 @@ cargo test                 # 620 unit tests and 22 integration tests
 # on a machine somebody is using, keep off every core
 nice -n 15 cargo build --release -j 4
 ```
+
+Releases carry four binaries: macOS on Apple silicon and Intel, Linux on ARM and
+on Intel or AMD. The Linux pair link statically against musl, so one binary runs
+on any distribution.
 
 Patches welcome, including the ones that tell me I got something wrong.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the three commands CI runs.

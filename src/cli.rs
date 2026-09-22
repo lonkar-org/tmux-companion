@@ -7,8 +7,18 @@ use crate::proto::{ClientsArgs, GstArgs, Request, ShJobsArgs, StatusRightArgs};
 use clap::{Parser, Subcommand};
 
 /// The parsed command line.
+///
+/// `--version` reports the build stamp rather than the crate version, which is
+/// what `doctor` and the daemon handshake compare and what the installer reads
+/// to decide whether it has anything to do. During development every build
+/// carries the same version number, so the crate version on its own answers the
+/// wrong question.
 #[derive(Parser)]
-#[command(name = "tmux-companion", about = "Singleton tmux status server")]
+#[command(
+    name = "tmux-companion",
+    about = "Singleton tmux status server",
+    version = crate::proto::BUILD_ID
+)]
 pub struct Cli {
     /// The subcommand to run, which decides whether this process is the server
     /// or a client.
