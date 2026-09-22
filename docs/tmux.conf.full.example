@@ -1,0 +1,80 @@
+# tmux-companion with everything turned on.
+#
+# docs/tmux.conf.example is the bar I actually run: one `#()` call, 18.43 ms/s
+# of CPU, which is 1.8% of one core. This file is the other end of the range,
+# and every block carries what it costs, so you're choosing with the number in
+# front of you rather than after your fans come on.
+#
+# Measurements are from BENCHMARKS.md, taken on one machine. Yours won't match
+# the absolute numbers and will match the shape.
+#
+#   each extra #() on the bar        14.6 ms of CPU per second per client
+#   sh-jobs on the bar               16.25 ms of server CPU per call
+#   clients on the bar               4.93 ms per call
+#   #{pane_pid} on status-right      18.5 ms per gst call
+#   window in window-status-format   one process spawn per window per redraw
+#   all of it, five #() calls        153.77 ms/s, 15.4% of one core
+
+set -g status-interval 1
+
+# ── The right side, with the suspended-job marker ───────────────────────────
+#
+# Passing #{pane_pid} makes the git segment resolve suspended jobs, which means
+# enumerating every process on the machine: 18.5 ms of a 26.0 ms segment. The
+# marker is worth it to some people. It was not worth it to me.
+set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path} #{pane_pid})"
+set -g status-right-length 150
+
+# ── Jobs stopped under this pane ────────────────────────────────────────────
+#
+# A second #() call, so 14.6 ms/s of spawn, plus 16.25 ms of server CPU per
+# call for the process-table scan. Configure what it draws in [[sh_jobs.job]].
+set -ga status-right "#(tmux-companion sh-jobs #{pane_pid})"
+
+# ── Other clients attached ──────────────────────────────────────────────────
+#
+# A third #() call. Cheap to compute at 4.93 ms and it still costs a spawn.
+set -ga status-left "#(tmux-companion clients #{session_attached} #{window_active_clients})"
+
+# ── Windows drawn by the companion ──────────────────────────────────────────
+#
+# One spawn per window per redraw. Eight windows is eight spawns, and tmux
+# redraws on pane output as well as on the timer, so this isn't eight per
+# second, it's eight per anything happening.
+set -g window-status-format "#(tmux-companion window -i #I -n '#W' -w '#{pane_current_path}' -p '#{pane_current_command}' -f '#{window_flags}' -P #{window_panes} -A #{pane_index})"
+set -g window-status-current-format "#(tmux-companion window -c -i #I -n '#W' -w '#{pane_current_path}' -p '#{pane_current_command}' -f '#{window_flags}' -P #{window_panes} -A #{pane_index})"
+
+# ── The pickers ─────────────────────────────────────────────────────────────
+#
+# These cost nothing until they're pressed. display-popup is tmux's own 33 ms,
+# and the picker inside it replaces fzf, which was 50 ms of the old 93 ms.
+bind -N "custom: help search every key binding" ? \
+  display-popup -E -w 80% -h 60% "tmux-companion keys"
+bind -N "custom: help cheat sheet of my bindings" C-c \
+  display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
+bind -N "custom: project pick a project" -n M-s \
+  display-popup -E -w 80% -h 70% "tmux-companion project"
+bind -N "custom: window run a command from history" e \
+  display-popup -E -w 70% -h 60% "tmux-companion run"
+bind -N "custom: config pick a colour theme" C-t \
+  display-popup -E -w 70% -h 70% "tmux-companion theme pick"
+bind -N "custom: project toggle the tools in this session" -n M-a \
+  run-shell "tmux-companion toggle '#{session_name}' '#{window_name}'"
+bind -N "custom: session close this project cleanly" X \
+  confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion close-project'"
+
+# ── Copy mode, opening what is under the cursor ─────────────────────────────
+bind -T copy-mode-vi o send-keys -X copy-selection-no-clear \; \
+  run-shell "tmux-companion open -s"
+bind -T copy-mode-vi y send-keys -X copy-selection-no-clear \; \
+  run-shell "tmux-companion clipboard"
+
+# ── Logic that used to live in this file ────────────────────────────────────
+#
+# The clipboard was two if-shell branches on `uname`, and zoom was a run-shell
+# wrapping an if-shell, which is tmux shelling out to ask tmux how many panes
+# there are. Neither's a thing a config file should be doing.
+bind z run-shell "tmux-companion zoom"
+
+# ── The theme, applied when a session is created ────────────────────────────
+set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_id}\"'"

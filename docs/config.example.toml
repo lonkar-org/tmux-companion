@@ -271,3 +271,11 @@ slide_ms = 150
 
 # The shell the command runs under.
 shell = "zsh"
+
+[clipboard]
+# The command to pipe a copy into. Unset picks one for the platform: pbcopy on
+# macOS, then wl-copy, then xclip.
+#
+# This was two if-shell branches on `uname` in tmux.conf. One binary picking
+# the right command is one less thing the Linux branch has to special-case.
+# copy = "xclip -selection clipboard"

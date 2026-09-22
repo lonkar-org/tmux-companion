@@ -167,6 +167,47 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// Open a URL or file found in text
+    Open {
+        /// The text to scan. Reads stdin when there is none
+        text: Vec<String>,
+        /// Scan the tmux selection instead
+        #[arg(short = 's')]
+        selection: bool,
+        /// Resolve relative paths against this directory
+        #[arg(short = 'd')]
+        base_dir: Option<String>,
+        /// Print what would be opened, and open nothing
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
+
+    /// Close a project session by letting every window exit
+    CloseProject {
+        /// The session, defaulting to the current one
+        session: Option<String>,
+        /// Quit editors with :qa! and throw away unsaved work
+        #[arg(long)]
+        discard: bool,
+    },
+
+    /// Copy to the system clipboard, whatever this platform calls it
+    Clipboard {
+        /// Read stdin rather than the tmux buffer
+        #[arg(long)]
+        stdin: bool,
+    },
+
+    /// Zoom a pane, or the window when there is only one
+    Zoom,
+
+    /// Ask the terminal what it does
+    Probe {
+        /// Which probe
+        #[command(subcommand)]
+        what: ProbeAction,
+    },
+
     /// Run a command from history in a pane beside this one
     Run {
         /// List the history and exit, instead of opening the picker
@@ -224,6 +265,23 @@ pub enum Cmd {
         /// What to do with it
         #[command(subcommand)]
         action: ConfigAction,
+    },
+}
+
+/// The two probes.
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "kebab-case")]
+pub enum ProbeAction {
+    /// Show the exact bytes the terminal sends for a key
+    Keys {
+        /// Stop after this many keys
+        #[arg(short = 'n')]
+        count: Option<usize>,
+    },
+    /// Ask how many cells the terminal advances for a string
+    Cells {
+        /// The strings to measure, or a built-in set
+        strings: Vec<String>,
     },
 }
 
@@ -411,6 +469,16 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             refresh,
             print,
         } => run_keys(all, query, refresh, print).await?,
+        Cmd::Open {
+            text,
+            selection,
+            base_dir,
+            dry_run,
+        } => run_open(text, selection, base_dir, dry_run).await?,
+        Cmd::CloseProject { session, discard } => run_close_project(session, discard).await?,
+        Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
+        Cmd::Zoom => run_zoom().await?,
+        Cmd::Probe { what } => run_probe(what)?,
         Cmd::Run { print, exec } => run_command(print, exec).await?,
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
@@ -1323,4 +1391,338 @@ fn read_choice() -> Option<crate::run::Choice> {
     let _ = disable_raw_mode();
     println!();
     choice
+}
+
+/// `open`: find a URL or a file in some text and open it.
+async fn run_open(
+    text: Vec<String>,
+    selection: bool,
+    base_dir: Option<String>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    use crate::open::Target;
+
+    let text = if selection {
+        let out = tokio::process::Command::new("tmux")
+            .arg("show-buffer")
+            .output()
+            .await?;
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else if text.is_empty() {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_to_string(&mut buf);
+        buf
+    } else {
+        text.join(" ")
+    };
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let base = match base_dir {
+        Some(d) => std::path::PathBuf::from(d),
+        None => {
+            let p = tmux_display("#{pane_current_path}").await;
+            if p.is_empty() {
+                std::env::current_dir().unwrap_or_default()
+            } else {
+                std::path::PathBuf::from(p)
+            }
+        }
+    };
+
+    let Some(target) = crate::open::scan(&text, &base, &home, &|p| p.exists()) else {
+        anyhow::bail!("nothing to open in that text");
+    };
+
+    if dry_run {
+        match &target {
+            Target::Url(u) => println!("url {u}"),
+            Target::File { path, line, column } => {
+                println!("file {} line {line} column {column}", path.display())
+            }
+        }
+        return Ok(());
+    }
+
+    match target {
+        // No shell anywhere in this: the text came off somebody's screen, and
+        // an argument vector cannot be talked into being two commands.
+        Target::Url(url) => {
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            tokio::process::Command::new(opener)
+                .arg(url)
+                .status()
+                .await?;
+        }
+        Target::File { path, line, column } => {
+            let at = match (line, column) {
+                (0, _) => path.display().to_string(),
+                (l, 0) => format!("+{l} {}", path.display()),
+                (l, c) => format!("+call cursor({l},{c}) {}", path.display()),
+            };
+            tmux(&["split-window", "-h", &format!("nvim {at}")]).await;
+        }
+    }
+    Ok(())
+}
+
+/// `close-project`: ask every window to go, rather than killing the session.
+async fn run_close_project(session: Option<String>, discard: bool) -> anyhow::Result<()> {
+    use crate::close::{Farewell, farewell, parse_panes, quit_command};
+
+    let session = match session {
+        Some(s) => s,
+        None => tmux_display("#{session_name}").await,
+    };
+    let target = format!("={session}");
+
+    let listing = tmux_capture(&[
+        "list-panes",
+        "-s",
+        "-t",
+        &target,
+        "-F",
+        "#{pane_id} #{pane_current_command}",
+    ])
+    .await;
+    let panes = parse_panes(&listing);
+
+    // Editors first, and only editors, because they are the ones that leave
+    // state behind.
+    let editor_ids: Vec<String> = crate::close::editors(&panes)
+        .into_iter()
+        .map(|p| p.id.clone())
+        .collect();
+    for id in &editor_ids {
+        tmux(&["send-keys", "-t", id, "Escape"]).await;
+        tmux(&["send-keys", "-t", id, quit_command(discard), "Enter"]).await;
+    }
+
+    // A quit that does not happen means the editor is asking something, and
+    // the answer is to stop and leave the question on screen.
+    for id in &editor_ids {
+        for _ in 0..30 {
+            if tmux_capture(&["has-session", "-t", &target])
+                .await
+                .is_empty()
+                && !session_exists(&target).await
+            {
+                break;
+            }
+            if pane_command(id).await != "nvim" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if pane_command(id).await == "nvim" {
+            tmux(&["select-pane", "-t", id]).await;
+            tmux(&[
+                "display-message",
+                "close-project: nvim would not quit, so nothing was closed. Read what it is asking.",
+            ])
+            .await;
+            anyhow::bail!("nvim would not quit");
+        }
+    }
+
+    for _ in 0..40 {
+        if !session_exists(&target).await {
+            return Ok(());
+        }
+        let listing = tmux_capture(&[
+            "list-panes",
+            "-s",
+            "-t",
+            &target,
+            "-F",
+            "#{pane_id} #{pane_current_command}",
+        ])
+        .await;
+        let panes = parse_panes(&listing);
+        if panes.is_empty() {
+            break;
+        }
+        for pane in &panes {
+            match farewell(&pane.command) {
+                Farewell::ShellExit => {
+                    tmux(&["send-keys", "-t", &pane.id, "C-u"]).await;
+                    tmux(&["send-keys", "-t", &pane.id, "exit", "Enter"]).await;
+                }
+                Farewell::EndOfFile => {
+                    tmux(&["send-keys", "-t", &pane.id, "C-d"]).await;
+                }
+                Farewell::Skip => {}
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    if session_exists(&target).await {
+        tmux(&[
+            "display-message",
+            &format!("close-project: {session} is still open; something did not take Ctrl-D."),
+        ])
+        .await;
+        anyhow::bail!("{session} is still open");
+    }
+    Ok(())
+}
+
+/// Whether a session is still there.
+async fn session_exists(target: &str) -> bool {
+    tokio::process::Command::new("tmux")
+        .args(["has-session", "-t", target])
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// What a pane is running now.
+async fn pane_command(id: &str) -> String {
+    tmux_capture(&["display-message", "-p", "-t", id, "#{pane_current_command}"])
+        .await
+        .trim()
+        .to_string()
+}
+
+/// One tmux command, giving back its stdout.
+async fn tmux_capture(args: &[&str]) -> String {
+    let out = tokio::process::Command::new("tmux")
+        .args(args)
+        .output()
+        .await;
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+/// `probe keys` and `probe cells`.
+fn run_probe(what: ProbeAction) -> anyhow::Result<()> {
+    use ratatui::crossterm::{
+        event::{self, Event, KeyCode},
+        terminal::{disable_raw_mode, enable_raw_mode},
+    };
+
+    match what {
+        ProbeAction::Keys { count } => {
+            println!("press keys to see what they send; q or ctrl-c to stop");
+            enable_raw_mode()?;
+            let mut seen = 0usize;
+            loop {
+                let Ok(Event::Key(key)) = event::read() else {
+                    continue;
+                };
+                if key.code == KeyCode::Char('q') {
+                    break;
+                }
+                // crossterm has already parsed the bytes, so this reports what
+                // it decided rather than the raw sequence. That is the honest
+                // thing to print: it is what any crossterm program will act on,
+                // including this one.
+                println!("{:?} modifiers {:?}\r", key.code, key.modifiers);
+                seen += 1;
+                if count.is_some_and(|c| seen >= c) {
+                    break;
+                }
+            }
+            disable_raw_mode()?;
+            Ok(())
+        }
+        ProbeAction::Cells { strings } => {
+            let strings: Vec<String> = if strings.is_empty() {
+                crate::probe::DEFAULT_PROBES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            } else {
+                strings
+            };
+            for s in strings {
+                match measure_cells(&s) {
+                    Some(cells) => println!("{cells:>3} cells  {s}"),
+                    None => println!("  ?  cells  {s}  (no reply from the terminal)"),
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Print a string and ask the terminal where the cursor ended up.
+///
+/// The reply is read from `/dev/tty` rather than stdin. That is the bug this
+/// probe already fixed once: with stdin a pipe, reading the reply from it hangs
+/// forever.
+fn measure_cells(s: &str) -> Option<u32> {
+    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use std::io::{Read, Write};
+
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()?;
+
+    enable_raw_mode().ok()?;
+    let _ = write!(tty, "\r{s}\x1b[6n");
+    let _ = tty.flush();
+
+    let mut buf = [0u8; 32];
+    let n = tty.read(&mut buf).ok()?;
+    let _ = write!(tty, "\r\x1b[2K");
+    let _ = tty.flush();
+    let _ = disable_raw_mode();
+
+    crate::probe::cells_advanced(&buf[..n], 1)
+}
+
+/// `clipboard`: one binary picks the copy command, so the config does not.
+///
+/// This was two `if-shell` branches on `uname` in tmux.conf, which is one more
+/// thing the Linux branch had to special-case.
+async fn run_clipboard(stdin: bool) -> anyhow::Result<()> {
+    let text = if stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_to_string(&mut buf);
+        buf
+    } else {
+        tmux_capture(&["show-buffer"]).await
+    };
+
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let (program, args) = config.clipboard.command();
+
+    let mut child = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut input) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        input.write_all(text.as_bytes()).await?;
+    }
+    child.wait().await?;
+    Ok(())
+}
+
+/// `zoom`: resize the pane, or the window when the pane is the window.
+///
+/// This was a `run-shell` wrapping an `if-shell`, which is tmux shelling out to
+/// ask tmux how many panes there are.
+async fn run_zoom() -> anyhow::Result<()> {
+    let panes: u32 = tmux_display("#{window_panes}").await.parse().unwrap_or(1);
+    if panes > 1 {
+        tmux(&["resize-pane", "-Z"]).await;
+    } else {
+        // One pane, so zooming it does nothing anybody can see. Toggling the
+        // status bar is what somebody pressing zoom in that situation wants.
+        tmux(&["set", "-g", "status"]).await;
+    }
+    Ok(())
 }

@@ -16,16 +16,22 @@ pub mod cheatsheet;
 pub mod cli;
 /// Talking to the server over the socket.
 pub mod client;
+/// Closing a project session politely.
+pub mod close;
 /// The configuration file.
 pub mod config;
 /// What to ask somebody to run before they open an issue.
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod keys;
+/// Opening a URL or file found in text.
+pub mod open;
 /// The fuzzy picker and its state machine.
 pub mod picker;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
+/// Asking the terminal what it does.
+pub mod probe;
 /// Projects: one session each.
 pub mod project;
 /// The JSON request and response, and one args struct per command.

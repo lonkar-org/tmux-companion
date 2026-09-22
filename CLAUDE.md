@@ -77,6 +77,9 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/project.rs` | session and zoxide rows, short paths, session names |
 | `src/tasks.rs` | the autosave timer, the calendar, the toggle target |
 | `src/run.rs` | shell history parsing, the pane slide, the exit dialog |
+| `src/open.rs` | URL and `file:line:col` extraction from text |
+| `src/close.rs` | which pane gets which farewell |
+| `src/probe.rs` | key bytes and DSR cell measurement |
 
 ## Key invariants
 

@@ -46,6 +46,45 @@ pub struct Config {
     pub autosave: Autosave,
     /// Running a command from history in a side pane.
     pub run: Run,
+    /// Copying to the system clipboard.
+    pub clipboard: Clipboard,
+}
+
+/// How to copy to the system clipboard.
+///
+/// This was two `if-shell` branches on `uname` in tmux.conf. One binary picking
+/// the right command is one less thing the Linux branch has to special-case.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct Clipboard {
+    /// The command to pipe into. Empty picks one for the platform.
+    pub copy: String,
+}
+
+impl Clipboard {
+    /// The program and its arguments.
+    pub fn command(&self) -> (String, Vec<String>) {
+        if !self.copy.trim().is_empty() {
+            let mut words = self.copy.split_whitespace().map(str::to_string);
+            let program = words.next().unwrap_or_default();
+            return (program, words.collect());
+        }
+        if cfg!(target_os = "macos") {
+            return ("pbcopy".to_string(), Vec::new());
+        }
+        // Wayland first, since a session with both usually wants it.
+        if std::process::Command::new("wl-copy")
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            return ("wl-copy".to_string(), Vec::new());
+        }
+        (
+            "xclip".to_string(),
+            vec!["-selection".to_string(), "clipboard".to_string()],
+        )
+    }
 }
 
 /// Running a command from history in a side pane.
@@ -279,6 +318,7 @@ impl Default for Config {
             project: Project::default(),
             autosave: Autosave::default(),
             run: Run::default(),
+            clipboard: Clipboard::default(),
         }
     }
 }
@@ -1256,6 +1296,25 @@ name = "work"
         let text = "[[project.override]]\nmatch = \"/a\"\nuse_layout = \"x\"\n";
         let c = parse(text, std::path::Path::new("t.toml")).unwrap();
         assert_eq!(c.project.override_.len(), 1);
+    }
+
+    #[test]
+    fn a_configured_clipboard_command_is_used_whole() {
+        let c = Clipboard {
+            copy: "xclip -selection clipboard".to_string(),
+        };
+        let (program, args) = c.command();
+        assert_eq!(program, "xclip");
+        assert_eq!(args, vec!["-selection", "clipboard"]);
+    }
+
+    #[test]
+    fn an_unset_clipboard_picks_something_for_the_platform() {
+        let (program, _) = Clipboard::default().command();
+        assert!(!program.is_empty());
+        if cfg!(target_os = "macos") {
+            assert_eq!(program, "pbcopy");
+        }
     }
 
     #[test]
