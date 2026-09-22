@@ -43,6 +43,9 @@ pub struct Config {
     /// Sourcing tmux's config when it changes.
     #[serde(default)]
     pub autoreload: Autoreload,
+    /// Naming windows after what is running in them.
+    #[serde(default)]
+    pub window_names: WindowNames,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -171,6 +174,29 @@ impl Autosave {
         self.script.clone().unwrap_or_else(|| {
             PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh")
         })
+    }
+}
+
+/// Naming windows after what is running in them, from the job table.
+///
+/// Off by default: renaming somebody's windows is visible, and a window called
+/// `2.1.278` because an agent renamed itself is annoying in a way that a window
+/// renamed by a tool they did not configure is worse.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WindowNames {
+    /// Whether to rename anything.
+    pub enabled: bool,
+    /// Seconds between passes. One tmux call each.
+    pub interval_secs: u64,
+}
+
+impl Default for WindowNames {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 5,
+        }
     }
 }
 
@@ -431,6 +457,7 @@ impl Default for Config {
             }],
             project: Project::default(),
             autoreload: Autoreload::default(),
+            window_names: WindowNames::default(),
             autosave: Autosave::default(),
             run: Run::default(),
             clipboard: Clipboard::default(),
@@ -476,6 +503,7 @@ impl Default for ShJobs {
                 match_: "nvim".to_string(),
                 icon: Self::VIM_OUTPUT.to_string(),
                 color: String::new(),
+                window_name: None,
             }],
         }
     }
@@ -511,6 +539,13 @@ pub struct JobEntry {
     pub match_: String,
     /// What to draw for it. `{NAME}` expands to a glyph, as in a separator.
     pub icon: String,
+    /// What to call a window whose active pane is running this.
+    ///
+    /// Unset means this entry says nothing about window names, which is what
+    /// every entry written before this field existed says. The icon is tmux
+    /// markup and a window name is not, so it cannot stand in for one.
+    #[serde(default)]
+    pub window_name: Option<String>,
     /// A tmux colour for the icon. Empty leaves it uncoloured, which is what
     /// an icon carrying its own markup wants.
     #[serde(default)]

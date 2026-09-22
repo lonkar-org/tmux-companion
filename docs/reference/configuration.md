@@ -214,6 +214,38 @@ The plugin this comes from is
 [thepante/tmux-git-autofetch](https://github.com/thepante/tmux-git-autofetch).
 It's alive and it's worth installing if you aren't running this.
 
+### Naming windows after what is running
+
+```toml
+[window_names]
+enabled = true
+
+[[sh_jobs.job]]
+match = "nvim"
+icon = "..."
+window_name = "edit"
+```
+
+One table answering two questions. `[[sh_jobs.job]]` already maps a
+process-name pattern to an icon for the bar, and a row with a `window_name` on
+it also says what a window holding that process should be called. A row without
+one says nothing about names, which is what every row written before the field
+existed says.
+
+It won't take a name away from you. A window with `automatic-rename` off was
+pinned deliberately, by `hold_name` in a layout or by hand, and this leaves it
+alone unless it was the thing that pinned it, which it knows from a
+`@tmux-companion-named` option it sets on its own work. When a window stops
+matching, the name is handed back and tmux goes back to renaming it.
+
+Off by default, because renaming somebody's windows is visible.
+
+The plugins this comes from are
+[ofirgall/tmux-window-name](https://github.com/ofirgall/tmux-window-name),
+which is a Python daemon, and
+[joshmedeski/tmux-nerd-font-window-name](https://github.com/joshmedeski/tmux-nerd-font-window-name)
+for the icon half.
+
 ### Reloading tmux's config when it changes
 
 ```toml

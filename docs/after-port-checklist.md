@@ -20,7 +20,7 @@ commit that does it. `blocked` carries the reason on the same line.
 | 6 | git autofetch | done — `[git.autofetch]`, off by default, sequential with a timeout and every git prompt disabled |
 | 7 | tmux.conf autoreload | done — `[autoreload]`, off by default, first pass never reloads, errors go to display-message |
 | 8 | notify when a long command finishes | todo |
-| 9 | the job table driving window names | todo |
+| 9 | the job table driving window names | done — `[window_names]` plus `window_name` on a job row, off by default, never overrides a name somebody pinned |
 
 ## Wants a manual check
 

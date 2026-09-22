@@ -56,3 +56,5 @@ pub mod tasks;
 pub mod theme;
 /// tmux's own formatting language.
 pub mod tmux;
+/// Naming windows after what is running in them.
+pub mod window_names;

@@ -84,6 +84,13 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    if config.window_names.enabled {
+        tokio::spawn(crate::window_names::window_names_loop(
+            config.window_names.clone(),
+            config.sh_jobs.clone(),
+        ));
+    }
+
     let autofetch = config.git.autofetch.clone();
     let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 

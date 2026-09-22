@@ -132,6 +132,7 @@ mod tests {
                 match_: "^claude$".into(),
                 icon: "AI".into(),
                 color: String::new(),
+                window_name: None,
             }],
             ..ShJobs::default()
         };
@@ -145,6 +146,7 @@ mod tests {
                 match_: "^vim$".into(),
                 icon: "V".into(),
                 color: String::new(),
+                window_name: None,
             }],
             ..ShJobs::default()
         };
@@ -164,11 +166,13 @@ mod tests {
                     match_: "vim".into(),
                     icon: "first".into(),
                     color: String::new(),
+                    window_name: None,
                 },
                 JobEntry {
                     match_: "nvim".into(),
                     icon: "second".into(),
                     color: String::new(),
+                    window_name: None,
                 },
             ],
             ..ShJobs::default()
@@ -183,6 +187,7 @@ mod tests {
                 match_: ".".into(),
                 icon: "J".into(),
                 color: String::new(),
+                window_name: None,
             }],
             max: 2,
             ..ShJobs::default()
@@ -198,6 +203,7 @@ mod tests {
                 match_: "watch".into(),
                 icon: "W".into(),
                 color: String::new(),
+                window_name: None,
             }],
             states: JobStates::Any,
             ..ShJobs::default()
@@ -213,6 +219,7 @@ mod tests {
                 match_: "[unclosed".into(),
                 icon: "X".into(),
                 color: String::new(),
+                window_name: None,
             }],
             ..ShJobs::default()
         };
@@ -226,6 +233,7 @@ mod tests {
                 match_: "nvim".into(),
                 icon: "V".into(),
                 color: "#539035".into(),
+                window_name: None,
             }],
             ..ShJobs::default()
         };

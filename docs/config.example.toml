@@ -194,6 +194,9 @@ max = 3
 [[sh_jobs.job]]
 match = "nvim"
 icon = "#[fg=#0262a8,bg=colour235,none] n#[fg=#539035]󰕷im#[fg=colour235,bg=colour233]"
+# What to call a window whose active pane is running this, when
+# [window_names] is on. Leave it out and this row says nothing about names.
+# window_name = "edit"
 color = ""
 
 [usage]
@@ -280,6 +283,25 @@ hold_name = true
 # The cell sizes in that string are absolute, and tmux rescales them
 # proportionally, so a layout captured on a wide display comes back cramped on
 # a laptop and a preset name travels better.
+
+[window_names]
+# Name a window after what is running in its active pane, using the same
+# [[sh_jobs.job]] table that gives the status bar its icons. A row drives a
+# name only when you give it a `window_name`, so every row written before that
+# field existed keeps drawing its icon and saying nothing about names.
+#
+# Off by default: renaming somebody's windows is visible.
+#
+# This will not take a name away from somebody who set one. A window with
+# automatic-rename off was pinned on purpose, by `hold_name` in a layout or by
+# hand, and this leaves it alone unless it was the thing that pinned it. When a
+# window stops matching, the name is handed back and tmux renames it again.
+#
+# The plugins this comes from are ofirgall/tmux-window-name, which is a Python
+# daemon, and joshmedeski/tmux-nerd-font-window-name for the icon half.
+enabled = false
+# Seconds between passes. One tmux call each.
+interval_secs = 5
 
 [autoreload]
 # Watch tmux's config and source it when it changes, so an edit takes effect
