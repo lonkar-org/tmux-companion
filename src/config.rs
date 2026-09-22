@@ -46,6 +46,9 @@ pub struct Config {
     /// Naming windows after what is running in them.
     #[serde(default)]
     pub window_names: WindowNames,
+    /// Announcing a long command that finished out of sight.
+    #[serde(default)]
+    pub notify: Notify,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -174,6 +177,55 @@ impl Autosave {
         self.script.clone().unwrap_or_else(|| {
             PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh")
         })
+    }
+}
+
+/// Telling somebody a long command finished in a pane they were not watching.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Notify {
+    /// Whether to announce anything.
+    pub enabled: bool,
+    /// Seconds between scans. One tmux call each.
+    pub interval_secs: u64,
+    /// How long something has to run before finishing is news.
+    pub threshold_secs: u64,
+    /// Only announce what finished out of sight.
+    ///
+    /// On by default, because a command that finishes in front of you needs no
+    /// announcement and firing for those is the noise that teaches people to
+    /// ignore the ones that matter.
+    pub only_when_unwatched: bool,
+    /// What to run. Empty means tmux's own `display-message`, which needs
+    /// nothing installed and behaves the same everywhere.
+    ///
+    /// `{command}`, `{duration}`, `{pane}` and `{message}` are substituted in
+    /// every argument, so a desktop notifier can be given a title and a body.
+    pub command: Vec<String>,
+    /// Commands never worth announcing.
+    ///
+    /// An editor, a pager or an agent runs for hours, and finishing one is not
+    /// news. Without this list every `:q` fires a notification about a two-hour
+    /// nvim session.
+    pub ignore: Vec<String>,
+}
+
+impl Default for Notify {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 2,
+            threshold_secs: 30,
+            only_when_unwatched: true,
+            command: Vec::new(),
+            ignore: [
+                "nvim", "vim", "vi", "emacs", "nano", "less", "more", "man", "top", "htop", "btop",
+                "watch", "ssh", "tmux", "claude", "codex", "gemini", "lazygit", "tig", "fzf",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        }
     }
 }
 
@@ -458,6 +510,7 @@ impl Default for Config {
             project: Project::default(),
             autoreload: Autoreload::default(),
             window_names: WindowNames::default(),
+            notify: Notify::default(),
             autosave: Autosave::default(),
             run: Run::default(),
             clipboard: Clipboard::default(),

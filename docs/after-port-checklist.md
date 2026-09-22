@@ -19,7 +19,7 @@ commit that does it. `blocked` carries the reason on the same line.
 | 5 | `shell-init`, the OSC 133 prompt marks | done — zsh, bash and fish; the escape bytes are verified by running each snippet, the tmux-side navigation wants one manual check (see below) |
 | 6 | git autofetch | done — `[git.autofetch]`, off by default, sequential with a timeout and every git prompt disabled |
 | 7 | tmux.conf autoreload | done — `[autoreload]`, off by default, first pass never reloads, errors go to display-message |
-| 8 | notify when a long command finishes | todo |
+| 8 | notify when a long command finishes | done — `[notify]`, off by default, display-message needs nothing installed; whether it earns its place on a one-client machine is still unmeasured |
 | 9 | the job table driving window names | done — `[window_names]` plus `window_name` on a job row, off by default, never overrides a name somebody pinned |
 
 ## Wants a manual check

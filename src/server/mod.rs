@@ -91,6 +91,11 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    if config.notify.enabled {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        tokio::spawn(crate::notify::notify_loop(config.notify.clone(), shell));
+    }
+
     let autofetch = config.git.autofetch.clone();
     let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 

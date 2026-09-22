@@ -284,6 +284,43 @@ hold_name = true
 # proportionally, so a layout captured on a wide display comes back cramped on
 # a laptop and a preset name travels better.
 
+[notify]
+# Say something when a long command finishes in a pane you were not looking at.
+# The last clause is the whole value: a command that finishes in front of you
+# needs no announcement, and firing for those is the noise that teaches people
+# to ignore the ones that matter.
+#
+# Off by default.
+#
+# The plugin this comes from is rickstaa/tmux-notify.
+enabled = false
+# Seconds between scans. One tmux call each.
+interval_secs = 2
+# How long something has to run before finishing is news.
+threshold_secs = 30
+# Only announce what finished out of sight. A pane counts as out of sight if it
+# was hidden at any point while the command ran, not only at the end, because
+# the usual shape is starting something, switching away, and coming back when
+# it is already done.
+only_when_unwatched = true
+# What to run. Empty means tmux's own display-message, which needs nothing
+# installed and behaves the same on every platform. A desktop notification is
+# one line away, and is not the default because shelling out to osascript or
+# notify-send on a machine that has neither is a failure somebody has to debug:
+#
+#   command = ["notify-send", "{command}", "ran for {duration}"]
+#
+# {command}, {duration}, {pane} and {message} are substituted in every argument.
+command = []
+# Commands never worth announcing. An editor, a pager or an agent runs for
+# hours and finishing one is not news; without this list every `:q` fires a
+# notification about a two-hour nvim session.
+ignore = [
+  "nvim", "vim", "vi", "emacs", "nano", "less", "more", "man",
+  "top", "htop", "btop", "watch", "ssh", "tmux",
+  "claude", "codex", "gemini", "lazygit", "tig", "fzf",
+]
+
 [window_names]
 # Name a window after what is running in its active pane, using the same
 # [[sh_jobs.job]] table that gives the status bar its icons. A row drives a

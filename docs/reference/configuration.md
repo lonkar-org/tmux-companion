@@ -214,6 +214,49 @@ The plugin this comes from is
 [thepante/tmux-git-autofetch](https://github.com/thepante/tmux-git-autofetch).
 It's alive and it's worth installing if you aren't running this.
 
+### Saying a long command finished
+
+```toml
+[notify]
+enabled = true
+threshold_secs = 30
+```
+
+The last four words of the heading are the feature. A command that finishes in
+front of you needs no announcement, and firing for those is exactly the noise
+that teaches people to ignore the ones that matter, so `only_when_unwatched` is
+on by default.
+
+A pane counts as out of sight if it was hidden at any point while the command
+ran, not only at the end. The usual shape is starting something, switching away,
+and coming back when it's already done, and a check taken at the finish would
+say you'd been watching all along.
+
+The default notifier is tmux's own `display-message`, which needs nothing
+installed and behaves the same on every platform. A desktop notification is a
+line of config away and deliberately isn't the default, because shelling out to
+`osascript` or `notify-send` on a machine that has neither is a failure
+somebody has to debug:
+
+```toml
+command = ["notify-send", "{command}", "ran for {duration}"]
+```
+
+`{command}`, `{duration}`, `{pane}` and `{message}` are substituted in every
+argument.
+
+The `ignore` list is doing real work. An editor, a pager or an agent runs for
+hours, and without the list every `:q` fires a notification about a two-hour
+nvim session. The default covers the editors, pagers and agents; add whatever
+else you leave open.
+
+Nothing is announced on the first scan after the daemon starts, or a restart
+would announce everything running everywhere at once, and it can't know how
+long any of it had already been going.
+
+The plugin this comes from is
+[rickstaa/tmux-notify](https://github.com/rickstaa/tmux-notify).
+
 ### Naming windows after what is running
 
 ```toml

@@ -28,6 +28,8 @@ pub mod config;
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod keys;
+/// Announcing a long command that finished out of sight.
+pub mod notify;
 /// Opening a URL or file found in text.
 pub mod open;
 /// The fuzzy picker and its state machine.
