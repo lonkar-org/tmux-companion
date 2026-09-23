@@ -16,9 +16,9 @@ Each one prints tmux markup on stdout and exits.
 | Command | Arguments |
 | --- | --- |
 | `status-right [PATH]` | The whole right-hand side in one call: git, bandwidth and battery, computed concurrently. `--style`, `--branch-max-len`, `--branch-icon`, `--force`, `--ttl` |
-| `gst [PATH] [PANE_PID]` | Git status on its own. Same flags, plus `--no-cap` |
+| `gst [PATH] [PANE_PID]` | Git status on its own. Same flags, plus `--no-cap`, `--no-daemon` and `--no-tmux` |
 | `battery` | Percentage and icon |
-| `net` | Bandwidth since the previous call |
+| `net` | Bandwidth since the previous call. `--no-daemon`, `--no-tmux` |
 | `clients SESSION_ATTACHED WINDOW_ACTIVE_CLIENTS` | How many other clients are attached |
 | `sh-jobs PANE_PID` | Jobs stopped or running under a pane, per `[sh_jobs]` |
 | `window -i INDEX [flags]` | One window's status. Driven by tmux format strings: `-c` current, `-n` name, `-w` path, `-p` process, `-s` start path, `-f` flags, `-P` pane count, `-A` pane index |
@@ -26,6 +26,34 @@ Each one prints tmux markup on stdout and exits.
 
 `vim-bg PANE_PID` still works and is `sh-jobs` under its old name. It prints a
 line saying so, and goes away after one release.
+
+### Using `gst` and `net` outside tmux
+
+Both print a string and neither needs tmux to be running, so they work in a
+shell prompt, in a bar that takes a command, or in a script. `--no-tmux` writes
+ANSI escapes instead of tmux's `#[fg=...]` markup and resets the terminal at the
+end, and a segment that drew nothing prints nothing at all, not even a newline.
+
+```sh
+PS1='$(tmux-companion gst --no-daemon --no-tmux) $ '
+```
+
+`--no-daemon` computes the answer in that one process and exits, with no socket
+opened and no server started. What it costs is the cache: every call pays for a
+cold `git status`, which was 51 ms against a large tree, where the daemon
+answers a warm one in well under a millisecond. That's the right trade for a
+prompt you press enter on and the wrong one for a bar redrawing once a second,
+so inside tmux leave both flags off.
+
+`net` is a rate and needs two counter readings, so with no daemon holding the
+first one it goes in `$XDG_STATE_HOME/tmux-companion/net-sample`. The first call
+after a reboot records the reading and draws nothing, which is exactly what the
+daemon does on its own first call.
+
+The two flags are independent. `--no-tmux` on its own still asks the daemon and
+is the cheap way to put a segment in a prompt on a machine where tmux is running
+anyway, and `--no-daemon` on its own prints tmux markup for a `#()` in a config
+on a machine where you would rather not have a resident process.
 
 ## Configuration
 

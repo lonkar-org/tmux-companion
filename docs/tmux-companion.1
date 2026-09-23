@@ -71,13 +71,13 @@ One
 rather than three.
 Takes a path and deliberately no pane pid: a pid makes the git segment
 enumerate every process on the machine, which cost 18.5 ms of its 26.0.
-.It Ic gst Oo Ar path Oc Op Ar pid
+.It Ic gst Oo Ar path Oc Oo Ar pid Oc Op Fl -no-daemon Fl -no-tmux
 The git segment on its own: branch, what is dirty, ahead and behind.
 With a pid it also marks a suspended editor.
 .It Ic battery
 Charge, as an icon and a percentage.
 Reads the platform's battery and prints nothing on a machine without one.
-.It Ic net
+.It Ic net Op Fl -no-daemon Fl -no-tmux
 Bytes per second in and out, over all interfaces but the loopback.
 A rate, so it is never cached.
 Draws nothing below
@@ -95,6 +95,49 @@ as well as on the timer, so this is the expensive way to draw a window list.
 .It Ic preview
 Sample git segments in every colour style, without a server.
 .El
+.Ss Outside tmux
+.Ic gst
+and
+.Ic net
+are ordinary commands that print a string, and neither needs tmux to be
+running.
+Two flags make them usable anywhere a shell prompt, a bar or a script wants
+them.
+.Bl -tag -width Ds
+.It Fl -no-tmux
+Write ANSI escapes instead of tmux's
+.Ql #[fg=...]
+markup, and reset the terminal at the end so nothing after the segment
+inherits its colour.
+A segment that drew nothing prints nothing, not even a newline.
+.It Fl -no-daemon
+Compute the answer in this process and exit.
+No socket is opened, no server is started and nothing is left running.
+The cost is the cache: every call pays for a cold
+.Xr git 1
+status, about 51 ms against a large tree, where the daemon answers a warm one
+in well under a millisecond.
+That is the right trade for a shell prompt and the wrong one for a status bar
+refreshing once a second.
+.Pp
+.Ic net
+is a rate and needs two counter readings, so without a daemon to hold the
+first one it is kept in
+.Pa $XDG_STATE_HOME/tmux-companion/net-sample .
+The first call after a reboot records the reading and draws nothing, which is
+what the daemon does on its first call and for the same reason.
+.El
+.Pp
+For a prompt, in
+.Xr bash 1
+or
+.Xr zsh 1 :
+.Bd -literal -offset indent
+PS1='$(tmux-companion gst --no-daemon --no-tmux) $ '
+.Ed
+.Pp
+Inside tmux, leave both flags off: the daemon is what makes the segment cost
+almost nothing to draw once a second.
 .Sh PICKERS
 Each is a fuzzy-matched list with a preview.
 They are bound to keys in

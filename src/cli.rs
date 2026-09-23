@@ -57,6 +57,12 @@ pub enum Cmd {
         /// Seconds a cached status stays fresh (0 disables the cache)
         #[arg(long, default_value = "5")]
         ttl: f64,
+        /// Compute it here instead of asking a daemon; no socket, no cache
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_daemon: bool,
+        /// Write ANSI escapes instead of tmux markup, for use outside tmux
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_tmux: bool,
     },
 
     /// Whole right-hand status side in one call: git status, bandwidth and
@@ -90,7 +96,15 @@ pub enum Cmd {
     Battery,
 
     /// Network bandwidth segment
-    Net,
+    Net {
+        /// Compute it here instead of asking a daemon; the previous counter
+        /// reading is kept in a file under the state directory
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_daemon: bool,
+        /// Write ANSI escapes instead of tmux markup, for use outside tmux
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_tmux: bool,
+    },
 
     /// Multi-client indicator segment
     Clients {
@@ -459,7 +473,27 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             branch_max_len,
             branch_icon,
             ttl,
+            no_daemon,
+            no_tmux,
         } => {
+            if no_daemon {
+                let config = local_config();
+                let opts = crate::segments::git::GstOptions {
+                    path,
+                    pane_pid,
+                    force,
+                    style: parse_style(&style),
+                    no_cap,
+                    branch_max_len,
+                    branch_icon,
+                    ttl: std::time::Duration::ZERO,
+                    parts: config.git.parts.clone(),
+                    branch_types: config.git.branch_types.clone(),
+                    bar_bg: config.bar.background.clone(),
+                };
+                print_segment(crate::local::gst(&opts).await?, no_tmux);
+                return Ok(());
+            }
             let args = GstArgs {
                 path,
                 pane_pid,
@@ -470,7 +504,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 branch_icon,
                 ttl_secs: ttl,
             };
-            crate::client::send_and_print(Request::build("gst", &args)).await?;
+            send_segment(Request::build("gst", &args), no_tmux).await?;
         }
         Cmd::StatusRight {
             path,
@@ -496,8 +530,13 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Battery => {
             crate::client::send_and_print(Request::build("battery", &())).await?;
         }
-        Cmd::Net => {
-            crate::client::send_and_print(Request::build("net", &())).await?;
+        Cmd::Net { no_daemon, no_tmux } => {
+            if no_daemon {
+                let config = local_config();
+                print_segment(crate::local::net(&config).await?, no_tmux);
+                return Ok(());
+            }
+            send_segment(Request::build("net", &()), no_tmux).await?;
         }
         Cmd::Clients {
             session_attached,
@@ -602,6 +641,48 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
 /// `Style::parse` did on the server before the style crossed the wire as a
 /// string. The difference now is that the fallback happens once, in the
 /// process that saw the flag.
+/// The config for a `--no-daemon` run.
+///
+/// A broken config is a warning on stderr and the defaults, not a failure: the
+/// no-daemon path is what somebody's shell prompt calls, and a prompt that
+/// stops printing because a TOML key was misspelled is worse than a prompt
+/// drawn with the defaults. `config check` is where the error is meant to be
+/// read.
+fn local_config() -> crate::config::Config {
+    match crate::config::load() {
+        Ok((c, _)) => c,
+        Err(e) => {
+            eprintln!("tmux-companion: {e}");
+            crate::config::Config::default()
+        }
+    }
+}
+
+/// Print a rendered segment, translated out of tmux markup when asked.
+///
+/// Nothing is printed for an empty segment, not even a newline, because these
+/// are written into a prompt or a bar where a stray line is visible.
+fn print_segment(rendered: String, no_tmux: bool) {
+    if no_tmux {
+        print!("{}", crate::tmux::format::to_ansi(&rendered));
+    } else {
+        print!("{rendered}");
+    }
+}
+
+/// Ask the daemon and print what comes back, through the same translation.
+async fn send_segment(req: crate::proto::Request, no_tmux: bool) -> anyhow::Result<()> {
+    if !no_tmux {
+        return crate::client::send_and_print(req).await;
+    }
+    let resp = crate::client::send(req).await?;
+    match resp.error {
+        Some(err) => eprintln!("tmux-companion error: {err}"),
+        None => print_segment(resp.output, true),
+    }
+    Ok(())
+}
+
 fn parse_style(s: &str) -> crate::tmux::format::Style {
     crate::tmux::format::Style::parse(s).unwrap_or_default()
 }

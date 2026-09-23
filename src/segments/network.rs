@@ -63,7 +63,7 @@ fn iec_fmt_styled(bytes_per_sec: u64, unit_colour: &str) -> String {
 /// threshold is: the text is drawn in the bar's background colour on top of
 /// the rate block, so a bar that is not `colour233` had this segment writing
 /// in a colour from somebody else's tmux.conf.
-fn format_bandwidth(dl: u64, ul: u64, net: &crate::config::Network, bar_bg: &str) -> String {
+pub fn format_rates(dl: u64, ul: u64, net: &crate::config::Network, bar_bg: &str) -> String {
     let mut out = String::new();
     if dl >= net.threshold_bps {
         out.push_str(&format!(
@@ -150,7 +150,7 @@ pub fn advance(
     let dl = rate(rx.saturating_sub(prev.rx), elapsed);
     let ul = rate(tx.saturating_sub(prev.tx), elapsed);
     *previous = Some(NetSample { rx, tx, at: now });
-    *last_render = format_bandwidth(dl, ul, net, bar_bg);
+    *last_render = format_rates(dl, ul, net, bar_bg);
     last_render.clone()
 }
 
@@ -229,22 +229,22 @@ mod tests {
         assert_eq!(iec_fmt(1023, 0), "1023B/s");
     }
 
-    // ── format_bandwidth ─────────────────────────────────────────────────────
+    // ── format_rates ─────────────────────────────────────────────────────
 
     #[test]
-    fn format_bandwidth_both_below_threshold_empty() {
-        assert_eq!(format_bandwidth(100, 100, &cfg(), BAR), "");
+    fn format_rates_both_below_threshold_empty() {
+        assert_eq!(format_rates(100, 100, &cfg(), BAR), "");
     }
 
     #[test]
-    fn format_bandwidth_exactly_at_threshold_empty() {
+    fn format_rates_exactly_at_threshold_empty() {
         // threshold is >=, so 20479 is below and 20480 shows
-        assert_eq!(format_bandwidth(THRESHOLD_BPS - 1, 0, &cfg(), BAR), "");
+        assert_eq!(format_rates(THRESHOLD_BPS - 1, 0, &cfg(), BAR), "");
     }
 
     #[test]
-    fn format_bandwidth_dl_above_threshold() {
-        let out = format_bandwidth(THRESHOLD_BPS, 0, &cfg(), BAR);
+    fn format_rates_dl_above_threshold() {
+        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), BAR);
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#5cae36]"), "expected green arrow: {out}");
         assert!(
@@ -255,8 +255,8 @@ mod tests {
     }
 
     #[test]
-    fn format_bandwidth_ul_above_threshold() {
-        let out = format_bandwidth(0, THRESHOLD_BPS, &cfg(), BAR);
+    fn format_rates_ul_above_threshold() {
+        let out = format_rates(0, THRESHOLD_BPS, &cfg(), BAR);
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#0262a8]"), "expected blue arrow: {out}");
         assert!(
@@ -267,17 +267,17 @@ mod tests {
     }
 
     #[test]
-    fn format_bandwidth_both_above_threshold() {
-        let out = format_bandwidth(THRESHOLD_BPS * 10, THRESHOLD_BPS * 2, &cfg(), BAR);
+    fn format_rates_both_above_threshold() {
+        let out = format_rates(THRESHOLD_BPS * 10, THRESHOLD_BPS * 2, &cfg(), BAR);
         assert!(out.contains("#[fg=#5cae36"), "missing dl: {out}");
         assert!(out.contains("#[fg=#0262a8"), "missing ul: {out}");
     }
 
     #[test]
-    fn format_bandwidth_no_leading_space_in_speed() {
+    fn format_rates_no_leading_space_in_speed() {
         // Number part must immediately follow the color tag — no numeric padding.
         // Use 40 KiB/s (above 20 KiB/s threshold).
-        let out = format_bandwidth(40 * 1024, 0, &cfg(), BAR);
+        let out = format_rates(40 * 1024, 0, &cfg(), BAR);
         assert!(out.contains("40"), "number present: {out}");
         assert!(!out.contains("   40"), "no left numeric padding: {out}");
     }
@@ -326,8 +326,8 @@ mod tests {
     }
 
     #[test]
-    fn format_bandwidth_unit_is_styled() {
-        let out = format_bandwidth(THRESHOLD_BPS, 0, &cfg(), BAR);
+    fn format_rates_unit_is_styled() {
+        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), BAR);
         assert!(
             out.contains("#[fg=colour237,none,italics]"),
             "unit style present: {out}"
@@ -336,8 +336,8 @@ mod tests {
     }
 
     #[test]
-    fn format_bandwidth_shows_human_readable_speed() {
-        let out = format_bandwidth(2 * 1024 * 1024, 0, &cfg(), BAR); // 2 MiB/s
+    fn format_rates_shows_human_readable_speed() {
+        let out = format_rates(2 * 1024 * 1024, 0, &cfg(), BAR); // 2 MiB/s
         assert!(out.contains(RATE_MIB), "expected MiB glyph in: {out}");
     }
 

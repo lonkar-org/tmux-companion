@@ -285,10 +285,182 @@ fn ansi(colour: &str, layer: u8) -> String {
     }
 }
 
+/// Rewrite a rendered segment's tmux style markup as ANSI escapes.
+///
+/// This is what makes the segments usable outside tmux — in a shell prompt, in
+/// a bar that takes a command, or piped into anything that reads a terminal.
+/// The segments are written once, against tmux's `#[fg=...,bg=...]`, and this
+/// translates the finished string rather than every segment growing a second
+/// rendering path.
+///
+/// `##` is tmux's escape for a literal `#` and becomes one here. A run that
+/// emits nothing leaves the string untouched, so a segment that drew nothing
+/// stays empty rather than becoming a lone reset.
+pub fn to_ansi(markup: &str) -> String {
+    let mut out = String::with_capacity(markup.len());
+    let mut styled = false;
+    let mut rest = markup;
+
+    while let Some(at) = rest.find('#') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if let Some(body) = rest.strip_prefix("##") {
+            out.push('#');
+            rest = body;
+            continue;
+        }
+        let Some(body) = rest.strip_prefix("#[") else {
+            out.push('#');
+            rest = &rest[1..];
+            continue;
+        };
+        let Some(close) = body.find(']') else {
+            // An unterminated run is somebody's literal text, not markup.
+            out.push('#');
+            rest = &rest[1..];
+            continue;
+        };
+        out.push_str(&style_to_ansi(&body[..close]));
+        styled = true;
+        rest = &body[close + 1..];
+    }
+    out.push_str(rest);
+
+    // Leave the terminal as it was found. Without this a prompt keeps the last
+    // segment's colour for everything the user types afterwards.
+    if styled {
+        out.push_str("\x1b[0m");
+    }
+    out
+}
+
+/// One `#[...]` run's contents as SGR escapes.
+///
+/// An attribute this does not know is skipped rather than guessed at: drawing
+/// nothing is recoverable and drawing the wrong colour over somebody's prompt
+/// is not.
+fn style_to_ansi(body: &str) -> String {
+    let mut out = String::new();
+    for part in body.split(',') {
+        let part = part.trim();
+        match part {
+            "" => {}
+            // `none` in tmux clears attributes and keeps the colours, which is
+            // why `#[fg=colour237,none,italics]` draws an italic grey rather
+            // than an italic nothing. `default` is the one that resets both.
+            "none" => out.push_str("\x1b[22;23;24;27m"),
+            "default" => out.push_str("\x1b[0m"),
+            "nobold" | "nodim" => out.push_str("\x1b[22m"),
+            "noitalics" => out.push_str("\x1b[23m"),
+            "nounderscore" => out.push_str("\x1b[24m"),
+            "noreverse" => out.push_str("\x1b[27m"),
+            "bold" => out.push_str("\x1b[1m"),
+            "dim" => out.push_str("\x1b[2m"),
+            "italics" | "italic" => out.push_str("\x1b[3m"),
+            "underscore" => out.push_str("\x1b[4m"),
+            "reverse" => out.push_str("\x1b[7m"),
+            _ => {
+                if let Some(c) = part.strip_prefix("fg=") {
+                    out.push_str(&ansi(c, 38));
+                } else if let Some(c) = part.strip_prefix("bg=") {
+                    out.push_str(&ansi(c, 48));
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tmux::icons::ARROW_RIGHT;
+
+    // ── to_ansi ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn to_ansi_turns_a_colour_pair_into_sgr() {
+        assert_eq!(
+            to_ansi("#[fg=colour39,bg=colour233]main"),
+            "\x1b[38;5;39m\x1b[48;5;233mmain\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn to_ansi_reads_a_hex_colour() {
+        assert_eq!(to_ansi("#[fg=#0262a8]x"), "\x1b[38;2;2;98;168mx\x1b[0m");
+    }
+
+    #[test]
+    fn to_ansi_leaves_plain_text_alone() {
+        // No markup means no trailing reset either, so a segment that drew
+        // nothing stays nothing.
+        assert_eq!(to_ansi("main"), "main");
+        assert_eq!(to_ansi(""), "");
+    }
+
+    #[test]
+    fn to_ansi_resets_at_the_end_so_a_prompt_is_not_left_coloured() {
+        assert!(to_ansi("#[fg=colour39]x").ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn to_ansi_unescapes_a_literal_hash() {
+        assert_eq!(to_ansi("a ## b"), "a # b");
+    }
+
+    #[test]
+    fn to_ansi_leaves_a_bare_hash_as_written() {
+        // `#5` is not markup and not an escape; it is somebody's text.
+        assert_eq!(to_ansi("issue #5"), "issue #5");
+    }
+
+    #[test]
+    fn to_ansi_leaves_an_unterminated_run_as_written() {
+        assert_eq!(to_ansi("#[fg=colour39"), "#[fg=colour39");
+    }
+
+    #[test]
+    fn to_ansi_knows_the_attributes_the_segments_use() {
+        assert_eq!(to_ansi("#[default]x"), "\x1b[0mx\x1b[0m");
+        assert_eq!(to_ansi("#[reverse]x"), "\x1b[7mx\x1b[0m");
+    }
+
+    #[test]
+    fn none_clears_attributes_and_keeps_the_colour() {
+        // `#[fg=colour237,none,italics]` is what the net segment's unit is
+        // drawn with. Reading `none` as a full reset drew it in the terminal's
+        // own colour, which is the wrong grey and sometimes no grey at all.
+        let out = to_ansi("#[fg=colour237,none,italics]K");
+        assert_eq!(out, "\x1b[38;5;237m\x1b[22;23;24;27m\x1b[3mK\x1b[0m");
+        assert!(
+            !out.contains("\x1b[0m\x1b[3m"),
+            "the colour was reset: {out:?}"
+        );
+    }
+
+    #[test]
+    fn to_ansi_skips_an_attribute_it_does_not_know() {
+        // Better a missing effect than a wrong colour over somebody's prompt.
+        assert_eq!(to_ansi("#[fg=colour39,wobble]x"), "\x1b[38;5;39mx\x1b[0m");
+    }
+
+    #[test]
+    fn to_ansi_leaves_no_tmux_markup_behind() {
+        let rendered = status_line_for_test();
+        let out = to_ansi(&rendered);
+        assert!(!out.contains("#["), "{out:?}");
+    }
+
+    /// A line in the shape the git segment actually emits.
+    fn status_line_for_test() -> String {
+        format!(
+            "{}{}{}",
+            colored_segment(false, FG_DEFAULT, BG_BAR, " "),
+            colored_segment(false, FG_CLEAN, BG_CLEAN, "main"),
+            powerline_segment(FG_DEFAULT, BG_BAR, ARROW_RIGHT)
+        )
+    }
 
     // ── Segment ──────────────────────────────────────────────────────────────
 

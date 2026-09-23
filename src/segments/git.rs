@@ -660,7 +660,11 @@ fn count_stash(git_root: &Path) -> i32 {
         .unwrap_or(0)
 }
 
-async fn fetch_git_status(path: &Path) -> anyhow::Result<GitStatus> {
+/// Run `git status` and the stash count and parse the pair into a `GitStatus`.
+///
+/// Public because the no-daemon path in `crate::local` renders without a cache
+/// to serve from, so it calls this directly rather than going through `render`.
+pub async fn fetch_git_status(path: &Path) -> anyhow::Result<GitStatus> {
     let p1 = path.to_owned();
     let p2 = path.to_owned();
 
@@ -850,6 +854,17 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
 /// directory already on the status bar is not misremembered until the server
 /// restarts.  Both answers are cached — without the negative one, every
 /// non-repo pane would keep paying the fork on every refresh.
+/// The same question with nothing to cache it in, for the no-daemon path.
+///
+/// One fork per call, which is what running without a daemon costs and what
+/// the flag's documentation says it costs.
+pub async fn is_inside_work_tree_uncached(path: &Path) -> bool {
+    run_git(&["rev-parse", "--is-inside-work-tree"], path)
+        .await
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false)
+}
+
 async fn is_inside_work_tree(path: &Path, state: &Arc<Mutex<ServerState>>) -> bool {
     let key = path.to_path_buf();
     if let Some(known) = state.lock().await.repo_cached(&key) {
