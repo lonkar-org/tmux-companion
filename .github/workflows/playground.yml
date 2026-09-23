@@ -17,6 +17,11 @@ name: Playground image
 #   secret DOCKERHUB_TOKEN      an access token from Docker Hub, not a password
 #   variable DOCKERHUB_IMAGE    namespace/repository, if it is not the default
 #
+# The token needs read/write to push the image and read/write/delete for the
+# last step, which rewrites the repository description on Docker Hub. The
+# description is the only part of this that cannot be shipped inside the image,
+# so it is kept in playground/DOCKERHUB.md and pushed from here.
+#
 # The two secrets go up from a local `.env.local`, which `.gitignore` covers:
 #
 #   gh secret set --env-file .env.local
@@ -134,3 +139,28 @@ jobs:
           tags: |
             ${{ steps.name.outputs.image }}:playground
             ${{ steps.name.outputs.image }}:playground-${{ inputs.tag || github.ref_name }}
+
+      # The description on Docker Hub is the page anybody who finds the image
+      # lands on first, and it is the one thing about the image that is not in
+      # the image: it lives in Hub's own database and is set through the API.
+      # Keeping it in playground/DOCKERHUB.md means it is reviewed with
+      # everything else and pushed from here, rather than pasted into a web
+      # form once and left to drift.
+      #
+      # continue-on-error, deliberately. This action wants a token with
+      # read/write/delete scope, where pushing an image needs only read and
+      # write, so a DOCKERHUB_TOKEN that publishes perfectly well can still be
+      # refused here. A stale description is not worth failing a release whose
+      # image is already pushed; the step goes red and says what happened.
+      - name: Update the Docker Hub description
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ steps.name.outputs.image }}
+          readme-filepath: playground/DOCKERHUB.md
+          short-description: >-
+            A throwaway tmux with tmux-companion, five fake git projects and a
+            sixteen step guided tour.
+          enable-url-completion: true

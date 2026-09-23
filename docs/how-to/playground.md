@@ -108,6 +108,15 @@ say in each:
 `orchard-api/build.log` holds a compiler error with a path, a line and a
 column in it, for the copy-mode `o` binding to open.
 
+## The page on Docker Hub
+
+`playground/DOCKERHUB.md` is what Docker Hub shows on the image's page. It is
+pushed by the last step of `.github/workflows/playground.yml`, on a tag, so it
+is reviewed like anything else rather than pasted into a web form and left to
+drift. That step needs the Docker Hub token to carry delete scope as well as
+read and write, and it is `continue-on-error`, because a description that did
+not update is not worth failing a release whose image is already pushed.
+
 ## Taking the config with you
 
 Everything the playground runs is a file in the image:
