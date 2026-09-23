@@ -7,7 +7,10 @@
 //!
 //! Credit: `b0o/tmux-autoreload` is this idea, and it watches with `entr` or
 //! `inotifywait` where this compares a modification time, which is the whole
-//! difference between the two.
+//! difference between the two. It was archived in February 2024 with no
+//! successor named, so unlike the credits in `autofetch`, `notify` and
+//! `window_names` this one is not also a recommendation: there is nothing
+//! alive to send anybody to.
 
 use std::{
     path::{Path, PathBuf},

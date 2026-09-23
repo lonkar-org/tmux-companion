@@ -147,7 +147,9 @@ tmux-companion should install theirs. `rickstaa/tmux-notify`,
 `thepante/tmux-git-autofetch`, `roosta/tmux-fuzzback`, `MunifTanjim/tmux-suspend`,
 `jaclu/tmux-power-zoom`, `nickdiego/tmux-pocket-pane`,
 `kristopolous/tmux-gentrify`, `tmux-plugins/tmux-resurrect` and
-`tmux-plugins/tmux-continuum` are the current list. A two-line issue on their
+`tmux-plugins/tmux-continuum` are the current list, and the last two are on it
+for what they are rather than for being busy: neither has been pushed since
+August 2024. A two-line issue on their
 repository before shipping costs nothing, and an author who hears about it first
 usually reacts better than one who finds out from a README.
 
@@ -175,7 +177,7 @@ be started, do its work, and exit before the next tick wants it again.
 | --- | --- | --- | --- | --- |
 | git autofetch | `thepante/tmux-git-autofetch` | 22 | 2026-09-12 | the `autosave` task shape, the repo cache |
 | notify when a long command finishes | `rickstaa/tmux-notify` | 278 | 2026-05-18 | the `sh-jobs` process scan, plus exit code and duration |
-| reload tmux.conf on save | `b0o/tmux-autoreload` | 123 | 2024-02-16 | the config watch the daemon needs for `keys` anyway |
+| reload tmux.conf on save | `b0o/tmux-autoreload`, archived | 123 | 2024-02-16 | the config watch the daemon needs for `keys` anyway |
 | online status, packet loss, ping | `tmux-plugins/tmux-online-status` 185, `jaclu/tmux-packet-loss` 15 | | 2023-09, 2026-08 | one async probe into a `TtlMap` |
 | time spent per session | `tmux-code-time`, `tmux-timetrap` | small | | the usage log `keys` already writes |
 
@@ -190,7 +192,7 @@ The `[[sh-jobs.job]]` table maps a process-name regex to an icon, a label and a
 colour. The same table answers three more questions:
 
 - naming windows after what is running in them, which is
-  `ofirgall/tmux-window-name` (297 stars, pushed 2026-09-20) and is a Python
+  `ofirgall/tmux-window-name` (298 stars, pushed 2026-09-20) and is a Python
   daemon, so this removes a runtime as well as a process
 - icons per window, `joshmedeski/tmux-nerd-font-window-name` (226 stars,
   2026-09-21)
@@ -211,8 +213,9 @@ Four features, one config table, and the scan that feeds them is the scan
 | filter the pane buffer by pattern | nothing with traction | | log triage, small once capture and the matcher are there |
 
 Hint-based copy was in this table and has been taken out. `Morantron/tmux-fingers`
-has 1472 stars and was pushed in June 2026, `fcsonline/tmux-thumbs` has 1099 and
-is already Rust, and between them they've been the maintainers' main project for
+has 1473 stars and was pushed in June 2026, `fcsonline/tmux-thumbs` has 1099,
+is already Rust and has been quiet since April 2024, and between them they've
+been the maintainers' main project for
 years. The only argument for a fifth one was that the pattern table would be
 shared with `open`, which is not enough to justify competing with somebody's
 signature work, so `open` will ship a config snippet that hands off to thumbs
@@ -244,7 +247,7 @@ and inside the combined right-hand side they cost nothing extra.
 | named side panes, toggled on demand | `nickdiego/tmux-pocket-pane` | 1 |
 | move panes between windows with a cut and paste flow | `kristopolous/tmux-gentrify` | 17 |
 | word and line copy on double and triple click | `aless3/tmux-click-copy` | 8 |
-| list listening ports and kill from a picker | `jrmoulton/tmux-port` | small |
+| list listening ports and kill from a picker | gone: `jrmoulton/tmux-port` 404s and no living equivalent was found | — |
 
 `tmux-pocket-pane` at one star is the one I keep looking at. The idea is good
 and the adoption says nothing about the idea, since a plugin's star count
@@ -459,7 +462,8 @@ already does all three and `sesh`, `sessionx` and `t` do them for everybody
 else. The scope is the layout of a session the project picker made.
 
 Credit where it belongs: `tmux-plugins/tmux-resurrect` and
-`tmux-plugins/tmux-continuum` are alive, are the maintainers' signature work,
+`tmux-plugins/tmux-continuum` are unarchived, are the maintainers' signature
+work,
 and this repository already shells out to resurrect's save script for
 `autosave`. They snapshot every session on a timer for crash recovery and
 restore on demand, across the whole server, processes included. This is one

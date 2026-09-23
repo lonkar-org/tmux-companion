@@ -373,7 +373,9 @@ interval_secs = 5
 # thing that happens to their running sessions.
 #
 # The plugin this comes from is b0o/tmux-autoreload, which watches with entr or
-# inotifywait where this compares a modification time.
+# inotifywait where this compares a modification time. It is archived, since
+# February 2024, and its author named nothing to use instead, which is why this
+# setting exists rather than a link.
 enabled = false
 # Seconds between checks. One stat per file, so this can be small.
 interval_secs = 2

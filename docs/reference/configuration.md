@@ -312,7 +312,9 @@ error in it is exactly when you need telling.
 
 The plugin this comes from is
 [b0o/tmux-autoreload](https://github.com/b0o/tmux-autoreload), which watches
-with `entr` or `inotifywait` where this compares a modification time.
+with `entr` or `inotifywait` where this compares a modification time. It was
+archived in February 2024 and its author named no successor, so that link is
+history rather than a recommendation: this section is the replacement.
 
 ## What a new project session starts with
 
