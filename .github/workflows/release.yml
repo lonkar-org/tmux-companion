@@ -86,6 +86,9 @@ jobs:
           staging=$(mktemp -d)
           cp "target/${{ matrix.target }}/release/tmux-companion" "$staging/"
           cp README.md LICENSE "$staging/"
+          # The manual, so `scripts/install.sh` has one to install and
+          # `man tmux-companion` works on a machine that never saw the repo.
+          cp docs/tmux-companion.1 "$staging/"
           tar -czf "$name" -C "$staging" .
           echo "name=$name" >> "$GITHUB_OUTPUT"
 

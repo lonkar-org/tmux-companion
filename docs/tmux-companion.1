@@ -1,0 +1,336 @@
+.\" tmux-companion(1) -- the manual.
+.\"
+.\" mdoc, the macro set tmux's own page uses, so the two read alike when
+.\" somebody has both open. Render it without installing:
+.\"
+.\"     man ./docs/tmux-companion.1
+.\"
+.\" Every subcommand here is checked against the binary by a test, so a
+.\" command added without a paragraph in this file fails the build.
+.Dd September 23, 2026
+.Dt TMUX-COMPANION 1
+.Os
+.Sh NAME
+.Nm tmux-companion
+.Nd a status line, a set of pickers and a project manager for tmux
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar flags
+.Sh DESCRIPTION
+.Nm
+is one binary in two modes.
+.Pp
+.Ic server
+binds a unix socket and answers requests forever, holding the caches that
+make a status line cheap.
+Every other command is a client: it connects, starting the server when the
+socket is absent, writes one JSON line, reads one back, prints it and exits.
+.Pp
+The point of the split is the status bar.
+tmux gates
+.Ql #()
+to
+.Ev status-interval
+per attached client, and a spawn costs 12.4 ms of CPU before the command has
+computed anything, so the bill is the number of distinct commands rather than
+what they do.
+.Ic status-right
+answers with git, bandwidth and battery in one call.
+.Pp
+Commands that draw on a terminal -- the pickers, the dialogs -- run in the
+client process.
+The daemon has no terminal; it answers with rows and the client draws them.
+.Sh GETTING IN
+.Bl -tag -width Ds
+.It Ic start Oo Ar directory Oc Op Fl -last
+The way in, from a shell that is not in tmux yet.
+Opens the project picker, live sessions first and every directory
+.Xr zoxide 1
+knows underneath, and attaches to what is chosen.
+.Fl -last
+goes back to the session used most recently without asking, and a directory
+skips the picker.
+Inside tmux it switches rather than attaching.
+.Pp
+.Ql tmux
+on its own leaves you in a session called
+.Ql 0
+holding one bare shell, which is what this replaces.
+.El
+.Sh STATUS LINE COMMANDS
+These print tmux format strings on standard output and are meant for
+.Ql #()
+in
+.Pa tmux.conf .
+.Bl -tag -width Ds
+.It Ic status-right Oo Ar path Oc Op Fl -branch-max-len Ar n
+Git, bandwidth and battery in one call, computed concurrently.
+One
+.Ql #()
+rather than three.
+Takes a path and deliberately no pane pid: a pid makes the git segment
+enumerate every process on the machine, which cost 18.5 ms of its 26.0.
+.It Ic gst Oo Ar path Oc Op Ar pid
+The git segment on its own: branch, what is dirty, ahead and behind.
+With a pid it also marks a suspended editor.
+.It Ic battery
+Charge, as an icon and a percentage.
+Reads the platform's battery and prints nothing on a machine without one.
+.It Ic net
+Bytes per second in and out, over all interfaces but the loopback.
+A rate, so it is never cached.
+Draws nothing below
+.Ic [network] threshold_bps .
+.It Ic sh-jobs Ar pane-pid
+What is stopped or running under a pane, from the table in
+.Ic [[sh_jobs.job]] .
+.It Ic clients Ar attached Ar active
+A marker when more than one client is looking at this session.
+.It Ic window Fl i Ar index Op Ar flags
+One window's entry for
+.Ev window-status-format .
+Costs a process spawn per window per redraw, and tmux redraws on pane output
+as well as on the timer, so this is the expensive way to draw a window list.
+.It Ic preview
+Sample git segments in every colour style, without a server.
+.El
+.Sh PICKERS
+Each is a fuzzy-matched list with a preview.
+They are bound to keys in
+.Pa docs/tmux.conf.full.example ;
+the bindings shown are that file's.
+.Bl -tag -width Ds
+.It Ic project Oo Ar directory Oc Op Fl -print
+Live sessions and the directories
+.Xr zoxide 1
+knows, in one list, each in its project's colour.
+Picking a live session switches to it; picking a directory builds its session
+from
+.Ic [[layout]] .
+Bound to
+.Ql M-s .
+.It Ic project save Op Fl -no-commands
+Capture this session's windows and panes as the layout this project opens
+with.
+A saved layout wins over the config.
+Bound to
+.Ql prefix S .
+.It Ic project forget
+Delete the saved layout, so the config decides again.
+Bound to
+.Ql prefix M-S .
+.It Ic project show
+Which layout this project gets, which file decided, and the windows it opens.
+.It Ic keys Oo Ar query Oc Op Fl -all , Fl -print
+Every binding tmux knows, searchable, with what it runs in the preview.
+Enter runs the binding.
+Bound to
+.Ql prefix ? .
+.It Ic cheatsheet Op Fl -plain
+The bindings written in
+.Pa tmux.conf ,
+in four boxes, most-used first.
+A box with fewer than three of its own is filled out from tmux's own noted
+bindings.
+Bound to
+.Ql prefix C-c .
+.It Ic new-window
+A window here, or at any directory.
+The query starts on the pane's own directory, which is also the first row, so
+the key and enter is another window here.
+Bound to
+.Ql prefix c .
+.It Ic run
+A command from shell history, run in a pane that slides out beside this one
+and waits for an answer before closing.
+Bound to
+.Ql prefix e .
+.It Ic theme pick Op Fl -themes Ar dir
+Every theme with its colour beside it, applied on the spot and remembered
+against the project.
+Bound to
+.Ql prefix C-t .
+.El
+.Sh SESSIONS AND WINDOWS
+.Bl -tag -width Ds
+.It Ic toggle Ar session Ar window
+Move to the next window in this session's layout, and back again.
+Bound to
+.Ql M-a .
+.It Ic close-project Oo Ar session Oc Op Fl -discard , Fl -no-save
+Close a project by asking every window to exit, capturing the layout on the
+way out.
+.Fl -discard
+quits editors with
+.Ql :qa!
+and throws away unsaved work.
+Bound to
+.Ql prefix X .
+.It Ic zoom
+Zoom a pane, or the whole window when there is only one.
+Bound to
+.Ql prefix z .
+.It Ic autosave Op Fl -once , Fl -status
+The session-list autosave the daemon runs.
+.El
+.Sh COPY MODE AND OPENING
+.Bl -tag -width Ds
+.It Ic open Oo Ar text Oc Op Fl s , Fl n , Fl d Ar dir
+Open what is in the text: a URL goes to a browser, a
+.Ql path:line:column
+opens an editor there.
+.Fl s
+reads the tmux selection instead of arguments, which is how the copy-mode
+binding uses it.
+.Fl n
+prints what it would open and opens nothing.
+Bound to
+.Ql o
+in copy mode.
+.It Ic clipboard
+Copy standard input to the system clipboard, whichever command this platform
+has.
+Bound to
+.Ql y
+in copy mode.
+.It Ic shell-init Ar shell
+Print the shell code that emits the OSC 133 prompt marks.
+tmux has had
+.Ic next-prompt
+and
+.Ic previous-prompt
+since 3.3 and they do nothing until the shell says where a prompt begins.
+.Bd -literal -offset indent
+eval "$(tmux-companion shell-init zsh)"     # or bash
+tmux-companion shell-init fish | source
+.Ed
+.El
+.Sh THEMES
+A theme is a file of tmux options that
+.Pa _apply.tmux
+turns into colours.
+Options are set without
+.Fl g ,
+so a theme belongs to one session and two projects can be different colours
+at once.
+.Bl -tag -width Ds
+.It Ic theme init Op Fl -themes Ar dir
+Write the starter themes and the two files that apply them.
+Six colours, each of which
+.Ic theme gen Fl -shades
+turns into three.
+Nothing is overwritten.
+.It Ic theme gen Oo Fl -apply Oc Oo Fl -shades Oc Op Fl -background Ar colour
+Compute each theme's readable text colour and a visible border.
+Without
+.Fl -apply
+it reports what would change and touches nothing.
+.Fl -shades
+mints a lighter and a darker sibling of each.
+The text colour is chosen to clear 4.5:1 against the theme's own background
+and the border to clear 3:1 against the terminal's, so a theme that cannot be
+read cannot be written.
+.It Ic theme add Fl -bg Ar colour Op Fl -fg Ar colour
+A theme from one colour.
+The text colour is computed unless given, and a given pair under 4.5:1 is
+refused without
+.Fl -force .
+.It Ic theme apply Ar session Op Fl t Ar target
+The theme a session should have, without asking.
+Run from the
+.Ic session-created
+hook.
+Silent when there is no theme to apply, which is every install until
+.Ic theme init
+has run.
+.It Ic theme list-colours
+Every colour tmux takes, painted, with its hex and the contrast on it.
+.El
+.Sh CONFIGURATION
+TOML, read from the first of:
+.Bl -bullet -offset indent -compact
+.It
+.Ev TMUX_COMPANION_CONFIG
+.It
+.Pa $XDG_CONFIG_HOME/tmux-companion/config.toml
+.It
+.Pa ~/.config/tmux-companion/config.toml
+.It
+.Pa ~/.tmux-companion.toml
+.El
+.Pp
+Every setting with its default, annotated, is
+.Pa docs/config.example.toml .
+The sections are
+.Ic [general] , [dirs] , [git] , [network] , [battery] , [glyphs] ,
+.Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
+.Ic [window_names] , [notify] , [project] , [autosave] , [run] ,
+.Ic [clipboard] , [theme] , [bar]
+and
+.Ic [picker] .
+.Bl -tag -width Ds
+.It Ic config path
+Which file is being read.
+.It Ic config check
+Parse it and say what is wrong, with the line and a suggestion for a
+misspelled key.
+.It Ic config dump
+Every setting with its default, as a config file.
+.El
+.Pp
+Two settings are worth knowing before the rest.
+.Ic [bar] background
+is what the segments draw their caps against and has to match
+.Ev status-style ;
+it used to be a compiled-in
+.Ql colour233 ,
+which is one person's bar and nobody else's.
+.Ic [picker] preview
+is where every picker puts its preview pane, or
+.Ql none
+for no preview at all.
+.Sh DIAGNOSTICS
+.Bl -tag -width Ds
+.It Ic doctor
+What a bug report needs: the version, the socket, what the config says, what
+tmux says, and what is missing.
+.It Ic probe
+What the terminal answers about itself.
+.El
+.Sh FILES
+.Bl -tag -width "$XDG_STATE_HOME/tmux-companion/projects/" -compact
+.It Pa ~/.config/tmux-companion/config.toml
+the configuration
+.It Pa ~/.config/tmux/themes/
+themes, and the two files that apply them
+.It Pa $XDG_STATE_HOME/tmux-companion/projects/
+saved per-project layouts
+.It Pa /tmp/tmux-companion-$UID.sock
+the daemon's socket
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width TMUX_COMPANION_CONFIG -compact
+.It Ev TMUX_COMPANION_CONFIG
+a configuration file, before the search order
+.It Ev TMUX_COMPANION_SOCK
+the daemon socket, before the default
+.It Ev XDG_CONFIG_HOME , XDG_STATE_HOME
+where configuration and state live
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Pp
+A binding that runs from
+.Ic run-shell
+prints its complaint on standard output rather than exiting non-zero, because
+tmux turns a non-zero exit into
+.Ql 'tmux-companion open -s' returned 1
+in the message area, which names the command and not the problem.
+.Sh SEE ALSO
+.Xr tmux 1 ,
+.Xr zoxide 1
+.Pp
+.Lk https://github.com/lonkar-org/tmux-companion
+.Sh AUTHORS
+.An Yogesh Lonkar

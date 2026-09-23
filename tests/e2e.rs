@@ -717,3 +717,72 @@ fn start_last_picks_the_session_used_most_recently() {
         "nothing chosen from {listing:?}"
     );
 }
+
+/// Every subcommand has a paragraph in the manual.
+///
+/// A rule that says "keep the man page in sync" is one somebody forgets on the
+/// day they are busy. This is the same rule with a build failure attached: add
+/// a command, and the page has to name it before the suite goes green.
+#[test]
+fn the_manual_documents_every_subcommand() {
+    let manual = include_str!("../docs/tmux-companion.1");
+    let Some(binary) = target_binary() else {
+        return;
+    };
+
+    let help = Command::new(&binary)
+        .arg("--help")
+        .output()
+        .expect("--help runs");
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+
+    // The subcommand names clap prints, which is the list the manual has to
+    // cover. `help` is clap's own and documents itself.
+    let commands: Vec<&str> = help
+        .lines()
+        .skip_while(|l| !l.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .collect();
+
+    assert!(
+        commands.len() > 20,
+        "did not read the subcommand list: {commands:?}"
+    );
+
+    let missing: Vec<&str> = commands
+        .iter()
+        .filter(|name| !manual.contains(&format!("Ic {name}")))
+        .copied()
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/tmux-companion.1 does not document: {missing:?}"
+    );
+}
+
+/// The manual's configuration section names every section of the config.
+#[test]
+fn the_manual_names_every_configuration_section() {
+    let manual = include_str!("../docs/tmux-companion.1");
+    let example = include_str!("../docs/config.example.toml");
+
+    let sections: Vec<String> = example
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('[') && l.ends_with(']') && !l.starts_with("[["))
+        .map(|l| l.trim_start_matches('[').trim_end_matches(']').to_string())
+        .filter(|s| !s.contains('.'))
+        .collect();
+
+    let missing: Vec<&String> = sections
+        .iter()
+        .filter(|s| !manual.contains(&format!("[{s}]")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/tmux-companion.1 does not name these config sections: {missing:?}"
+    );
+}

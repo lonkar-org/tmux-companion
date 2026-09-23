@@ -141,7 +141,31 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
    `#()` costs ~14.6 ms of CPU per second per attached client, which is more
    than any segment here costs to compute.  Put anything expensive and slow to
    change behind a `TtlMap` on `ServerState`.
-7. Update `docs/tmux.conf.example` and the module table above.
+7. Update `docs/tmux.conf.example`, the module table above, and
+   `docs/tmux-companion.1`.
+
+## The manual
+
+`docs/tmux-companion.1` is mdoc, the macro set tmux's own page uses, and it is
+part of the change that adds a feature rather than a thing to write afterwards.
+A command, a config section, a key binding or a file path that the tool gains
+gets its paragraph in the same commit.
+
+Two tests enforce it, so this is not a rule anybody has to remember:
+`the_manual_documents_every_subcommand` reads `--help` and fails on a command
+the page does not name, and `the_manual_names_every_configuration_section`
+does the same for `docs/config.example.toml`. Both are in `tests/e2e.rs`.
+
+Read it while writing it:
+
+```sh
+man ./docs/tmux-companion.1
+```
+
+It ships three ways and all three have to keep working: `scripts/install.sh`
+puts it in `$PREFIX/share/man/man1`, the release workflow copies it into every
+archive, and the playground image installs it so `man tmux-companion` answers
+in the container.
 
 ## Adding a new command
 
@@ -158,6 +182,7 @@ bytes for the bar.  The steps are the same shape, with one extra.
    was never sent reads back as `None` and changes behaviour silently, which is
    the bug class the args structs exist to remove.
 5. Write the pure parts as free functions and unit-test them in the same file.
+   Give it a paragraph in `docs/tmux-companion.1`; the suite fails without one.
 6. If the command talks to the terminal (a picker, a dialog), it runs in the
    **client** process, not the daemon.  The daemon has no terminal; it answers
    with rows and the client draws them.

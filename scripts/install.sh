@@ -85,6 +85,18 @@ build_from_source() {
   mkdir -p "$DEST"
   install -m 755 "$here/target/release/$BIN" "$DEST/$BIN"
   say "installed $DEST/$BIN"
+  install_manual "$here/docs/$BIN.1"
+}
+
+# The manual, beside the binary. `man tmux-companion` finds it because
+# $PREFIX/share/man is on the default manpath for /usr/local, and for a
+# ~/.local prefix man reads $HOME/.local/share/man too on any man since 2.7.
+install_manual() {
+  local page=$1
+  [ -f "$page" ] || return 0
+  mkdir -p "$PREFIX/share/man/man1"
+  install -m 644 "$page" "$PREFIX/share/man/man1/$BIN.1"
+  say "installed the manual to $PREFIX/share/man/man1/$BIN.1"
 }
 
 if [ "$BUILD_ONLY" = 1 ]; then
@@ -155,6 +167,9 @@ tar -xzf "$TMP/$ASSET" -C "$TMP"
 mkdir -p "$DEST"
 install -m 755 "$TMP/$BIN" "$DEST/$BIN"
 say "installed $VERSION to $DEST/$BIN"
+# Shipped in the archive beside the binary since v0.1.0; an older archive
+# without it installs the binary alone rather than failing.
+install_manual "$TMP/$BIN.1"
 
 case ":$PATH:" in
   *":$DEST:"*) ;;

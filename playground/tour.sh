@@ -55,7 +55,11 @@ wait_for() {
     # screen says which step you are on.
     printf '\n%s%s   [Enter] done   [b] back   [s] skip   [q] quit%s%s ' \
       "$DIM" "$LABEL" "$OFF" "$EXTRA_KEYS"
-    IFS= read -r answer || { answer=q; printf '\n'; }
+    # One key, no Enter. `read -rsn1` returns as soon as something is
+    # pressed; Enter arrives as an empty string because the newline is the
+    # delimiter it stopped on, which is the case below that moves on.
+    IFS= read -rsn1 answer || { answer=q; printf '\n'; }
+    printf '\n\n' 
     case "$answer" in
       q|Q) return 3 ;;
       b|B) return 2 ;;
@@ -78,6 +82,22 @@ back_here() {
 
 windows_now() { tmux list-windows -a 2>/dev/null | wc -l | tr -d ' '; }
 panes_now()   { tmux list-panes -a 2>/dev/null | wc -l | tr -d ' '; }
+
+# Did a window ever get made since this step began?
+#
+# Counting windows now and comparing is wrong the moment somebody closes the
+# window they just opened: the count goes back to where it started and the
+# step says "no new window yet" forever, with no way past it. This latches on
+# the first time it is true.
+MADE_A_WINDOW=""
+made_a_window() {
+  [ -n "$MADE_A_WINDOW" ] && return 0
+  if [ "$(windows_now)" -gt "${1:-0}" ]; then
+    MADE_A_WINDOW=yes
+    return 0
+  fi
+  return 1
+}
 
 # ── The banner the playground shell opens with ──────────────────────────────
 if [ "${1:-}" = "welcome" ]; then
@@ -219,12 +239,17 @@ Nothing is checked from here on. Press things and see what happens.
     ${KEY}prefix  "${OFF}       split it top and bottom
     ${KEY}prefix  o${OFF}       go to the next pane
     ${KEY}prefix  ← → ↑ ↓${OFF}   go to the pane in that direction
-    ${KEY}prefix  x${OFF}       close this pane, after asking
+    ${KEY}prefix  x${OFF}       close any pane, after asking
     ${KEY}prefix  z${OFF}       make this pane full screen, and again to put it back
 
 The tour is running in one of these panes, so splitting will squash it. That
 is fine: ${KEY}prefix z${OFF} on this pane makes it readable again, and ${KEY}prefix x${OFF}
 closes the one you made.
+
+${WARN}If you close the tour's own pane${OFF} the tour stops, because it was a program
+running in that pane and you just ended it. Nothing else is lost. Type
+${KEY}tour${OFF} in any shell to start it again from the beginning, and ${KEY}s${OFF} skips
+forward quickly.
 
 ${DIM}Those chords are tmux's own, not this tool's. They work in any tmux.${OFF}
 EOF
@@ -274,73 +299,58 @@ wait_for
 
 basics_08() {
 LABEL="tmux basics 1.8 of 1.9"
-begin "📜" "Scrolling back"
+begin "\U0001f4dc" "Scrolling back, copying, and opening"
 cat <<EOF
-The mouse wheel works because this playground turns the mouse on, but the
-keyboard way is worth knowing, because it is also how you copy text.
+The mouse wheel works because this playground turns the mouse on. The
+keyboard way is worth knowing, because it is also how you copy.
 
-    ${KEY}prefix  [${OFF}       enter copy mode: now the arrows and PgUp scroll
-    ${KEY}q${OFF}              leave copy mode
+    ${KEY}prefix  [${OFF}       into copy mode: the pane freezes and you read its history
+    ${KEY}k${OFF} ${KEY}j${OFF} ${KEY}h${OFF} ${KEY}l${OFF}         move, because this config sets ${DIM}mode-keys vi${OFF}
+    ${KEY}w${OFF} ${KEY}b${OFF}            forward and back a word
     ${KEY}/${OFF}              search backwards, then ${KEY}n${OFF} for the next hit
+    ${KEY}v${OFF}              start selecting, ${KEY}y${OFF} yanks it, ${KEY}q${OFF} leaves
 
-In copy mode the pane is frozen and you are looking at its history, which is
-2000 lines here and 20000 in most configs. The program underneath keeps
-running; you are reading a scrollback, not pausing it.
+The program underneath keeps running while you read; you are looking at a
+scrollback, not pausing anything.
 
-Step 13 of the main tour builds on this.
+One more key, and this one is this tool rather than tmux:
+
+    ${KEY}o${OFF}              open whatever is selected
+
+A ${DIM}path:line:column${OFF} opens your editor there, which step 14 does with a
+compiler error. A URL opens a browser, and this container has none, so it
+says so instead:
+
+    ${DIM}no xdg-open on this machine, so this was not opened: https://...${OFF}
+
+That message is the whole thing working except the last step.
 EOF
 wait_for
 }
 
 basics_09() {
 LABEL="tmux basics 1.9 of 1.9"
-begin "🎓" "That is tmux"
+begin "\U0001f393" "That is tmux"
 cat <<EOF
 Four ideas and about a dozen keys:
 
     a ${BOLD}server${OFF} owns your programs, a ${BOLD}client${OFF} draws them
     ${BOLD}prefix${OFF} then a key talks to tmux instead of to your shell
-    ${BOLD}session › window › pane${OFF}, nesting in that order
+    ${BOLD}session \u203a window \u203a pane${OFF}, nesting in that order
     ${BOLD}detach${OFF} leaves it all running
 
-tmux's own list of every binding is ${KEY}prefix ?${OFF}, and it is a long unsorted
-page. The next step of the main tour is a searchable version of it, which is
-where this tool starts.
+Where to go next:
 
-${BOLD}If you want more than nine screens${OFF}
+    ${KEY}man tmux${OFF}                   the real thing, and it is good
+    ${KEY}prefix ?${OFF}                   every binding, unsorted, from tmux itself
+    ${DIM}https://learntmux.dev${OFF}       42 tasks against a real tmux in a browser
+    ${DIM}https://tmuxai.dev${OFF}          a written walkthrough
 
-    https://learntmux.dev      42 tasks against a real tmux in the browser
-    https://tmuxai.dev/tmux-getting-started/    a written walkthrough
+${KEY}man tmux${OFF} works in here, and so does ${KEY}man tmux-companion${OFF}. Try either in
+any shell; ${KEY}q${OFF} leaves the pager.
 
-${BOLD}Try opening one of them from here${OFF}, which is the last tmux thing worth
-knowing: getting text off a terminal without touching the mouse.
-
-${WARN}Read this before you press it.${OFF} A container has no browser in it, so opening
-a URL in here cannot work and is not meant to. What you will see is:
-
-    ${DIM}tmux-companion: no xdg-open on this machine, so this was not opened:${OFF}
-    ${DIM}  https://learntmux.dev${OFF}
-
-That message ${BOLD}is${OFF} the demonstration. It says which URL it had, which means
-the selecting, the copying and the handing-over all worked, and only the last
-step -- a browser to hand it to -- was missing. On your own machine that same
-keystroke opens the page. On a server over ssh you get this message, with the
-URL ready to copy.
-
-    ${KEY}prefix  [${OFF}       into copy mode
-    ${KEY}k${OFF} ${KEY}j${OFF} ${KEY}h${OFF} ${KEY}l${OFF}         up, down, left, right, because this config sets
-                   ${DIM}setw -g mode-keys vi${OFF}. Without that line it is emacs keys.
-    ${KEY}w${OFF} ${KEY}b${OFF}            forward and back a word
-    ${KEY}v${OFF}              start selecting, then move to the end of the URL
-    ${KEY}y${OFF}              yank it to the system clipboard
-    ${KEY}o${OFF}              open it, which is this tool rather than tmux
-
-The same ${KEY}o${OFF} on a ${DIM}path:line:column${OFF} -- a compiler error, a stack trace --
-opens your editor at that line instead. Step 14 does exactly that with a
-build log, and it does work in here, because the editor is right there.
-
-${DIM}The rest of the tour assumes exactly what you have just read and nothing${OFF}
-${DIM}more.${OFF}
+The next step of the main tour is a searchable version of ${KEY}prefix ?${OFF}, which
+is where this tool starts.
 EOF
 wait_for
 }
@@ -577,6 +587,7 @@ wait_for
 
 # ── 8 ──────────────────────────────────────────────────────────────────────
 step_08() {
+MADE_A_WINDOW=''
 begin "🪟" "A new window, here or anywhere"
 before=$(windows_now)
 cat <<EOF
@@ -603,7 +614,7 @@ brings you back here, or close the window with ${DIM}exit${OFF}.
 EOF
 keys "prefix  c      then type: lantern"
 hint "step 8: prefix then c, open a window in lantern-docs"
-wait_for "[ \"\$(windows_now)\" -gt $before ]" "no new window yet"
+wait_for "made_a_window $before" "no new window yet"
 }
 
 # ── 9 ──────────────────────────────────────────────────────────────────────
@@ -641,8 +652,11 @@ wait_for "[ \"\$(panes_now)\" -le $before ]" "the run pane is still open: press 
 step_10() {
 begin "🎨" "A colour per project"
 cat <<EOF
-Six themes ship, each with a lighter and a darker sibling that
-${DIM}tmux-companion theme gen${OFF} computed. The text colour on each one is chosen to
+Eighteen themes, from six colours: ${DIM}theme init${OFF} writes the six, and
+${DIM}theme gen --shades${OFF} turns each into three by minting a lighter and a darker
+sibling. That is all of them, and ${DIM}theme add --bg colour99${OFF} makes another
+from any colour tmux takes -- ${DIM}theme list-colours${OFF} prints all 256 with a
+swatch. The text colour on each one is chosen to
 clear WCAG AA against its background, which is 4.5:1, so a theme cannot be
 picked that you then cannot read.
 
@@ -709,7 +723,11 @@ this image already has it:
 
     ${DIM}eval "\$(tmux-companion shell-init zsh)"${OFF}
 
-Run a few commands first so there is something to jump between, then:
+${WARN}This only works where a shell has been printing prompts${OFF}, so do it in the
+${BOLD}playground${OFF} session and not here: this pane is running the tour, not zsh, and
+there are no prompts in it to jump between.
+
+Run two or three commands there first, then:
 
     ${KEY}prefix  [${OFF}        into copy mode
     ${KEY}Ctrl-p / Ctrl-n${OFF}  to the previous and next prompt
@@ -728,11 +746,22 @@ In the playground session:
 
     ${DIM}cat ~/projects/orchard-api/build.log${OFF}
 
-That log has a compiler error in it with a path, a line and a column, and a
-URL underneath. Go into copy mode, select either one, and press ${KEY}o${OFF}.
+That log has a compiler error in it with a path, a line and a column:
 
-A file opens in the editor at that line. A URL opens in a browser, which
-this container does not have, so it will tell you so rather than pretending.
+    ${DIM}  --> src/main.rs:2:22${OFF}
+
+In the playground session:
+
+    ${KEY}prefix  [${OFF}       into copy mode
+    ${KEY}k${OFF}              up to the line holding ${BOLD}src/main.rs:2:22${OFF}
+    ${KEY}v${OFF}              start selecting, then ${KEY}l${OFF} or ${KEY}w${OFF} to the end of it
+    ${KEY}o${OFF}              open it
+
+nvim opens in a pane beside you, on line 2, column 22 -- the character the
+compiler was pointing at. Close it with ${DIM}:q${OFF}.
+
+The URL two lines below works the same way and cannot finish in here, for
+the reason 1.8 gave: no browser to hand it to.
 EOF
 keys "prefix  [      select the path      o"
 hint "step 14: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
@@ -775,6 +804,8 @@ What is in this image, if you want to copy it out:
 
 Read next:
 
+    ${KEY}man tmux${OFF}                     tmux itself, and it is worth the hour
+    ${KEY}man tmux-companion${OFF}           every command, every config section
     ${DIM}tmux-companion --help${OFF}
     ${DIM}tmux-companion doctor${OFF}                what it can see on this machine
     https://github.com/lonkar-org/tmux-companion    install, configure, themes

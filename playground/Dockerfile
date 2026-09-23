@@ -35,8 +35,13 @@ FROM alpine:3.21
 # git, because the status bar's largest segment reads it. neovim and zsh
 # because the tour opens both. zoxide because the project picker asks it which
 # directories exist. ncurses-terminfo so tmux knows what the host terminal is.
+# mandoc and the tmux man page, because the last thing the tour says is "read
+# the manual" and a container where `man tmux` answers "not found" makes a
+# liar of it. mandoc rather than man-db: it renders the mdoc both pages are
+# written in and costs a tenth as much.
 RUN apk add --no-cache \
-      tmux zsh bash git neovim zoxide \
+      tmux tmux-doc zsh bash git neovim zoxide \
+      mandoc man-pages \
       ncurses ncurses-terminfo less findutils coreutils grep procps-ng \
  && adduser -D -s /bin/zsh play
 
@@ -50,6 +55,8 @@ ENV HOME=/home/play \
     PAGER=less
 
 COPY --from=build /src/target/release/tmux-companion /usr/local/bin/tmux-companion
+# The manual, where `man tmux-companion` looks for it.
+COPY docs/tmux-companion.1 /usr/share/man/man1/tmux-companion.1
 COPY docs/tmux.conf.full.example /opt/playground/tmux.conf.full.example
 COPY docs/config.example.toml    /opt/playground/config.example.toml
 COPY playground/seed.sh playground/tour.sh playground/entrypoint.sh playground/smoke.sh /opt/playground/

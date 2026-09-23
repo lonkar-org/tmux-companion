@@ -2152,7 +2152,18 @@ async fn run_open(
     };
 
     let Some(target) = crate::open::scan(&text, &base, &home, &|p| p.exists()) else {
-        anyhow::bail!("nothing to open in that text");
+        // Said rather than raised. This runs from a `run-shell` binding, and
+        // tmux turns a non-zero exit into `'tmux-companion open -s' returned
+        // 1` in the message area, which names the command rather than the
+        // problem. stdout from a run-shell is displayed, so a sentence there
+        // is what somebody actually reads.
+        if text.trim().is_empty() {
+            println!("nothing is selected: select something in copy mode first");
+        } else {
+            let sample: String = text.trim().chars().take(60).collect();
+            println!("no file or URL in that selection: {sample}");
+        }
+        return Ok(());
     };
 
     if dry_run {
@@ -2185,10 +2196,9 @@ async fn run_open(
                 .await
             {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    eprintln!(
-                        "tmux-companion: no {opener} on this machine, so this was not opened:"
-                    );
-                    eprintln!("  {url}");
+                    // stdout, because a `run-shell` binding shows stdout in
+                    // the message area and drops stderr on the floor.
+                    println!("no {opener} on this machine, so this was not opened: {url}");
                 } else {
                     return Err(e.into());
                 }

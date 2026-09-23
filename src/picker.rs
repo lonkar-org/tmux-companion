@@ -469,6 +469,50 @@ fn terminal_width() -> u16 {
         .unwrap_or(120)
 }
 
+/// The keys every picker has, whatever it is picking.
+///
+/// Worth spelling out because they are skim's rather than this tool's, and
+/// nobody arrives knowing them. Dropped when the header would not fit: a line
+/// cut off mid-word says less than a shorter one.
+const SHARED_KEYS: &str = "\u{2191}\u{2193} move   ctrl-u clear";
+
+/// The line above the list: what this picker is, then what its keys do.
+///
+/// `room` is how wide the list is, which is not how wide the popup is: the
+/// header is drawn in the list column, so with a preview beside it there is
+/// roughly half a popup to write in.
+fn header_line(chrome: &Chrome, room: usize) -> String {
+    let title = chrome.title.trim();
+    let keys = chrome.footer.trim();
+    let own = if keys.is_empty() {
+        title.to_string()
+    } else {
+        format!("{title}   {keys}")
+    };
+    let with_shared = format!("{own}   {SHARED_KEYS}");
+    if with_shared.chars().count() <= room {
+        with_shared
+    } else {
+        own
+    }
+}
+
+/// How much of the popup the list gets, which is where the header is drawn.
+fn list_width(chrome: &Chrome, previewable: bool, width: u16) -> usize {
+    let side_by_side = previewable
+        && matches!(
+            fitting_preview(chrome.preview, width),
+            Some(PreviewDirection::Right) | Some(PreviewDirection::Left)
+        );
+    let cols = if side_by_side {
+        u32::from(width) * u32::from(100 - chrome.preview_percent.min(95)) / 100
+    } else {
+        u32::from(width)
+    };
+    // Two for the border and two for the selection marker.
+    (cols as usize).saturating_sub(4)
+}
+
 /// Whether this list has a preview pane at all.
 ///
 /// A picker whose rows carry nothing to show gets the full width for its list
@@ -489,7 +533,14 @@ fn options_with(chrome: &Chrome, query: &str, previewable: bool, width: u16) -> 
     // ctrl-u clears it, which is the readline habit.
     options.query = Some(query.to_string());
     options.prompt = chrome.prompt.clone();
-    options.header = Some(chrome.title.clone());
+    // The title and the keys, on the header line above the list.
+    //
+    // skim's own `footer` is private with `setter(skip)`, so a library cannot
+    // put anything on the bottom border; the header is the one place a
+    // picker can say what its keys do. It said only the title until now,
+    // which meant `Chrome::footer` -- the line every picker used to draw --
+    // was being built and thrown away.
+    options.header = Some(header_line(chrome, list_width(chrome, previewable, width)));
     // The query on top with the list growing down from it, which is fzf's
     // `--reverse` and the way this was drawn before. `options.reverse` is the
     // flag the command line parses; `layout` is what the drawing reads, and
@@ -609,6 +660,51 @@ mod tests {
     }
 
     // ── options ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_header_says_what_the_keys_do() {
+        // The footer was built by every call site and then dropped on the
+        // floor: skim draws no footer a library can set, and the header was
+        // being given the title alone.
+        let chrome = Chrome {
+            title: "[ Theme ]".into(),
+            footer: "enter applies it".into(),
+            ..Chrome::default()
+        };
+        let header = header_line(&chrome, 120);
+        assert!(header.contains("[ Theme ]"), "{header}");
+        assert!(header.contains("enter applies it"), "{header}");
+        assert!(header.contains("ctrl-u clear"), "{header}");
+
+        // A picker with nothing of its own still says the shared keys.
+        let bare = Chrome {
+            title: "[ Pick ]".into(),
+            footer: String::new(),
+            ..Chrome::default()
+        };
+        assert!(header_line(&bare, 120).contains("ctrl-u clear"));
+
+        // No room, so the shared keys go rather than being cut off mid-word.
+        let tight = header_line(&chrome, 30);
+        assert!(tight.contains("enter applies it"), "{tight}");
+        assert!(!tight.contains("ctrl-u"), "{tight}");
+    }
+
+    #[test]
+    fn the_header_is_measured_against_the_list_not_the_popup() {
+        // With a preview beside it the list is a fraction of the popup, and a
+        // header measured against the popup is a header cut in half.
+        let chrome = Chrome {
+            preview_title: "[ Where ]".into(),
+            preview_percent: 55,
+            ..Chrome::default()
+        };
+        assert_eq!(list_width(&chrome, true, 200), 200 * 45 / 100 - 4);
+        // No preview, so the list has all of it.
+        assert_eq!(list_width(&chrome, false, 200), 196);
+        // Narrow enough that the preview went underneath, so again all of it.
+        assert_eq!(list_width(&chrome, true, 80), 76);
+    }
 
     #[test]
     fn the_preview_pane_is_off_when_no_row_has_one() {
