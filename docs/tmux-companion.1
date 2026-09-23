@@ -45,9 +45,13 @@ The daemon has no terminal; it answers with rows and the client draws them.
 .Bl -tag -width Ds
 .It Ic start Oo Ar directory Oc Op Fl -last
 The way in, from a shell that is not in tmux yet.
-Opens the project picker, live sessions first and every directory
+Opens the project picker, live sessions first and every directory the
+configured source knows underneath, and attaches to what is chosen.
+The source is
 .Xr zoxide 1
-knows underneath, and attaches to what is chosen.
+unless
+.Ic [project] dirs_source
+says otherwise.
 .Fl -last
 goes back to the session used most recently without asking, and a directory
 skips the picker.
@@ -145,9 +149,14 @@ They are bound to keys in
 the bindings shown are that file's.
 .Bl -tag -width Ds
 .It Ic project Oo Ar directory Oc Op Fl -print
-Live sessions and the directories
+Live sessions and the directories the configured source knows, in one list,
+each in its project's colour.
+The source is
 .Xr zoxide 1
-knows, in one list, each in its project's colour.
+by default and
+.Ic [project] dirs_source
+changes it; a source that is not installed lists nothing rather than failing,
+and a directory it has never seen can still be typed in full.
 Picking a live session switches to it; picking a directory builds its session
 from
 .Ic [[layout]] .
@@ -180,8 +189,12 @@ Bound to
 .Ql prefix C-c .
 .It Ic new-window
 A window here, or at any directory.
+The rows are the pane's own directory and then the same source
+.Ic project
+lists, so it is the one setting for both.
 The query starts on the pane's own directory, which is also the first row, so
 the key and enter is another window here.
+A path the source has never seen opens when it is typed in full.
 Bound to
 .Ql prefix c .
 .It Ic run
@@ -317,7 +330,8 @@ and
 Which file is being read.
 .It Ic config check
 Parse it and say what is wrong, with the line and a suggestion for a
-misspelled key.
+misspelled key or an unrecognised value.
+It also names any setting that still works but is deprecated.
 .It Ic config dump
 Every setting with its default, as a config file.
 .El
@@ -338,6 +352,40 @@ is which side the editor opens on,
 .Ql right
 or
 .Ql bottom .
+.Pp
+.Ic [project] dirs_source
+is where the project picker gets its directories, one of
+.Ql zoxide ,
+.Ql z ,
+.Ql cdr ,
+.Ql ghq
+or
+.Ql none .
+.Xr zoxide 1
+is the default rather than a requirement, and nothing here has to be installed:
+a source that is absent lists nothing, leaving live sessions and whatever is
+typed.
+.Ql z
+reads the
+.Pa ~/.z
+database and
+.Ql cdr
+reads
+.Pa ~/.chpwd-recent-dirs ,
+as files rather than as commands, because both are shell functions that cannot
+be run from here.
+.Ic [project] dirs_command
+takes any command printing one absolute path per line, as a list of words, and
+wins over
+.Ic dirs_source ;
+.Ic [project] visit_command
+is what records a pick, defaulting to
+.Ql zoxide add
+for zoxide and nothing for the rest.
+.Ic [project] zoxide
+is the old spelling of
+.Ql dirs_source = \(dqnone\(dq
+and goes away in the next release.
 .Pp
 .Ic [[git.branch_types]]
 is the glyph drawn before a branch name, keyed on how the name starts.
@@ -383,6 +431,16 @@ themes, and the two files that apply them
 saved per-project layouts
 .It Pa /tmp/tmux-companion-$UID.sock
 the daemon's socket
+.It Pa ~/.z
+the z database, read when
+.Ic [project] dirs_source
+is
+.Ql z
+.It Pa ~/.chpwd-recent-dirs
+zsh's recent directories, read when
+.Ic [project] dirs_source
+is
+.Ql cdr
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width TMUX_COMPANION_CONFIG -compact
@@ -392,6 +450,13 @@ a configuration file, before the search order
 the daemon socket, before the default
 .It Ev XDG_CONFIG_HOME , XDG_STATE_HOME
 where configuration and state live
+.It Ev _Z_DATA
+the z database, before
+.Pa ~/.z
+.It Ev ZDOTDIR
+where zsh keeps
+.Pa .chpwd-recent-dirs ,
+before the home directory
 .El
 .Sh EXIT STATUS
 .Ex -std

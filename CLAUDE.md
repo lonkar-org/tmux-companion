@@ -74,7 +74,8 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 | `src/keys.rs` | `list-keys` parse, the row cache, the usage log |
 | `src/picker.rs` | fuzzy match state machine and the ratatui screen |
 | `src/cheatsheet.rs` | the four boxes, their ordering and the grid |
-| `src/project.rs` | session and zoxide rows, short paths, session names |
+| `src/project.rs` | session and directory rows, short paths, session names |
+| `src/dirsource.rs` | where the directory list comes from: named sources, their parsers, visits |
 | `src/tasks.rs` | the autosave timer, the calendar, the toggle target |
 | `src/run.rs` | shell history parsing, the pane slide, the exit dialog |
 | `src/open.rs` | URL and `file:line:col` extraction from text |

@@ -65,11 +65,20 @@ entry per phase of the comrades port.
 - A TOML config file: glyph presets for readers without a Nerd Font, an ordered
   `[git] parts` list, a configurable `[status.right]`, `[[layout]]` for what a
   project session starts with, and an off switch on the usage log.
+- `[project] dirs_source`, so the project picker and `new-window` list
+  directories from `z`, zsh's own `cdr` or `ghq` as well as zoxide, and
+  `[project] dirs_command` for anything else that prints one absolute path per
+  line. `z` and `cdr` are read as files rather than run as commands, because
+  both are shell functions. `[project] visit_command` is the matching write.
 
 ### Changed
 
 - `vim-bg` is `sh-jobs`, with a config-driven job table rather than one
   hardcoded editor. The old name works for one more release and says so.
+- zoxide is documented as optional rather than assumed. It was already possible
+  to run without it, and the picker already degraded to live sessions and a
+  typed path, but nothing outside `config.example.toml` said so — `[project]` is
+  now covered in the manual, `docs/reference/requirements.md` and the README.
 - `autosave` runs in the daemon instead of a detached shell loop, which removes
   its PID lock file, the stale-lock takeover and the liveness check between
   sleeps.
@@ -77,6 +86,12 @@ entry per phase of the comrades port.
   daemon from an older build replaces it rather than quietly getting an older
   answer.
 - The socket is created 0600 and its owner is checked before a client connects.
+
+### Deprecated
+
+- `[project] zoxide`. It is the old spelling of `dirs_source = "none"`, still
+  works, still wins over everything else in the section, and goes away in the
+  next release. `config check` names it, so nobody meets the removal first.
 
 ### Fixed
 

@@ -452,8 +452,78 @@ The commands are sent after the geometry is settled, which is deliberate: a
 full-screen program started before the splits draws itself at the pre-split size
 and then repaints, and that looks broken on every single session start.
 
-`[project] zoxide = false` drops the directory list, leaving live sessions and
-whatever you type. zoxide is an assumption here rather than a requirement.
+## Where the directory list comes from
+
+The project picker lists live sessions and then directories, and zoxide is the
+default source rather than a requirement. `[project] dirs_source` picks another:
+
+| Name | What it reads | Order |
+| --- | --- | --- |
+| `zoxide` | `zoxide query -l` | frecency, zoxide's own |
+| `z` | the `~/.z` database, honouring `$_Z_DATA` | rank, highest first |
+| `cdr` | zsh's `~/.chpwd-recent-dirs`, honouring `$ZDOTDIR` | most recent first |
+| `ghq` | `ghq list -p` | ghq's own |
+| `none` | nothing | — |
+
+`z` and `cdr` are read as files rather than run as commands, because both are
+shell functions. Spawning `zsh -ic 'z -l'` to reach one sources a whole
+interactive rc for a list of paths, and prints whatever that rc prints into the
+middle of it; the data file is the part that is stable.
+
+That is also why the list stops at four names. Everything else that jumps
+directories is either a shell function with its own file format, or a binary
+that prints paths, and the second kind needs no support here:
+
+```toml
+[project]
+dirs_command = ["fd", "-td", "-d2", ".", "/Users/you/src"]
+```
+
+`dirs_command` is a list of words and it wins over `dirs_source`. Anything
+wanting a pipe, a glob or a filter goes through a shell:
+
+```toml
+dirs_command = ["sh", "-c", "ls -d ~/src/*/"]
+```
+
+autojump, fasd, jump and anything else that can list directories go here as
+well. Which flag each one wants is its own manual's business and not repeated
+here, because they do not agree on one and a wrong flag copied out of this page
+would look like the setting being broken.
+
+That last one is the answer for a machine with no jumper installed at all,
+which is a real and reasonable way to work: a code directory and a glob over
+it gives a project picker without anything to install.
+
+A source that is not installed, or a database never written, is the empty list
+and not an error. The picker falls back to live sessions and whatever you type,
+which is a smaller tool and still a working one — typing a path that matches no
+row opens it either way, so nothing is unreachable.
+
+### Recording a visit
+
+Picking a project or opening a window tells the source it was visited, so the
+place you just went floats up the list next time. Only zoxide has a command for
+this by default:
+
+```toml
+[project]
+visit_command = ["myjumper", "add"]
+```
+
+`z` and `cdr` are written by your shell on every `cd` and want no help from
+here, and `ghq` lists clones rather than visits. The directory is appended to
+whatever `visit_command` names.
+
+`[project] zoxide = false` is the old spelling of `dirs_source = "none"`. It
+still works, and it still wins over anything else in the section, so a config
+written before this had more than one source keeps behaving as it did. It goes
+away in the next release, and `tmux-companion config check` names it until then:
+
+```
+~/.config/tmux-companion/config.toml: ok
+  `[project] zoxide = false` is deprecated; use `dirs_source = "none"`
+```
 
 ## Saving the session list
 

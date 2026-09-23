@@ -342,7 +342,7 @@ pub enum Outcome {
     /// itself.
     ///
     /// This is the only way to run a command that was never in the history, or
-    /// to open a directory zoxide has never seen.
+    /// to open a directory the source has never seen.
     Typed(String),
     /// Cancelled.
     Cancelled,

@@ -32,7 +32,7 @@ everything my tmux used to shell out for talks to it instead.
 | `status-right` | git, bandwidth and battery in one call |
 | `keys` | fuzzy search every binding, press enter to run it |
 | `cheatsheet` | the bindings you wrote, four boxes, most-used first |
-| `project` | one session per project, sessions and zoxide in one list |
+| `project` | one session per project, sessions and your directory jumper in one list |
 | `project save` | capture this session's panes as the layout it reopens with |
 | `run` | pick from shell history, run it in a pane that slides out |
 | `open` | open the URL or `file:line:col` under your cursor |
@@ -99,11 +99,17 @@ Then the way in, from a shell that is not in tmux yet:
 tmux-companion start
 ```
 
-That opens the project picker — live sessions first, then every directory
-zoxide knows — and attaches to what you choose. `tmux` on its own leaves you in
+That opens the project picker — live sessions first, then every directory your
+jumper knows — and attaches to what you choose. `tmux` on its own leaves you in
 a session called `0` with one bare shell, which is the thing this replaces.
 `start --last` goes back to whatever you were in without asking, and
 `start ~/src/thing` skips the picker.
+
+The jumper is zoxide by default and is not a requirement: `[project]
+dirs_source` also takes `z`, `cdr`, `ghq` or `none`, `dirs_command` takes
+anything else that prints paths, and with nothing installed at all you get live
+sessions and whatever you type. [docs/reference/configuration.md](docs/reference/configuration.md#where-the-directory-list-comes-from)
+has the table.
 
 One line in `tmux.conf` gets you the bar:
 

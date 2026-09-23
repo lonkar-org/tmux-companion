@@ -428,12 +428,31 @@ impl Default for Autoreload {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Project {
-    /// Whether to list the directories zoxide knows.
+    /// Deprecated, and replaced by `dirs_source = "none"`.
     ///
-    /// zoxide is an assumption rather than a requirement: with this off the
-    /// picker lists live sessions and whatever gets typed, which is a smaller
-    /// tool and still a working one.
+    /// Kept one release so a config written before the directory list had more
+    /// than one source keeps behaving as it did: `false` still means the
+    /// picker lists live sessions and whatever gets typed, whatever else is
+    /// set.
     pub zoxide: bool,
+    /// Which directory jumper the picker lists, by name.
+    ///
+    /// One of [`crate::dirsource::NAMES`]. zoxide is the default rather than
+    /// the requirement, and `"none"` leaves the picker with live sessions and
+    /// whatever gets typed, which is a smaller tool and still a working one.
+    pub dirs_source: String,
+    /// A command that prints one absolute path per line, overriding
+    /// `dirs_source`.
+    ///
+    /// The escape hatch for every jumper that is not built in: anything that
+    /// can be executed and prints paths works without this crate knowing its
+    /// name. Empty means use `dirs_source`.
+    pub dirs_command: Vec<String>,
+    /// The command that records a visit, with the directory appended.
+    ///
+    /// Empty means whatever the source does by default, which is `zoxide add`
+    /// for zoxide and nothing at all for the rest.
+    pub visit_command: Vec<String>,
     /// The layout a new session starts with, by name.
     pub layout: String,
     /// Path-prefix overrides, first match wins.
@@ -459,6 +478,9 @@ impl Default for Project {
     fn default() -> Self {
         Self {
             zoxide: true,
+            dirs_source: "zoxide".to_string(),
+            dirs_command: Vec::new(),
+            visit_command: Vec::new(),
             layout: "default".to_string(),
             override_: Vec::new(),
             preview_window: "ai".to_string(),
@@ -1401,10 +1423,49 @@ fn unknown_field(message: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// What a parsed config can still get wrong, which serde's types cannot say.
+///
+/// Only one thing so far: `dirs_source` is a name out of a fixed list, and a
+/// typo in it would otherwise fall back to zoxide and look like the setting
+/// being ignored.
+fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigError> {
+    let name = &config.project.dirs_source;
+    if crate::dirsource::DirsSource::from_name(name).is_none() {
+        let known: Vec<String> = crate::dirsource::NAMES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message: format!(
+                "unknown value for `project.dirs_source`: `{name}`, expected one of `{}`",
+                known.join("`, `")
+            ),
+            did_you_mean: closest_key(name, &known),
+        });
+    }
+    Ok(config)
+}
+
+/// What the config says that still works but should be spelled another way.
+///
+/// One line each, printed by `config check`. A deprecation nobody is told
+/// about is a deprecation that surprises somebody on the release that removes
+/// it, and `config check` is where they are already looking.
+pub fn deprecations(config: &Config) -> Vec<String> {
+    let mut out = Vec::new();
+    if !config.project.zoxide {
+        out.push(
+            "`[project] zoxide = false` is deprecated; use `dirs_source = \"none\"`".to_string(),
+        );
+    }
+    out
+}
+
 /// Parse a config from TOML text, naming the file in any error.
 pub fn parse(text: &str, path: &std::path::Path) -> Result<Config, ConfigError> {
     match toml::from_str::<Config>(text) {
-        Ok(c) => Ok(c),
+        Ok(c) => validate(c, path),
         Err(e) => {
             let message = e.to_string();
             let did_you_mean = unknown_field(&message)
@@ -1546,6 +1607,57 @@ mod tests {
         let s = e.to_string();
         assert!(s.contains("/tmp/x.toml"), "{s}");
         assert!(s.contains("line 2") || s.contains("2:"), "{s}");
+    }
+
+    #[test]
+    fn the_defaults_deprecate_nothing() {
+        assert!(deprecations(&Config::default()).is_empty());
+    }
+
+    #[test]
+    fn the_old_zoxide_flag_is_called_out() {
+        let c = parse(
+            "[project]\nzoxide = false\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        let notes = deprecations(&c);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("dirs_source"), "{}", notes[0]);
+    }
+
+    #[test]
+    fn an_unknown_dirs_source_names_the_ones_that_exist() {
+        let e = parse(
+            "[project]\ndirs_source = \"zoxid\"\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap_err();
+        let s = e.to_string();
+        assert!(s.contains("dirs_source"), "{s}");
+        assert!(s.contains("zoxide"), "{s}");
+        assert_eq!(e.did_you_mean.as_deref(), Some("zoxide"));
+    }
+
+    #[test]
+    fn every_dirs_source_name_parses() {
+        for name in crate::dirsource::NAMES {
+            let text = format!("[project]\ndirs_source = \"{name}\"\n");
+            let c = parse(&text, std::path::Path::new("t.toml")).unwrap();
+            assert_eq!(c.project.dirs_source, name);
+        }
+    }
+
+    #[test]
+    fn a_dirs_command_is_a_list_of_words() {
+        // One string would have to be split, and splitting a command line
+        // correctly is a parser nobody wants in a config loader.
+        let c = parse(
+            "[project]\ndirs_command = [\"ghq\", \"list\", \"-p\"]\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        assert_eq!(c.project.dirs_command, vec!["ghq", "list", "-p"]);
     }
 
     #[test]

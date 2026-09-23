@@ -70,7 +70,7 @@ on a machine where you would rather not have a resident process.
 | `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels |
 | `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--plain` prints and exits |
 | `start [DIR]` | The way in from a shell that is not in tmux yet: the project picker, then attach. `--last` goes back to the session used most recently without asking; `DIR` skips the picker. Inside tmux it switches rather than attaching, so it is the same thing as `project` |
-| `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then what zoxide knows; `--print` lists and exits |
+| `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then the directories `[project] dirs_source` knows — zoxide by default, or `z`, `cdr`, `ghq`, a `dirs_command`, or none at all; `--print` lists and exits |
 | `project save` | Capture this session's windows and panes as this project's layout. `--no-commands` keeps the shape and leaves every pane a shell |
 | `project forget` | Delete this project's saved layout, so the config decides again |
 | `project show` | Which layout this project gets, which file decided, and the windows it opens |
@@ -130,7 +130,7 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | Command | Does |
 | --- | --- |
 | `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `-s` scans the tmux selection, `-n` prints what it would open |
-| `new-window` | Pick a directory and open a window there. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full |
+| `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
 | `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform |

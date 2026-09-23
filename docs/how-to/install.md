@@ -125,8 +125,11 @@ tmux-companion start
 ```
 
 That opens the project picker, live sessions first and then every directory
-zoxide knows, and attaches to what you pick. It is worth an alias, because it
-is the thing you type instead of `tmux`:
+your jumper knows — zoxide by default, and
+[`[project] dirs_source`](../reference/configuration.md#where-the-directory-list-comes-from)
+if you use `z`, `cdr`, `ghq`, something else or nothing at all — and attaches to
+what you pick. It is worth an alias, because it is the thing you type instead
+of `tmux`:
 
 ```sh
 alias t='tmux-companion start'

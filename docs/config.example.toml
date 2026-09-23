@@ -279,12 +279,54 @@ enabled = true
 # path = "~/.local/state/tmux-companion/keys-usage.tsv"
 
 [project]
-# Whether to list the directories zoxide knows.
+# Which directory jumper the project picker and `new-window` list, by name.
+# One of:
 #
-# zoxide is an assumption rather than a requirement: with this off, the picker
-# lists live sessions and whatever you type, which is a smaller tool and still
-# a working one.
-zoxide = true
+#   zoxide   `zoxide query -l`, most frecent first. The default.
+#   z        the `~/.z` database, which rupa/z, zsh-z and z.lua all write.
+#            Read straight from the file, because `z` is a shell function and
+#            cannot be run from here. Ordered by rank. Honours $_Z_DATA.
+#   cdr      zsh's own recent directories, `~/.chpwd-recent-dirs`, most recent
+#            first. Nothing to install: it is already there if you have
+#            `chpwd_recent_dirs` on. Honours $ZDOTDIR.
+#   ghq      `ghq list -p`, every repository ghq has cloned. Not visits, so the
+#            list is stable and complete rather than ordered by what you use.
+#   none     no directory list. Live sessions and whatever you type.
+#
+# A jumper that is not installed, or a database that has never been written, is
+# the empty list and not an error: you get live sessions and a typed path.
+dirs_source = "zoxide"
+
+# A command that prints one absolute path per line. Set, it wins over
+# dirs_source; this is how every jumper that is not in the list above works.
+#
+#   dirs_command = ["fd", "-td", "-d2", ".", "/Users/you/src"]
+#   dirs_command = ["sh", "-c", "ls -d ~/src/*/"]
+#
+# autojump, fasd, jump and the rest go here too, with whichever of their flags
+# lists directories -- check their own manual for it rather than trusting a
+# line copied from this file, because they do not agree on one.
+#
+# It is a list of words rather than one string, because splitting a command
+# line correctly is a parser that does not belong in a config loader. Anything
+# that needs a pipe, a glob or a filter goes through `sh -c`, as above.
+dirs_command = []
+
+# The command that records a visit, with the directory appended. Run when you
+# open a project or a window, so the place you just went floats up the list.
+#
+# Empty means whatever the source does on its own: `zoxide add` for zoxide, and
+# nothing for the rest. z and cdr are written by your shell on every `cd`, and
+# ghq has no notion of a visit.
+#
+#   visit_command = ["myjumper", "add"]
+visit_command = []
+
+# Deprecated, and going away next release. Use dirs_source = "none".
+#
+# `zoxide = false` still means no directory list, whatever else is set here, so
+# a config written before this section had more than one source keeps working.
+# zoxide = true
 
 # The layout a new project session starts with.
 layout = "default"

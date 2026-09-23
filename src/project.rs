@@ -6,10 +6,11 @@
 //! other half of the one you are in. A session per project splits that into two
 //! axes, and the toggle moves between tools without touching the project.
 //!
-//! The list is sessions first, most recently attached first, then the
-//! directories zoxide knows. A directory zoxide has never seen cannot be picked
-//! from the list, because the list is visits; typing a path that matches
-//! nothing opens it anyway and records the first visit.
+//! The list is sessions first, most recently attached first, then whatever the
+//! directory source knows -- zoxide by default, and [`crate::dirsource`] for
+//! the rest. A directory the source has never seen cannot be picked from the
+//! list, because the list is visits; typing a path that matches nothing opens
+//! it anyway and records the first visit.
 
 use std::collections::HashMap;
 
@@ -18,7 +19,7 @@ use std::collections::HashMap;
 pub enum Kind {
     /// A live tmux session: picking switches to it.
     Session,
-    /// A directory zoxide knows: picking opens or creates its session.
+    /// A directory the source knows: picking opens or creates its session.
     Directory,
 }
 
@@ -106,7 +107,7 @@ pub fn sessions_from(listing: &str) -> Vec<Row> {
     with_time.into_iter().map(|(_, r)| r).collect()
 }
 
-/// Turn `zoxide query -l` output into rows, colouring each from the project
+/// Turn a directory source's lines into rows, colouring each from the project
 /// map.
 pub fn directories_from(
     listing: &str,
@@ -139,7 +140,7 @@ pub fn directories_from(
 
 /// Sessions then directories, with any path already listed dropped.
 ///
-/// A project that is open is a session row and a zoxide row at once, and the
+/// A project that is open is a session row and a directory row at once, and the
 /// session row is the useful one: it knows the session's real name, which is
 /// not always derivable from the path. Session `y` sits at the home directory,
 /// and deriving its name from that path opened a brand new session called
@@ -183,7 +184,7 @@ pub fn theme_colours(files: &[(String, String)]) -> HashMap<String, String> {
 
 /// Resolve a typed query to a directory.
 ///
-/// The only way into a directory zoxide has never seen: it lists visits, and a
+/// The only way into a directory the source has never seen: it lists visits, and a
 /// repository reached by `cd`, or cloned and never visited, does not appear at
 /// all. Tried absolute, then `~`-relative, then relative to the pane, then
 /// relative to home.
@@ -216,20 +217,19 @@ pub fn resolve_typed(query: &str, cwd: &str, home: &str) -> Option<String> {
 
 // ── Collecting ───────────────────────────────────────────────────────────────
 
-/// Every row the picker should show: sessions first, then zoxide.
+/// Every row the picker should show: sessions first, then the directory source.
 pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
     let sessions = sessions_from(&tmux_sessions().await);
-    if !config.project.zoxide {
+    let source = crate::dirsource::DirsSource::from_config(&config.project);
+    if source == crate::dirsource::DirsSource::None {
         return sessions;
     }
     let map = std::fs::read_to_string(project_map_path(home))
         .map(|t| parse_project_map(&t))
         .unwrap_or_default();
     let colours = theme_colours(&read_theme_files(home));
-    merge(
-        sessions,
-        directories_from(&zoxide_list().await, &map, &colours),
-    )
+    let listing = source.list(home).await.join("\n");
+    merge(sessions, directories_from(&listing, &map, &colours))
 }
 
 /// `tmux list-sessions`, with the fields the rows need.
@@ -250,31 +250,15 @@ async fn tmux_sessions() -> String {
     }
 }
 
-/// `zoxide query -l`, empty when zoxide is not installed.
-/// The directories zoxide knows, most frecent first.
+/// The directories the configured source knows, most relevant first.
 ///
 /// `new-window` wants the paths and nothing else, where the project picker
 /// wants them merged with live sessions and coloured, so the shared part stops
 /// here.
-pub async fn zoxide_dirs() -> Vec<String> {
-    zoxide_list()
+pub async fn source_dirs(config: &crate::config::Config, home: &str) -> Vec<String> {
+    crate::dirsource::DirsSource::from_config(&config.project)
+        .list(home)
         .await
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-async fn zoxide_list() -> String {
-    let out = tokio::process::Command::new("zoxide")
-        .args(["query", "-l"])
-        .output()
-        .await;
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-        Err(_) => String::new(),
-    }
 }
 
 /// Where the project-to-theme map lives.
@@ -299,12 +283,10 @@ fn read_theme_files(home: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Tell zoxide this directory was visited, the same as `z` would.
-pub async fn record_visit(dir: &str) {
-    let _ = tokio::process::Command::new("zoxide")
-        .args(["add", dir])
-        .status()
-        .await;
+/// Tell the directory source this directory was visited, if it takes telling.
+pub async fn record_visit(config: &crate::config::Config, dir: &str) {
+    let source = crate::dirsource::DirsSource::from_config(&config.project);
+    crate::dirsource::record_visit(&source, &config.project, dir).await;
 }
 
 // ── building a session ───────────────────────────────────────────────────────

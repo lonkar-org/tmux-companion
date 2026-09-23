@@ -50,6 +50,34 @@ boxes:
 preset = "ascii"
 ```
 
+## Directory jumpers
+
+Optional, every one of them. Nothing here has to be installed for the tool to
+run, and nothing errors when it is missing.
+
+The project picker and `new-window` list live sessions and then directories,
+and the directories come from whichever jumper `[project] dirs_source` names.
+Four are built in:
+
+| Name | Needs | Read as |
+| --- | --- | --- |
+| `zoxide` | [zoxide](https://github.com/ajeetdsouza/zoxide), the default | `zoxide query -l` |
+| `z` | rupa/z, zsh-z or z.lua | the `~/.z` file, `$_Z_DATA` honoured |
+| `cdr` | zsh with `chpwd_recent_dirs` on | `~/.chpwd-recent-dirs`, `$ZDOTDIR` honoured |
+| `ghq` | [ghq](https://github.com/x-motemen/ghq) | `ghq list -p` |
+
+Anything else that prints one absolute path per line goes in
+`[project] dirs_command` without this tool knowing its name — autojump, fasd,
+jump, an `fd`, or a glob through `sh -c`. Which flag each of those wants is in
+its own manual; this page does not repeat them, because they do not agree.
+
+With none of them installed, and nothing configured, the picker lists live
+tmux sessions and opens whatever path you type. That is the floor, and it needs
+nothing but tmux.
+
+[reference/configuration.md](configuration.md) has the table of what each one
+reads and why `z` and `cdr` are read as files rather than run as commands.
+
 ## Contrast
 
 Text on a theme's own block clears WCAG 2.1 AA, 4.5:1 for body text, and an

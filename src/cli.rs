@@ -222,7 +222,7 @@ pub enum Cmd {
     ///
     /// The query starts on the pane's own directory, so pressing the key and
     /// then enter is "another window here" and nothing has to be typed for the
-    /// common case. A directory zoxide has never seen can be typed in full.
+    /// common case. A directory the source has never seen can be typed in full.
     NewWindow,
 
     /// Print the shell code that emits the OSC 133 prompt marks
@@ -285,8 +285,8 @@ pub enum Cmd {
     /// `tmux` on its own drops you in a session called `0` holding one bare
     /// shell, and everything this tool does is one keystroke further on from
     /// there. This is that keystroke, from outside tmux: it opens the same
-    /// picker `M-s` opens, with live sessions first and every directory zoxide
-    /// knows under them, and attaches to whatever is chosen.
+    /// picker `M-s` opens, with live sessions first and every directory the
+    /// source knows under them, and attaches to whatever is chosen.
     Start {
         /// Go straight to this directory instead of opening the picker
         dir: Option<String>,
@@ -706,7 +706,12 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
                 None => config::load(),
             };
             match result {
-                Ok((_, source)) => println!("{source}: ok"),
+                Ok((config, source)) => {
+                    println!("{source}: ok");
+                    for note in config::deprecations(&config) {
+                        println!("  {note}");
+                    }
+                }
                 Err(e) => {
                     eprintln!("{e}");
                     std::process::exit(1);
@@ -1271,7 +1276,7 @@ async fn open_project(
         .unwrap_or(false);
 
     if !exists {
-        crate::project::record_visit(path).await;
+        crate::project::record_visit(config, path).await;
 
         let (windows, _) = crate::saved::resolve(config, crate::saved::load(path), path, home);
 
@@ -1401,23 +1406,19 @@ async fn run_new_window() -> anyhow::Result<()> {
     };
 
     let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    let paths: Vec<String> = if config.project.zoxide {
-        crate::project::zoxide_dirs().await
-    } else {
-        Vec::new()
-    };
+    let paths: Vec<String> = crate::project::source_dirs(&config, &home).await;
 
     let prefill = crate::project::short_path(&pane_dir, &home);
 
     // The pane's own directory goes on the list, not only into the query.
-    // Without it, a directory zoxide has never seen -- which is most of them
+    // Without it, a directory the source has never seen -- which is most of them
     // the first time somebody runs this -- prefilled a query that matched no
     // row, so the list came up empty and the default looked broken. Enter
     // still opens it either way; now you can also see what Enter would do.
     let mut items: Vec<crate::picker::Item> = Vec::with_capacity(paths.len() + 1);
     // What each row opens, in the same order as the rows, because a pick
     // comes back as an index and the extra row below would otherwise shift
-    // every zoxide path by one.
+    // every listed path by one.
     let mut targets: Vec<String> = Vec::with_capacity(paths.len() + 1);
     if !paths.iter().any(|p| p == &pane_dir) {
         items.push(
@@ -1436,7 +1437,9 @@ async fn run_new_window() -> anyhow::Result<()> {
     }
     let chrome = crate::picker::Chrome {
         title: "[ New window at ]".into(),
-        footer: "enter opens a window   ctrl-u clears it   type a path zoxide has not seen   esc cancels".into(),
+        footer:
+            "enter opens a window   ctrl-u clears it   type a path that is not listed   esc cancels"
+                .into(),
         preview_title: "[ Directory ]".into(),
         ..Default::default()
     }
@@ -1456,7 +1459,7 @@ async fn run_new_window() -> anyhow::Result<()> {
         crate::project::WindowTarget::Open(dir) => {
             // Counted as a visit, the same as `z` would, so opening a window
             // somewhere twice floats it up the list next time.
-            crate::project::record_visit(&dir).await;
+            crate::project::record_visit(&config, &dir).await;
             tmux(&["new-window", "-c", &dir]).await;
             Ok(())
         }

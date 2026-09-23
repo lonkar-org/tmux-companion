@@ -24,6 +24,8 @@ pub mod client;
 pub mod close;
 /// The configuration file.
 pub mod config;
+/// Where the project picker's directory list comes from.
+pub mod dirsource;
 /// What to ask somebody to run before they open an issue.
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
