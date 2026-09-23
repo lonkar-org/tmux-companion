@@ -57,9 +57,12 @@ manual, so `man tmux-companion` works straight after. `brew upgrade
 tmux-companion` takes you to the next release, and `brew uninstall` takes the
 binary and the manual back out, leaving your config and saved layouts alone.
 
-The formula lives in [lonkar-org/tap](https://github.com/lonkar-org/tap) and
-the release workflow rewrites it after each release, so a new version reaches
-brew a couple of minutes after it reaches the Releases page.
+The formula lives in
+[lonkar-org/homebrew-tap](https://github.com/lonkar-org/homebrew-tap) and the
+release workflow rewrites it after each release, so a new version reaches brew
+a couple of minutes after it reaches the Releases page. The `homebrew-` on the
+front is Homebrew's convention rather than a second tap: `brew tap
+lonkar-org/tap` is what you type, and it expands the name itself.
 
 ## Through tpm
 
@@ -121,8 +124,8 @@ From a shell that is not in tmux yet:
 tmux-companion start
 ```
 
-That opens the project picker — live sessions first, then every directory
-zoxide knows — and attaches to what you pick. It is worth an alias, because it
+That opens the project picker, live sessions first and then every directory
+zoxide knows, and attaches to what you pick. It is worth an alias, because it
 is the thing you type instead of `tmux`:
 
 ```sh
@@ -138,8 +141,8 @@ typing `tmux`, one hook makes it land in the same place:
 set-hook -g client-attached 'run-shell "tmux-companion start --hook"'
 ```
 
-That opens the picker only when the session is one tmux named itself — a name
-that is all digits — with one window, one pane and a shell in it. A session you
+That opens the picker only when the session is one tmux named itself, meaning
+a name that is all digits, with one window, one pane and a shell in it. A session you
 asked for by name, or one with anything already running, is left alone.
 
 ## Upgrading
