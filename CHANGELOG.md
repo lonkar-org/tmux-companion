@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.1.0 - 2026-09-23
 
 ### Added
 
@@ -22,6 +22,13 @@ entry per phase of the comrades port.
   publishing waits on the `release` environment so an admin approves first.
 - [docs/how-to/install.md](docs/how-to/install.md), covering all three ways in
   and how to remove it again.
+- [BENCHMARKS.md](BENCHMARKS.md) and `just bench`, which measure from inside a
+  real tmux against the zsh this replaced: a key is pressed, tmux runs the
+  binding, and the clock stops when the first row reaches the terminal. The bar
+  is 3.0% of a core against 34.4%, and the pickers cost half the CPU while
+  opening no faster, which is the number the old socket-side measurements could
+  not see. The port's own before and after numbers move to
+  [BENCHMARKS-before-port.md](BENCHMARKS-before-port.md).
 
 - Panes in a layout window. `[[layout.window.pane]]` with a command, a cwd and
   a focus flag, under a `layout` naming one of tmux's five presets or carrying
