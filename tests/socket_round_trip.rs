@@ -35,20 +35,40 @@ impl TestServer {
             .env("TMUX_COMPANION_SOCK", &sock)
             .spawn()
             .expect("server spawns");
-        let server = Self { child, sock };
+        let mut server = Self { child, sock };
         server.wait_until_listening();
         server
     }
 
-    fn wait_until_listening(&self) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+    fn wait_until_listening(&mut self) {
+        // Thirty seconds, and not five. Twelve of these servers start while
+        // the e2e suite is running tmux servers of its own, and on a loaded
+        // macOS runner a cold binary took longer than five seconds to bind,
+        // so two tests failed for being slow rather than wrong. Nothing waits
+        // the full deadline when the server is healthy: the loop returns on
+        // the first connection that succeeds, which is normally the first one.
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             if std::os::unix::net::UnixStream::connect(&self.sock).is_ok() {
                 return;
             }
+            // A server that died says so, rather than being reported as one
+            // that is taking its time. Waiting out the deadline for a process
+            // that is already gone turns a config error or a port clash into
+            // "never started listening", which sends the next reader looking
+            // at the wrong thing.
+            if let Ok(Some(status)) = self.child.try_wait() {
+                panic!(
+                    "server exited with {status} before listening on {}",
+                    self.sock.display()
+                );
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
-        panic!("server never started listening on {}", self.sock.display());
+        panic!(
+            "server never started listening on {} within 30s",
+            self.sock.display()
+        );
     }
 
     /// Run one request against this server's socket.
