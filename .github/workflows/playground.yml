@@ -17,6 +17,10 @@ name: Playground image
 #   secret DOCKERHUB_TOKEN      an access token from Docker Hub, not a password
 #   variable DOCKERHUB_IMAGE    namespace/repository, if it is not the default
 #
+# The two secrets go up from a local `.env.local`, which `.gitignore` covers:
+#
+#   gh secret set --env-file .env.local
+#
 # The image name is a variable because a Docker Hub namespace is not derivable
 # from the GitHub one: Hub namespaces are lowercase alphanumeric, so a GitHub
 # owner with a hyphen in it has no matching name on Hub.
