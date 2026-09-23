@@ -346,14 +346,25 @@ wait_for
 }
 
 # The detour's own loop, the same shape as the main one.
+# run_basics <first-step-index>
+#
+# Returns 0 when it ran off the end forwards, 2 when somebody pressed `b` on
+# the first screen and wants out of the detour altogether, and 3 on quit.
+#
+# The start index is what makes going backwards into the detour work: coming
+# back from step 2 should land on 1.9, the screen just left, not on 1.1.
 run_basics() {
   local steps=(basics_01 basics_02 basics_03 basics_04 basics_05 basics_06 \
                basics_07 basics_08 basics_09)
-  local j=0
+  local j=${1:-0}
   while [ "$j" -lt "${#steps[@]}" ]; do
     "${steps[$j]}"
     case "$?" in
-      2) [ "$j" -gt 0 ] && j=$(( j - 1 )) ;;
+      2) if [ "$j" -eq 0 ]; then
+           # Back off the top of the detour, which is step 1.
+           return 2
+         fi
+         j=$(( j - 1 )) ;;
       3) return 3 ;;
       *) j=$(( j + 1 )) ;;
     esac
@@ -361,7 +372,38 @@ run_basics() {
   return 0
 }
 
-# ── 1 ──────────────────────────────────────────────────────────────────────
+# The last screen of the detour, which is where `b` from step 2 lands.
+BASICS_LAST=8
+
+quit_tour() {
+  printf '\n%sThe tour is over. Run `tour` to start it again.%s\n' "$DIM" "$OFF"
+  exec zsh
+}
+
+# enter_basics <first-step-index>
+#
+# Runs the detour and turns its answer into a position in the main tour. Sets
+# `i` when the answer is "put me back at step 1", and leaves it alone when the
+# detour simply finished.
+# Returns 0 when the detour finished forwards and 2 when somebody backed out
+# of the top of it. The caller decides where that leaves them, because doing
+# it in here and then falling into the caller's own `i=$(( i + 1 ))` is how
+# backing out of 1.1 landed on step 2.
+enter_basics() {
+  run_basics "$1"
+  local answer=$?
+  case "$answer" in
+    3) quit_tour ;;
+    # Step 1 gets to decide again: somebody who backs out and then presses
+    # Enter has come to step 2 from step 1, and `b` there should take them
+    # back to step 1 rather than into a detour they just left.
+    2) took_basics=0
+       return 2 ;;
+  esac
+  return 0
+}
+
+# ── 1 ──────────────────────────────────────────────────────────────────
 step_01() {
 begin "⌨️ " "Two keyboard things, or nothing below works"
 cat <<EOF
@@ -754,6 +796,11 @@ STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 s
 TOTAL=${#STEPS[@]}
 
 i=0
+# Whether the detour was taken, which decides what `b` on step 2 means: back
+# to the screen before it, which is 1.9 for somebody who went through the
+# basics and step 1 for somebody who skipped them.
+took_basics=0
+
 while [ "$i" -lt "$TOTAL" ]; do
   n=$(( i + 1 ))
   LABEL="step $n of $TOTAL"
@@ -763,14 +810,20 @@ while [ "$i" -lt "$TOTAL" ]; do
   # nothing on the other fifteen.
   EXTRA_KEYS=""
   case "$answer" in
-    2) [ "$i" -gt 0 ] && i=$(( i - 1 )) ;;
-    3) printf '\n%sThe tour is over. Run `tour` to start it again.%s\n' "$DIM" "$OFF"
-       exec zsh ;;
-    4) run_basics || {
-         printf '\n%sThe tour is over. Run `tour` to start it again.%s\n' "$DIM" "$OFF"
-         exec zsh
-       }
-       i=$(( i + 1 )) ;;
+    2) if [ "$i" -eq 1 ] && [ "$took_basics" -eq 1 ]; then
+         # Back into the detour at its last screen, and back out of its first
+         # one lands on step 1.
+         enter_basics "$BASICS_LAST" || i=0
+       elif [ "$i" -gt 0 ]; then
+         i=$(( i - 1 ))
+       fi ;;
+    3) quit_tour ;;
+    4) took_basics=1
+       if enter_basics 0; then
+         i=$(( i + 1 ))
+       else
+         i=0
+       fi ;;
     *) i=$(( i + 1 )) ;;
   esac
 done
