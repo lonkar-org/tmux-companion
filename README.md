@@ -78,7 +78,19 @@ set -g @plugin 'lonkar-org/tmux-companion'
 It binds no keys and sets no options. Or clone it and run
 `cargo build --release` yourself.
 
-All three paths, with the flags and how to remove it again, are in
+On a Mac or a Linux with Homebrew:
+
+```sh
+brew tap lonkar-org/tap
+brew trust lonkar-org/tap
+brew install tmux-companion
+```
+
+Homebrew 7 won't load a formula from a tap you haven't trusted, hence the middle
+line. That path brings the manual with it, so `man tmux-companion` works
+straight after.
+
+All four paths, with the flags and how to remove it again, are in
 [docs/how-to/install.md](docs/how-to/install.md).
 
 Then the way in, from a shell that is not in tmux yet:

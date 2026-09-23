@@ -1,6 +1,6 @@
 # Install
 
-Three ways, and the first one's the one to take.
+Four ways, and the first one's the one to take.
 
 ## Download the binary
 
@@ -37,6 +37,29 @@ There are four archives:
 
 The Linux builds are static against musl, so one binary runs on any
 distribution rather than tracking whichever glibc the build machine had.
+
+## Through Homebrew
+
+```sh
+brew tap lonkar-org/tap
+brew trust lonkar-org/tap
+brew install tmux-companion
+```
+
+The trust line is Homebrew 7 and newer: it won't load a formula out of a
+third-party tap until you say that tap is one of yours, and the error it prints
+otherwise names the command, so the worst a skipped line costs you is one
+message.
+
+The formula downloads the same archive the script would, checks it against the
+sha256 the tap recorded when the release was published, and installs the
+manual, so `man tmux-companion` works straight after. `brew upgrade
+tmux-companion` takes you to the next release, and `brew uninstall` takes the
+binary and the manual back out, leaving your config and saved layouts alone.
+
+The formula lives in [lonkar-org/tap](https://github.com/lonkar-org/tap) and
+the release workflow rewrites it after each release, so a new version reaches
+brew a couple of minutes after it reaches the Releases page.
 
 ## Through tpm
 

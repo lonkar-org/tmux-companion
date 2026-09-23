@@ -11,6 +11,20 @@ name: Release
 # approves before anything reaches the Releases page. Configure that once under
 # Settings, Environments, release, Required reviewers. Without the environment
 # the publish job runs unapproved, which is worth knowing before the first tag.
+#
+# The last job pushes the new version and checksums into the Homebrew tap at
+# lonkar-org/tap. `brew tap lonkar-org/tap` looks for a repository called
+# `homebrew-tap` and reaches this one through the rename redirect GitHub keeps,
+# which works and would stop working the day anything else takes that name.
+# It needs a secret named TAP_TOKEN on this repository: a fine-grained personal
+# access token whose only resource is that repository and whose only permission
+# is Contents, read and write. The workflow's own
+# GITHUB_TOKEN cannot reach another repository, which is why the secret exists.
+#
+#   gh secret set TAP_TOKEN --repo lonkar-org/tmux-companion
+#
+# Without it the release still publishes and the job warns, so a missing token
+# costs a stale tap rather than a failed release.
 
 on:
   push:
@@ -156,3 +170,66 @@ jobs:
             --title "$TAG" \
             --notes-file "$notes" \
             --generate-notes
+
+  tap:
+    name: Update the Homebrew tap
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # A secret cannot be read in a job-level `if`, so the token is checked
+      # once here and every step after it reads this output.
+      - name: Is TAP_TOKEN set
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAP_TOKEN:-}" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAP_TOKEN is not set, so lonkar-org/tap still points at the previous version. Create the secret and rerun this job."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          repository: lonkar-org/tap
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      # The tap owns the rewrite. Doing it there keeps one copy of the rules
+      # about which archive belongs on which line, testable without a release.
+      - name: Fill in the formula
+        if: steps.token.outputs.have == 'true'
+        working-directory: tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern checksums.txt --dir .
+          ./scripts/update-formula.sh "$TAG" checksums.txt
+          rm checksums.txt
+          git --no-pager diff
+
+      - name: Commit it
+        if: steps.token.outputs.have == 'true'
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Formula/tmux-companion.rb; then
+            echo "the formula already points at $TAG"
+            exit 0
+          fi
+          git add Formula/tmux-companion.rb
+          git commit -m "tmux-companion ${TAG#v}" \
+            -m "From ${{ github.repository }} $TAG, checksums taken from the release."
+          git push
