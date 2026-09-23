@@ -402,8 +402,11 @@ pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow:
     let chrome = chrome.clone();
     let query = query.to_string();
     let previewable = previewable(&chrome, &items);
+    // Read here rather than on the picker thread: this is the terminal the
+    // client owns, and asking for its size is one syscall.
+    let width = terminal_width();
     let output = std::thread::spawn(move || {
-        Skim::run_with(options_with(&chrome, &query, previewable), Some(rx))
+        Skim::run_with(options_with(&chrome, &query, previewable, width), Some(rx))
     })
     .join()
     .map_err(|_| anyhow::anyhow!("the picker thread panicked"))?
@@ -432,7 +435,38 @@ pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow:
 /// because `SkimOptions` holds `Rc`s and cannot cross one.
 #[cfg(test)]
 fn options_for(chrome: &Chrome, query: &str, items: &[Item]) -> SkimOptions {
-    options_with(chrome, query, previewable(chrome, items))
+    // A width no narrower than the threshold, so a test asserting the
+    // configured side gets the configured side rather than whatever terminal
+    // the suite happens to run under.
+    options_with(chrome, query, previewable(chrome, items), 160)
+}
+
+/// Narrower than this and a side-by-side preview leaves neither half readable.
+///
+/// Measured against what the popups in the shipped config actually get: a
+/// picker opened at 70% of a 100-column terminal is 70 columns, and splitting
+/// that 45/55 gives the list 31 columns, which truncates most rows in it. Under
+/// this the preview goes below the list instead, where it has the full width.
+const MIN_SIDE_BY_SIDE: u16 = 96;
+
+/// Where the preview really goes, once the terminal has had its say.
+///
+/// A percentage-sized popup on a small terminal is a small popup, and skim
+/// splits whatever it is given however narrow that is. Turning the split
+/// sideways rather than obeying is the difference between a readable list and
+/// two unreadable columns.
+pub fn fitting_preview(preview: Preview, width: u16) -> Option<PreviewDirection> {
+    match preview {
+        Preview::Right | Preview::Left if width < MIN_SIDE_BY_SIDE => Some(PreviewDirection::Down),
+        other => other.direction(),
+    }
+}
+
+/// How wide the terminal is, or a sane guess when there is no terminal.
+fn terminal_width() -> u16 {
+    ratatui::crossterm::terminal::size()
+        .map(|(cols, _)| cols)
+        .unwrap_or(120)
 }
 
 /// Whether this list has a preview pane at all.
@@ -446,7 +480,7 @@ fn previewable(chrome: &Chrome, items: &[Item]) -> bool {
 }
 
 /// The options themselves, once the preview question is settled.
-fn options_with(chrome: &Chrome, query: &str, previewable: bool) -> SkimOptions {
+fn options_with(chrome: &Chrome, query: &str, previewable: bool, width: u16) -> SkimOptions {
     // Built by mutation rather than by a struct literal: `SkimOptions` has
     // private fields, so `..Default::default()` cannot reach past them.
     let mut options = SkimOptions::default();
@@ -475,7 +509,7 @@ fn options_with(chrome: &Chrome, query: &str, previewable: bool) -> SkimOptions 
         RankCriteria::Index,
     ];
 
-    if previewable && let Some(direction) = chrome.preview.direction() {
+    if previewable && let Some(direction) = fitting_preview(chrome.preview, width) {
         // A preview command has to be set for the pane to exist at all, and
         // for skim to ask each row what it shows. It is never run: a row
         // answering with `AnsiText` is already "ready", so the command is
@@ -595,6 +629,31 @@ mod tests {
         };
         let items = vec![Item::with_preview("a", "something")];
         assert!(options_for(&chrome, "", &items).preview.is_none());
+    }
+
+    #[test]
+    fn a_narrow_popup_puts_the_preview_underneath_instead() {
+        // 45/55 of a 70-column popup gives the list 31 columns, which cuts
+        // most rows in half. Below the threshold the split turns sideways.
+        assert_eq!(
+            fitting_preview(Preview::Right, 70),
+            Some(PreviewDirection::Down)
+        );
+        assert_eq!(
+            fitting_preview(Preview::Left, 70),
+            Some(PreviewDirection::Down)
+        );
+        // Wide enough, and it is left alone.
+        assert_eq!(
+            fitting_preview(Preview::Right, 160),
+            Some(PreviewDirection::Right)
+        );
+        // A preview already below, or switched off, is not second-guessed.
+        assert_eq!(
+            fitting_preview(Preview::Bottom, 70),
+            Some(PreviewDirection::Down)
+        );
+        assert_eq!(fitting_preview(Preview::None, 200), None);
     }
 
     #[test]
