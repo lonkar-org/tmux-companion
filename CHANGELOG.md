@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## 0.1.0 - 2026-09-23
+## Unreleased
 
 ### Added
 
