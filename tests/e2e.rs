@@ -669,9 +669,15 @@ fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
         "-c",
         &dir.display().to_string(),
     ]);
-    t.tmux(&["split-window", "-t", "1"]);
+    t.tmux(&["split-window", "-t", "=1:"]);
 
-    for (session, expected) in [("0", true), ("named", false), ("1", false)] {
+    // `=name:` and not a bare name. Two of these sessions are called "0" and
+    // "1", and a bare number as a target is ambiguous: tmux can read it as a
+    // session name or as a window index in whichever session is current. tmux
+    // 3.7 reads it as the session and 3.4 does not, so this passed on a laptop
+    // and failed on CI, reporting session "1" when it asked for "0". The `=`
+    // asks for an exact session name and the colon says the rest is a window.
+    for (session, expected) in [("=0:", true), ("=named:", false), ("=1:", false)] {
         let answer = t.tmux(&[
             "display-message",
             "-t",
