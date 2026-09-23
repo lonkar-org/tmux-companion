@@ -144,9 +144,12 @@ bind -N "custom: copy jump to the next prompt" -T copy-mode-vi C-n \
   send-keys -X next-prompt
 
 # ── Copy mode, opening what is under the cursor ─────────────────────────────
-bind -N "custom: copy open what is selected" -T copy-mode-vi o \
-  send-keys -X copy-selection-no-clear \; \
-  run-shell "tmux-companion open -s"
+# No selection needed: the cursor is already on the thing. `#{copy_cursor_line}`
+# is the line under it and `#{copy_cursor_x}` the column, so a line naming two
+# paths opens the one you are actually on. `#{q:...}` shell-quotes the line,
+# which matters the first time a log line contains an apostrophe.
+bind -N "custom: copy open what is under the cursor" -T copy-mode-vi o \
+  run-shell "tmux-companion open --pane '#{pane_id}' --cursor-x '#{copy_cursor_x}' -- #{q:copy_cursor_line}"
 bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
   send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion clipboard"
@@ -156,8 +159,11 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 # The clipboard was two if-shell branches on `uname`, and zoom was a run-shell
 # wrapping an if-shell, which is tmux shelling out to ask tmux how many panes
 # there are. Neither's a thing a config file should be doing.
-bind -N "custom: pane zoom this one, or the window when it is alone" z \
-  run-shell "tmux-companion zoom"
+# Zen: everything but this pane goes. With other panes open that is a zoom;
+# with none it is the status bar, because a lone pane already fills the window
+# and tmux's own `prefix z` does nothing there.
+bind -N "custom: pane zen, everything but this one goes" z \
+  run-shell "tmux-companion zen --pane '#{pane_id}'"
 
 # ── Landing somewhere, when you typed plain `tmux` ──────────────────────────
 #

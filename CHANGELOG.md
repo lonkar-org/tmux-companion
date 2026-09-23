@@ -65,6 +65,10 @@ entry per phase of the comrades port.
 - A TOML config file: glyph presets for readers without a Nerd Font, an ordered
   `[git] parts` list, a configurable `[status.right]`, `[[layout]]` for what a
   project session starts with, and an off switch on the usage log.
+- `open` finds what is under the cursor. The copy-mode binding passes
+  `#{copy_cursor_line}` and `#{copy_cursor_x}`, so `o` opens the path or URL
+  the cursor is on without selecting it first, and a line naming two paths
+  opens the one you are actually on rather than whichever came first.
 - `[project] dirs_source`, so the project picker and `new-window` list
   directories from `z`, zsh's own `cdr` or `ghq` as well as zoxide, and
   `[project] dirs_command` for anything else that prints one absolute path per
@@ -72,6 +76,20 @@ entry per phase of the comrades port.
   both are shell functions. `[project] visit_command` is the matching write.
 
 ### Changed
+
+- `theme gen --shades` takes a rung: `aa` for 216 themes, `aaa` for 151, `a4`
+  for 105, `a5` for 75 and `a6` for the original eighteen. The flag on its own
+  means `aaa`, and an unknown rung is an error rather than a silent fall back,
+  because a typo that generates 145 files instead of 18 is a directory somebody
+  cleans up by hand.
+- `theme gen --shades` writes every colour in tmux's 6x6x6 cube whose text
+  clears WCAG AAA rather than one lighter and one darker sibling of each theme
+  already on disk: 145 more on top of the bundled six, so 151 in all, named
+  after the colour each sits nearest to so `ember-04` and `pine-11` group in
+  the picker. It answers "show me what there is" instead of "vary what I have",
+  and it no longer depends on which files happen to be in the directory. AAA
+  and not AA because the worst colour in the cube scores 4.60:1, so an AA
+  filter keeps all 216 and removes nothing.
 
 - `vim-bg` is `sh-jobs`, with a config-driven job table rather than one
   hardcoded editor. The old name works for one more release and says so.
@@ -89,11 +107,46 @@ entry per phase of the comrades port.
 
 ### Deprecated
 
+- `zoom` is `zen`. The name described half of what it does: with other panes it
+  zooms, and with none it takes the status bar, because a lone pane already
+  fills the window and tmux's own `prefix z` does nothing there. Both halves
+  mean "clear everything but what I am working on", which is one idea and now
+  has one name. The old name works for one more release, and the binding is
+  still `prefix z`.
+
 - `[project] zoxide`. It is the old spelling of `dirs_source = "none"`, still
   works, still wins over everything else in the section, and goes away in the
   next release. `config check` names it, so nobody meets the removal first.
 
 ### Fixed
+
+- `shell-init zsh` emitted a prompt mark that tmux then threw away, so
+  `previous-prompt` and `next-prompt` did nothing on zsh -- the shell this was
+  written on and tested with. zsh has `PROMPT_SP` and `PROMPT_CR` on by
+  default: after `precmd` returns it prints a partial-line indicator and a
+  carriage return and redraws the prompt line, taking the mark recorded against
+  that line with it. The mark now goes in `PS1`, where the redraw cannot reach
+  it. bash was never affected, because it has no such redraw.
+  `scripts/check-prompt-marks.sh` drives a real tmux and fails when the cursor
+  does not move, which is the only thing that catches this: the hook installs,
+  defines its functions and prints every byte either way.
+- `[run] history` defaulted to `zsh`, so on bash the command picker read a
+  `~/.zsh_history` that was not there and came up empty with nothing said. It
+  defaults to `auto` now and reads whichever shell `$SHELL` names.
+- `[run] shell` defaulted to `zsh`, so on a machine without zsh -- most Linux
+  boxes -- the pane slid out and the command never ran. Empty now, meaning
+  `$SHELL`.
+- `open` and `zoom` acted on the wrong pane. Both ran their tmux commands with
+  no target, and tmux then resolves "current" as the most recently used session
+  on the server, so with a second session touched more recently the editor
+  opened in a window nobody was looking at and the zoom key moved a pane on
+  another screen. `$TMUX_PANE` is no help here: tmux runs these from bindings
+  through `run-shell`, where it holds the most recently active pane on the
+  server and `run-shell -t` does not change it. Both commands now take
+  `--pane`, and the shipped bindings pass `#{pane_id}`.
+- `new-window` created its window in whichever session the server had used
+  last, for the same reason. It targets its own session now.
+
 
 - `TMUX_COMPANION_SOCK` that is empty or too long for a unix socket address now
   exits 2 instead of warning and connecting to the default socket, which meant

@@ -148,27 +148,107 @@ pub fn scan(
     home: &str,
     exists: &dyn Fn(&std::path::Path) -> bool,
 ) -> Option<Target> {
+    scan_at(text, None, base, home, exists)
+}
+
+/// Where each whitespace-separated word sits, in columns.
+///
+/// Columns and not bytes, because the number this is compared against comes
+/// from tmux's `#{copy_cursor_x}`, which counts cells on the screen.
+fn word_spans(text: &str) -> Vec<(usize, usize, &str)> {
+    let mut out = Vec::new();
+    let mut start: Option<(usize, usize)> = None;
+    for (col, (byte, ch)) in text.char_indices().enumerate() {
+        if ch.is_whitespace() {
+            if let Some((c0, b0)) = start.take() {
+                out.push((c0, col, &text[b0..byte]));
+            }
+        } else if start.is_none() {
+            start = Some((col, byte));
+        }
+    }
+    if let Some((c0, b0)) = start {
+        out.push((c0, text.chars().count(), &text[b0..]));
+    }
+    out
+}
+
+/// How far a word is from the cursor: zero when the cursor is inside it.
+fn distance_from(span: (usize, usize), cursor: usize) -> usize {
+    let (start, end) = span;
+    if cursor >= start && cursor < end {
+        0
+    } else if cursor < start {
+        start - cursor
+    } else {
+        cursor + 1 - end
+    }
+}
+
+/// Scan text, preferring whatever sits under a cursor column.
+///
+/// This is what the copy-mode binding uses. Selecting the path first is work
+/// nobody should have to do: the cursor is already on the thing, and a line
+/// like `see src/a.rs:2 and src/b.rs:9` has two right answers where only the
+/// one under the cursor is the one meant. With no cursor the order is the
+/// line's own, which is what every other caller wants.
+pub fn scan_at(
+    text: &str,
+    cursor: Option<usize>,
+    base: &std::path::Path,
+    home: &str,
+    exists: &dyn Fn(&std::path::Path) -> bool,
+) -> Option<Target> {
+    let mut words = word_spans(text);
+    if let Some(cursor) = cursor {
+        words.sort_by_key(|(start, end, _)| distance_from((*start, *end), cursor));
+        // Nearest first, and a URL is only preferred over a file when it is
+        // the nearer of the two, so a cursor sitting on a path does not open a
+        // browser because the line also mentioned a link.
+        for (_, _, raw) in &words {
+            if let Some(url) = find_url(raw) {
+                return Some(Target::Url(url));
+            }
+            if let Some(target) = file_in(raw, base, home, exists) {
+                return Some(target);
+            }
+        }
+        return None;
+    }
     if let Some(url) = find_url(text) {
         return Some(Target::Url(url));
     }
     for raw in text.split_whitespace() {
-        let token = clean_token(raw);
-        if token.is_empty() {
-            continue;
+        if let Some(target) = file_in(raw, base, home, exists) {
+            return Some(target);
         }
-        let mut tries: Vec<&str> = vec![token];
-        tries.extend(fragments(token).into_iter().filter(|f| *f != token));
-        for candidate in tries {
-            let (path, line, column) = split_position(clean_token(candidate));
-            for form in candidates(path) {
-                let abs = absolute(form, base, home);
-                if exists(&abs) {
-                    return Some(Target::File {
-                        path: abs,
-                        line,
-                        column,
-                    });
-                }
+    }
+    None
+}
+
+/// The file one word names, if it names one that exists.
+fn file_in(
+    raw: &str,
+    base: &std::path::Path,
+    home: &str,
+    exists: &dyn Fn(&std::path::Path) -> bool,
+) -> Option<Target> {
+    let token = clean_token(raw);
+    if token.is_empty() {
+        return None;
+    }
+    let mut tries: Vec<&str> = vec![token];
+    tries.extend(fragments(token).into_iter().filter(|f| *f != token));
+    for candidate in tries {
+        let (path, line, column) = split_position(clean_token(candidate));
+        for form in candidates(path) {
+            let abs = absolute(form, base, home);
+            if exists(&abs) {
+                return Some(Target::File {
+                    path: abs,
+                    line,
+                    column,
+                });
             }
         }
     }
@@ -442,5 +522,194 @@ mod editor_command_tests {
         // line zero.
         let cmd = editor_command("nvim '+call cursor({line},{column})' {path}", "a.rs", 0, 0);
         assert_eq!(cmd, "nvim '+call cursor(1,1)' 'a.rs'");
+    }
+}
+
+/// The `split-window` argument vector that opens the editor.
+///
+/// `target` is the pane to split, which is `$TMUX_PANE` when there is one.
+/// Leaving it out is what the first version did, and tmux then splits the
+/// current pane of the most recently used session rather than the pane the
+/// command was run in. With one session nobody notices; with a second session
+/// touched more recently the editor opens in a window the person is not
+/// looking at, having reported success.
+pub fn split_window_args(
+    config: &crate::config::Open,
+    command: String,
+    target: Option<&str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec!["split-window".into(), config.split.flag().to_string()];
+    if let Some(pane) = target {
+        args.push("-t".into());
+        args.push(pane.to_string());
+    }
+    if config.size_percent > 0 {
+        args.push("-l".into());
+        args.push(format!("{}%", config.size_percent.min(95)));
+    }
+    args.push(command);
+    args
+}
+
+#[cfg(test)]
+mod scan_at_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn exists(names: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |p: &Path| names.iter().any(|n| p.to_string_lossy().ends_with(n))
+    }
+
+    fn file_name(t: Option<Target>) -> String {
+        match t {
+            Some(Target::File { path, .. }) => path.display().to_string(),
+            other => format!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn words_are_measured_in_columns() {
+        assert_eq!(
+            word_spans("ab  cde f"),
+            vec![(0, 2, "ab"), (4, 7, "cde"), (8, 9, "f")]
+        );
+    }
+
+    #[test]
+    fn a_word_at_the_end_is_not_lost() {
+        assert_eq!(word_spans("one two"), vec![(0, 3, "one"), (4, 7, "two")]);
+    }
+
+    #[test]
+    fn a_cursor_inside_a_word_is_no_distance_from_it() {
+        assert_eq!(distance_from((4, 7), 4), 0);
+        assert_eq!(distance_from((4, 7), 6), 0);
+        assert_eq!(distance_from((4, 7), 7), 1);
+        assert_eq!(distance_from((4, 7), 2), 2);
+    }
+
+    #[test]
+    fn the_cursor_picks_between_two_paths_on_one_line() {
+        // The reason this exists. Both paths are real and the line's own order
+        // would always answer with the first, which is wrong half the time.
+        let text = "see src/a.rs:2 and src/b.rs:9";
+        let e = exists(&["src/a.rs", "src/b.rs"]);
+        let base = Path::new("/repo");
+        assert!(file_name(scan_at(text, Some(5), base, "/home/y", &e)).ends_with("src/a.rs"));
+        assert!(file_name(scan_at(text, Some(20), base, "/home/y", &e)).ends_with("src/b.rs"));
+    }
+
+    #[test]
+    fn a_cursor_on_a_path_does_not_open_the_line_s_url() {
+        // Without the cursor, find_url runs over the whole line first and wins.
+        // With one, the nearest word decides, so sitting on a path opens an
+        // editor rather than a browser.
+        let text = "https://example.com src/a.rs:2";
+        let e = exists(&["src/a.rs"]);
+        let base = Path::new("/repo");
+        assert!(file_name(scan_at(text, Some(22), base, "/home/y", &e)).ends_with("src/a.rs"));
+        assert!(matches!(
+            scan_at(text, Some(2), base, "/home/y", &e),
+            Some(Target::Url(_))
+        ));
+    }
+
+    #[test]
+    fn the_nearest_word_wins_when_the_cursor_is_on_whitespace() {
+        let text = "src/a.rs:2   plain";
+        let e = exists(&["src/a.rs"]);
+        assert!(
+            file_name(scan_at(text, Some(11), Path::new("/repo"), "/home/y", &e))
+                .ends_with("src/a.rs")
+        );
+    }
+
+    #[test]
+    fn no_cursor_keeps_the_old_order() {
+        // Every other caller passes None and must see exactly what it saw
+        // before this existed: the first URL on the line, whatever else is on
+        // it.
+        let text = "src/a.rs:2 https://example.com";
+        let e = exists(&["src/a.rs"]);
+        assert!(matches!(
+            scan_at(text, None, Path::new("/repo"), "/home/y", &e),
+            Some(Target::Url(_))
+        ));
+    }
+
+    #[test]
+    fn a_line_with_nothing_on_it_finds_nothing() {
+        let e = exists(&[]);
+        assert!(
+            scan_at(
+                "just some words",
+                Some(3),
+                Path::new("/repo"),
+                "/home/y",
+                &e
+            )
+            .is_none()
+        );
+        assert!(scan_at("", Some(0), Path::new("/repo"), "/home/y", &e).is_none());
+    }
+
+    #[test]
+    fn the_cursor_may_sit_past_the_end_of_the_line() {
+        // tmux reports the cursor where it is, and in copy mode that can be
+        // one past the last character of a short line.
+        let e = exists(&["src/a.rs"]);
+        assert!(
+            file_name(scan_at(
+                "src/a.rs:2",
+                Some(99),
+                Path::new("/repo"),
+                "/home/y",
+                &e
+            ))
+            .ends_with("src/a.rs")
+        );
+    }
+}
+
+#[cfg(test)]
+mod split_window_args_tests {
+    use super::*;
+    use crate::config::{Open, Split};
+
+    fn config(split: Split, size_percent: u16) -> Open {
+        Open {
+            split,
+            size_percent,
+            editor: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_pane_is_targeted_when_there_is_one() {
+        let args = split_window_args(&config(Split::Right, 0), "nvim a.rs".into(), Some("%7"));
+        assert_eq!(args, vec!["split-window", "-h", "-t", "%7", "nvim a.rs"]);
+    }
+
+    #[test]
+    fn no_pane_leaves_the_target_off() {
+        // Outside tmux there is no $TMUX_PANE, and an empty -t is worse than
+        // no -t: tmux takes it as a target it cannot resolve and fails.
+        let args = split_window_args(&config(Split::Right, 0), "nvim a.rs".into(), None);
+        assert_eq!(args, vec!["split-window", "-h", "nvim a.rs"]);
+    }
+
+    #[test]
+    fn a_size_follows_the_target() {
+        let args = split_window_args(&config(Split::Bottom, 40), "nvim a.rs".into(), Some("%7"));
+        assert_eq!(
+            args,
+            vec!["split-window", "-v", "-t", "%7", "-l", "40%", "nvim a.rs"]
+        );
+    }
+
+    #[test]
+    fn a_size_over_ninety_five_is_clamped() {
+        let args = split_window_args(&config(Split::Bottom, 400), "nvim a.rs".into(), None);
+        assert!(args.contains(&"95%".to_string()), "{args:?}");
     }
 }

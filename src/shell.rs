@@ -7,9 +7,16 @@
 //!
 //! Three marks are emitted and the fourth is not. `A` is the start of a prompt,
 //! `C` is the start of a command's output and `D;<status>` is the end of one
-//! with its exit code. `B`, the end of the prompt, would mean rewriting `PS1`
-//! around whatever the person already has in it, and tmux's prompt navigation
-//! reads `A` and `C`, so the intrusive one is the one left out.
+//! with its exit code. `B`, the end of the prompt, is left out: tmux's prompt
+//! navigation reads `A` and `C`, and `B` would have to be placed at the end of
+//! whatever the person already has in `PS1`.
+//!
+//! Where `A` is emitted is not a free choice, and it differs by shell. bash can
+//! print it from `PROMPT_COMMAND`; zsh cannot print it from `precmd`, because
+//! `PROMPT_SP` and `PROMPT_CR` redraw the prompt line afterwards and take the
+//! mark with it, so zsh's goes in `PS1`. `scripts/check-prompt-marks.sh` drives
+//! a real tmux and checks the cursor actually moves, which is the only thing
+//! that catches this -- the hook installs cleanly either way.
 //!
 //! These are emitted whether or not tmux is the terminal, because they are
 //! useful in any terminal that reads them and invisible in one that does not.
@@ -31,7 +38,6 @@ __tmux_companion_precmd() {
   # this function overwrites it.
   local status_=$?
   printf '\033]133;D;%s\033\\' "$status_"
-  printf '\033]133;A\033\\'
 }
 
 __tmux_companion_preexec() {
@@ -40,6 +46,23 @@ __tmux_companion_preexec() {
 
 add-zsh-hook precmd __tmux_companion_precmd
 add-zsh-hook preexec __tmux_companion_preexec
+
+# The start-of-prompt mark goes in the prompt itself, and not in precmd where
+# the other two hooks live.
+#
+# zsh has PROMPT_SP and PROMPT_CR on by default: after precmd returns it prints
+# its partial-line indicator and a carriage return, then draws the prompt over
+# that line. tmux had already recorded the mark against that line, and the
+# redraw takes it with it. Everything looked right -- the hook installed, the
+# functions were defined, every byte was printed -- and `previous-prompt` moved
+# the cursor nowhere, on the author's own machine, for months.
+#
+# %{ %} tells zsh the bytes inside take no width, so a prompt does not end up
+# with a hole in it. The guard keeps a re-sourced rc from stacking a second
+# copy on the front of PS1.
+if [[ $PS1 != *'133;A'* ]]; then
+  PS1=$'%{\e]133;A\e\\%}'$PS1
+fi
 "#;
 
 /// bash, where there is no preexec and the DEBUG trap has to stand in for one.
@@ -138,18 +161,55 @@ mod tests {
 
     #[test]
     fn every_snippet_emits_all_three_marks() {
+        // The mark, not the spelling it is written in. zsh emits its prompt
+        // mark from PS1 with `$'\e...'` and the others print `\033...` from a
+        // hook, and pinning one spelling made this fail on a change that was
+        // the fix for a real bug rather than a regression.
         for s in SHELLS {
             let text = init(s).unwrap();
-            assert!(text.contains(r"\033]133;A\033\\"), "{s} has no prompt mark");
-            assert!(
-                text.contains(r"\033]133;C\033\\"),
-                "{s} has no command mark"
-            );
-            assert!(
-                text.contains(r"\033]133;D;%s\033\\"),
-                "{s} has no exit mark"
-            );
+            assert!(text.contains("133;A"), "{s} has no prompt mark");
+            assert!(text.contains("133;C"), "{s} has no command mark");
+            assert!(text.contains("133;D;%s"), "{s} has no exit mark");
         }
+    }
+
+    #[test]
+    fn zsh_marks_the_prompt_from_ps1_and_not_from_precmd() {
+        // The whole bug, pinned. zsh runs PROMPT_SP and PROMPT_CR after precmd
+        // returns: it prints its partial-line indicator and a carriage return
+        // and redraws the prompt line, taking any mark tmux recorded on that
+        // line with it. A prompt mark printed from precmd is therefore emitted
+        // correctly and then erased, which is invisible from inside the shell
+        // and only shows up when `previous-prompt` refuses to move.
+        let text = init("zsh").unwrap();
+        let precmd = text
+            .split("__tmux_companion_precmd() {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("zsh snippet has a precmd");
+        assert!(
+            !precmd.contains("133;A"),
+            "the prompt mark is back in precmd, where zsh redraws over it"
+        );
+        assert!(
+            text.contains("PS1=") && text.contains("133;A"),
+            "the prompt mark is not in PS1"
+        );
+    }
+
+    #[test]
+    fn bash_marks_the_prompt_from_prompt_command() {
+        // bash has no PROMPT_SP, so its mark stays where the other two are.
+        // Named so that moving it later is a deliberate act rather than a
+        // tidy-up that quietly breaks it the way zsh's was broken.
+        let text = init("bash").unwrap();
+        assert!(text.contains("PROMPT_COMMAND="), "bash lost its hook");
+        let precmd = text
+            .split("__tmux_companion_precmd() {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("bash snippet has a precmd");
+        assert!(precmd.contains("133;A"), "bash lost its prompt mark");
     }
 
     #[test]

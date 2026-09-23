@@ -99,8 +99,8 @@ Then the way in, from a shell that is not in tmux yet:
 tmux-companion start
 ```
 
-That opens the project picker — live sessions first, then every directory your
-jumper knows — and attaches to what you choose. `tmux` on its own leaves you in
+That opens the project picker, live sessions first and then every directory
+your jumper knows, and attaches to what you choose. `tmux` on its own leaves you in
 a session called `0` with one bare shell, which is the thing this replaces.
 `start --last` goes back to whatever you were in without asking, and
 `start ~/src/thing` skips the picker.
@@ -123,10 +123,14 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 ## Usage
 
-<!-- @Yogesh(video): the usage recording goes here once it is approved, about
-     100 seconds: the bar, keys, cheatsheet, project, a session made and
-     switched, run in its side pane, open and sh-jobs. Both an inline GIF from
-     media.lonkar.org and a link to the asciinema player. -->
+[![tmux-companion: the project picker, a new window, run and zen](https://media.lonkar.org/tmux-companion/usage.gif)](https://asciinema.org/a/1266213)
+
+Twenty four seconds of it: the project picker, a window opened somewhere else,
+a command pulled out of shell history, and zen. The chords are in the right
+hand column and every one of them was really pressed, so those are the real
+popups. The [full recording](https://asciinema.org/a/1266213) runs
+four minutes and covers the rest, and it is worth watching there rather than
+here because you can pause it.
 
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads
@@ -139,9 +143,6 @@ draws the same glyphs, and `[glyphs] preset = "ascii"` covers you if you haven't
 got one.
 
 ## Configuration
-
-<!-- @Yogesh(video): the configuration recording belongs on
-     docs/reference/configuration.md rather than here. -->
 
 There's no config file till you write one, and the defaults are what the binary
 did before the file existed.
@@ -185,9 +186,11 @@ Measured on one machine, with the method beside the numbers in
   restoring stays on a key you press, cause an automatic restore would
   resurrect a stale layout over a session you'd already started working in.
 - It's not a theme pack. `theme init` writes six colours and the two files that
-  apply them, `theme gen --shades` turns those into eighteen with the contrast
-  computed against your terminal, and after that the palette is yours. It
-  doesn't compete with catppuccin or rose-pine.
+  apply them, `theme gen --shades` grows that to 151, every colour in tmux's
+  cube whose text clears WCAG AAA, with the contrast computed against your
+  terminal. `--shades a4`, `a5` and `a6` are shorter lists if 151 is more than
+  you want to scroll, down to the original eighteen. After that the palette is
+  yours; it doesn't compete with catppuccin or rose-pine.
 
 ## Documentation
 

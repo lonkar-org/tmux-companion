@@ -196,7 +196,14 @@ pub fn pane_width(window_width: u16, percent: u16) -> u16 {
 pub async fn history(config: &crate::config::Run, home: &str) -> Vec<String> {
     use crate::config::HistorySource as S;
 
-    let text = match config.history {
+    // `auto` is the default, so this is where most machines decide which
+    // history they are reading. Resolved once, and used for both the file and
+    // the parser, so the two cannot disagree.
+    let source = config
+        .history
+        .resolve(&std::env::var("SHELL").unwrap_or_default());
+
+    let text = match source {
         S::Atuin => {
             // atuin keeps its history in a database, so it is asked rather
             // than read: anybody using it has no history file worth parsing.
@@ -216,7 +223,7 @@ pub async fn history(config: &crate::config::Run, home: &str) -> Vec<String> {
         }
         _ => {
             let path = config.history_file.clone().unwrap_or_else(|| {
-                let name = match config.history {
+                let name = match source {
                     S::Bash => ".bash_history",
                     S::Fish => ".local/share/fish/fish_history",
                     _ => ".zsh_history",
@@ -231,7 +238,7 @@ pub async fn history(config: &crate::config::Run, home: &str) -> Vec<String> {
         }
     };
 
-    let parsed = match config.history {
+    let parsed = match source {
         S::Fish => parse_fish(&text),
         _ => parse_zsh(&text),
     };

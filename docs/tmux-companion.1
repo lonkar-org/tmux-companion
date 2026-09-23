@@ -223,8 +223,18 @@ quits editors with
 and throws away unsaved work.
 Bound to
 .Ql prefix X .
-.It Ic zoom
-Zoom a pane, or the whole window when there is only one.
+.It Ic zen Op Fl -pane Ar id
+Clear everything but the pane you are working in.
+With other panes open that is tmux's own zoom: this pane fills the window, the
+rest are hidden, and the same key puts the layout back untouched.
+With no other panes there is nothing to zoom -- a lone pane already fills the
+window, and tmux's own
+.Ql prefix z
+does nothing at all there -- so the key takes the status bar instead, which is
+the only clutter left.
+One key for "give me the most screen you can", whatever the window looks like.
+.Ic zoom
+is the old name and works for one more release.
 Bound to
 .Ql prefix z .
 .It Ic autosave Op Fl -once , Fl -status
@@ -232,15 +242,33 @@ The session-list autosave the daemon runs.
 .El
 .Sh COPY MODE AND OPENING
 .Bl -tag -width Ds
-.It Ic open Oo Ar text Oc Op Fl s , Fl n , Fl d Ar dir
+.It Ic open Oo Ar text Oc Op Fl s , Fl n , Fl d Ar dir , Fl -pane Ar id , Fl -cursor-x Ar column
 Open what is in the text: a URL goes to a browser, a
 .Ql path:line:column
 opens an editor there.
+.Fl -cursor-x
+names the column the cursor is in, and what sits under it wins.
+The shipped binding passes the line under the cursor together with
+.Ql #{copy_cursor_x} ,
+so nothing has to be selected first: being on the thing is the whole gesture,
+and a line naming two paths opens the one the cursor is actually on rather than
+whichever came first.
 .Fl s
-reads the tmux selection instead of arguments, which is how the copy-mode
-binding uses it.
+reads the tmux selection instead of arguments, for a binding that would rather
+select a range by hand.
 .Fl n
 prints what it would open and opens nothing.
+.Fl -pane
+names the pane this is for, and the shipped binding passes
+.Ql #{pane_id}
+so that it does.
+tmux runs the binding through
+.Ic run-shell ,
+where
+.Ev TMUX_PANE
+holds the most recently active pane on the server rather than the pane the key
+was pressed in, so without it the editor can open in a window nobody is looking
+at.
 Bound to
 .Ql o
 in copy mode.
@@ -273,17 +301,46 @@ at once.
 .Bl -tag -width Ds
 .It Ic theme init Op Fl -themes Ar dir
 Write the starter themes and the two files that apply them.
-Six colours, each of which
+Six colours, which
 .Ic theme gen Fl -shades
-turns into three.
+grows to 151.
 Nothing is overwritten.
 .It Ic theme gen Oo Fl -apply Oc Oo Fl -shades Oc Op Fl -background Ar colour
 Compute each theme's readable text colour and a visible border.
 Without
 .Fl -apply
 it reports what would change and touches nothing.
+.Fl -shades Op Ar level
+writes a theme for every colour in the 6x6x6 cube whose text clears a contrast
+floor, named after the bundled colour each sits nearest to, so
+.Ql ember-04
+and
+.Ql pine-11
+land together in the picker.
+.Ar level
+is a rung of a ladder, and the flag on its own means
+.Ql aaa :
+.Bl -column "aaa " "12:1 " "themes" -compact -offset indent
+.It Ic aa Ta 4.5:1 Ta 216
+.It Ic aaa Ta 7:1 Ta 151
+.It Ic a4 Ta 9.5:1 Ta 105
+.It Ic a5 Ta 12:1 Ta 75
+.It Ic a6 Ta \(em Ta 18
+.El
+.Pp
+WCAG names the first two rungs and stops; the rest continue at its own spacing
+of 2.5 per step, so the ladder is one rule rather than four opinions.
+.Ic a6
+is not a floor at all: it is the bundled six with a lighter and a darker
+sibling of each, which is what
 .Fl -shades
-mints a lighter and a darker sibling of each.
+did before it swept the cube, and the only rung whose colours a person chose.
+.Ic aaa
+is the default rather than
+.Ic aa
+because the worst colour in the cube scores 4.60:1, so an AA filter keeps all
+216 of them
+.Pq a threshold that is arithmetically a no-op .
 The text colour is chosen to clear 4.5:1 against the theme's own background
 and the border to clear 3:1 against the terminal's, so a theme that cannot be
 read cannot be written.

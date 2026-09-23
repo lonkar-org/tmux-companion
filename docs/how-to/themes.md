@@ -85,10 +85,36 @@ measured against your real terminal background rather than an assumed one:
 supplies it anywhere else.
 
 The six bundled colours were chosen so that the base and both of its shades
-clear AA with room. The weakest of the eighteen is 5.53:1, and a test fails if
-an edit ever drops one under 5:1, since `readable_on` picks the better of black
-and white and the worst case for a cube colour lands at about 4.5:1 exactly.
-Passing on paper and reading badly is the thing worth guarding against.
+clear AA with room, and a test fails if an edit ever drops one under 5:1.
+
+`theme gen --shades` is the rest of the palette: every colour in tmux's 6x6x6
+cube whose text clears **WCAG AAA**, which is 7:1. That is 145 more on top of
+the six, so 151 in all, each named after the bundled colour it sits nearest to
+in cube space — `ember-04`, `pine-11` — so the warm ones group together when
+you scroll the picker.
+
+151 is more than some people want to scroll, so the flag takes a rung:
+
+| | floor | themes |
+| --- | --- | --- |
+| `--shades aa` | 4.5:1 | 216 |
+| `--shades aaa` | 7:1 | 151 |
+| `--shades a4` | 9.5:1 | 105 |
+| `--shades a5` | 12:1 | 75 |
+| `--shades a6` | — | 18 |
+
+`--shades` on its own is `aaa`. WCAG names the first two rungs and stops; the
+rest carry on at its own spacing, 2.5 per step, so the ladder is one rule and
+not four opinions. `a6` is not a floor at all — it is the bundled six with a
+lighter and a darker sibling of each, which is what `--shades` did before it
+swept the cube, and the only rung whose colours a person chose.
+
+AAA and not AA, and that is not strictness for its own sake. `readable_on`
+picks the better of black and white, and the worst colour in the whole cube
+scores 4.60:1 on that basis, so filtering by AA keeps all 216 — a threshold
+that reads like a filter and removes nothing. AAA is a real standard rather
+than a number chosen to reach a pleasant count, and it lands at 148 of the 216
+before the bundled six are taken out.
 
 `theme gen` without `--apply` reports what it would change and touches nothing,
 which is the way to see whether a palette you wrote yourself clears the bar:

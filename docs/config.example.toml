@@ -504,12 +504,18 @@ interval_secs = 900
 # script = "~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh"
 
 [run]
-# Where the commands come from: zsh, bash, fish or atuin.
+# Where the commands come from: auto, zsh, bash, fish or atuin.
 #
-# atuin is worth naming because anybody using it has no .zsh_history worth
+# `auto` reads whichever shell $SHELL names, and is the default. It used to be
+# `zsh`, which meant a bash user's picker read a ~/.zsh_history that was not
+# there and came up empty with nothing said -- the one failure shape that looks
+# like the feature having nothing to offer. Name a shell here and it is used
+# whatever $SHELL says, which is the reason the setting still exists.
+#
+# atuin is worth naming because anybody using it has no shell history worth
 # reading: atuin keeps the history in its own database and answers through its
 # own command.
-history = "zsh"
+history = "auto"
 
 # The history file, when it is not where the shell usually puts it.
 # history_file = "~/.zsh_history"
@@ -528,8 +534,11 @@ width_percent = 33
 slide_steps = 5
 slide_ms = 150
 
-# The shell the command runs under.
-shell = "zsh"
+# The shell the command runs under. Empty means $SHELL.
+#
+# This used to be `zsh`, so on a machine without zsh -- most Linux boxes -- the
+# pane slid out and the command never ran.
+shell = ""
 
 [clipboard]
 # The command to pipe a copy into. Unset picks one for the platform: pbcopy on

@@ -116,7 +116,7 @@ nothing to keep from starting twice.
 | `theme list-colours` | Every colour tmux takes, painted, with its hex and the contrast its text colour clears |
 | `theme gen` | Report which themes need a different text colour or a more visible border |
 | `theme gen --apply` | Write `@theme-color-on-main` and `@theme-color-border` into each theme file |
-| `theme gen --shades` | Also mint a lighter and a darker sibling of each cube colour |
+| `theme gen --shades [LEVEL]` | Also write a theme for every cube colour whose text clears a contrast floor, named after the bundled one each sits nearest to. `aa` 216, `aaa` 151 (the default), `a4` 105, `a5` 75, `a6` the bundled six and their siblings, 18 |
 
 `--themes DIR` says where the files are, and `--background '#rrggbb'` gives the
 terminal background to measure borders against. Without it, ghostty is asked
@@ -129,12 +129,12 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 
 | Command | Does |
 | --- | --- |
-| `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `-s` scans the tmux selection, `-n` prints what it would open |
+| `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `--cursor-x` picks whatever is under that column, which is how the copy-mode binding needs nothing selected; `--pane` says which pane it is for; `-s` scans the tmux selection, `-n` prints what it would open |
 | `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
 | `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform |
-| `zoom` | Zoom the pane, or toggle the status bar when the window has only one |
+| `zen [--pane ID]` | Clear everything but this pane: a zoom when there are other panes, the status bar when there are not. `--pane` says which, and the binding passes it. `zoom` is the old name, kept one release |
 | `probe keys` | Show what the terminal sends for a key |
 | `probe cells` | Ask how many cells the terminal advances for a string |
 

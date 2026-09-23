@@ -256,19 +256,41 @@ pub struct Run {
     pub slide_steps: u16,
     /// How long the slide takes, in milliseconds.
     pub slide_ms: u64,
-    /// The shell the command runs under.
+    /// The shell the command runs under. Empty means `$SHELL`.
+    ///
+    /// It used to default to `zsh`, which on a machine without zsh -- most
+    /// Linux boxes -- meant the pane opened and the command never ran.
     pub shell: String,
 }
 
 impl Default for Run {
     fn default() -> Self {
         Self {
-            history: HistorySource::Zsh,
+            history: HistorySource::Auto,
             history_file: None,
             width_percent: 33,
             slide_steps: 5,
             slide_ms: 150,
-            shell: "zsh".to_string(),
+            shell: String::new(),
+        }
+    }
+}
+
+impl HistorySource {
+    /// What `Auto` resolves to, from the name `$SHELL` ends with.
+    ///
+    /// Unknown shells read as zsh, because the zsh parser passes a plain
+    /// one-command-per-line history through untouched and that is what an
+    /// unknown shell most likely writes.
+    pub fn resolve(self, shell_env: &str) -> Self {
+        if self != Self::Auto {
+            return self;
+        }
+        let name = shell_env.rsplit('/').next().unwrap_or(shell_env);
+        match name {
+            "bash" => Self::Bash,
+            "fish" => Self::Fish,
+            _ => Self::Zsh,
         }
     }
 }
@@ -277,8 +299,15 @@ impl Default for Run {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum HistorySource {
-    /// zsh, plain or extended format.
+    /// Whichever shell `$SHELL` names, falling back to zsh.
+    ///
+    /// The default, and it used to be `Zsh`. A bash user then got a `run`
+    /// picker that read `~/.zsh_history`, found no such file, and showed an
+    /// empty list with no error -- the one failure shape that looks like the
+    /// feature having nothing to offer.
     #[default]
+    Auto,
+    /// zsh, plain or extended format.
     Zsh,
     /// bash.
     Bash,
@@ -1658,6 +1687,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.project.dirs_command, vec!["ghq", "list", "-p"]);
+    }
+
+    #[test]
+    fn auto_reads_the_history_of_the_shell_you_actually_run() {
+        use HistorySource as S;
+        assert_eq!(S::Auto.resolve("/bin/bash"), S::Bash);
+        assert_eq!(S::Auto.resolve("/usr/local/bin/fish"), S::Fish);
+        assert_eq!(S::Auto.resolve("/bin/zsh"), S::Zsh);
+        assert_eq!(S::Auto.resolve("bash"), S::Bash);
+    }
+
+    #[test]
+    fn an_unknown_shell_reads_as_zsh() {
+        // The zsh parser passes a plain one-command-per-line history through
+        // untouched, which is what an unknown shell most likely writes, so it
+        // is the safe fallback rather than an empty list.
+        use HistorySource as S;
+        assert_eq!(S::Auto.resolve("/bin/ksh"), S::Zsh);
+        assert_eq!(S::Auto.resolve(""), S::Zsh);
+    }
+
+    #[test]
+    fn a_named_history_source_ignores_the_environment() {
+        // Somebody who wrote `history = "bash"` means it, whatever $SHELL says
+        // -- that is the whole reason the setting still exists.
+        use HistorySource as S;
+        assert_eq!(S::Bash.resolve("/bin/zsh"), S::Bash);
+        assert_eq!(S::Atuin.resolve("/bin/bash"), S::Atuin);
     }
 
     #[test]

@@ -204,6 +204,12 @@ pub enum Cmd {
         /// Print what would be opened, and open nothing
         #[arg(short = 'n', long)]
         dry_run: bool,
+        /// The pane this is for, as `#{pane_id}` from the binding that ran it
+        #[arg(long)]
+        pane: Option<String>,
+        /// The cursor column, as `#{copy_cursor_x}`, to pick what is under it
+        #[arg(long)]
+        cursor_x: Option<usize>,
     },
 
     /// Close a project session by letting every window exit
@@ -241,8 +247,15 @@ pub enum Cmd {
         stdin: bool,
     },
 
-    /// Zoom a pane, or the window when there is only one
-    Zoom,
+    /// Clear everything but the pane you are working in
+    ///
+    /// `zoom` is the old name and still works, for one more release.
+    #[command(alias = "zoom")]
+    Zen {
+        /// The pane to keep, as `#{pane_id}` from the binding that ran it
+        #[arg(long)]
+        pane: Option<String>,
+    },
 
     /// Ask the terminal what it does
     Probe {
@@ -430,9 +443,10 @@ pub enum ThemeAction {
         /// nothing
         #[arg(long)]
         apply: bool,
-        /// Also mint a lighter and a darker sibling of each cube colour
-        #[arg(long)]
-        shades: bool,
+        /// Which colours to generate, as a contrast rung: aa, aaa, a4, a5, a6.
+        /// Defaults to aaa when the flag is given with no value
+        #[arg(long, num_args = 0..=1, default_missing_value = "aaa")]
+        shades: Option<String>,
         /// Where the theme files are
         #[arg(long)]
         themes: Option<String>,
@@ -606,7 +620,9 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             selection,
             base_dir,
             dry_run,
-        } => run_open(text, selection, base_dir, dry_run).await?,
+            pane,
+            cursor_x,
+        } => run_open(text, selection, base_dir, dry_run, pane, cursor_x).await?,
         Cmd::CloseProject {
             session,
             discard,
@@ -615,7 +631,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::NewWindow => run_new_window().await?,
         Cmd::ShellInit { shell } => run_shell_init(shell)?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
-        Cmd::Zoom => run_zoom().await?,
+        Cmd::Zen { pane } => run_zen(pane).await?,
         Cmd::Probe { what } => run_probe(what)?,
         Cmd::Run { print, exec } => run_command(print, exec).await?,
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
@@ -725,7 +741,7 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
 
 /// `theme gen`.
 fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
-    let (apply, shades, themes, background) = match action {
+    let (apply, shades, themes, background): (bool, Option<String>, _, _) = match action {
         ThemeAction::Gen {
             apply,
             shades,
@@ -752,6 +768,21 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
             themes,
         } => return theme_add(&bg, fg, name, force, &themes_dir_or(themes)),
         ThemeAction::ListColours { plain } => return theme_list_colours(plain),
+    };
+    // Named rather than numbered, and resolved once: an unknown rung is an
+    // error here rather than a silent fall back to the default, because a
+    // typo that quietly generates 148 themes instead of 18 is a directory
+    // somebody has to clean up by hand.
+    let level_name = shades.clone().unwrap_or_default();
+    let level = match &shades {
+        None => None,
+        Some(name) => match crate::theme::ShadeLevel::from_name(name) {
+            Some(level) => Some(level),
+            None => anyhow::bail!(
+                "unknown --shades level `{name}`, expected one of {}",
+                crate::theme::SHADE_LEVELS.join(", ")
+            ),
+        },
     };
 
     let dir = themes_dir_or(themes);
@@ -842,45 +873,36 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
         if apply { "wrote" } else { "would write" }
     );
 
-    if shades {
-        let mut taken: std::collections::HashSet<u8> =
-            themes_parsed.iter().map(|t| t.index).collect();
+    if let Some(level) = level {
+        // Every cube colour that can carry readable text, not two siblings of
+        // whatever happened to be in the directory. The old behaviour answered
+        // "vary what I have"; the question people ask a theme generator is
+        // "show me what there is", and the answer should not depend on which
+        // files are already there.
+        let taken: std::collections::HashSet<u8> = themes_parsed.iter().map(|t| t.index).collect();
         let mut made = Vec::new();
-        let mut by_name = themes_parsed.clone();
-        by_name.sort_by(|a, b| a.name.cmp(&b.name));
-        for theme in &by_name {
-            for (label, index) in crate::theme::shades(theme.index) {
-                if !taken.insert(index) {
-                    continue;
-                }
-                let stem = format!(
-                    "{}-{label}",
-                    theme
-                        .path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                );
-                let target = dir.join(format!("{stem}.tmux"));
-                if apply && !target.exists() {
-                    std::fs::write(
-                        &target,
-                        crate::theme::shade_file(
-                            theme,
-                            label,
-                            index,
-                            bg,
-                            &dir.display().to_string(),
-                        ),
-                    )?;
-                }
-                made.push((stem, index));
+        for (stem, index) in crate::theme::themes_for(level) {
+            if taken.contains(&index) {
+                continue;
             }
+            let target = dir.join(format!("{stem}.tmux"));
+            if apply && !target.exists() {
+                std::fs::write(
+                    &target,
+                    crate::theme::cube_theme_file(&stem, index, bg, &dir.display().to_string()),
+                )?;
+            }
+            made.push((stem, index));
         }
         println!(
-            "\n-- shades: {} {}",
+            "\n-- shades ({}): {} {} themes{}",
+            level_name,
             if apply { "wrote" } else { "would write" },
-            made.len()
+            made.len(),
+            match level.min_contrast() {
+                Some(min) => format!(", every cube colour whose text clears {min}:1"),
+                None => ", the bundled six and their lighter and darker siblings".to_string(),
+            }
         );
         for (stem, index) in &made {
             println!("   {stem:<22} colour{index}");
@@ -1460,7 +1482,18 @@ async fn run_new_window() -> anyhow::Result<()> {
             // Counted as a visit, the same as `z` would, so opening a window
             // somewhere twice floats it up the list next time.
             crate::project::record_visit(&config, &dir).await;
-            tmux(&["new-window", "-c", &dir]).await;
+            // Targeted at this pane's session, so the window lands where the
+            // person is looking rather than in whichever session the server
+            // used last. A session and not the pane: `new-window -t %7` is
+            // "can't specify pane here", because for new-window the target is
+            // the index to create at. A bare `session:` appends at the next
+            // free index, which is what this did before it was targeted.
+            let session = tmux_display("#{session_name}").await;
+            if session.is_empty() {
+                tmux(&["new-window", "-c", &dir]).await;
+            } else {
+                tmux(&["new-window", "-t", &format!("{session}:"), "-c", &dir]).await;
+            }
             Ok(())
         }
     }
@@ -1630,6 +1663,23 @@ async fn run_project_show() -> anyhow::Result<()> {
 ///
 /// Each of these is a step in building a session, and a step that fails should
 /// cost its own window rather than leaving half a session and an error.
+/// The pane this process is running in, when tmux put it in one.
+///
+/// Every `tmux` subcommand here used to run unanchored, and tmux then resolves
+/// "current" as the most recently used session on the server. That is the
+/// right answer only while there is one session. With a second one touched
+/// more recently, `open` split a pane in a window nobody was looking at and
+/// `display-message -p '#{pane_current_path}'` answered for it too, so the
+/// editor opened on a path from another project. tmux sets `$TMUX_PANE` in
+/// every pane and in every binding it runs, so there is an exact answer
+/// available and no reason to guess.
+fn pane_target() -> Option<String> {
+    match std::env::var("TMUX_PANE") {
+        Ok(p) if !p.trim().is_empty() => Some(p),
+        _ => None,
+    }
+}
+
 async fn tmux(args: &[&str]) {
     let _ = tokio::process::Command::new("tmux")
         .args(args)
@@ -1684,11 +1734,40 @@ async fn run_autosave(once: bool, status: bool) -> anyhow::Result<()> {
 
 /// One `tmux display-message -p`, empty when tmux is not there.
 async fn tmux_display(format: &str) -> String {
-    let out = tokio::process::Command::new("tmux")
-        .args(["display-message", "-p", format])
+    tmux_display_at(None, format).await
+}
+
+/// `display-message -p`, answering for one pane rather than for the server's
+/// idea of the current one.
+///
+/// `target` wins when it is given; otherwise this falls back to `$TMUX_PANE`,
+/// and to tmux's own current pane when there is neither.
+async fn tmux_display_at(target: Option<&str>, format: &str) -> String {
+    if let Some(pane) = target.map(str::to_string).or_else(pane_target) {
+        let answered = display_message(&["-t", &pane, format]).await;
+        if !answered.is_empty() {
+            return answered;
+        }
+        // The pane did not answer, so it is not a pane on this server. That is
+        // an ordinary thing and not an error: `run-shell` does not set
+        // `$TMUX_PANE`, it passes whatever the server inherited when it
+        // started, which can be a pane id from a tmux the user has since
+        // closed. Targeting it made `project save` report "not inside tmux"
+        // from inside tmux, every time it was run from its binding. Asking
+        // again without a target is what this did before it asked at all.
+    }
+    display_message(&[format]).await
+}
+
+/// `display-message -p`, or the empty string if tmux would not answer.
+async fn display_message(args: &[&str]) -> String {
+    let mut argv: Vec<&str> = vec!["display-message", "-p"];
+    argv.extend_from_slice(args);
+    match tokio::process::Command::new("tmux")
+        .args(&argv)
         .output()
-        .await;
-    match out {
+        .await
+    {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => String::new(),
     }
@@ -2073,7 +2152,14 @@ async fn run_in_this_pane(command: &str, config: &crate::config::Config) -> anyh
 
     loop {
         println!("\x1b[2m$ \x1b[0m{command}");
-        let status = tokio::process::Command::new(&config.run.shell)
+        // Empty means `$SHELL`, which is the default: hardcoding zsh here meant
+        // a pane that opened and never ran anything on a machine without it.
+        let shell = if config.run.shell.is_empty() {
+            std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+        } else {
+            config.run.shell.clone()
+        };
+        let status = tokio::process::Command::new(&shell)
             .args(["-ic", command])
             .status()
             .await;
@@ -2211,8 +2297,18 @@ async fn run_open(
     selection: bool,
     base_dir: Option<String>,
     dry_run: bool,
+    pane: Option<String>,
+    cursor_x: Option<usize>,
 ) -> anyhow::Result<()> {
     use crate::open::Target;
+
+    // The binding runs this through `run-shell`, and `run-shell` is the one
+    // place `$TMUX_PANE` lies: it holds the most recently active pane on the
+    // server rather than the pane the key was pressed in, and `run-shell -t`
+    // does not change that. What does work is `#{pane_id}` in the command
+    // string, which tmux expands against the pane of the key press, so the
+    // binding passes the pane and this prefers what it was told.
+    let pane = pane.filter(|p| !p.trim().is_empty()).or_else(pane_target);
 
     let text = if selection {
         let out = tokio::process::Command::new("tmux")
@@ -2233,7 +2329,7 @@ async fn run_open(
     let base = match base_dir {
         Some(d) => std::path::PathBuf::from(d),
         None => {
-            let p = tmux_display("#{pane_current_path}").await;
+            let p = tmux_display_at(pane.as_deref(), "#{pane_current_path}").await;
             if p.is_empty() {
                 std::env::current_dir().unwrap_or_default()
             } else {
@@ -2242,14 +2338,14 @@ async fn run_open(
         }
     };
 
-    let Some(target) = crate::open::scan(&text, &base, &home, &|p| p.exists()) else {
+    let Some(target) = crate::open::scan_at(&text, cursor_x, &base, &home, &|p| p.exists()) else {
         // Said rather than raised. This runs from a `run-shell` binding, and
         // tmux turns a non-zero exit into `'tmux-companion open -s' returned
         // 1` in the message area, which names the command rather than the
         // problem. stdout from a run-shell is displayed, so a sentence there
         // is what somebody actually reads.
         if text.trim().is_empty() {
-            println!("nothing is selected: select something in copy mode first");
+            println!("nothing under the cursor, and nothing selected");
         } else {
             let sample: String = text.trim().chars().take(60).collect();
             println!("no file or URL in that selection: {sample}");
@@ -2303,13 +2399,7 @@ async fn run_open(
                 line as usize,
                 column as usize,
             );
-            let mut args: Vec<String> =
-                vec!["split-window".into(), config.open.split.flag().to_string()];
-            if config.open.size_percent > 0 {
-                args.push("-l".into());
-                args.push(format!("{}%", config.open.size_percent.min(95)));
-            }
-            args.push(command);
+            let args = crate::open::split_window_args(&config.open, command, pane.as_deref());
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             tmux(&args).await;
         }
@@ -2581,13 +2671,28 @@ async fn run_clipboard(stdin: bool) -> anyhow::Result<()> {
 ///
 /// This was a `run-shell` wrapping an `if-shell`, which is tmux shelling out to
 /// ask tmux how many panes there are.
-async fn run_zoom() -> anyhow::Result<()> {
-    let panes: u32 = tmux_display("#{window_panes}").await.parse().unwrap_or(1);
+async fn run_zen(pane: Option<String>) -> anyhow::Result<()> {
+    // Same reason `open` takes one: the binding runs this through `run-shell`,
+    // where `$TMUX_PANE` is the most recently active pane on the server rather
+    // than the pane the key was pressed in. Unanchored, `resize-pane -Z`
+    // zoomed a pane in whichever window the server had touched last, and the
+    // window the key was pressed in did not move at all.
+    let pane = pane.filter(|p| !p.trim().is_empty()).or_else(pane_target);
+    let panes: u32 = tmux_display_at(pane.as_deref(), "#{window_panes}")
+        .await
+        .parse()
+        .unwrap_or(1);
     if panes > 1 {
-        tmux(&["resize-pane", "-Z"]).await;
+        match pane.as_deref() {
+            Some(p) => tmux(&["resize-pane", "-Z", "-t", p]).await,
+            None => tmux(&["resize-pane", "-Z"]).await,
+        }
     } else {
-        // One pane, so zooming it does nothing anybody can see. Toggling the
-        // status bar is what somebody pressing zoom in that situation wants.
+        // One pane, so there is nothing to zoom: a lone pane already fills the
+        // window, and tmux's own `prefix z` does nothing at all here -- the key
+        // is dead exactly when you have the least screen. The only clutter left
+        // to take is the status bar, so that is what the key takes. Both halves
+        // mean the same thing, which is why this is `zen` and not `zoom`.
         tmux(&["set", "-g", "status"]).await;
     }
     Ok(())
