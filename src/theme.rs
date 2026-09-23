@@ -166,7 +166,7 @@ pub fn border_for(index: u8, background: (u8, u8, u8)) -> (u8, f64) {
 /// rather than wrapping the hue somewhere else.
 ///
 /// This no longer generates anything -- `theme gen --shades` sweeps the whole
-/// cube now, see [`aa_cube_themes`]. What it still defines is the property the
+/// cube now, see [`cube_themes`]. What it still defines is the property the
 /// six bundled colours were chosen for: each one and both of its siblings
 /// clear [`TEXT_MIN_AA`] with room, which
 /// `every_bundled_theme_and_its_shades_clear_wcag_aa` holds them to.
@@ -275,7 +275,7 @@ pub fn with_computed_colours(theme: &Theme, background: (u8, u8, u8)) -> Option<
 /// A generated cube theme, as a file.
 ///
 /// Named from its own stem and nothing else. `shade_file` builds its name as
-/// "<parent> <label>", which was right when every generated theme really was a
+/// `"<parent> <label>"`, which was right when every generated theme really was a
 /// sibling of one on disk; used for a whole-cube sweep it named all 145 after
 /// whichever theme happened to sort first, so a picker full of colours all
 /// called Ember. It also put the generated set back at the mercy of what was
