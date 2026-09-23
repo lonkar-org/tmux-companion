@@ -11,6 +11,48 @@ One binary behind your whole tmux config. It draws the status bar, runs the
 pickers behind your keybindings, and builds your project sessions, out of a
 daemon that is already warm.
 
+<p align="center">
+  <a href="https://asciinema.org/a/1266213">
+    <img src="https://media.lonkar.org/tmux-companion/usage.gif"
+         alt="tmux-companion: the project picker, a new window, run and zen">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://asciinema.org/a/1266213">https://asciinema.org/a/1266213</a>
+</p>
+
+Twenty four seconds of it: the project picker, a window opened somewhere else,
+a command pulled out of shell history, and zen. The chords are in the right
+hand column and every one of them was really pressed, so those are the real
+popups. The full recording behind that link runs four minutes and covers the
+rest, and it is worth watching there rather than here because you can pause it
+and it has a marker on every chapter.
+
+## Try it first
+
+```sh
+docker run --rm -it lonkarorg/tmux-companion:playground
+```
+
+tmux, the binary, five fake projects and a guided tour through the bindings, in
+a container that goes away when you leave it. Nothing is mounted from your
+machine. [docs/how-to/playground.md](docs/how-to/playground.md).
+
+## What it costs
+
+Measured on one machine, with the method beside the numbers in
+[BENCHMARKS.md](./BENCHMARKS.md).
+
+| | |
+| --- | --- |
+| the recommended bar | 18.43 ms/s, 1.8% of a core |
+| the five-call bar it replaced | 153.77 ms/s, 15.4% of a core |
+| one fork and exec | 12.4 ms, or 14.6 ms as tmux runs it |
+| the whole right side, computed | 2.6 ms |
+| `keys`, warm, against `fzf --filter` | 8.3 ms against 18.8 ms |
+| a cold `git status` after a restart | 51 ms, once |
+
 ## Why
 
 My tmux config shelled out for everything. The bar spawned five processes a
@@ -18,17 +60,10 @@ second. Every binding that needed to think ran a zsh script that started a
 shell, read some config, called `fzf`, and exited. I'd built it that way over
 years, a script at a time, and never added it up.
 
-The bar alone cost 15.4% of one core, all day, on a laptop running on battery.
-It costs 1.8% now, and the pickers open in 8.3 ms instead of 18.8.
-
-None of that's because Rust is fast. tmux gates `#()` to `status-interval` per
-attached client, so a bar costs what it spawns and not what it computes: a fork
-and exec is 12.4 ms of CPU, and computing the whole right-hand side takes 2.6.
-The same arithmetic runs the other way for a picker, where the cost was a shell
-starting up before anything showed on screen.
-
 So there's one process now. It holds its caches, answers over a unix socket, and
 everything my tmux used to shell out for talks to it instead.
+
+I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts/ten-years-of-tmux/).
 
 ## What you get
 
@@ -52,16 +87,6 @@ windows after what's running in them, and saying when a long command finished
 somewhere you weren't looking.
 
 Every flag: [docs/reference/cli.md](docs/reference/cli.md).
-
-## Try it first
-
-```sh
-docker run --rm -it lonkarorg/tmux-companion:playground
-```
-
-tmux, the binary, five fake projects and a guided tour through the bindings, in
-a container that goes away when you leave it. Nothing is mounted from your
-machine. [docs/how-to/playground.md](docs/how-to/playground.md).
 
 ## Install
 
@@ -126,29 +151,6 @@ The annotated version, with the reasoning for every line and what each feature
 costs, is [docs/tmux.conf.full.example](docs/tmux.conf.full.example). The
 smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
-## Usage
-
-[![tmux-companion: the project picker, a new window, run and zen](https://media.lonkar.org/tmux-companion/usage.gif)](https://asciinema.org/a/1266213)
-
-https://asciinema.org/a/1266213
-
-Twenty four seconds of it: the project picker, a window opened somewhere else,
-a command pulled out of shell history, and zen. The chords are in the right
-hand column and every one of them was really pressed, so those are the real
-popups. The full recording behind that link runs four minutes and covers the
-rest, and it is worth watching there rather than here because you can pause it
-and it has a marker on every chapter.
-
-Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
-tmux has notes on its bindings and no way to search them, so the popup reads
-your `-N` strings and runs whatever you pick.
-
-The recordings are made with
-[firacode-nfc-tweaked](https://github.com/lonkar-org/firacode-nfc-tweaked), Fira
-Code patched with Nerd Fonts. Any v3 [Nerd Font](https://www.nerdfonts.com/font-downloads)
-draws the same glyphs, and `[glyphs] preset = "ascii"` covers you if you haven't
-got one.
-
 ## Configuration
 
 There's no config file till you write one, and the defaults are what the binary
@@ -169,20 +171,6 @@ preset = "ascii"
 Every setting with its default is in
 [docs/config.example.toml](docs/config.example.toml), and the reasoning is in
 [docs/reference/configuration.md](docs/reference/configuration.md).
-
-## What it costs
-
-Measured on one machine, with the method beside the numbers in
-[BENCHMARKS.md](./BENCHMARKS.md).
-
-| | |
-| --- | --- |
-| the recommended bar | 18.43 ms/s, 1.8% of a core |
-| the five-call bar it replaced | 153.77 ms/s, 15.4% of a core |
-| one fork and exec | 12.4 ms, or 14.6 ms as tmux runs it |
-| the whole right side, computed | 2.6 ms |
-| `keys`, warm, against `fzf --filter` | 8.3 ms against 18.8 ms |
-| a cold `git status` after a restart | 51 ms, once |
 
 ## What it doesn't do
 
