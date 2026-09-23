@@ -39,7 +39,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup show active-toolchain || rustup toolchain install
       - run: cargo fmt --all --check
 
   check:
@@ -65,8 +73,20 @@ jobs:
       - run: tmux -V
 
       # rust-toolchain.toml pins the version; this installs it on a runner
-      # whose preinstalled Rust is something else.
-      - run: rustup show active-toolchain || rustup toolchain install
+      # whose preinstalled Rust is something else, and installs rustup itself
+      # on one that has none. GitHub's images ship rustup, so the first line is
+      # a no-op there; `act`'s runner image does not, and without this the
+      # local mirror of this job dies with exit 127 before it has compiled
+      # anything.
+      - name: Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup show active-toolchain || rustup toolchain install
 
       - uses: actions/cache@v6
         with:
@@ -90,5 +110,13 @@ jobs:
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v7
-      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup show active-toolchain || rustup toolchain install
       - run: cargo doc --no-deps

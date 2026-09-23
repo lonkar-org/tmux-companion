@@ -46,29 +46,35 @@ default:
 # The cost is that the local image never ages out on its own, so it can drift
 # from what GitHub runs, which is the drift act is here to catch. Refresh
 # deliberately, not never.
+#
+# -P names the runner image on every recipe. act asks for it interactively the
+# first time on a machine that has no actrc, and a non-interactive caller gets
+# `level=fatal msg=EOF` instead of a question, which reads like a network
+# failure. Naming it here means these recipes depend on nothing outside the
+# repository but the image itself.
 
 # ci.yml, every job, in containers.
 act-ci:
-    act --pull=false -W .github/workflows/ci.yml push
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push
 
 # The slow one: a cold cargo build with no cache, plus tmux installed into the
 # container before anything runs.
 
 # ci.yml, the clippy and tests job.
 act-check:
-    act --pull=false -W .github/workflows/ci.yml push -j check
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push -j check
 
 # ci.yml, the rustdoc job.
 act-docs:
-    act --pull=false -W .github/workflows/ci.yml push -j docs
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push -j docs
 
 # ci.yml, the rustfmt job. Seconds, and the one worth running first.
 act-format:
-    act --pull=false -W .github/workflows/ci.yml push -j format
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push -j format
 
 # What would run, without running it.
 act-list:
-    act --pull=false -W .github/workflows/ci.yml push --list
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push --list
 
 # Needed once before the first local run, and worth re-running when GitHub's
 # runners have moved - otherwise the act-* recipes keep using whatever was

@@ -1,0 +1,11 @@
+# act reads this before it runs anything, and its only job is to stop act
+# asking which runner image to use. With no config anywhere, act opens an
+# interactive menu; a redirected or piped run answers that menu with EOF and
+# then starts a container with an empty image name, which surfaces as
+# `invalid reference format` and looks like a Docker problem rather than a
+# missing answer to a question nobody saw.
+#
+# catthehacker/ubuntu:act-latest is the medium image act itself recommends.
+# It is not GitHub's runner image and does not pretend to be: it has no
+# rustup, which is why ci.yml installs rustup when the runner has none.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest

@@ -68,6 +68,15 @@ impl Tmux {
             std::env::var("PATH").unwrap_or_default()
         );
         cmd.env("PATH", path)
+            // HOME as well as XDG_CONFIG_HOME, because the themes directory is
+            // resolved from both: with no `tmux.conf` under XDG_CONFIG_HOME,
+            // `themes_dir` looks for `$HOME/.tmux.conf` and, finding one,
+            // answers `$HOME/.tmux/themes`. Leaving HOME alone therefore let
+            // the machine running the suite decide where a test's themes went,
+            // and the ubuntu CI runner has a `~/.tmux.conf` where this laptop
+            // and act's container do not. That is the whole of the failure
+            // that looked like a tmux 3.4 difference for two pushes.
+            .env("HOME", &self.sandbox)
             .env("XDG_CONFIG_HOME", self.sandbox.join("config"))
             .env("XDG_STATE_HOME", self.sandbox.join("state"))
             .env("_ZO_DATA_DIR", self.sandbox.join("zoxide"))
@@ -549,11 +558,7 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
         &dir.display().to_string(),
     ]);
     // `-t second` is a target-PANE, so the session has to have one before the
-    // theme can be pointed at it. tmux reports the session the moment it is
-    // created and fills in its pane a beat later, and on a loaded CI runner
-    // that beat is long enough to lose: this test failed once in about ten
-    // runs on the ubuntu job with the option simply unset, and passed on a
-    // rerun of the same commit.
+    // theme can be pointed at it.
     assert!(
         t.until(5, |t| !t
             .tmux(&["list-panes", "-t", "second", "-F", "#{pane_id}"])
