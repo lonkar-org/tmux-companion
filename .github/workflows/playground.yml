@@ -34,6 +34,16 @@ on:
         description: 'Tag to build and publish, for example v0.1.0'
         required: true
 
+# The docker/* actions are on their current majors for the reason the comment
+# in ci.yml gives for the actions/* ones: the previous majors ran on Node 20,
+# which GitHub has deprecated, so the runner forced them onto Node 24 and
+# annotated every run to say so. Checked 2026-09-23. All four need a runner of
+# at least 2.327.1. Nothing here passes an input the new majors dropped:
+# setup-buildx and setup-qemu are called bare, login-action still takes
+# username and password, and build-push-action v7 removed only the
+# DOCKER_BUILD_NO_SUMMARY and DOCKER_BUILD_EXPORT_RETENTION_DAYS envs, which
+# this workflow never set.
+
 env:
   IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'lonkarorg/tmux-companion' }}
 
@@ -57,7 +67,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Built here and checked here, so a broken image is a failed build rather
       # than something somebody pulls. The smoke script asserts the projects,
@@ -96,10 +106,10 @@ jobs:
           fi
           echo "publishing to ${{ env.IMAGE }}"
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -115,7 +125,7 @@ jobs:
       # architecture means pushing by digest before anybody has approved
       # anything. It runs on a tag, so it runs rarely.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: playground/Dockerfile
