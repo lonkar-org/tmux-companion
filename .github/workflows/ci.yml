@@ -23,6 +23,12 @@ on:
     paths-ignore: ['**/*.md']
   workflow_dispatch:
 
+# The actions are on their current majors because the older ones ran on Node
+# 20, which GitHub has deprecated: the runner forces them onto Node 24 anyway
+# and annotates every run to say so. Checked 2026-09-23. `actions/cache@v5` and
+# later need a runner of at least 2.327.1, which GitHub-hosted runners have and
+# an old `act` image may not, so a local act run failing where CI passes is
+# worth checking against `just act-refresh` before believing.
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -32,7 +38,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - run: cargo fmt --all --check
 
@@ -44,7 +50,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # tests/e2e.rs drives a real tmux on its own socket. Without one those
       # tests skip themselves, which is worse than failing: the suite that
@@ -62,7 +68,7 @@ jobs:
       # whose preinstalled Rust is something else.
       - run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -83,6 +89,6 @@ jobs:
       # undocumented public item fail a pull request rather than pile up.
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - run: cargo doc --no-deps
