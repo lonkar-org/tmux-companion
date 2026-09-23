@@ -16,14 +16,20 @@ name: Release
 # lonkar-org/tap. `brew tap lonkar-org/tap` looks for a repository called
 # `homebrew-tap` and reaches this one through the rename redirect GitHub keeps,
 # which works and would stop working the day anything else takes that name.
-# It needs a secret named TAP_TOKEN on this repository: a fine-grained personal
-# access token whose only resource is that repository and whose only permission
-# is Contents, read and write. The workflow's own
-# GITHUB_TOKEN cannot reach another repository, which is why the secret exists.
+# It needs a secret named TAP_DEPLOY_KEY on this repository: the private half of
+# a write-enabled deploy key on lonkar-org/tap. The workflow's own GITHUB_TOKEN
+# cannot reach another repository, which is why a second credential exists at
+# all, and a deploy key is the one kind of credential a repository owns itself.
+# It is scoped to that repository's contents and to nothing else, so it is not
+# tied to anybody's account and a leak of it reaches the tap and stops there.
 #
-#   gh secret set TAP_TOKEN --repo lonkar-org/tmux-companion
+#   ssh-keygen -t ed25519 -N '' -C tmux-companion-release -f tap-key
+#   gh repo deploy-key add tap-key.pub --repo lonkar-org/tap --allow-write \
+#     --title 'tmux-companion release workflow'
+#   gh secret set TAP_DEPLOY_KEY --repo lonkar-org/tmux-companion < tap-key
+#   rm tap-key tap-key.pub
 #
-# Without it the release still publishes and the job warns, so a missing token
+# Without it the release still publishes and the job warns, so a missing key
 # costs a stale tap rather than a failed release.
 
 on:
@@ -180,26 +186,28 @@ jobs:
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      # A secret cannot be read in a job-level `if`, so the token is checked
-      # once here and every step after it reads this output.
-      - name: Is TAP_TOKEN set
+      # A secret cannot be read in a job-level `if`, so the key is checked once
+      # here and every step after it reads this output.
+      - name: Is TAP_DEPLOY_KEY set
         id: token
         env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
         run: |
           set -euo pipefail
-          if [ -n "${TAP_TOKEN:-}" ]; then
+          if [ -n "${TAP_DEPLOY_KEY:-}" ]; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::TAP_TOKEN is not set, so lonkar-org/tap still points at the previous version. Create the secret and rerun this job."
+            echo "::warning::TAP_DEPLOY_KEY is not set, so lonkar-org/tap still points at the previous version. Create the secret and rerun this job."
           fi
 
+      # `ssh-key` rather than `token`, so checkout clones over SSH and leaves
+      # the remote and the key configured for the push at the end of the job.
       - uses: actions/checkout@v4
         if: steps.token.outputs.have == 'true'
         with:
           repository: lonkar-org/tap
-          token: ${{ secrets.TAP_TOKEN }}
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
           path: tap
 
       # The tap owns the rewrite. Doing it there keeps one copy of the rules
