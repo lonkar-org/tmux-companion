@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.1.0 - 2026-09-23
 
 ### Added
 
@@ -77,25 +77,24 @@ entry per phase of the comrades port.
 
 ### Changed
 
-- `theme gen --shades` takes a rung: `aa` for 216 themes, `aaa` for 151, `a4`
-  for 105, `a5` for 75 and `a6` for the original eighteen. The flag on its own
-  means `aaa`, and an unknown rung is an error rather than a silent fall back,
-  because a typo that generates 145 files instead of 18 is a directory somebody
-  cleans up by hand.
 - `theme gen --shades` writes every colour in tmux's 6x6x6 cube whose text
-  clears WCAG AAA rather than one lighter and one darker sibling of each theme
-  already on disk: 145 more on top of the bundled six, so 151 in all, named
-  after the colour each sits nearest to so `ember-04` and `pine-11` group in
-  the picker. It answers "show me what there is" instead of "vary what I have",
-  and it no longer depends on which files happen to be in the directory. AAA
-  and not AA because the worst colour in the cube scores 4.60:1, so an AA
-  filter keeps all 216 and removes nothing.
+  clears a contrast rung rather than one lighter and one darker sibling of each
+  theme already on disk, each named after the colour it sits nearest to so
+  `ember-04` and `pine-11` group in the picker. It answers "show me what there
+  is" instead of "vary what I have", and it no longer depends on which files
+  happen to be in the directory. The rung is the flag's value: `aa` for 216
+  themes, `aaa` for 151, `a4` for 105, `a5` for 75 and `a6` for the original
+  eighteen. On its own the flag means `aaa`, because the worst colour in the
+  cube scores 4.60:1 and an AA filter therefore keeps all 216 and removes
+  nothing. An unknown rung is an error rather than a silent fall back, since a
+  typo that generates 145 files instead of 18 is a directory somebody cleans up
+  by hand.
 
 - `vim-bg` is `sh-jobs`, with a config-driven job table rather than one
   hardcoded editor. The old name works for one more release and says so.
 - zoxide is documented as optional rather than assumed. It was already possible
   to run without it, and the picker already degraded to live sessions and a
-  typed path, but nothing outside `config.example.toml` said so — `[project]` is
+  typed path, but nothing outside `config.example.toml` said so -- `[project]` is
   now covered in the manual, `docs/reference/requirements.md` and the README.
 - `autosave` runs in the daemon instead of a detached shell loop, which removes
   its PID lock file, the stale-lock takeover and the liveness check between
