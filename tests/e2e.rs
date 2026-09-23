@@ -548,9 +548,28 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
         "-c",
         &dir.display().to_string(),
     ]);
+    // `-t second` is a target-PANE, so the session has to have one before the
+    // theme can be pointed at it. tmux reports the session the moment it is
+    // created and fills in its pane a beat later, and on a loaded CI runner
+    // that beat is long enough to lose: this test failed once in about ten
+    // runs on the ubuntu job with the option simply unset, and passed on a
+    // rerun of the same commit.
+    assert!(
+        t.until(5, |t| !t
+            .tmux(&["list-panes", "-t", "second", "-F", "#{pane_id}"])
+            .is_empty()),
+        "the second session never grew a pane"
+    );
     t.tmux(&["set", "-t", "second", "-u", "@theme-session-name-bg"]);
     let (_, err, ok) = t.run(&["theme", "apply", "second", "-t", ""]);
     assert!(ok, "theme apply with an empty target failed: {err}");
+    // The example config's session-created hook is a `run-shell`, which tmux
+    // does not wait for, so this reads the same option the hook writes and has
+    // to allow for the hook still being in flight.
+    t.until(5, |t| {
+        t.tmux(&["show", "-t", "second", "-v", "@theme-session-name-bg"])
+            .starts_with("colour")
+    });
     let second = t.tmux(&["show", "-t", "second", "-v", "@theme-session-name-bg"]);
     assert!(
         second.starts_with("colour"),
