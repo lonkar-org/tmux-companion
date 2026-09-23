@@ -295,6 +295,33 @@ is which side the editor opens on,
 .Ql right
 or
 .Ql bottom .
+.Pp
+.Ic [[git.branch_types]]
+is the glyph drawn before a branch name, keyed on how the name starts.
+Each entry is an
+.Ic icon
+and a list of
+.Ic prefixes ,
+tried in the order written; the first prefix that claims the name wins, and
+it is cut off the name the bar draws, so
+.Ql feat/status-bar
+renders as the feature glyph and
+.Ql status-bar .
+Prefixes are compared without regard to case and are plain text rather than
+regular expressions.
+.Ic icon
+takes
+.Ql {NAME}
+for any glyph the tool knows, so the file stays readable without a patched
+font, and draws anything else as written.
+The list replaces the six shipped entries rather than adding to them;
+.Ic config dump
+prints them in the shape they are edited in.
+A name no entry claims keeps the plain branch glyph, which is why
+.Ql main
+and
+.Ql master
+need no entry.
 .Sh DIAGNOSTICS
 .Bl -tag -width Ds
 .It Ic doctor

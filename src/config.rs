@@ -1064,6 +1064,14 @@ pub struct Git {
     /// tree with four hundred untracked build artifacts does not want a count
     /// of them, and somebody who never pushes does not want ahead and behind.
     pub parts: Vec<GitPart>,
+    /// Which branch-name prefixes earn which glyph, in the order they are
+    /// tried.
+    ///
+    /// The list replaces the built-ins rather than adding to them, so
+    /// `tmux-companion config dump` prints the defaults in the shape you edit
+    /// them in. A name matching nothing here keeps the plain branch glyph, so
+    /// main, master and dev are not special cases.
+    pub branch_types: Vec<BranchType>,
     /// Fetching in the background so ahead and behind mean something.
     #[serde(default)]
     pub autofetch: Autofetch,
@@ -1117,9 +1125,72 @@ impl Default for Git {
             branch_max_len: 20,
             branch_tail_len: 10,
             parts: GitPart::all(),
+            branch_types: default_branch_types(),
             autofetch: Autofetch::default(),
         }
     }
+}
+
+/// A group of branch-name prefixes and the glyph they earn.
+///
+/// Grouped by glyph rather than one row per prefix, because the spellings of
+/// one idea (`feat/`, `feature/`, `features/`) are what a list is for and
+/// repeating the icon beside each of them is what makes a config file long
+/// enough that nobody edits it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct BranchType {
+    /// The glyph drawn before the branch name.
+    ///
+    /// `{NAME}` expands to the glyph of that name in `src/tmux/icons.rs`, the
+    /// same spelling `[status.right] separator_before` uses, so the file stays
+    /// readable in an editor with no patched font. Anything else is drawn as
+    /// written, which is how a literal emoji or a codepoint your font does
+    /// have gets in.
+    pub icon: String,
+    /// The prefixes that earn it, compared case-insensitively and cut off the
+    /// name the bar draws.
+    ///
+    /// Plain prefixes rather than regular expressions: `posts/` is what people
+    /// actually name branches, and an unanchored pattern matching in the
+    /// middle of a branch name is a bug report nobody enjoys.
+    pub prefixes: Vec<String>,
+}
+
+impl BranchType {
+    /// The markup this entry draws, with `{NAME}` resolved.
+    pub fn glyph(&self) -> String {
+        expand_glyphs(&self.icon)
+    }
+
+    /// What is left of `branch` after the first prefix that claims it, or
+    /// `None` when none does.
+    pub fn strip<'a>(&self, branch: &'a str) -> Option<&'a str> {
+        self.prefixes.iter().find_map(|p| {
+            let head = branch.get(..p.len())?;
+            head.eq_ignore_ascii_case(p).then(|| &branch[p.len()..])
+        })
+    }
+}
+
+/// The prefixes the bar knew before any of this was configurable.
+///
+/// Kept as the default rather than as a hardcoded fallback so that a config
+/// dump shows them, and so that dropping one is done by deleting a line rather
+/// than by finding a flag that turns it off.
+fn default_branch_types() -> Vec<BranchType> {
+    let group = |icon: &str, prefixes: &[&str]| BranchType {
+        icon: icon.to_string(),
+        prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
+    };
+    vec![
+        group("{FEATURE}", &["feat/", "feature/", "features/"]),
+        group("{BUGFIX}", &["fix/", "fixes/", "bugfix/", "bugfixes/"]),
+        group("{HOTFIX}", &["hotfix/"]),
+        group("{CHORE}", &["chore/", "chores/"]),
+        group("{RELEASE}", &["release/", "releases/"]),
+        group("{TAG}", &["tag/", "tags/"]),
+    ]
 }
 
 /// The bandwidth segment.

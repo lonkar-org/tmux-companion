@@ -6,11 +6,10 @@ use std::{
     time::Duration,
 };
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::config::GitPart;
+use crate::config::{BranchType, GitPart};
 use crate::server::state::{DEFAULT_GST_TTL, ServerState};
 use crate::tmux::{
     format::{
@@ -33,27 +32,13 @@ const OUTLINE_CAP: &str = crate::tmux::icons::SEPARATOR;
 
 const BRANCH_MAX_LEN: usize = 20;
 
-// Branch-type icon patterns — evaluated in order (first match wins).
-// Using a Vec (not HashMap) to ensure deterministic order and allow order-sensitive matching.
-static BRANCH_TYPES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
-    vec![
-        (
-            crate::tmux::icons::FEATURE,
-            Regex::new(r"^feat(ures?)?/").unwrap(),
-        ),
-        (
-            crate::tmux::icons::BUGFIX,
-            Regex::new(r"^(bug)?fix(es)?/").unwrap(),
-        ),
-        (crate::tmux::icons::HOTFIX, Regex::new(r"^hotfix/").unwrap()),
-        (crate::tmux::icons::CHORE, Regex::new(r"^chores?/").unwrap()),
-        (
-            crate::tmux::icons::RELEASE,
-            Regex::new(r"^releases?/").unwrap(),
-        ),
-        (crate::tmux::icons::TAG, Regex::new(r"^tags?/").unwrap()),
-    ]
-});
+/// The shipped `[[git.branch_types]]`, for the paths that render without a
+/// config in hand: `preview`, and the tests that pin the bar byte for byte.
+///
+/// The daemon never reads this — it passes what the config parsed, which is
+/// this same list until somebody edits it.
+static DEFAULT_BRANCH_TYPES: LazyLock<Vec<BranchType>> =
+    LazyLock::new(|| crate::config::Git::default().branch_types);
 
 /// File counts for one side of the index: staged, or unstaged.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -289,27 +274,29 @@ impl GitStatus {
 
 #[cfg(test)]
 fn short_branch(branch: &str) -> String {
-    short_branch_len(branch, BRANCH_MAX_LEN)
+    short_branch_len(branch, BRANCH_MAX_LEN, &DEFAULT_BRANCH_TYPES)
 }
 
-fn short_branch_len(branch: &str, max_len: usize) -> String {
-    // No recognized prefix falls back to the plain branch glyph, so main,
+fn short_branch_len(branch: &str, max_len: usize, types: &[BranchType]) -> String {
+    // A name no entry claims falls back to the plain branch glyph, so main,
     // master, dev, ... still carry a type marker.
-    let mut icon = crate::tmux::icons::BRANCH;
-    let mut stripped = String::new();
+    let mut icon = crate::tmux::icons::BRANCH.to_string();
+    let mut stripped = "";
 
-    for (icn, pattern) in BRANCH_TYPES.iter() {
-        if pattern.is_match(branch) {
-            stripped = pattern.replace(branch, "").into_owned();
-            icon = icn;
+    for entry in types {
+        if let Some(rest) = entry.strip(branch) {
+            stripped = rest;
+            icon = entry.glyph();
             break;
         }
     }
 
+    // A branch named exactly `feat/` strips to nothing, and a bar drawing an
+    // icon and no name at all says less than one drawing the name as written.
     let name = if stripped.is_empty() {
         branch
     } else {
-        &stripped
+        stripped
     };
     let char_count = name.chars().count();
     // Middle-ellipsize names longer than max_len chars. The kept chars are
@@ -394,6 +381,9 @@ pub struct LineOpts<'a> {
     pub branch_max: Option<usize>,
     /// Draw the git glyph before the branch name.
     pub branch_icon: bool,
+    /// Which prefixes earn which glyph, from `[[git.branch_types]]`. Empty
+    /// means every branch gets the plain branch glyph.
+    pub branch_types: &'a [BranchType],
     /// Which parts to draw, and in what order.
     pub parts: &'a [GitPart],
     /// The colour the status bar itself is set to.
@@ -411,6 +401,7 @@ impl Default for LineOpts<'static> {
             cap_glyph: None,
             branch_max: None,
             branch_icon: true,
+            branch_types: &DEFAULT_BRANCH_TYPES,
             parts: &[],
             bar_bg: BG_BAR,
         }
@@ -428,6 +419,7 @@ pub fn status_line_render(
         style,
         cap_glyph,
         branch_max,
+        branch_types,
         branch_icon,
         parts,
         bar_bg,
@@ -492,7 +484,11 @@ pub fn status_line_render(
             ""
         },
         if has(GitPart::Branch) {
-            short_branch_len(&s.branch, branch_max.unwrap_or(BRANCH_MAX_LEN))
+            short_branch_len(
+                &s.branch,
+                branch_max.unwrap_or(BRANCH_MAX_LEN),
+                branch_types,
+            )
         } else {
             String::new()
         },
@@ -743,6 +739,9 @@ pub struct GstOptions {
     pub ttl: Duration,
     /// What the segment draws, from `[git] parts` in the config.
     pub parts: Vec<GitPart>,
+    /// Which branch-name prefixes earn which glyph, from
+    /// `[[git.branch_types]]` in the config.
+    pub branch_types: Vec<BranchType>,
     /// The colour the status bar is set to, from `[bar] background`.
     ///
     /// The caps and the outline backgrounds are drawn against this. It is a
@@ -763,6 +762,7 @@ impl Default for GstOptions {
             branch_icon: false,
             ttl: DEFAULT_GST_TTL,
             parts: GitPart::all(),
+            branch_types: crate::config::Git::default().branch_types,
             bar_bg: BG_BAR.to_string(),
         }
     }
@@ -827,6 +827,7 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
             cap_glyph: cap,
             branch_max: opts.branch_max_len,
             branch_icon: opts.branch_icon,
+            branch_types: &opts.branch_types,
             parts: &opts.parts,
             bar_bg: &opts.bar_bg,
         },
@@ -1152,6 +1153,107 @@ mod tests {
 
     // ── short_branch ─────────────────────────────────────────────────────────
 
+    /// The shipped `[[git.branch_types]]`, which is what the bar renders with
+    /// until somebody writes their own.
+    fn types() -> &'static [BranchType] {
+        &DEFAULT_BRANCH_TYPES
+    }
+
+    /// One entry, so a test says what it is testing without the other five.
+    fn one(icon: &str, prefixes: &[&str]) -> Vec<BranchType> {
+        vec![BranchType {
+            icon: icon.to_string(),
+            prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
+        }]
+    }
+
+    #[test]
+    fn a_configured_prefix_earns_its_icon_and_is_cut_off() {
+        let types = one("P ", &["parked/"]);
+        assert_eq!(
+            short_branch_len("parked/docs-that-died", 40, &types),
+            "P docs-that-died"
+        );
+    }
+
+    #[test]
+    fn a_configured_icon_may_name_a_glyph() {
+        let types = one("{TAG}", &["posts/"]);
+        assert_eq!(
+            short_branch_len("posts/tmux", 40, &types),
+            format!("{}tmux", crate::tmux::icons::TAG)
+        );
+    }
+
+    #[test]
+    fn an_unknown_glyph_name_is_drawn_as_written() {
+        // Same rule as `separator_before`: a visible typo beats a silent one.
+        let types = one("{NOPE}", &["posts/"]);
+        assert_eq!(short_branch_len("posts/tmux", 40, &types), "{NOPE}tmux");
+    }
+
+    #[test]
+    fn prefixes_are_matched_without_case() {
+        let types = one("P ", &["parked/"]);
+        assert_eq!(short_branch_len("Parked/Thing", 40, &types), "P Thing");
+    }
+
+    #[test]
+    fn entries_are_tried_in_the_order_written() {
+        let types = vec![
+            BranchType {
+                icon: "first ".into(),
+                prefixes: vec!["post/".into()],
+            },
+            BranchType {
+                icon: "second ".into(),
+                prefixes: vec!["post/".into()],
+            },
+        ];
+        assert_eq!(short_branch_len("post/x", 40, &types), "first x");
+    }
+
+    #[test]
+    fn a_longer_spelling_is_not_swallowed_by_a_shorter_one() {
+        // `post/` is not a prefix of `posts/whatever`, so the two can be
+        // separate entries with separate glyphs and order does not matter.
+        let types = vec![
+            BranchType {
+                icon: "one ".into(),
+                prefixes: vec!["post/".into()],
+            },
+            BranchType {
+                icon: "many ".into(),
+                prefixes: vec!["posts/".into()],
+            },
+        ];
+        assert_eq!(short_branch_len("posts/x", 40, &types), "many x");
+    }
+
+    #[test]
+    fn an_empty_list_leaves_every_branch_on_the_plain_glyph() {
+        assert_eq!(
+            short_branch_len("feat/thing", 40, &[]),
+            format!("{}feat/thing", BRANCH)
+        );
+    }
+
+    #[test]
+    fn a_prefix_and_nothing_after_it_keeps_the_name_as_written() {
+        // Stripping `feat/` off `feat/` leaves an icon and no name, which says
+        // less than the name does.
+        let types = one("F ", &["feat/"]);
+        assert_eq!(short_branch_len("feat/", 40, &types), "F feat/");
+    }
+
+    #[test]
+    fn a_prefix_cutting_a_multibyte_name_does_not_panic() {
+        // `branch.get(..len)` returns None on a byte that is not a char
+        // boundary; slicing would have panicked in the daemon.
+        let types = one("E ", &["ab"]);
+        assert_eq!(short_branch_len("aé", 40, &types), format!("{}aé", BRANCH));
+    }
+
     #[test]
     fn short_branch_plain_gets_fallback_branch_icon() {
         assert_eq!(short_branch("branch1"), format!("{}branch1", BRANCH));
@@ -1160,7 +1262,7 @@ mod tests {
     #[test]
     fn short_branch_len_default_matches_legacy_shape() {
         // 25 chars: default max 20 keeps 8 head + "..." + 10 tail
-        let r = short_branch_len("abcdefghijklmnopqrstuvwxy", 20);
+        let r = short_branch_len("abcdefghijklmnopqrstuvwxy", 20, types());
         assert_eq!(r, format!("{}abcdefgh...pqrstuvwxy", BRANCH));
         assert_eq!(r, short_branch("abcdefghijklmnopqrstuvwxy"));
     }
@@ -1169,7 +1271,7 @@ mod tests {
     fn short_branch_len_proportional_at_40() {
         // budget 38: head 17, tail 21
         let name: String = ('a'..='z').cycle().take(50).collect();
-        let r = short_branch_len(&name, 40);
+        let r = short_branch_len(&name, 40, types());
         let r = r.strip_prefix(BRANCH).unwrap();
         assert_eq!(r.chars().count(), 17 + 3 + 21);
         assert!(r.starts_with(&name.chars().take(17).collect::<String>()));
@@ -1180,7 +1282,10 @@ mod tests {
     #[test]
     fn short_branch_len_at_exact_max_not_truncated() {
         let name: String = ('a'..='z').cycle().take(40).collect();
-        assert_eq!(short_branch_len(&name, 40), format!("{}{}", BRANCH, name));
+        assert_eq!(
+            short_branch_len(&name, 40, types()),
+            format!("{}{}", BRANCH, name)
+        );
     }
 
     #[test]

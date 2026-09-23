@@ -125,6 +125,48 @@ counters would move escape sequences rather than glyphs. `parts = []` renders
 an almost empty segment, which is a legitimate thing to ask for and not a
 crash.
 
+## The glyph in front of the branch name
+
+The first thing in the git segment is a glyph chosen from how the branch name
+starts, so `feat/picker-preview` gets the feature icon and drops the `feat/`,
+and a name nothing claims keeps the plain branch glyph, which is why `main`,
+`master`, `dev` and `stable` were never special cases.
+
+Six groups ship, covering `feat/`, `feature/`, `features/`, `fix/`, `fixes/`,
+`bugfix/`, `bugfixes/`, `hotfix/`, `chore/`, `chores/`, `release/`,
+`releases/`, `tag/` and `tags/`, which is a reasonable guess at how most people
+name branches and wrong the moment you name one `posts/` or `parked/`, so the
+whole table is `[[git.branch_types]]`:
+
+```toml
+[[git.branch_types]]
+icon = "{TAG}"
+prefixes = ["post/", "posts/"]
+
+[[git.branch_types]]
+icon = "P "
+prefixes = ["parked/"]
+```
+
+Entries are tried in the order written and the first prefix that claims the
+name wins, the match ignores case, and the prefix is cut off the name the bar
+draws. They're plain prefixes rather than regular expressions: `posts/` is what
+you'd type anyway, and an unanchored pattern hitting the middle of a branch
+name is a bug you'd find on the status bar rather than in a test.
+
+`icon` takes `{NAME}` for any glyph in
+[`src/tmux/icons.rs`](../../src/tmux/icons.rs), the same spelling
+`separator_before` uses, so the file is readable in an editor with no patched
+font. Anything else is drawn as written, so an emoji, a couple of letters, or a
+codepoint your own font has all work, and the trailing space is yours to
+include or leave out.
+
+Your list replaces the six rather than adding to them, so run
+`tmux-companion config dump`, copy the `[[git.branch_types]]` blocks you want
+to keep, and add yours. Replacing rather than merging is what lets you delete
+`tag/` if a branch of yours starts with it and you'd rather it didn't get the
+tag glyph.
+
 ## Building the right-hand side
 
 `[[status.right.segments]]` is the list of segments and what goes in front of

@@ -80,6 +80,60 @@ branch_tail_len = 10
 # move escape sequences rather than glyphs.
 parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked", "deleted", "renamed", "copied", "modified", "staged", "stash"]
 
+# Which branch-name prefixes earn which glyph, tried in the order written.
+#
+# The prefix is cut off the name the bar draws, so `feat/status-bar` renders as
+# the feature glyph and `status-bar`. A name no entry claims keeps the plain
+# branch glyph, which is why main, master and dev need no entry of their own.
+#
+# Matching is by plain prefix, compared without case. Not a regular expression:
+# `posts/` is what people actually name branches, and an unanchored pattern
+# matching in the middle of a branch name is a bug nobody enjoys finding on a
+# status bar.
+#
+# `icon` takes `{NAME}` for any glyph in src/tmux/icons.rs — FEATURE, BUGFIX,
+# HOTFIX, CHORE, RELEASE, TAG, BRANCH, GIT and the rest — so this file stays
+# readable without a patched font. Anything else is drawn as written, which is
+# how an emoji, a letter or a codepoint your own font has gets in:
+#
+#   [[git.branch_types]]
+#   icon = "{TAG}"
+#   prefixes = ["post/", "posts/"]
+#
+#   [[git.branch_types]]
+#   icon = "\U000F04DF "      # a codepoint, TOML's 8-digit escape
+#   prefixes = ["parked/"]
+#
+#   [[git.branch_types]]
+#   icon = "wip "
+#   prefixes = ["wip/", "spike/"]
+#
+# The list replaces these six rather than adding to them, so copy what you want
+# to keep. `tmux-companion config dump` prints the current list in this shape.
+[[git.branch_types]]
+icon = "{FEATURE}"
+prefixes = ["feat/", "feature/", "features/"]
+
+[[git.branch_types]]
+icon = "{BUGFIX}"
+prefixes = ["fix/", "fixes/", "bugfix/", "bugfixes/"]
+
+[[git.branch_types]]
+icon = "{HOTFIX}"
+prefixes = ["hotfix/"]
+
+[[git.branch_types]]
+icon = "{CHORE}"
+prefixes = ["chore/", "chores/"]
+
+[[git.branch_types]]
+icon = "{RELEASE}"
+prefixes = ["release/", "releases/"]
+
+[[git.branch_types]]
+icon = "{TAG}"
+prefixes = ["tag/", "tags/"]
+
 [git.autofetch]
 # Fetch the repositories the bar has drawn, on a timer inside the daemon, so
 # the ahead and behind counts mean something. A status bar reporting a stale

@@ -100,6 +100,7 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 {
                     let s = state.lock().await;
                     opts.parts = s.config.git.parts.clone();
+                    opts.branch_types = s.config.git.branch_types.clone();
                     opts.bar_bg = s.config.bar.background.clone();
                 }
                 segments::git::render(&opts, &state).await
@@ -193,6 +194,7 @@ fn gst_options(args: &GstArgs) -> GstOptions {
         // has no access to and does not want: it stays a pure mapping from the
         // wire to the options.
         parts: crate::config::GitPart::all(),
+        branch_types: crate::config::Git::default().branch_types,
         bar_bg: crate::tmux::format::BG_BAR.to_string(),
     }
 }
@@ -221,9 +223,13 @@ async fn render_right(
     // `state.lock().await` calls inside one expression deadlock: the first
     // guard is a temporary that lives until the end of the statement, so the
     // second waits on a mutex this same task is still holding.
-    let (parts, bar_bg) = {
+    let (parts, branch_types, bar_bg) = {
         let s = state.lock().await;
-        (s.config.git.parts.clone(), s.config.bar.background.clone())
+        (
+            s.config.git.parts.clone(),
+            s.config.git.branch_types.clone(),
+            s.config.bar.background.clone(),
+        )
     };
     let opts = GstOptions {
         path: args.path.clone(),
@@ -238,6 +244,7 @@ async fn render_right(
         // Deliberately not plumbed from the request: see `GstOptions::pane_pid`.
         pane_pid: None,
         parts,
+        branch_types,
         bar_bg,
     };
 
