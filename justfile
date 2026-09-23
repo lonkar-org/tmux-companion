@@ -171,3 +171,14 @@ prompt-marks *SHELLS:
 # Every test, including the ones a failure would otherwise hide.
 test:
     nice -n 15 cargo test -j 4 --all-targets --no-fail-fast
+
+# A green run is not a quiet one. Four actions sat on Node 20 for weeks with
+# every run reporting success, because the warning lives in the annotations
+# block that `gh run view` does not print. This waits, then prints both.
+#
+# It stops rather than hangs when a job is parked on an environment approval,
+# which is what release.yml's publish job does on purpose.
+
+# Wait for a workflow run and print its jobs and annotations.
+watch-run RUN="":
+    ./scripts/watch-run.sh {{RUN}}
