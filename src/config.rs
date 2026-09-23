@@ -66,6 +66,57 @@ pub struct Config {
     /// How every picker is laid out.
     #[serde(default)]
     pub picker: PickerLayout,
+    /// What happens when a file is opened out of copy mode.
+    #[serde(default)]
+    pub open: Open,
+}
+
+/// Where the editor goes when `open` finds a file.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Open {
+    /// The pane the editor opens in, beside or below the one you are in.
+    pub split: Split,
+    /// How big that pane is, as a percentage of the window. Zero lets tmux
+    /// halve it, which is what it did before this was a setting.
+    pub size_percent: u16,
+    /// The editor, and how it is told to jump to a line and column.
+    ///
+    /// `{path}`, `{line}` and `{column}` are replaced. The default is what
+    /// vim and neovim take; emacs and helix want something else, which is
+    /// why this is a template rather than a program name.
+    pub editor: String,
+}
+
+/// Which way `open` splits the window for an editor.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Split {
+    /// Beside the pane you are in.
+    #[default]
+    Right,
+    /// Under the pane you are in.
+    Bottom,
+}
+
+impl Split {
+    /// The flag tmux's `split-window` wants.
+    pub fn flag(self) -> &'static str {
+        match self {
+            Split::Right => "-h",
+            Split::Bottom => "-v",
+        }
+    }
+}
+
+impl Default for Open {
+    fn default() -> Self {
+        Self {
+            split: Split::Right,
+            size_percent: 0,
+            editor: "nvim '+call cursor({line},{column})' {path}".to_string(),
+        }
+    }
 }
 
 /// How the pickers are laid out.
@@ -624,6 +675,7 @@ impl Default for Config {
             theme: Theme::default(),
             bar: Bar::default(),
             picker: PickerLayout::default(),
+            open: Open::default(),
         }
     }
 }

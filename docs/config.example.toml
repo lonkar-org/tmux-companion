@@ -501,3 +501,32 @@ preview = "right"
 # The preview's share of the popup, as a percentage. Clamped to 20-80, because
 # outside that one half of the split is too narrow to read.
 preview_percent = 55
+
+[open]
+# What happens when `open` finds a file rather than a URL: which pane the
+# editor opens in, and which editor.
+#
+# `right` puts it beside the pane you were in, `bottom` puts it underneath.
+# Right by default, because a file and the log you found it in read better
+# side by side; bottom is better on a narrow terminal, where two columns of
+# sixty are two columns nobody can read.
+split = "right"
+
+# How much of the window that pane takes, as a percentage. Zero lets tmux
+# halve it, which is what it did before this was a setting.
+size_percent = 0
+
+# The editor, and how it is told to jump to a line and column. `{path}`,
+# `{line}` and `{column}` are replaced; the path arrives already quoted for
+# the shell, so do not put quotes around `{path}` yourself.
+#
+# The quotes around the `+call` matter. tmux runs a split's command through
+# `sh`, and `nvim +call cursor(2,22) file` is a shell syntax error, so the
+# pane opened, complained to nobody, and closed again. Opening a file at a
+# line had never worked until they were added.
+#
+# Some others:
+#   helix    "hx {path}:{line}:{column}"
+#   emacs    "emacsclient -nw +{line}:{column} {path}"
+#   vim      the default works unchanged
+editor = "nvim '+call cursor({line},{column})' {path}"

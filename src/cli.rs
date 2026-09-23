@@ -1275,10 +1275,17 @@ async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
                 .lines()
                 .any(|w| w.trim() == preferred)
         };
+        // A trailing colon, which is the difference between a session target
+        // and a pane one. `capture-pane -t =alpha` answers "can't find pane:
+        // =alpha" -- the `=` means an exact session name, and capture-pane
+        // wants a pane -- so every live session's preview came back empty and
+        // fell through to a directory listing whose contents were already on
+        // the row above. `=alpha:` is that session's current window and its
+        // active pane, which is the screen somebody wants to see.
         let pane = if named {
             format!("={}:{preferred}", row.label)
         } else {
-            target.clone()
+            format!("={}:", row.label)
         };
         // -e keeps whatever colours are on that screen.
         let screen = tmux_capture(&["capture-pane", "-p", "-e", "-t", &pane]).await;
@@ -2205,12 +2212,22 @@ async fn run_open(
             }
         }
         Target::File { path, line, column } => {
-            let at = match (line, column) {
-                (0, _) => path.display().to_string(),
-                (l, 0) => format!("+{l} {}", path.display()),
-                (l, c) => format!("+call cursor({l},{c}) {}", path.display()),
-            };
-            tmux(&["split-window", "-h", &format!("nvim {at}")]).await;
+            let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+            let command = crate::open::editor_command(
+                &config.open.editor,
+                &path.display().to_string(),
+                line as usize,
+                column as usize,
+            );
+            let mut args: Vec<String> =
+                vec!["split-window".into(), config.open.split.flag().to_string()];
+            if config.open.size_percent > 0 {
+                args.push("-l".into());
+                args.push(format!("{}%", config.open.size_percent.min(95)));
+            }
+            args.push(command);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            tmux(&args).await;
         }
     }
     Ok(())

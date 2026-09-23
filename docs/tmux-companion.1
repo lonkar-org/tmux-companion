@@ -266,9 +266,9 @@ The sections are
 .Ic [general] , [dirs] , [git] , [network] , [battery] , [glyphs] ,
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [project] , [autosave] , [run] ,
-.Ic [clipboard] , [theme] , [bar]
+.Ic [clipboard] , [theme] , [bar] , [picker]
 and
-.Ic [picker] .
+.Ic [open] .
 .Bl -tag -width Ds
 .It Ic config path
 Which file is being read.
@@ -290,6 +290,11 @@ which is one person's bar and nobody else's.
 is where every picker puts its preview pane, or
 .Ql none
 for no preview at all.
+.Ic [open] split
+is which side the editor opens on,
+.Ql right
+or
+.Ql bottom .
 .Sh DIAGNOSTICS
 .Bl -tag -width Ds
 .It Ic doctor

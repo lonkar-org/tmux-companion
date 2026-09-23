@@ -373,3 +373,74 @@ mod tests {
         assert_eq!(scan("   \t  ", Path::new("/repo"), "/home/me", &fs), None);
     }
 }
+
+/// Quote one argument for the shell tmux runs a split's command through.
+///
+/// Single quotes, with any single quote inside closed, escaped and reopened,
+/// which is the only form that needs no other escaping.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The command that opens an editor on a file, at a line and column.
+///
+/// `{path}`, `{line}` and `{column}` in the template are replaced; the path is
+/// quoted for the shell and the numbers are not, because they are numbers.
+///
+/// This exists because the command was built as
+/// `nvim +call cursor(2,22) src/main.rs` and handed to `split-window`, which
+/// runs it through `sh`. Unquoted parentheses are a syntax error there, so the
+/// pane opened, the shell complained to a pane nobody was looking at, and it
+/// closed again. Opening a file at a line had never worked.
+pub fn editor_command(template: &str, path: &str, line: usize, column: usize) -> String {
+    template
+        .replace("{path}", &shell_quote(path))
+        .replace("{line}", &line.max(1).to_string())
+        .replace("{column}", &column.max(1).to_string())
+}
+
+#[cfg(test)]
+mod editor_command_tests {
+    use super::*;
+
+    #[test]
+    fn the_cursor_call_survives_a_shell() {
+        let cmd = editor_command(
+            "nvim '+call cursor({line},{column})' {path}",
+            "src/main.rs",
+            2,
+            22,
+        );
+        assert_eq!(cmd, "nvim '+call cursor(2,22)' 'src/main.rs'");
+
+        // The whole point: `sh -c` has to accept it.
+        let status = std::process::Command::new("sh")
+            .arg("-n")
+            .arg("-c")
+            .arg(&cmd)
+            .status()
+            .expect("sh runs");
+        assert!(status.success(), "sh cannot parse: {cmd}");
+    }
+
+    #[test]
+    fn a_path_with_a_space_or_a_quote_is_still_one_argument() {
+        let cmd = editor_command("nvim {path}", "/tmp/my notes/it's here.md", 1, 1);
+        assert_eq!(cmd, "nvim '/tmp/my notes/it'\\''s here.md'");
+        let status = std::process::Command::new("sh")
+            .arg("-n")
+            .arg("-c")
+            .arg(&cmd)
+            .status()
+            .expect("sh runs");
+        assert!(status.success(), "sh cannot parse: {cmd}");
+    }
+
+    #[test]
+    fn a_file_with_no_line_opens_at_the_top() {
+        // `open` reports 0 for "no line was in the text", and no editor takes
+        // line zero.
+        let cmd = editor_command("nvim '+call cursor({line},{column})' {path}", "a.rs", 0, 0);
+        assert_eq!(cmd, "nvim '+call cursor(1,1)' 'a.rs'");
+    }
+}
