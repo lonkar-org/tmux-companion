@@ -352,6 +352,11 @@ async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
 fn rusage_line() -> anyhow::Result<String> {
     use nix::sys::resource::{UsageWho, getrusage};
 
+    // `tv_usec` is `i32` on macOS and `i64` on Linux, so the conversion is
+    // required on one and redundant on the other. Written either way it builds
+    // on both and fails clippy on one, which is how this passed here and broke
+    // CI: `-D warnings` turns the redundant half into an error on Linux.
+    #[allow(clippy::useless_conversion)]
     fn micros(t: nix::sys::time::TimeVal) -> i64 {
         t.tv_sec() * 1_000_000 + i64::from(t.tv_usec())
     }
@@ -764,6 +769,30 @@ mod tests {
         assert_eq!(r.output, "");
     }
 
+    /// Every segment that rendered is introduced by its separator, and a side
+    /// that rendered nothing carries no separator at all.
+    ///
+    /// Not "the separator is always there", which is what this used to say and
+    /// what broke CI. On a path that is not a repository git renders nothing,
+    /// and on a machine with no battery -- a CI runner, a desktop, a container
+    /// -- so does battery, so the honest answer can be the trailing space and
+    /// nothing else. `assemble_right_with` drops the separator with its
+    /// segment on purpose; the old assertion contradicted the behaviour it was
+    /// supposed to be guarding and only passed on a laptop.
+    fn assert_separates_what_it_rendered(output: &str) {
+        if output.trim().is_empty() {
+            assert!(
+                !output.contains(&right_separator()),
+                "a separator with nothing after it: {output:?}"
+            );
+        } else {
+            assert!(
+                output.contains(&right_separator()),
+                "something rendered without its separator: {output:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn status_right_on_a_non_repo_path_still_emits_the_literals() {
         // gst is empty, so the response is the separator, whatever battery
@@ -779,15 +808,11 @@ mod tests {
         .await;
         assert!(r.error.is_none(), "{:?}", r.error);
         assert!(
-            r.output.contains(&right_separator()),
-            "missing separator: {:?}",
-            r.output
-        );
-        assert!(
             r.output.ends_with(' '),
             "missing trailing space: {:?}",
             r.output
         );
+        assert_separates_what_it_rendered(&r.output);
     }
 
     #[tokio::test]
@@ -805,7 +830,12 @@ mod tests {
         let a = dispatch(make(), Arc::clone(&st)).await;
         let b = dispatch(make(), Arc::clone(&st)).await;
         assert!(a.error.is_none() && b.error.is_none());
-        assert!(a.output.contains(&right_separator()));
-        assert!(b.output.contains(&right_separator()));
+        assert_separates_what_it_rendered(&a.output);
+        assert_separates_what_it_rendered(&b.output);
+        assert_eq!(
+            a.output.is_empty(),
+            b.output.is_empty(),
+            "a cold call and a warm one disagreed about whether anything rendered"
+        );
     }
 }

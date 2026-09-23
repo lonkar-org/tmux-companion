@@ -6,3 +6,7 @@
 # Local credentials for the publishing workflows, never committed. `gh secret
 # set --env-file .env.local` is what puts them on the repository.
 .env.local
+
+# wrangler's local R2 simulator, written when `r2 object put` runs without
+# --remote. Nothing here belongs to the project.
+.wrangler/
