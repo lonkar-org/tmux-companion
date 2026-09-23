@@ -6,6 +6,7 @@
 # Usage:
 #   /opt/playground/tour.sh            the tour
 #   /opt/playground/tour.sh welcome    the banner the playground shell opens with
+#   /opt/playground/tour.sh 12         resume at a step, after the tour was closed
 #
 # Every step sets @playground-step, which the second status line draws, so the
 # instruction is still in front of you after you have switched away from it.
@@ -652,9 +653,14 @@ wait_for "[ \"\$(panes_now)\" -le $before ]" "the run pane is still open: press 
 step_10() {
 begin "🎨" "A colour per project"
 cat <<EOF
-Eighteen themes, from six colours: ${DIM}theme init${OFF} writes the six, and
-${DIM}theme gen --shades${OFF} turns each into three by minting a lighter and a darker
-sibling. That is all of them, and ${DIM}theme add --bg colour99${OFF} makes another
+151 themes, from six colours: ${DIM}theme init${OFF} writes the six, and
+${DIM}theme gen --shades${OFF} adds every colour in tmux's 6x6x6 cube whose text clears
+WCAG AAA, 145 more, each named after the bundled colour it sits nearest to so
+they group in the picker. AAA and not AA because the worst colour in the cube
+is 4.60:1, so an AA filter keeps all 216 and filters nothing. If 151 is more
+than you want, ${DIM}--shades a4${OFF} gives 105, ${DIM}a5${OFF} gives 75 and ${DIM}a6${OFF} gives the
+original eighteen.
+${DIM}theme add --bg colour99${OFF} still makes one
 from any colour tmux takes -- ${DIM}theme list-colours${OFF} prints all 256 with a
 swatch. The text colour on each one is chosen to
 clear WCAG AA against its background, which is 4.5:1, so a theme cannot be
@@ -702,11 +708,13 @@ on, config or no config.
 Capital letters, so those are prefix and then ${BOLD}Shift-S${OFF} and ${BOLD}Shift-X${OFF}. Lower
 case s and x are tmux's own session list and pane kill.
 
-${WARN}One warning before you press Shift-X:${OFF} closing the last session on a tmux
-server ends the server, and in this container that puts you back at a plain
-shell with no tmux at all. Close ${BOLD}sparrow-cli${OFF}, not this one, and there will
-still be two sessions left. If you do end up outside, ${DIM}exit${OFF} leaves the
-container and you can start it again.
+${WARN}Press these in the sparrow-cli session, not here.${OFF} ${BOLD}Shift-X${OFF} closes
+whichever project you are in, and right now that is this one -- the tour. It
+closes just as willingly as any other session, so pressing it on this screen
+closes the thing you are reading. ${DIM}Alt-s${OFF} first, pick ${BOLD}sparrow-cli${OFF}, then press it.
+
+If you do close the tour, nothing is lost: the playground brings it back at
+this step and you carry on.
 EOF
 back_here
 hint "step 12: in sparrow-cli: prefix Shift-S saves, prefix Shift-X closes, Alt-s reopens"
@@ -826,7 +834,18 @@ exec zsh
 STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 step_10 step_11 step_12 step_13 step_14 step_15 step_16)
 TOTAL=${#STEPS[@]}
 
+# Where to start. `tour.sh 12` resumes at step 12, which is how the playground
+# puts the tour back after somebody closes it: step 12 asks for `prefix Shift-X`
+# and the person reading the step is sitting in the tour session while they read
+# it, so closing the tour is the likeliest mistake in the whole playground and
+# used to end the container.
 i=0
+if [ -n "${1:-}" ] && [ "$1" -eq "$1" ] 2>/dev/null; then
+  i=$(( $1 - 1 ))
+  [ "$i" -lt 0 ] && i=0
+  [ "$i" -ge ${#STEPS[@]} ] && i=$(( ${#STEPS[@]} - 1 ))
+fi
+
 # Whether the detour was taken, which decides what `b` on step 2 means: back
 # to the screen before it, which is 1.9 for somebody who went through the
 # basics and step 1 for somebody who skipped them.

@@ -65,13 +65,52 @@ tmux set -g destroy-unattached off
 # and the basics track asks somebody to press it. `exec tmux attach` would
 # make detaching end the container, which teaches the opposite of the lesson:
 # the whole point is that the server is still there when the client is gone.
-while true; do
-  tmux attach -t instructions
-  # Nothing left to attach to: every session was closed, so there is nothing
-  # to come back to either.
-  tmux has-session -t instructions 2>/dev/null || break
+# Which step the tour last announced, so a tour that has to be rebuilt comes
+# back where it was rather than at the beginning.
+last_step() {
+  local step
+  step=$(tmux show -gv @playground-step 2>/dev/null || true)
+  # The option is a sentence like "step 12: in sparrow-cli: ...".
+  step=${step#step }
+  step=${step%%:*}
+  case $step in
+    ''|*[!0-9]*) printf '1' ;;
+    *) printf '%s' "$step" ;;
+  esac
+}
 
-  cat <<'DETACHED'
+# Attach, and decide what to do each time the client comes back.
+#
+# Three ways out of this loop, and all three are reachable on purpose:
+#
+#   - typing `exit` at either prompt
+#   - closing every session, so there is nothing left to attach to
+#   - EOF on the prompt, for a terminal that has gone away
+#
+# The tour session being gone is deliberately *not* one of them, and it is
+# deliberately not an automatic rebuild either. Step 12 asks for `prefix
+# Shift-X` while somebody is reading it inside the tour session, so closing the
+# tour by accident is the likeliest mistake in the playground -- and it used to
+# end the container, because this loop attached by name and broke when the name
+# was gone. Rebuilding it silently is the opposite mistake: `quit_tour` ends
+# with `exec zsh`, so typing `exit` in the tour is a normal way to leave, and a
+# loop that rebuilds would trap somebody in a playground they cannot get out
+# of. So it asks.
+while true; do
+  if tmux has-session -t instructions 2>/dev/null; then
+    # `|| true`, because `set -e` is on and attach exits non-zero when the
+    # server goes away under it -- which is exactly the case this loop exists
+    # to handle. Without it the script died right here and the container
+    # stopped with status 1, before any of the logic below got a say.
+    tmux attach -t instructions || true
+  fi
+
+  # Nothing at all left: no session to come back to, so there is no question
+  # worth asking.
+  tmux list-sessions >/dev/null 2>&1 || break
+
+  if tmux has-session -t instructions 2>/dev/null; then
+    cat <<'DETACHED'
 
   You detached. tmux is still running, with everything in it exactly as you
   left it: the shells, the editors, the half-finished commands.
@@ -80,9 +119,49 @@ while true; do
   by accident. Nothing was saved, because nothing stopped.
 
 DETACHED
-  printf '  [Enter] to attach again, or type exit to leave the container: '
+    printf '  [Enter] to attach again, or type exit to leave the container: '
+    IFS= read -r answer || break
+    case "$answer" in
+      exit | quit | q) break ;;
+    esac
+    continue
+  fi
+
+  # The tour session has gone. Either `prefix Shift-X` closed it -- which is
+  # what that key does, to whichever project you are in, including this one --
+  # or somebody typed `exit` in it after the tour handed them a shell. From out
+  # here those look identical, so this asks rather than guessing.
+  step=$(last_step)
+  cat <<CLOSED
+
+  The tour session is gone. That is what prefix Shift-X does: it closes
+  whichever project you are in, and the tour is one of them.
+
+  Everything else is still running.
+
+    [Enter]  bring the tour back at step $step
+    p        attach to the playground instead
+    exit     leave the container
+
+CLOSED
+  printf '  Which? '
   IFS= read -r answer || break
   case "$answer" in
     exit | quit | q) break ;;
+    p | playground)
+      if tmux has-session -t playground 2>/dev/null; then
+        tmux attach -t playground || true
+      fi
+      ;;
+    *)
+      tmux new-session -d -s instructions -n tour -c "$HOME" \
+        "/opt/playground/tour.sh $step"
+      ;;
   esac
 done
+
+# Leaving the playground is not a failure. Without this the script ends on the
+# status of whatever last ran -- `tmux list-sessions` failing after the server
+# was closed, say -- and `docker run` returns 1 for somebody who simply
+# finished the tour, which reads as a broken container in any CI that runs it.
+exit 0

@@ -53,9 +53,19 @@ n=$(grep -c ';' "$HOME/.zsh_history" 2>/dev/null || echo 0)
 [ "$n" -ge 5 ] && ok "$n commands in history" || bad "history has commands" "found $n"
 
 printf '\n== themes\n'
-for f in _apply.tmux _reset.tmux ember.tmux pine-dark.tmux; do
+for f in _apply.tmux _reset.tmux ember.tmux; do
   [ -f "$HOME/.config/tmux/themes/$f" ] && ok "themes/$f" || bad "themes/$f" "not written"
 done
+# The generated palette, by count rather than by one filename. This used to
+# name `pine-dark.tmux`, from when `theme gen --shades` minted a lighter and a
+# darker sibling of each theme; it now sweeps the cube for every colour whose
+# text clears WCAG AAA, so the names are `pine-07` and there are about 150 of
+# them. A count survives the next rename, and a single missing file was never
+# the failure worth catching -- an empty picker was.
+themes=$(find "$HOME/.config/tmux/themes" -name '*.tmux' ! -name '_*' 2>/dev/null | wc -l | tr -d ' ')
+[ "${themes:-0}" -ge 100 ] \
+  && ok "$themes themes for the picker" \
+  || bad "the generated palette" "only $themes theme files, expected 100 or more"
 if grep -q 'set -g ' "$HOME/.config/tmux/themes/_apply.tmux"; then
   bad "themes are session-scoped" "_apply.tmux uses set -g, so one session paints them all"
 else
