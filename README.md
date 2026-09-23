@@ -51,7 +51,7 @@ Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 ## Try it first
 
 ```sh
-docker run --rm -it ghcr.io/lonkar-org/tmux-companion:playground
+docker run --rm -it lonkarorg/tmux-companion:playground
 ```
 
 tmux, the binary, five fake projects and a guided tour through the bindings, in

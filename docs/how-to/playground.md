@@ -6,7 +6,7 @@ Nothing is mounted from your machine and nothing is published off it, so the
 whole thing goes away with the container.
 
 ```sh
-docker run --rm -it ghcr.io/lonkar-org/tmux-companion:playground
+docker run --rm -it lonkarorg/tmux-companion:playground
 ```
 
 From a clone, `scripts/playground.sh` builds the image and runs it. The first

@@ -3,7 +3,7 @@
 # A tmux-companion playground: tmux, the binary, a config with everything
 # turned on, five fake projects and a guided tour.
 #
-#   docker run --rm -it ghcr.io/lonkar-org/tmux-companion:playground
+#   docker run --rm -it lonkarorg/tmux-companion:playground
 #
 # Nothing here touches the host. No volumes, no ports, and the container is
 # meant to be thrown away, so anything typed inside it dies with it.
