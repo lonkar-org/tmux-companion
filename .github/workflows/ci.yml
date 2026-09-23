@@ -5,10 +5,22 @@ name: CI
 # rust-toolchain.toml, which is what keeps the formatting identical to a
 # maintainer's machine.
 
+# Markdown is excluded because nothing in it is shipped or tested. The docs
+# that *are* tested are not markdown: `the_manual_documents_every_subcommand`
+# reads docs/tmux-companion.1 and the config tests read
+# docs/config.example.toml, so both of those still start a run. A README or a
+# CHANGELOG edit does not.
+#
+# If a required status check is ever turned on for this repository, take this
+# out: GitHub leaves the check pending rather than passing it on a pull request
+# that only touches ignored paths, so a documentation-only pull request would
+# never become mergeable.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md']
   pull_request:
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 env:

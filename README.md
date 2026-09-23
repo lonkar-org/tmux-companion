@@ -1,6 +1,11 @@
 # tmux-companion
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
+[![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
+[![Demo](https://img.shields.io/badge/demo-asciinema-d40000?logo=asciinema&logoColor=white)](https://asciinema.org/a/1266213)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 One binary behind your whole tmux config. It draws the status bar, runs the
 pickers behind your keybindings, and builds your project sessions, out of a
@@ -125,12 +130,14 @@ smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
 
 [![tmux-companion: the project picker, a new window, run and zen](https://media.lonkar.org/tmux-companion/usage.gif)](https://asciinema.org/a/1266213)
 
+https://asciinema.org/a/1266213
+
 Twenty four seconds of it: the project picker, a window opened somewhere else,
 a command pulled out of shell history, and zen. The chords are in the right
 hand column and every one of them was really pressed, so those are the real
-popups. The [full recording](https://asciinema.org/a/1266213) runs
-four minutes and covers the rest, and it is worth watching there rather than
-here because you can pause it.
+popups. The full recording behind that link runs four minutes and covers the
+rest, and it is worth watching there rather than here because you can pause it
+and it has a marker on every chapter.
 
 Every picker is a `display-popup -E` away. `keys` is the one I'd bind first:
 tmux has notes on its bindings and no way to search them, so the popup reads

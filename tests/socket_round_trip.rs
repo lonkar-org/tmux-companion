@@ -85,6 +85,42 @@ impl TestServer {
 }
 
 /// One request and one response over a socket, with no environment involved.
+/// Ask the daemon on one socket to stop, and wait for it to let go.
+///
+/// This used to be `pkill -f "<binary> server"`, with a comment explaining
+/// that the path under target/ could not match an installed daemon. That was
+/// true and beside the point: every server in the test run is that same
+/// binary, so the two tests that did this killed the servers belonging to
+/// whichever tests happened to be running beside them. It showed up as
+/// `SIGTERM before listening` and `Connection reset by peer` in tests that had
+/// done nothing wrong, and only on CI, because the suite is slower there and
+/// the windows overlap.
+///
+/// The daemon already knows how to be asked: `__shutdown` is what a client
+/// sends to replace a daemon from an older build, and it answers before it
+/// exits so the caller can tell "it stopped" from "it was never there".
+fn shut_down(sock: &std::path::Path) {
+    use std::io::Write;
+
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(sock) else {
+        return;
+    };
+    let req = Request::raw("__shutdown", serde_json::Value::Null);
+    let mut msg = serde_json::to_string(&req).expect("serialise");
+    msg.push('\n');
+    let _ = stream.write_all(msg.as_bytes());
+
+    // It sleeps 50ms before exiting, so give it room without making every
+    // caller wait: the loop stops as soon as the socket refuses a connection.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if std::os::unix::net::UnixStream::connect(sock).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn send_to(sock: &std::path::Path, req: Request) -> Response {
     use std::io::{BufRead, BufReader, Write};
 
@@ -275,14 +311,7 @@ fn a_client_with_no_server_starts_one() {
         .output()
         .expect("client runs");
 
-    // Kill the server this test caused to exist, by the exact path of the test
-    // binary under target/, which cannot match an installed daemon.
-    let _ = Command::new("pkill")
-        .args([
-            "-f",
-            &format!("{} server", env!("CARGO_BIN_EXE_tmux-companion")),
-        ])
-        .status();
+    shut_down(&sock);
     let _ = std::fs::remove_file(&sock);
 
     assert!(
@@ -372,11 +401,6 @@ fn a_client_replaces_a_daemon_from_another_build() {
     );
     assert!(err.contains("replacing daemon"), "{err}");
 
-    let _ = Command::new("pkill")
-        .args([
-            "-f",
-            &format!("{} server", env!("CARGO_BIN_EXE_tmux-companion")),
-        ])
-        .status();
+    shut_down(&sock);
     let _ = std::fs::remove_file(&sock);
 }
