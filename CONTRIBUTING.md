@@ -38,8 +38,11 @@ the first command will tell you before CI does.
   commit message and say why, because somebody's bar is going to shift and
   they'll want to know it was deliberate.
 - **A measurement, for anything performance-shaped.** `BENCHMARKS.md` explains
-  how the numbers were taken and `bench-cpu.py` is the instrument. A claim that
-  something's faster wants a number beside it.
+  how the numbers were taken and `just bench` is the instrument: it drives a
+  real tmux with a real key press and measures both the wait and the CPU. A
+  claim that something's faster wants a number beside it, and the pickers are
+  the reason to measure rather than assume -- rewriting them in Rust halved
+  what they cost and left what you wait for exactly where it was.
 
 ## Things worth knowing before you start
 

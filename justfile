@@ -94,6 +94,28 @@ ci: fmt-check lint test doc
 clean:
     cargo clean
 
+# Both arms, from inside a real tmux: a key is pressed, the popup opens, and
+# the clock runs until the first row of results reaches the client. The before
+# arm is the actual zsh, read out of mysetup at the commit that replaced it,
+# so this needs the author's machine; elsewhere it measures the new arm alone
+# and says so.
+
+# Every benchmark, both arms.
+bench WHAT="all":
+    ./scripts/bench.sh {{WHAT}}
+
+# What the status bar costs per second.
+bench-bar:
+    ./scripts/bench.sh bar
+
+# Keypress to first row, and CPU per press.
+bench-pickers:
+    ./scripts/bench.sh pickers
+
+# Daemon CPU per request, today's binary only.
+bench-segments:
+    ./scripts/bench.sh segments
+
 # Did the reel show what it claims, and is anything in it unpublishable?
 demo-cast-check CAST="demo/recordings/usage.cast":
     ./demo/check-cast.py {{CAST}}

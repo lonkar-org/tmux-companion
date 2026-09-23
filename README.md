@@ -41,17 +41,21 @@ machine. [docs/how-to/playground.md](docs/how-to/playground.md).
 
 ## What it costs
 
-Measured on one machine, with the method beside the numbers in
-[BENCHMARKS.md](./BENCHMARKS.md).
+Measured from inside tmux on one machine, against the zsh this replaced, with
+the method beside the numbers in [BENCHMARKS.md](./BENCHMARKS.md).
 
 | | |
 | --- | --- |
-| the recommended bar | 18.43 ms/s, 1.8% of a core |
-| the five-call bar it replaced | 153.77 ms/s, 15.4% of a core |
-| one fork and exec | 12.4 ms, or 14.6 ms as tmux runs it |
-| the whole right side, computed | 2.6 ms |
-| `keys`, warm, against `fzf --filter` | 8.3 ms against 18.8 ms |
-| a cold `git status` after a restart | 51 ms, once |
+| the bar | 29.71 ms/s, 3.0% of a core |
+| the zsh bar it replaced | 344.01 ms/s, 34.4% of a core |
+| a picker, keypress to first row | 86 ms, and the zsh took 82 |
+| a picker, CPU per press | 33.3 ms, against 66.7 for the zsh |
+| the whole right side, computed | 1.43 ms |
+| one fork and exec, as tmux runs it | 13.07 ms |
+
+The picker rows are the honest part. Opening one is not faster: what a person
+waits through is `display-popup` at 21 ms, a process starting and a terminal
+painting, and none of that got cheaper. What halved is what it costs to do.
 
 ## Why
 

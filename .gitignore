@@ -10,3 +10,4 @@
 # wrangler's local R2 simulator, written when `r2 object put` runs without
 # --remote. Nothing here belongs to the project.
 .wrangler/
+__pycache__/
