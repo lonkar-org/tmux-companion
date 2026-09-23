@@ -4,8 +4,12 @@ The port replaces `~/.config/tmux/comrades` and stops. Nothing in this file
 starts before that is done, and it exists so the survey behind it does not have
 to be repeated, and so the port plan can stay about the port.
 
-Star counts and last-push dates were checked on 2026-09-22 against the GitHub
-API. They are here as evidence of how many people use a thing, not as a ranking.
+Last-push dates were checked on 2026-09-22 against the GitHub API. They say
+whether a plugin is still being worked on, which is what the tiers below turn
+on, and they are not a ranking, and nothing here is a judgement of anybody's
+work. Star counts have been left out for the same reason, since they decide
+nothing in the rules below and a column of them beside somebody's repository
+would only be sizing people up.
 
 ## The rule for anything on this list
 
@@ -168,97 +172,100 @@ inviting somebody to apply to mine.
 
 ## Daemon-native
 
-Every plugin in this table is a shell script on a timer, because a plugin has
-nowhere else to live. The daemon is already up, holding caches and a tokio
-runtime, so each of these is a scheduled task rather than a program that has to
-be started, do its work, and exit before the next tick wants it again.
+These are all shell scripts on a timer, which is the shape the plugin API leaves
+an author with. The daemon is already up, holding caches and a tokio runtime, so
+the same idea lands here as a scheduled task rather than as a program that has
+to start, do its work, and exit before the next tick wants it again. That is a
+difference in where the code lives and not in how well it was written.
 
-| Feature | Plugin today | Stars | Last push | What it reuses here |
-| --- | --- | --- | --- | --- |
-| git autofetch | `thepante/tmux-git-autofetch` | 22 | 2026-09-12 | the `autosave` task shape, the repo cache |
-| notify when a long command finishes | `rickstaa/tmux-notify` | 278 | 2026-05-18 | the `sh-jobs` process scan, plus exit code and duration |
-| reload tmux.conf on save | `b0o/tmux-autoreload`, archived | 123 | 2024-02-16 | the config watch the daemon needs for `keys` anyway |
-| online status, packet loss, ping | `tmux-plugins/tmux-online-status` 185, `jaclu/tmux-packet-loss` 15 | | 2023-09, 2026-08 | one async probe into a `TtlMap` |
-| time spent per session | `tmux-code-time`, `tmux-timetrap` | small | | the usage log `keys` already writes |
+| Feature | Plugin today | Last push | What it reuses here |
+| --- | --- | --- | --- |
+| git autofetch | `thepante/tmux-git-autofetch` | 2026-09-12 | the `autosave` task shape, the repo cache |
+| notify when a long command finishes | `rickstaa/tmux-notify` | 2026-05-18 | the `sh-jobs` process scan, plus exit code and duration |
+| reload tmux.conf on save | `b0o/tmux-autoreload`, archived | 2024-02-16 | the config watch the daemon needs for `keys` anyway |
+| online status, packet loss, ping | `tmux-plugins/tmux-online-status`, `jaclu/tmux-packet-loss` | 2023-09, 2026-08 | one async probe into a `TtlMap` |
+| time spent per session | `tmux-code-time`, `tmux-timetrap` | | the usage log `keys` already writes |
 
 Autofetch is the one I would build first of these, because the ahead and behind
 counts the git segment renders are wrong until somebody fetches, and a status
 bar that reports a stale number confidently is worse than one that reports
 nothing.
 
-## One table, four plugins
+## One table, four questions
 
 The `[[sh-jobs.job]]` table maps a process-name regex to an icon, a label and a
 colour. The same table answers three more questions:
 
-- naming windows after what is running in them, which is
-  `ofirgall/tmux-window-name` (298 stars, pushed 2026-09-20) and is a Python
-  daemon, so this removes a runtime as well as a process
-- icons per window, `joshmedeski/tmux-nerd-font-window-name` (226 stars,
-  2026-09-21)
+- naming windows after what is running in them, which
+  `ofirgall/tmux-window-name` does well and does as a Python daemon, so the
+  version here removes a runtime as well as a process
+- icons per window, which is `joshmedeski/tmux-nerd-font-window-name`
 - which panes are running an AI agent and whether it is waiting for input,
   which is where the ecosystem is thinnest and newest: `tmux-agent-indicator`,
   `tmux-claude-status`, `tmux-scout`, `marmonitor`, `opensessions` and
   `tmux-agent-view` all appeared in `awesome-tmux` recently and none of them has
   settled
 
-Four features, one config table, and the scan that feeds them is the scan
+Both of the first two are alive and worth installing on their own, so what this
+section is about is one config table answering more than it was written for
+rather than replacing either of them, and the scan that feeds it is the scan
 `sh-jobs` already pays for.
 
 ## Cheap after the matcher exists
 
-| Feature | Plugin today | Stars | Note |
+| Feature | Plugin today | Last push | Note |
 | --- | --- | --- | --- |
-| fuzzy search of the scrollback | `roosta/tmux-fuzzback` | 188, 2025-05 | `capture-pane` plus `nucleo` |
-| filter the pane buffer by pattern | nothing with traction | | log triage, small once capture and the matcher are there |
+| fuzzy search of the scrollback | `roosta/tmux-fuzzback` | 2025-05 | `capture-pane` plus `nucleo` |
+| filter the pane buffer by pattern | nothing found | | log triage, small once capture and the matcher are there |
 
 Hint-based copy was in this table and has been taken out. `Morantron/tmux-fingers`
-has 1473 stars and was pushed in June 2026, `fcsonline/tmux-thumbs` has 1099,
-is already Rust and has been quiet since April 2024, and between them they've
-been the maintainers' main project for
-years. The only argument for a fifth one was that the pattern table would be
-shared with `open`, which is not enough to justify competing with somebody's
-signature work, so `open` will ship a config snippet that hands off to thumbs
-instead of replacing it.
+was pushed in June 2026 and `fcsonline/tmux-thumbs` is already Rust, and both
+have been their maintainers' main project for years, which puts them squarely in
+the third tier. The only argument for a fourth implementation was that the
+pattern table would be shared with `open`, and that is not reason enough, so
+`open` will ship a config snippet that hands off to thumbs instead.
 
 ## Segments that cost a fork today
 
 Each of these is its own `#()` call in the configuration that ships with it,
 and inside the combined right-hand side they cost nothing extra.
 
-| Segment | Plugin today | Stars | Source of truth |
-| --- | --- | --- | --- |
-| kube context and namespace | `tony-sol/tmux-kubectx` | 12 | `~/.kube/config`, watched by mtime |
-| AWS profile and vault expiry | `mateimicu/tmux-aws-vault` | 2 | the vault session file |
-| disk free | `tassaron/tmux-df` | 44 | `statvfs`, shown only under a threshold, same discipline as `net` |
-| ssh user and host, per pane | `soyuka/tmux-current-pane-hostname` | 87 | better than the `if-shell $SSH_CONNECTION` in `status-left` today, which is per server and not per pane |
-| CPU and memory of this session's processes | `sjdonado/tmux-workspace-usage` | 6 | the number you actually want, and the scan already happens |
-| macOS dark and light follow | `erikw/tmux-dark-notify` | 99 | pairs with `theme apply` |
-| per-session colour from the session name | `imomaliev/tmux-peacock` | 39 | a hash to a hue, and `theme gen` already computes the contrast so the text colour falls out |
-| world clock | `alexanderjeurissen/tmux-world-clock` | 36, dead since 2021 | pure arithmetic |
+| Segment | Plugin today | Source of truth |
+| --- | --- | --- |
+| kube context and namespace | `tony-sol/tmux-kubectx` | `~/.kube/config`, watched by mtime |
+| AWS profile and vault expiry | `mateimicu/tmux-aws-vault` | the vault session file |
+| disk free | `tassaron/tmux-df` | `statvfs`, shown only under a threshold, same discipline as `net` |
+| ssh user and host, per pane | `soyuka/tmux-current-pane-hostname` | per pane, where the `if-shell $SSH_CONNECTION` in `status-left` today is per server |
+| CPU and memory of this session's processes | `sjdonado/tmux-workspace-usage` | the scan already happens for `sh-jobs` |
+| macOS dark and light follow | `erikw/tmux-dark-notify` | pairs with `theme apply` |
+| per-session colour from the session name | `imomaliev/tmux-peacock` | a hash to a hue, and `theme gen` already computes the contrast so the text colour falls out |
+| world clock | `alexanderjeurissen/tmux-world-clock`, dead since 2021 | pure arithmetic |
 
 ## Twenty-line utilities almost nobody has
 
-| Feature | Plugin today | Stars |
-| --- | --- | --- |
-| zoom a pane into its own window and back | `jaclu/tmux-power-zoom` | 63 |
-| kill the pane's process, TERM then KILL | `tmux-plugins/tmux-cowboy` | 58, dead since 2021 |
-| mute local bindings for a nested remote tmux | `MunifTanjim/tmux-suspend` | 180 |
-| named side panes, toggled on demand | `nickdiego/tmux-pocket-pane` | 1 |
-| move panes between windows with a cut and paste flow | `kristopolous/tmux-gentrify` | 17 |
-| word and line copy on double and triple click | `aless3/tmux-click-copy` | 8 |
-| list listening ports and kill from a picker | gone: `jrmoulton/tmux-port` 404s and no living equivalent was found | — |
+| Feature | Plugin today |
+| --- | --- |
+| zoom a pane into its own window and back | `jaclu/tmux-power-zoom` |
+| kill the pane's process, TERM then KILL | `tmux-plugins/tmux-cowboy`, dead since 2021 |
+| mute local bindings for a nested remote tmux | `MunifTanjim/tmux-suspend` |
+| named side panes, toggled on demand | `nickdiego/tmux-pocket-pane` |
+| move panes between windows with a cut and paste flow | `kristopolous/tmux-gentrify` |
+| word and line copy on double and triple click | `aless3/tmux-click-copy` |
+| list listening ports and kill from a picker | gone: `jrmoulton/tmux-port` 404s and no living equivalent was found |
 
-`tmux-pocket-pane` at one star is the one I keep looking at. The idea is good
-and the adoption says nothing about the idea, since a plugin's star count
-measures how many people found it, which for something published without a
-screenshot in a list of four hundred is close to a measure of luck.
+`tmux-pocket-pane` is the one I keep looking at. It has a single star and the
+idea deserves better than that, which is the whole reason star counts are not a
+column in these tables: what a number like that measures is how many people
+happened to find a thing published without a screenshot in a list of four
+hundred, and that is closer to luck than to quality.
 
 ## A page instead of a feature
 
-`tmux-plugins/tmux-logging` has 1258 stars and is a wrapper around `pipe-pane`.
-That is the whole plugin, and it is one of the most-installed things in the
-ecosystem.
+`tmux-plugins/tmux-logging` is a wrapper around `pipe-pane`, and with 1258 stars
+it is one of the most-installed things in the ecosystem. The number is worth
+quoting here because it is the argument: a thin wrapper gets installed that
+often when the thing it wraps is hard to find, so the gap it fills is
+documentation.
 
 So `docs/how-to/things-tmux-already-does.md`, covering `pipe-pane`,
 `display-menu`, `customize-mode` on prefix+C, `allow-passthrough`,
