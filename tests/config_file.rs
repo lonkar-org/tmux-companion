@@ -117,6 +117,14 @@ fn a_broken_config_stops_the_daemon_and_the_client_says_why() {
         .expect("server runs");
 
     assert!(!server.status.success(), "the daemon must refuse to start");
+    // And it must refuse before the socket exists. Binding first and parsing
+    // second leaves the daemon reachable for as long as the parse takes, which
+    // is a window a client can connect inside and then be reset in, and on a
+    // loaded machine that window is wide enough to hit.
+    assert!(
+        !sock.exists(),
+        "a daemon that refused its config must not have left a socket behind"
+    );
     let err = String::from_utf8_lossy(&server.stderr);
     assert!(
         err.contains("ttl_secs"),
@@ -142,6 +150,61 @@ fn a_broken_config_stops_the_daemon_and_the_client_says_why() {
     );
 
     let _ = std::fs::remove_file(&sock);
+}
+
+#[test]
+fn a_client_that_is_accepted_and_then_dropped_still_names_the_config() {
+    // The ordering bug, pinned from the client's side. A daemon refusing a
+    // broken config used to bind the socket first and parse second, so a
+    // client could connect, be accepted, and then be reset when it gave up.
+    // `connect_with_retry` only consulted `last-error` when the connect
+    // failed, so what reached the person was
+    // `Connection reset by peer (os error 104)`.
+    //
+    // This stands in a listener that accepts and immediately closes, which is
+    // what that daemon looked like from the outside, and leaves a `last-error`
+    // beside it for the client to find.
+    use std::io::Read;
+    use std::os::unix::net::UnixListener;
+
+    let dir = Dir::new("dropped");
+    let state = dir.0.join("state");
+    std::fs::create_dir_all(state.join("tmux-companion")).expect("state dir");
+    std::fs::write(
+        state.join("tmux-companion").join("last-error"),
+        "ttl_secs: invalid type: string \"soon\"\n",
+    )
+    .expect("last-error");
+
+    let sock = std::path::PathBuf::from(format!("/tmp/tc-dropped-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&sock);
+    let listener = UnixListener::bind(&sock).expect("bind");
+
+    let accepting = std::thread::spawn(move || {
+        if let Ok((mut s, _)) = listener.accept() {
+            // Read whatever it sends, then hang up without answering, which is
+            // the shape of a daemon exiting mid-request.
+            let mut buf = [0u8; 64];
+            let _ = s.read(&mut buf);
+        }
+    });
+
+    let client = bin()
+        .args(["gst", env!("CARGO_MANIFEST_DIR")])
+        .env("XDG_STATE_HOME", &state)
+        .env("TMUX_COMPANION_SOCK", &sock)
+        .output()
+        .expect("client runs");
+    let err = String::from_utf8_lossy(&client.stderr);
+
+    let _ = accepting.join();
+    let _ = std::fs::remove_file(&sock);
+
+    assert!(
+        err.contains("ttl_secs") && err.contains("config check"),
+        "a dropped connection has to say what the daemon refused, not just how \
+         the socket failed: {err}"
+    );
 }
 
 #[test]

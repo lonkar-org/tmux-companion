@@ -105,14 +105,36 @@ pub async fn send_once(req: &Request) -> anyhow::Result<Response> {
 
     let mut msg = serde_json::to_string(req)?;
     msg.push('\n');
-    writer.write_all(msg.as_bytes()).await?;
+    writer.write_all(msg.as_bytes()).await.map_err(died)?;
 
     let mut lines = BufReader::new(reader).lines();
-    match lines.next_line().await? {
+    match lines.next_line().await.map_err(died)? {
         Some(line) => Ok(serde_json::from_str(&line)?),
         // The server closed without answering. Treated as an error rather than
-        // an empty render, so a status bar shows something went wrong.
-        None => anyhow::bail!("server closed the connection without a response"),
+        // an empty render, so a status bar shows something went wrong, and
+        // routed through the same explanation, since a daemon that accepted
+        // and then went away has usually just refused its config.
+        None => Err(died(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "no response",
+        ))),
+    }
+}
+
+/// A daemon that died mid-request, explained by its own last words where it
+/// left any.
+///
+/// Connecting and being reset is a different failure from failing to connect,
+/// and only the second one used to reach `last_config_error`. A daemon that
+/// binds and then gives up -- which is what one refusing a broken config did
+/// until it started parsing before it binds -- accepts the connection first,
+/// so the client got `Connection reset by peer (os error 104)` and the person
+/// got no idea which key was wrong. Which of the two they saw came down to how
+/// loaded the machine was.
+fn died(e: std::io::Error) -> anyhow::Error {
+    match last_config_error() {
+        Some(c) => anyhow::anyhow!("config: {c}"),
+        None => anyhow::anyhow!("the daemon closed the connection: {e}"),
     }
 }
 

@@ -27,6 +27,24 @@ pub async fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Parsed before the socket exists, and that order is the whole point. A
+    // daemon that binds first and validates second is reachable for as long as
+    // the parse takes, so a client can connect, be accepted, and then have the
+    // connection reset when the daemon gives up on the config. What reaches
+    // the person is `Connection reset by peer (os error 104)` rather than the
+    // name of the key they got wrong, and which of the two they see depends on
+    // how loaded the machine is.
+    //
+    // The error goes to stderr and to the state file, which is where a client
+    // looks when its own start attempt produced no server.
+    let config = match crate::config::load() {
+        Ok((c, _)) => c,
+        Err(e) => {
+            record_config_error(&e);
+            return Err(anyhow::anyhow!("{e}"));
+        }
+    };
+
     // Remove stale socket file from a previous crashed run.
     let _ = std::fs::remove_file(&sock);
 
@@ -53,18 +71,6 @@ pub async fn run() -> anyhow::Result<()> {
             return Ok(());
         }
         Err(e) => return Err(e.into()),
-    };
-
-    // Parsed once, here, so a broken config stops the daemon starting rather
-    // than being discovered segment by segment. The error goes to stderr and to
-    // the state file, which is where a client looks when its own start attempt
-    // produced no server.
-    let config = match crate::config::load() {
-        Ok((c, _)) => c,
-        Err(e) => {
-            record_config_error(&e);
-            return Err(anyhow::anyhow!("{e}"));
-        }
     };
 
     // Started before the accept loop, so it runs for as long as the daemon

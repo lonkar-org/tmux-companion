@@ -7,6 +7,16 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- A broken config reached the person as `Connection reset by peer (os error
+  104)` instead of the name of the key that was wrong, on a machine loaded
+  enough to lose a race. The daemon bound its socket before it parsed the
+  config, so it was reachable for as long as the parse took: a client that
+  connected inside that window was accepted and then dropped when the daemon
+  gave up, and the client only consulted the recorded error when the *connect*
+  had failed. The daemon parses before it binds now, so a refusal leaves no
+  socket at all, and a connection that dies mid-request is explained by the
+  daemon's own last words wherever it left any.
+
 - `project save` and the save `close-project` does on the way out are all or
   nothing. Three things could each lose part of a layout while reporting
   success: a pane or window line tmux answered with that did not parse was
