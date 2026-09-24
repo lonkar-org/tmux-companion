@@ -8,4 +8,15 @@
 # catthehacker/ubuntu:act-latest is the medium image act itself recommends.
 # It is not GitHub's runner image and does not pretend to be: it has no
 # rustup, which is why ci.yml installs rustup when the runner has none.
+# Both runner labels, and both pointed at the same Linux image. act skips a job
+# whose platform it has no mapping for, and a matrix job is skipped whole: with
+# only ubuntu-latest here, `act -W ci.yml` quietly ran the two jobs that are not
+# a matrix and silently dropped clippy and the tests, which is the one job worth
+# running. It says so, in a line that scrolls past among a hundred others, and
+# then the run ends green.
+#
+# The macOS leg on this image is not macOS and does not pretend to be. What it
+# checks is that the workflow's steps are right, which is all act ever checks;
+# the platform difference is what the real runner is for.
 -P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P macos-latest=catthehacker/ubuntu:act-latest

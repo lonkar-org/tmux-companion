@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.2.0 - 2026-09-24
 
 ### Changed
 
@@ -27,6 +27,15 @@ entry per phase of the comrades port.
   that knows.
 
 ### Added
+
+- The playground image has a description on Docker Hub, pushed from the release
+  rather than pasted into a web form once. It is the page anybody who finds the
+  image lands on first and it was empty, and it is the one thing about the
+  image that cannot ship inside it, because it lives in Hub's own database. It
+  names the two things a stranger otherwise finds out the hard way: run the
+  container from a terminal that is not already in tmux, or ctrl-b reaches
+  their own server and every binding in the tour looks broken, and the font is
+  the one thing the image cannot supply.
 
 - The theme picker previews a theme rather than listing it. The card is the
   three colours it is built from, a ramp showing where the main one can go, and
@@ -75,6 +84,22 @@ entry per phase of the comrades port.
   divider, a theme card wants a frame.
 
 ### Fixed
+
+- `just act-ci` runs clippy and the tests rather than quietly skipping them.
+  act skips a job whose runner platform it has no mapping for, and skips a
+  matrix job whole, so naming only `ubuntu-latest` meant the one job worth
+  running was dropped while rustfmt and rustdoc passed and the run ended green.
+  Both labels are mapped now, to the same Linux image: what act checks is that
+  the workflow's steps are right, and the platform difference is what the real
+  runner is for.
+
+- The test suite writes its themes into its own sandbox instead of into
+  `$HOME`. `themes_dir` resolves from `HOME` as well as `XDG_CONFIG_HOME`, and
+  the harness set only the second, so with a `~/.tmux.conf` present every test
+  wrote into one shared directory in the home of whoever ran them. On GitHub's
+  ubuntu runner, which has that file where this laptop does not, whether a
+  theme was in place depended on which other tests had run; it read as a tmux
+  3.4 difference for two pushes and was not one.
 
 - The theme card draws a theme in its own colours rather than in black. It read
   `@theme-color-black` and `@theme-color-secondary`, two names carried over

@@ -1,10 +1,10 @@
 //! Stamps a build identifier into the binary.
 //!
 //! The version alone cannot answer "is this daemon from the build I just
-//! installed": during development every build is 0.1.0, and an upgraded binary
-//! on disk changes nothing until the old process exits. The stamp makes the
-//! mismatch visible, which is what lets a client restart a stale daemon
-//! instead of quietly getting an older answer.
+//! installed": during development every build carries the same version, and
+//! an upgraded binary on disk changes nothing until the old process exits. The
+//! stamp makes the mismatch visible, which is what lets a client restart a
+//! stale daemon instead of quietly getting an older answer.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
