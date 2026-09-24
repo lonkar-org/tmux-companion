@@ -150,6 +150,15 @@ demo-markers CAST="demo/recordings/usage.cast" *ARGS:
 demo-record REEL="usage":
     ./demo/record-demo.sh --reel {{REEL}}
 
+# The ubuntu job's conditions, here: tmux 3.4 and four cores in a throwaway
+# container, in a loop. A laptop with sixteen cores cannot lose the races a
+# four-core runner loses, so a test that fails only on CI needs this rather
+# than another twenty local reruns.
+
+# Run the suite under CI's conditions, repeatedly.
+repro-ci RUNS="12":
+    RUNS={{RUNS}} ./scripts/repro-ci.sh
+
 # rustdoc is a CI job of its own and fails on a broken intra-doc link, which is
 # what a rename leaves behind. Neither clippy nor the tests cover it.
 

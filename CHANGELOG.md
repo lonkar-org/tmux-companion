@@ -7,6 +7,12 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- The end-to-end tests told the tool which config to read and which daemon
+  socket to use, but never which tmux to talk to, so every tmux command the
+  binary ran under test went to the default socket rather than to the server
+  the test had started. `scripts/repro-ci.sh` runs the suite under the CI
+  job's conditions and is what found it.
+
 - A broken config reached the person as `Connection reset by peer (os error
   104)` instead of the name of the key that was wrong, on a machine loaded
   enough to lose a race. The daemon bound its socket before it parsed the

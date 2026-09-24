@@ -67,7 +67,32 @@ impl Tmux {
             self.sandbox.join("bin").display(),
             std::env::var("PATH").unwrap_or_default()
         );
-        cmd.env("PATH", path)
+        // Which tmux the tool talks to. Without this the binary shells out to
+        // plain `tmux`, which finds a server through $TMUX and otherwise falls
+        // back to the default socket, so every tmux command the tool ran went
+        // to the developer's own server or, on a machine with no tmux running,
+        // to nothing at all: `error connecting to /tmp/tmux-0/default`.
+        //
+        // That is not a detail. `a_new_session_is_painted_by_the_hook_the_
+        // example_config_sets` exists to prove that `theme apply -t ""`
+        // resolves an empty target to the session it names, and that call has
+        // never once reached the server the test set up. It passed anyway,
+        // because the session-created hook runs inside the server, inherits
+        // $TMUX, and repainted the session a moment after the test had unset
+        // the option. Whether that repaint landed before or after the unset is
+        // what decided the result, which is why it passed here and failed on
+        // CI, and why three separate theories about tmux targets went nowhere.
+        //
+        // The path is where tmux puts a socket named with -L. The uid comes
+        // off a directory this process just made rather than from another
+        // dependency.
+        let uid = std::fs::metadata(&self.sandbox)
+            .map(|m| std::os::unix::fs::MetadataExt::uid(&m))
+            .unwrap_or(0);
+        let tmux_sock = format!("/tmp/tmux-{uid}/{}", self.socket);
+
+        cmd.env("TMUX", format!("{tmux_sock},0,0"))
+            .env("PATH", path)
             // HOME as well as XDG_CONFIG_HOME, because the themes directory is
             // resolved from both: with no `tmux.conf` under XDG_CONFIG_HOME,
             // `themes_dir` looks for `$HOME/.tmux.conf` and, finding one,
