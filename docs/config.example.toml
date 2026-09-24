@@ -607,7 +607,130 @@ preview = "right"
 
 # The preview's share of the popup, as a percentage. Clamped to 20-80, because
 # outside that one half of the split is too narrow to read.
+#
+# ctrl-p inside a picker cycles this through 30, 50, 70 and off, because there
+# is no drag-resize to reach for: a row too long for the list column can only be
+# read by giving the column more room.
 preview_percent = 55
+
+# How big the popup itself is belongs in tmux.conf, on the `display-popup -w`
+# and `-h` of the binding that opens it. Everything below is what the picker
+# draws inside whatever tmux gives it.
+
+# The line the box is drawn with: none, plain, rounded, double or thick.
+#
+# `none` is the one to set when the popup already has a border of its own --
+# `display-popup -B` turns tmux's off, and without that flag two borders end up
+# nested one inside the other.
+border = "rounded"
+
+# Where the picker says which picker it is: hidden, top-left, top-center,
+# top-right, bottom-left, bottom-center or bottom-right.
+#
+# The label itself belongs to the picker rather than here, because only the
+# picker knows whether it is the key search or the theme list. This is where it
+# sits, and it is a setting because a label on the bottom border is fzf's habit
+# and a title over the list is skim's, and people arrive with one of the two.
+label_position = "bottom-right"
+
+# How many cells of border are left showing beyond the label, the corner
+# counted among them. Two is what fzf's `--border-label-pos=-3:bottom` draws,
+# and those cells are the difference between a label sitting on the line and a
+# label that has eaten the corner.
+label_offset = 2
+
+# Which end the line explaining the keys sits at: top, bottom or hidden.
+hint_position = "top"
+
+# Which end the query sits at: top or bottom. `bottom` is fzf's default layout,
+# with the list growing up towards it; `top` is what `--reverse` does.
+prompt_position = "bottom"
+
+# Which end the first row sits at: top or bottom.
+#
+# `bottom` is fzf's default, and it is not a cosmetic choice. The best match
+# ends up nearest the query, which is where your eye already is, and in a list
+# whose first rows are the sessions you were last in it makes the key, Up and
+# Enter a toggle between the last two. `top` is fzf's `--reverse-list`, and it
+# is the default here because a list that fills downwards is what everything
+# else on a screen does.
+list_from = "top"
+
+# Whether the `matched/total` counter is drawn beside the query. This is fzf's
+# `--no-info` inverted, and it is off here because on a list of fifteen keys the
+# count is a number nobody reads.
+counter = false
+
+# Rules between the hint, the list and the query. Without them the three run
+# together and the list has no edges of its own.
+rules = true
+
+# Drawn in front of the row the cursor is on. A bar rather than fzf's `>`,
+# because the row is also bold and a second marker made of punctuation reads as
+# part of the row.
+marker = "▌"
+
+# The order a row's columns are drawn in, by the position the picker built them
+# at. Empty draws them as built.
+#
+# Whether the key or what it does comes first is the kind of thing people have
+# an opinion about and no argument for, so it is a list rather than a decision.
+# The key search builds `[key, what it does]`, so `[1, 0]` turns it round. A
+# position no row has is skipped, and a position left out is a column that is
+# not drawn, which is how a picker is made narrower without touching the code
+# that fills it.
+column_order = []
+
+# Whether the preview gets a line between it and the list.
+preview_border = true
+
+# Where the preview's label sits. The same seven positions as `label_position`.
+#
+# A label sits on the nearest border line to the edge it names. With the
+# preview above or below the list that is the preview's own top or bottom
+# border. Beside the list, the preview's only border is the one-cell edge
+# between the two columns, with nowhere on it for words, so the label goes on
+# the outer box's border instead -- still within the preview's own columns, so
+# two labels on one bottom line each sit under the half they name.
+preview_label_position = "bottom-center"
+
+# How many cells of that line are left showing beyond the preview's label.
+preview_label_offset = 2
+
+# One picker's answer where it differs from the rest. Every key above can be
+# written again under one of these five, and the preview is the one people
+# actually want to set per picker: a theme wants a tall pane beside a narrow
+# list, a key binding wants three lines under a wide one, and a shell history
+# wants no pane at all.
+#
+#   [picker.keys]       the key search
+#   [picker.project]    the project and session list
+#   [picker.window]     the directory list a new window opens at
+#   [picker.theme]      the colour themes
+#   [picker.run]        the shell history
+#
+# Three keys exist only in these tables, because they are the words one picker
+# says and not a shape every picker shares: `label` is what it calls itself on
+# its border, `hint` is the line at the top naming the keys, and
+# `preview_label` is what it calls its preview. Each defaults to the tool's own
+# wording, and each is settable because a line somebody reads every day should
+# be in their words rather than in mine. Setting `preview_label` on a picker
+# that has nothing to preview does not give it a pane.
+#
+# A key left out here takes whatever `[picker]` says, so these tables hold the
+# exceptions rather than a second copy of everything:
+#
+#   [picker.keys]
+#   label = "[ Keys ]"
+#   hint = "enter runs it   ctrl-a clears the filter   ctrl-d cancel"
+#   preview_label = "[ What it runs ]"
+#   preview = "bottom"
+#   preview_percent = 30
+#   preview_label_position = "top-center"
+#   column_order = [1, 0]
+#
+#   [picker.run]
+#   preview = "none"
 
 [open]
 # What happens when `open` finds a file rather than a URL: which pane the
@@ -637,3 +760,28 @@ size_percent = 0
 #   emacs    "emacsclient -nw +{line}:{column} {path}"
 #   vim      the default works unchanged
 editor = "nvim '+call cursor({line},{column})' {path}"
+
+# What `open --choose` (or `open -i`) offers. Empty means no chooser, and
+# `--choose` then opens what it would have opened anyway rather than showing a
+# picker with nothing in it.
+#
+# `{url}` and `{path}` both take the thing being opened, so a browser template
+# and an editor template each name whichever reads better and neither has to
+# know which kind of thing it was handed. `{line}` and `{column}` are zero for
+# a URL. The command goes through the shell, because a template is where the
+# quoting lives: an application name with a space in it only reaches `-a`
+# intact if you wrote the quotes.
+#
+# `pane` decides whether it opens in a tmux pane beside the one you are in, the
+# way the editor above does, or is launched and left alone. An editor wants a
+# pane and a browser does not, and the wrong answer is either a browser holding
+# a pane open forever or an editor with nowhere to draw.
+#
+#   [[open.application]]
+#   name = "chrome"
+#   command = "open -a 'Google Chrome' {url}"
+#
+#   [[open.application]]
+#   name = "nvim"
+#   command = "nvim '+call cursor({line},{column})' {path}"
+#   pane = true

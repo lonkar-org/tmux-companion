@@ -210,6 +210,9 @@ pub enum Cmd {
         /// The cursor column, as `#{copy_cursor_x}`, to pick what is under it
         #[arg(long)]
         cursor_x: Option<usize>,
+        /// Pick which application opens it, from `[[open.application]]`
+        #[arg(short = 'i', long)]
+        choose: bool,
     },
 
     /// Close a project session by letting every window exit
@@ -272,6 +275,12 @@ pub enum Cmd {
         /// Internal: run this command in this pane and show the exit dialog
         #[arg(long, hide = true)]
         exec: Option<String>,
+        /// Internal: draw the exit dialog for this status and write the answer
+        #[arg(long, hide = true)]
+        dialog: Option<i32>,
+        /// Internal: the file the dialog writes its answer to
+        #[arg(long, hide = true)]
+        out: Option<String>,
     },
 
     /// Move to the next window in this session's layout
@@ -385,14 +394,17 @@ pub enum ThemeAction {
 
     /// Apply the theme a session should have, without asking
     Apply {
-        /// The session to resolve a theme for
-        session: String,
+        /// The session to resolve a theme for. Omitted with --all
+        session: Option<String>,
         /// Apply to this target rather than whatever is current
         #[arg(short = 't')]
         target: Option<String>,
         /// Where the theme files are
         #[arg(long)]
         themes: Option<String>,
+        /// Repaint every session rather than one
+        #[arg(long)]
+        all: bool,
     },
 
     /// Write the starter themes and the two files that apply them
@@ -622,7 +634,8 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             dry_run,
             pane,
             cursor_x,
-        } => run_open(text, selection, base_dir, dry_run, pane, cursor_x).await?,
+            choose,
+        } => run_open(text, selection, base_dir, dry_run, pane, cursor_x, choose).await?,
         Cmd::CloseProject {
             session,
             discard,
@@ -633,7 +646,15 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
         Cmd::Zen { pane } => run_zen(pane).await?,
         Cmd::Probe { what } => run_probe(what)?,
-        Cmd::Run { print, exec } => run_command(print, exec).await?,
+        Cmd::Run {
+            print,
+            exec,
+            dialog,
+            out,
+        } => match dialog {
+            Some(code) => run_dialog(code, out)?,
+            None => run_command(print, exec).await?,
+        },
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
@@ -758,7 +779,29 @@ fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
             session,
             target,
             themes,
-        } => return theme_apply(&session, target, &themes_dir_or(themes)),
+            all,
+        } => {
+            let dir = themes_dir_or(themes);
+            if all {
+                // Sourcing tmux.conf resets the global options a theme sets,
+                // so a reload leaves every session painted with whatever the
+                // file says rather than with its own colour. One pass over
+                // the session list puts them all back.
+                let listed = std::process::Command::new("tmux")
+                    .args(["list-sessions", "-F", "#{session_name}"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                for name in listed.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                    theme_apply(name, Some(name.to_string()), &dir)?;
+                }
+                return Ok(());
+            }
+            let Some(session) = session else {
+                anyhow::bail!("theme apply needs a session, or --all");
+            };
+            return theme_apply(&session, target, &dir);
+        }
         ThemeAction::Init { themes } => return theme_init(&themes_dir_or(themes)),
         ThemeAction::Add {
             bg,
@@ -1005,7 +1048,7 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
     }
-    .laid_out_by(&config.picker);
+    .configured(&config.picker, crate::config::Picker::Keys);
 
     let Some(index) = crate::picker::run(items, &opening, &chrome)? else {
         return Ok(());
@@ -1250,7 +1293,7 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         preview_title: "[ Where ]".into(),
         ..Default::default()
     }
-    .laid_out_by(&config.picker);
+    .configured(&config.picker, crate::config::Picker::Project);
 
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(());
@@ -1442,9 +1485,13 @@ async fn run_new_window() -> anyhow::Result<()> {
     // comes back as an index and the extra row below would otherwise shift
     // every listed path by one.
     let mut targets: Vec<String> = Vec::with_capacity(paths.len() + 1);
+    // What is in the directory, which is what `--preview="ls -A1 {2}"` showed.
+    // The preview used to be the path itself, which the row already says: a
+    // pane of one line repeating the line you are looking at.
+    let listing = |path: &str| crate::project::listing_of(std::path::Path::new(path), 200);
     if !paths.iter().any(|p| p == &pane_dir) {
         items.push(
-            crate::picker::Item::with_preview(prefill.clone(), pane_dir.clone())
+            crate::picker::Item::with_preview(prefill.clone(), listing(&pane_dir))
                 .in_columns(vec!["here".to_string(), prefill.clone()]),
         );
         targets.push(pane_dir.clone());
@@ -1452,7 +1499,7 @@ async fn run_new_window() -> anyhow::Result<()> {
     for p in &paths {
         let short = crate::project::short_path(p, &home);
         items.push(
-            crate::picker::Item::with_preview(short.clone(), p.clone())
+            crate::picker::Item::with_preview(short.clone(), listing(p))
                 .in_columns(vec![String::new(), short]),
         );
         targets.push(p.clone());
@@ -1465,7 +1512,7 @@ async fn run_new_window() -> anyhow::Result<()> {
         preview_title: "[ Directory ]".into(),
         ..Default::default()
     }
-    .laid_out_by(&config.picker);
+    .configured(&config.picker, crate::config::Picker::Window);
 
     let outcome = crate::picker::run_with_query(items, &prefill, &chrome)?;
     match crate::project::window_target(&outcome, &targets, &prefill, &pane_dir, &home) {
@@ -1841,7 +1888,7 @@ fn theme_pick(
         preview_title: "[ Colours ]".into(),
         ..Default::default()
     }
-    .laid_out_by(&config.picker);
+    .configured(&config.picker, crate::config::Picker::Theme);
 
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(());
@@ -2060,19 +2107,33 @@ fn theme_apply(session: &str, target: Option<String>, dir: &std::path::Path) -> 
     Ok(())
 }
 
-/// A few lines showing what a theme is made of.
+/// What a theme looks like, and then what it is made of.
+///
+/// The card first, because a list of `@theme-color-*` values answers none of
+/// the question anybody opens a theme preview to ask: whether the text on that
+/// background can be read, what a message looks like, what a copy-mode
+/// selection looks like. The settings follow it for the person who is editing
+/// the file rather than choosing from it.
 fn theme_preview(row: &crate::theme::ThemeRow) -> String {
     let text = std::fs::read_to_string(&row.path).unwrap_or_default();
     let settings = crate::theme::parse_settings(&text);
+
+    // Wide enough for the sample bars to read as bars. The preview pane is
+    // whatever share of the popup the config gives it, and the card is drawn
+    // before the pane exists, so this is a width rather than a measurement.
+    let card = crate::theme::preview_card(&settings, 60);
+
     let mut keys: Vec<&String> = settings.keys().collect();
     keys.sort();
-    keys.iter()
+    let listed = keys
+        .iter()
         .map(|k| {
             let v = &settings[*k];
-            format!("{} {:<26} {v}", crate::theme::swatch(v), k)
+            format!("  {} {:<26} {v}", crate::theme::swatch(v), k)
         })
         .collect::<Vec<String>>()
-        .join("\n")
+        .join("\n");
+    format!("{card}\n{listed}\n")
 }
 
 /// `tmux source-file`, honouring a target.
@@ -2124,7 +2185,7 @@ async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
         preview_title: String::new(),
         ..Default::default()
     }
-    .laid_out_by(&config.picker);
+    .configured(&config.picker, crate::config::Picker::Run);
 
     // The typed query is the command when nothing matched, which is the only
     // way to run something that was never in the history.
@@ -2156,6 +2217,67 @@ async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
 /// Quote a command so tmux hands it back to us whole.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Open a target with an application picked from the configured list.
+async fn open_with_chosen(
+    target: &crate::open::Target,
+    config: &crate::config::Config,
+    pane: Option<&str>,
+) -> anyhow::Result<()> {
+    use crate::open::Target;
+
+    let (text, line, column) = match target {
+        Target::Url(u) => (u.clone(), 0, 0),
+        Target::File { path, line, column } => {
+            (path.display().to_string(), *line as usize, *column as usize)
+        }
+    };
+
+    let items: Vec<crate::picker::Item> = config
+        .open
+        .applications
+        .iter()
+        .map(|a| {
+            crate::picker::Item::with_preview(
+                a.name.clone(),
+                crate::open::application_command(&a.command, &text, line, column),
+            )
+            .in_columns(vec![a.name.clone()])
+        })
+        .collect();
+
+    let chrome = crate::picker::Chrome {
+        title: "[ Open with ]".into(),
+        footer: "enter opens it   esc cancels".into(),
+        preview_title: "[ What it runs ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Open);
+
+    let Some(index) = crate::picker::run(items, "", &chrome)? else {
+        return Ok(());
+    };
+    let chosen = &config.open.applications[index];
+    let command = crate::open::application_command(&chosen.command, &text, line, column);
+
+    if chosen.pane {
+        let args = crate::open::split_window_args(&config.open, command, pane);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        tmux(&args).await;
+        return Ok(());
+    }
+
+    // Launched and left alone, which is what a browser wants. Through the
+    // shell because the template is where the quoting lives: an application
+    // name with a space in it only reaches `-a` intact if somebody wrote the
+    // quotes, and an argument vector built here would have to guess.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+    let _ = tokio::process::Command::new(shell)
+        .args(["-c", &command])
+        .status()
+        .await;
+    Ok(())
 }
 
 /// The width of the window this pane is in.
@@ -2223,7 +2345,186 @@ async fn slide(target: &str, from: u16, to: u16, config: &crate::config::Config)
 /// A popup when one can be opened, and an inline prompt when it cannot: on a
 /// tiny or detached client `display-popup` fails, and failing to ask is worse
 /// than asking plainly.
-async fn dialog(code: i32, _config: &crate::config::Config) -> crate::run::Choice {
+async fn dialog(code: i32, config: &crate::config::Config) -> crate::run::Choice {
+    match popup_dialog(code).await {
+        Some(choice) => choice,
+        None => inline_dialog(code, config),
+    }
+}
+
+/// The dialog as a floating popup over the pane the command ran in.
+///
+/// `None` when the popup could not be opened at all, which is what happens on
+/// a client too small to hold it and on a detached one.
+///
+/// The answer comes back through a file rather than through the popup's exit
+/// status, because `display-popup -E` reports only whether the command
+/// succeeded and there are three answers here.
+async fn popup_dialog(code: i32) -> Option<crate::run::Choice> {
+    let pane = std::env::var("TMUX_PANE").ok()?;
+    let geometry = tmux_capture(&[
+        "display",
+        "-p",
+        "-t",
+        &pane,
+        "#{pane_left} #{pane_top} #{pane_width} #{pane_height}",
+    ])
+    .await;
+    let numbers: Vec<u16> = geometry
+        .split_whitespace()
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    let [left, top, width, height] = numbers[..] else {
+        return None;
+    };
+    let (x, y) = crate::run::dialog_at(left, top, width, height);
+
+    let answer = std::env::temp_dir().join(format!("tmux-companion-dialog-{}", std::process::id()));
+    let me = std::env::current_exe().ok()?;
+    let command = format!(
+        "{} run --dialog {code} --out {}",
+        shell_quote(&me.display().to_string()),
+        shell_quote(&answer.display().to_string())
+    );
+    let status = tokio::process::Command::new("tmux")
+        .args([
+            "display-popup",
+            "-x",
+            &x.to_string(),
+            "-y",
+            &y.to_string(),
+            "-w",
+            &crate::run::DIALOG_WIDTH.to_string(),
+            "-h",
+            &crate::run::DIALOG_HEIGHT.to_string(),
+            "-T",
+            &crate::run::dialog_title(code),
+            "-E",
+            &command,
+        ])
+        .status()
+        .await
+        .ok()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&answer);
+        return None;
+    }
+    let word = std::fs::read_to_string(&answer).unwrap_or_default();
+    let _ = std::fs::remove_file(&answer);
+    Some(crate::run::choice_of_word(&word))
+}
+
+/// `run --dialog`: draw the dialog and write the answer where the caller asked.
+fn run_dialog(code: i32, out: Option<String>) -> anyhow::Result<()> {
+    let choice = draw_dialog(code)?;
+    if let Some(path) = out {
+        std::fs::write(path, crate::run::choice_word(choice))?;
+    }
+    Ok(())
+}
+
+/// The dialog itself: a line about what happened and three buttons.
+fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
+    use crate::run::{BUTTONS, Choice, button_label, default_button, step_button};
+    use ratatui::{
+        crossterm::event::{self, Event, KeyCode, KeyEventKind},
+        layout::{Alignment, Constraint, Direction, Layout},
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::Paragraph,
+    };
+
+    let mut selected = default_button(code);
+    let said = if code == 0 {
+        Span::styled(
+            "Command finished successfully",
+            Style::default().fg(Color::Indexed(114)),
+        )
+    } else {
+        Span::styled(
+            format!("Command failed with exit {code}"),
+            Style::default().fg(Color::Indexed(174)),
+        )
+    };
+
+    let mut terminal = ratatui::init();
+    let result = (|| -> anyhow::Result<Choice> {
+        loop {
+            terminal.draw(|frame| {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Min(0),
+                        Constraint::Length(1),
+                    ])
+                    .split(frame.area());
+
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![Span::raw("  "), said.clone()])),
+                    rows[0],
+                );
+
+                let mut buttons = vec![Span::raw("  ")];
+                for (i, choice) in BUTTONS.iter().enumerate() {
+                    buttons.push(if i == selected {
+                        Span::styled(
+                            button_label(*choice),
+                            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled(
+                            button_label(*choice),
+                            Style::default().fg(Color::Indexed(246)),
+                        )
+                    });
+                    buttons.push(Span::raw("   "));
+                }
+                frame.render_widget(Paragraph::new(Line::from(buttons)), rows[2]);
+
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        "  Enter=default  c/v/r/q  \u{2190}/\u{2192}/Tab  Esc=view",
+                        Style::default().fg(Color::Indexed(240)),
+                    )))
+                    .alignment(Alignment::Left),
+                    rows[4],
+                );
+            })?;
+
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Enter => return Ok(BUTTONS[selected]),
+                // Bare Esc dismisses to View, which leaves the pane open and
+                // read-only: nothing is lost while somebody works out what
+                // happened.
+                KeyCode::Esc => return Ok(Choice::View),
+                KeyCode::Char('c' | 'C' | 'q' | 'Q') => return Ok(Choice::Close),
+                KeyCode::Char('v' | 'V') => return Ok(Choice::View),
+                KeyCode::Char('r' | 'R') => return Ok(Choice::Restart),
+                KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => {
+                    selected = step_button(selected, 1);
+                }
+                KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') => {
+                    selected = step_button(selected, -1);
+                }
+                _ => {}
+            }
+        }
+    })();
+    ratatui::restore();
+    result
+}
+
+/// The dialog as a line in the pane, for when a popup cannot be opened.
+fn inline_dialog(code: i32, _config: &crate::config::Config) -> crate::run::Choice {
     use crate::run::{Choice, default_choice};
     use std::io::Write;
 
@@ -2234,8 +2535,8 @@ async fn dialog(code: i32, _config: &crate::config::Config) -> crate::run::Choic
         format!("\x1b[31m✘ exit {code}\x1b[0m")
     };
     let hint = match default {
-        Choice::Close => "[C]lose  [v]iew  [r]estart",
-        _ => "[c]lose  [v]iew  [R]estart",
+        Choice::Close => "[C]lose/q  [v]iew  [r]estart",
+        _ => "[c]lose/q  [v]iew  [R]estart",
     };
     print!("\n  {label}  {hint} ");
     let _ = std::io::stdout().flush();
@@ -2298,7 +2599,10 @@ fn read_choice() -> Option<crate::run::Choice> {
     let choice = loop {
         match event::read() {
             Ok(Event::Key(k)) => match k.code {
-                KeyCode::Char('c' | 'C') => break Some(Choice::Close),
+                // `q` alongside `c`, because a dialog that is in the way is
+                // a thing people quit rather than a thing they close, and the
+                // hand reaches for `q` before it has read the buttons.
+                KeyCode::Char('c' | 'C' | 'q' | 'Q') => break Some(Choice::Close),
                 KeyCode::Char('v' | 'V') => break Some(Choice::View),
                 KeyCode::Char('r' | 'R') => break Some(Choice::Restart),
                 KeyCode::Enter | KeyCode::Esc => break None,
@@ -2321,6 +2625,7 @@ async fn run_open(
     dry_run: bool,
     pane: Option<String>,
     cursor_x: Option<usize>,
+    choose: bool,
 ) -> anyhow::Result<()> {
     use crate::open::Target;
 
@@ -2385,6 +2690,17 @@ async fn run_open(
         return Ok(());
     }
 
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+
+    // `-i` in the script this replaces, which read "interactive" and meant
+    // "let me say which of my browsers or editors this goes to". With no
+    // applications configured there is nothing to choose between, so this
+    // opens what it would have opened anyway rather than showing an empty
+    // picker.
+    if choose && !config.open.applications.is_empty() {
+        return open_with_chosen(&target, &config, pane.as_deref()).await;
+    }
+
     match target {
         // No shell anywhere in this: the text came off somebody's screen, and
         // an argument vector cannot be talked into being two commands.
@@ -2414,7 +2730,6 @@ async fn run_open(
             }
         }
         Target::File { path, line, column } => {
-            let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
             let command = crate::open::editor_command(
                 &config.open.editor,
                 &path.display().to_string(),

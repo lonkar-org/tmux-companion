@@ -255,9 +255,45 @@ fn file_in(
     None
 }
 
+/// One application's command, with the target filled in.
+///
+/// `{url}` and `{path}` both take the target, because a browser template names
+/// one and an editor template names the other and neither should have to know
+/// which kind of thing it was handed. A URL has no line or column, so those are
+/// zero there, which is what an editor template does with a file it was given
+/// no position for anyway.
+///
+/// Pure, and the reason the chooser is testable without opening anything.
+pub fn application_command(template: &str, target: &str, line: usize, column: usize) -> String {
+    template
+        .replace("{url}", target)
+        .replace("{path}", target)
+        .replace("{line}", &line.to_string())
+        .replace("{column}", &column.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_application_template_takes_either_name_for_the_target() {
+        // A browser template names `{url}` and an editor template names
+        // `{path}`, and neither should have to know which it was handed.
+        assert_eq!(
+            application_command("open -a 'Google Chrome' {url}", "https://x.test", 0, 0),
+            "open -a 'Google Chrome' https://x.test"
+        );
+        assert_eq!(
+            application_command("nvim '+call cursor({line},{column})' {path}", "a.rs", 12, 4),
+            "nvim '+call cursor(12,4)' a.rs"
+        );
+    }
+
+    #[test]
+    fn a_template_naming_nothing_is_left_alone() {
+        assert_eq!(application_command("lazygit", "a.rs", 1, 1), "lazygit");
+    }
     use std::path::{Path, PathBuf};
 
     /// A filesystem that knows about exactly these paths.
@@ -681,6 +717,7 @@ mod split_window_args_tests {
             split,
             size_percent,
             editor: String::new(),
+            ..Open::default()
         }
     }
 

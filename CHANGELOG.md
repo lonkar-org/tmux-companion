@@ -5,7 +5,66 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Changed
+
+- The pickers draw their own screen instead of handing it to skim. skim has
+  `border_label`, `preview_label` and `footer` fields and accepts the fzf flags
+  that set them, so it looks for a while as though it can draw what fzf draws;
+  all three are private, carry `#[builder(setter(skip))]` and
+  `arg(hide = true)`, and appear nowhere in its drawing code. They are there so
+  an fzf command line parses, not so it renders. The matching is now
+  nucleo-matcher, which was already a dependency and used nowhere, and the
+  drawing is ratatui, which was already there for the colours.
+
+  What that buys is `[picker]`: the border, where the picker's label sits on
+  it, which end the hint line and the query are at, which end the list starts
+  from, the counter, the rules, the cursor marker, the column order, and the
+  preview's side, share, border and label. Each of them can be written again
+  under `[picker.keys]`, `[picker.project]`, `[picker.window]`,
+  `[picker.theme]`, `[picker.run]` or `[picker.open]` for the one picker that
+  wants a different answer, along with the words that picker says. How big the
+  popup is stays with `display-popup` in tmux.conf, which is the only place
+  that knows.
+
+### Added
+
+- The theme picker previews a theme rather than listing it. The card is the
+  three colours it is built from, a ramp showing where the main one can go, and
+  then the four places tmux actually paints: the status line, a message, a
+  copy-mode selection and the pane borders. A list of `@theme-color-*` values
+  answers none of the question somebody opens a preview to ask, which is
+  whether the text on that background can be read. The values follow the card
+  for the person editing the file rather than choosing from it.
+
+- `open --choose`, or `-i`, asks which application opens what it found, from
+  `[[open.application]]`. A browser is launched and left alone and an editor
+  gets a pane beside the one you are in, which is what `pane` decides.
+
+- `theme apply --all` repaints every session. Sourcing tmux.conf resets the
+  global options a theme sets, so a reload without this leaves every session
+  wearing whatever the file says instead of its own colour.
+
+- The exit dialog after a `run` command is a popup with three buttons, moved
+  between with the arrows or Tab and picked with Enter, rather than a line of
+  bracketed letters. `q` closes it alongside `c`, and Esc leaves the pane open
+  and read-only so nothing is lost while you work out what happened. The
+  one-line prompt is still there for a client too small or too detached for a
+  popup, which is when `display-popup` fails.
+
 ### Fixed
+
+- The directory list a new window opens at previews what is in the directory.
+  The preview was the path, which is what the row already says: a pane of one
+  line repeating the line you are looking at.
+
+- A preview beside the list carries its label on the outer border, under its
+  own columns, rather than inside the pane. Inside, it landed on the last line
+  of whatever was being previewed and read as attached to nothing.
+
+- Themes sort by file name rather than by the name they carry, so a theme and
+  its lighter and darker siblings land together: `amber-light.tmux` sorts
+  before `amber.tmux` because `-` is below `.`, where sorting by "Amber Light"
+  and "Amber" scattered a family across the list.
 
 - Daemons accumulated instead of exiting, one per test run, benchmark or
   recording. Two bugs, and either alone was enough. The daemon unlinks the

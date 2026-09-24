@@ -417,6 +417,156 @@ pub fn swatch(value: &str) -> String {
     }
 }
 
+/// Foreground and background, as one escape sequence.
+///
+/// Both optional: an empty colour, `default` or `terminal` leaves that half
+/// alone, which is what a theme means when it does not set one.
+pub fn sgr(fg: &str, bg: &str) -> String {
+    let mut out = "\x1b[0m".to_string();
+    for (lead, value) in [(38, fg), (48, bg)] {
+        if let Some((r, g, b)) = resolve_colour(value) {
+            out.push_str(&format!("\x1b[{lead};2;{r};{g};{b}m"));
+        }
+    }
+    out
+}
+
+/// A colour and its hex, the way the preview names one.
+///
+/// `colour215 (#ffaf5f)` rather than either alone: the index is what the theme
+/// file says and the hex is what it looks like, and a person reading a preview
+/// wants to match both against something else.
+pub fn label_of(value: &str) -> String {
+    match resolve_colour(value) {
+        Some((r, g, b)) => format!("{value} (#{r:02x}{g:02x}{b:02x})"),
+        None => value.to_string(),
+    }
+}
+
+/// The five steps of the main colour, darkest to lightest, as hex.
+///
+/// Multipliers rather than a colour-space walk: this is a swatch strip showing
+/// that a theme has somewhere to go in both directions, not a palette anybody
+/// computes from.
+pub fn shade_ramp(main: &str) -> Vec<String> {
+    let Some((r, g, b)) = resolve_colour(main) else {
+        return Vec::new();
+    };
+    [40u32, 70, 100, 130, 170]
+        .iter()
+        .map(|factor| {
+            let step = |c: u8| ((u32::from(c) * factor / 100).min(255)) as u8;
+            format!("#{:02x}{:02x}{:02x}", step(r), step(g), step(b))
+        })
+        .collect()
+}
+
+/// What a theme looks like, as a card.
+///
+/// This is `preview-tmux-theme.zsh` without the shell: the three colours it is
+/// built from, a ramp showing where the main one can go, and then the four
+/// places tmux actually paints -- the status line, a message, a copy-mode
+/// selection and the pane borders. Reading a list of `@theme-color-*` values
+/// tells you nothing about whether the text on that background can be read,
+/// and that is the only question anybody opens this to answer.
+///
+/// Pure: settings in, ANSI out, so the whole card is tested without a terminal.
+pub fn preview_card(settings: &std::collections::HashMap<String, String>, width: usize) -> String {
+    let get = |k: &str| settings.get(k).cloned().unwrap_or_default();
+
+    let name = {
+        let n = get("@theme-name");
+        if n.is_empty() { "theme".to_string() } else { n }
+    };
+    let main = {
+        let m = get("@theme-color-main-1");
+        if m.is_empty() {
+            let s = get("@theme-session-name-bg");
+            if s.is_empty() {
+                "colour245".to_string()
+            } else {
+                s
+            }
+        } else {
+            m
+        }
+    };
+    let secondary = {
+        let s = get("@theme-color-secondary");
+        if s.is_empty() {
+            "colour238".to_string()
+        } else {
+            s
+        }
+    };
+    let text_colour = {
+        let b = get("@theme-color-black");
+        if b.is_empty() { "black".to_string() } else { b }
+    };
+
+    // The bar the status line is drawn on, which is not part of the theme:
+    // it is what tmux.conf sets, and the preview needs something behind the
+    // sample for the sample to read as a bar at all.
+    let status_bg = "colour233";
+    let reset = "\x1b[0m";
+    let room = width.max(8) - 4;
+
+    let bar = |fg: &str, bg: &str, text: &str| {
+        format!(
+            "  {}{:<room$}{reset}",
+            sgr(fg, bg),
+            format!(" {text}"),
+            room = room
+        )
+    };
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str(&format!("  {}▉▉▉{reset}  {name}\n", sgr(&main, "")));
+    out.push_str(&format!("     main       {}\n", label_of(&main)));
+    out.push_str(&format!("     border     {}\n", label_of(&secondary)));
+    out.push_str(&format!("     text       {}\n\n", label_of(&text_colour)));
+
+    let ramp = shade_ramp(&main);
+    if !ramp.is_empty() {
+        out.push_str("  shades   ");
+        for hex in &ramp {
+            out.push_str(&format!("{}     {reset}", sgr("", hex)));
+        }
+        out.push_str("   dark to light\n\n");
+    }
+
+    out.push_str("  status line\n");
+    out.push_str(&format!(
+        "  {} {name} {}{} {} 1 zsh  2 nvim {reset}\n\n",
+        sgr(&text_colour, &main),
+        sgr(&main, status_bg),
+        sgr("colour240", status_bg),
+        sgr("colour250", status_bg),
+    ));
+
+    out.push_str("  message-style\n");
+    out.push_str(&bar(&text_colour, &main, "Config Reloaded!"));
+    out.push('\n');
+    out.push_str("  mode-style (copy mode selection)\n");
+    out.push_str(&bar(&text_colour, &main, "search: theme"));
+    out.push_str("\n\n");
+
+    let rule = "\u{2500}".repeat(20);
+    out.push_str("  pane borders\n");
+    out.push_str(&format!("  {}{rule}{reset} active\n", sgr(&main, "")));
+    out.push_str(&format!(
+        "  {}{rule}{reset} inactive\n\n",
+        sgr(&secondary, "")
+    ));
+
+    out.push_str(&format!(
+        "  clock-mode  {}▄▀▄ ▀█▀ ▄▀▄{reset}\n",
+        sgr(&main, "")
+    ));
+    out
+}
+
 /// Every `set @theme-… value` in a theme file.
 pub fn parse_settings(text: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
@@ -541,7 +691,12 @@ pub fn rows(dir: &Path) -> Vec<ThemeRow> {
             })
         })
         .collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // By file name, not by the name a theme calls itself. The two differ and
+    // the file is the one that groups a family together: `amber-light.tmux`
+    // sorts before `amber.tmux` because `-` is below `.`, so a theme and its
+    // lighter sibling land next to each other instead of an alphabetical list
+    // scattering them.
+    out.sort_by(|a, b| a.path.cmp(&b.path));
     out
 }
 
@@ -777,6 +932,134 @@ mod picker_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── the preview card ─────────────────────────────────────────────────────
+
+    fn amber() -> std::collections::HashMap<String, String> {
+        [
+            ("@theme-name", "Amber Light"),
+            ("@theme-color-main-1", "colour215"),
+            ("@theme-color-secondary", "colour238"),
+            ("@theme-color-black", "black"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    /// The card with every escape sequence taken back out.
+    fn plain(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c != '\u{1b}' {
+                out.push(c);
+                continue;
+            }
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_card_shows_the_four_places_tmux_paints() {
+        // Reading a list of @theme-color values answers none of the question
+        // somebody opens a preview to ask, which is whether this is legible.
+        let card = plain(&preview_card(&amber(), 60));
+        for expected in [
+            "Amber Light",
+            "main",
+            "border",
+            "text",
+            "shades",
+            "dark to light",
+            "status line",
+            "message-style",
+            "Config Reloaded!",
+            "mode-style (copy mode selection)",
+            "search: theme",
+            "pane borders",
+            "active",
+            "inactive",
+            "clock-mode",
+        ] {
+            assert!(
+                card.contains(expected),
+                "{expected:?} missing from:\n{card}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_colour_is_named_by_its_index_and_its_hex() {
+        // The index is what the file says and the hex is what it looks like,
+        // and somebody reading a preview is matching one of the two against
+        // something else.
+        assert_eq!(label_of("colour215"), "colour215 (#ffaf5f)");
+        assert_eq!(label_of("#ffaf5f"), "#ffaf5f (#ffaf5f)");
+        // Nothing to resolve, so nothing invented.
+        assert_eq!(label_of("default"), "default");
+        assert_eq!(label_of(""), "");
+    }
+
+    #[test]
+    fn the_ramp_runs_dark_to_light_and_stops_at_white() {
+        let ramp = shade_ramp("#808080");
+        assert_eq!(ramp.len(), 5);
+        assert_eq!(ramp[0], "#333333", "40 percent of 0x80");
+        assert_eq!(ramp[2], "#808080", "the middle step is the colour itself");
+        // 170 percent of 0x80 is 0xd9, which fits; a bright colour clamps.
+        assert_eq!(shade_ramp("#ffffff")[4], "#ffffff");
+        // A colour nothing can resolve has no ramp rather than a black one.
+        assert!(shade_ramp("default").is_empty());
+    }
+
+    #[test]
+    fn a_theme_that_names_nothing_still_draws_a_card() {
+        // Half the fields fall back, and a preview that panicked on a theme
+        // file somebody was midway through writing would be worse than one
+        // that shows the defaults.
+        let card = plain(&preview_card(&std::collections::HashMap::new(), 60));
+        assert!(card.contains("theme"), "{card}");
+        assert!(card.contains("colour245"), "the fallback main colour");
+    }
+
+    #[test]
+    fn the_sample_bars_are_as_wide_as_the_card() {
+        // A message-style sample narrower than the pane reads as text rather
+        // than as a bar, which is the thing it exists to show.
+        let card = plain(&preview_card(&amber(), 40));
+        let bar = card
+            .lines()
+            .find(|l| l.contains("Config Reloaded!"))
+            .expect("the message sample");
+        assert_eq!(bar.chars().count(), 38, "{bar:?}");
+    }
+
+    #[test]
+    fn a_theme_sorts_next_to_its_own_lighter_sibling() {
+        // By file name, not by the name the theme calls itself: `-` is below
+        // `.`, so amber-light.tmux lands beside amber.tmux instead of an
+        // alphabetical list scattering a family.
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (file, name) in [
+            ("amber.tmux", "Amber"),
+            ("amber-light.tmux", "Amber Light"),
+            ("azure.tmux", "Azure"),
+        ] {
+            std::fs::write(
+                dir.path().join(file),
+                format!("set -g @theme-name \"{name}\"\nset -g @theme-color-main-1 colour215\n"),
+            )
+            .expect("write");
+        }
+        let names: Vec<String> = rows(dir.path()).into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["Amber Light", "Amber", "Azure"]);
+    }
 
     #[test]
     fn the_cube_endpoints_are_black_and_white() {

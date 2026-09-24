@@ -245,9 +245,148 @@ pub async fn history(config: &crate::config::Run, home: &str) -> Vec<String> {
     dedupe(parsed)
 }
 
+/// How wide and tall the exit dialog is, in cells.
+///
+/// Fixed, because the dialog holds three buttons and two lines of text and
+/// nothing in it grows: a popup sized to its content would move under somebody
+/// every time a command exited with a longer status.
+pub const DIALOG_WIDTH: u16 = 44;
+/// How tall the exit dialog is. See [`DIALOG_WIDTH`].
+pub const DIALOG_HEIGHT: u16 = 7;
+
+/// Where to put the dialog so it lands centred on the pane it belongs to.
+///
+/// Over the pane rather than over the terminal: the pane is where the command
+/// ran and where the person is looking, and a dialog centred on a wide
+/// terminal opens over whatever else is on screen.
+///
+/// Pure, and clamped at zero, because a pane narrower than the dialog gives a
+/// negative offset and `display-popup -x -3` is an error rather than a nudge.
+pub fn dialog_at(left: u16, top: u16, width: u16, height: u16) -> (u16, u16) {
+    let x = left + width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = top + height.saturating_sub(DIALOG_HEIGHT) / 2;
+    (x, y)
+}
+
+/// The popup's title, which is the only place the exit status is shown.
+pub fn dialog_title(code: i32) -> String {
+    if code == 0 {
+        "#[fg=brightgreen][ \u{2714} done ]".to_string()
+    } else {
+        format!("#[fg=brightred][ \u{2718} exit {code} ]")
+    }
+}
+
+/// The three buttons, in the order they are drawn.
+pub const BUTTONS: [Choice; 3] = [Choice::Close, Choice::View, Choice::Restart];
+
+/// The button `delta` steps along, wrapping at both ends.
+///
+/// Wrapping because three buttons in a row are a ring in everybody's hands,
+/// and a Tab that stops at Restart is a Tab somebody presses twice.
+pub fn step_button(current: usize, delta: isize) -> usize {
+    let len = BUTTONS.len() as isize;
+    (((current as isize + delta) % len + len) % len) as usize
+}
+
+/// Which button starts selected.
+pub fn default_button(code: i32) -> usize {
+    BUTTONS
+        .iter()
+        .position(|c| *c == default_choice(code))
+        .unwrap_or(0)
+}
+
+/// What one of the buttons says.
+pub fn button_label(choice: Choice) -> &'static str {
+    match choice {
+        Choice::Close => " Close ",
+        Choice::View => " View ",
+        Choice::Restart => " Restart ",
+    }
+}
+
+/// A choice, as the word written to the answer file and read back.
+///
+/// A file rather than the popup's exit status: `display-popup -E` gives back
+/// whether the command succeeded and nothing else, and there are three answers
+/// here.
+pub fn choice_word(choice: Choice) -> &'static str {
+    match choice {
+        Choice::Close => "close",
+        Choice::View => "view",
+        Choice::Restart => "restart",
+    }
+}
+
+/// One of those words, read back.
+///
+/// Anything unrecognised is `View`, which is what a dialog that was killed
+/// rather than answered should do: it leaves the pane open and read-only, so
+/// nothing is lost while somebody works out what happened.
+pub fn choice_of_word(word: &str) -> Choice {
+    match word.trim() {
+        "close" => Choice::Close,
+        "restart" => Choice::Restart,
+        _ => Choice::View,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── the exit dialog ──────────────────────────────────────────────────────
+
+    #[test]
+    fn the_dialog_centres_on_the_pane_it_belongs_to() {
+        // On the pane and not on the terminal: the pane is where the command
+        // ran and where somebody is looking.
+        let (x, y) = dialog_at(100, 10, 60, 30);
+        assert_eq!(x, 100 + (60 - DIALOG_WIDTH) / 2);
+        assert_eq!(y, 10 + (30 - DIALOG_HEIGHT) / 2);
+    }
+
+    #[test]
+    fn a_pane_smaller_than_the_dialog_does_not_give_a_negative_offset() {
+        // `display-popup -x -3` is an error rather than a nudge.
+        assert_eq!(dialog_at(0, 0, 10, 3), (0, 0));
+        assert_eq!(dialog_at(5, 2, 4, 2), (5, 2));
+    }
+
+    #[test]
+    fn the_title_carries_the_exit_status_and_its_colour() {
+        assert!(dialog_title(0).contains("done"));
+        assert!(dialog_title(0).contains("brightgreen"));
+        assert!(dialog_title(3).contains("exit 3"));
+        assert!(dialog_title(3).contains("brightred"));
+    }
+
+    #[test]
+    fn the_buttons_are_a_ring() {
+        // Three in a row are a ring in everybody's hands, and a Tab that
+        // stops at the end is a Tab somebody presses twice.
+        assert_eq!(step_button(0, 1), 1);
+        assert_eq!(step_button(2, 1), 0);
+        assert_eq!(step_button(0, -1), 2);
+    }
+
+    #[test]
+    fn the_default_button_is_the_default_choice() {
+        assert_eq!(BUTTONS[default_button(0)], Choice::Close);
+        assert_eq!(BUTTONS[default_button(1)], Choice::Restart);
+    }
+
+    #[test]
+    fn a_choice_survives_the_answer_file() {
+        for choice in BUTTONS {
+            assert_eq!(choice_of_word(choice_word(choice)), choice);
+        }
+        // A dialog that was killed rather than answered leaves the pane open
+        // and read-only, so nothing is lost while somebody works out why.
+        assert_eq!(choice_of_word(""), Choice::View);
+        assert_eq!(choice_of_word("nonsense"), Choice::View);
+    }
 
     #[test]
     fn plain_zsh_history_comes_back_newest_first() {

@@ -271,7 +271,7 @@ The session-list autosave the daemon runs.
 .El
 .Sh COPY MODE AND OPENING
 .Bl -tag -width Ds
-.It Ic open Oo Ar text Oc Op Fl s , Fl n , Fl d Ar dir , Fl -pane Ar id , Fl -cursor-x Ar column
+.It Ic open Oo Ar text Oc Op Fl s , Fl i , Fl n , Fl d Ar dir , Fl -pane Ar id , Fl -cursor-x Ar column
 Open what is in the text: a URL goes to a browser, a
 .Ql path:line:column
 opens an editor there.
@@ -285,6 +285,14 @@ whichever came first.
 .Fl s
 reads the tmux selection instead of arguments, for a binding that would rather
 select a range by hand.
+.Fl i ,
+or
+.Fl -choose ,
+asks which application opens it, from the
+.Ic [[open.application]]
+list.
+With nothing in that list there is nothing to choose between, so it opens what
+it would have opened anyway rather than showing an empty picker.
 .Fl n
 prints what it would open and opens nothing.
 .Fl -pane
@@ -378,7 +386,7 @@ A theme from one colour.
 The text colour is computed unless given, and a given pair under 4.5:1 is
 refused without
 .Fl -force .
-.It Ic theme apply Ar session Op Fl t Ar target
+.It Ic theme apply Oo Ar session Oc Op Fl t Ar target , Fl -all
 The theme a session should have, without asking.
 Run from the
 .Ic session-created
@@ -386,6 +394,11 @@ hook.
 Silent when there is no theme to apply, which is every install until
 .Ic theme init
 has run.
+.Fl -all
+repaints every session instead of one, which is what a reload needs: sourcing
+.Pa tmux.conf
+resets the global options a theme sets, so without it every session is left
+wearing whatever the file says rather than its own colour.
 .It Ic theme list-colours
 Every colour tmux takes, painted, with its hex and the contrast on it.
 .El
@@ -433,6 +446,32 @@ which is one person's bar and nobody else's.
 is where every picker puts its preview pane, or
 .Ql none
 for no preview at all.
+The rest of that section is what a picker looks like rather than what it holds:
+.Ic border ,
+.Ic label_position ,
+.Ic hint_position ,
+.Ic prompt_position ,
+.Ic list_from ,
+.Ic counter ,
+.Ic rules ,
+.Ic marker ,
+.Ic column_order
+and the preview's own label.
+Each of them can be written again under
+.Ic [picker.keys] , [picker.project] , [picker.window] , [picker.theme] ,
+.Ic [picker.run]
+or
+.Ic [picker.open]
+for the one picker that wants a different answer, together with the
+.Ic label , hint
+and
+.Ic preview_label
+that picker says.
+How big the popup itself is belongs to
+.Ic display-popup
+in
+.Pa tmux.conf ,
+not here.
 .Ic [open] split
 is which side the editor opens on,
 .Ql right

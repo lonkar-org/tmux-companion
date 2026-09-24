@@ -86,6 +86,39 @@ pub struct Open {
     /// vim and neovim take; emacs and helix want something else, which is
     /// why this is a template rather than a program name.
     pub editor: String,
+
+    /// The applications `open --choose` offers.
+    ///
+    /// Empty means no chooser: `--choose` then opens what it would have opened
+    /// anyway rather than showing a picker with nothing in it.
+    ///
+    /// This is the `-i` of the script it replaces, which read "interactive"
+    /// and meant "let me say which of my browsers or editors this goes to".
+    /// A list rather than a compiled-in set of browsers, because the right
+    /// answer is whatever somebody has installed.
+    #[serde(default, rename = "application")]
+    pub applications: Vec<Application>,
+}
+
+/// One entry in `open --choose`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct Application {
+    /// What the picker calls it.
+    pub name: String,
+    /// The command, with `{url}`, `{path}`, `{line}` and `{column}` replaced.
+    ///
+    /// Run through the shell, like `editor` above, because a template with
+    /// quoting in it is the only way an application name with a space in it
+    /// reaches a `-a` flag intact.
+    pub command: String,
+    /// Whether this opens in a tmux pane beside the one you are in, the way
+    /// the editor does, rather than being launched and left alone.
+    ///
+    /// An editor wants a pane and a browser does not, and getting it the wrong
+    /// way round means either a browser that holds a pane open forever or an
+    /// editor with nowhere to draw.
+    pub pane: bool,
 }
 
 /// Which way `open` splits the window for an editor.
@@ -115,6 +148,7 @@ impl Default for Open {
             split: Split::Right,
             size_percent: 0,
             editor: "nvim '+call cursor({line},{column})' {path}".to_string(),
+            applications: Vec::new(),
         }
     }
 }
@@ -131,6 +165,178 @@ pub struct PickerLayout {
     /// The preview's share of the popup, as a percentage. Clamped to 20-80:
     /// outside that one half of the split is too narrow to read.
     pub preview_percent: u16,
+    /// The border, the labels, the rules and where each one sits.
+    ///
+    /// Flattened, so these are written straight under `[picker]` rather than
+    /// under a `[picker.look]` nobody would guess the name of.
+    #[serde(flatten)]
+    pub look: crate::picker::Look,
+
+    /// One picker's answer where it differs from the rest.
+    ///
+    /// The shape is shared on purpose -- five pickers that each drift into
+    /// their own is five things to learn rather than one -- but the preview is
+    /// genuinely not the same question for each: a theme wants a tall pane
+    /// beside a narrow list, a key binding wants three lines under a wide one,
+    /// and a list of sessions wants most of the popup. So `[picker]` is the
+    /// answer and `[picker.keys]` is the exception.
+    #[serde(default)]
+    pub keys: PickerOverride,
+    /// `[picker.project]`, for the project and session list.
+    #[serde(default)]
+    pub project: PickerOverride,
+    /// `[picker.window]`, for the directory list a new window opens at.
+    #[serde(default)]
+    pub window: PickerOverride,
+    /// `[picker.theme]`, for the colour themes.
+    #[serde(default)]
+    pub theme: PickerOverride,
+    /// `[picker.run]`, for the shell history.
+    #[serde(default)]
+    pub run: PickerOverride,
+    /// `[picker.open]`, for the application chooser.
+    #[serde(default)]
+    pub open: PickerOverride,
+}
+
+/// One picker's departures from `[picker]`.
+///
+/// Every field is optional and an absent one means "whatever the shared answer
+/// is". Written out rather than derived, because a macro here would save
+/// thirty lines and cost the config the error message that names the key you
+/// got wrong.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct PickerOverride {
+    /// What this picker calls itself on its border, e.g. `[ Keys ]`.
+    ///
+    /// The default is the call site's, because only it knows whether this is
+    /// the key search or the theme list. It is settable because a label is
+    /// four words somebody reads every day and the tool's four words are not
+    /// necessarily theirs.
+    pub label: Option<String>,
+    /// The line at the top saying what the keys do.
+    ///
+    /// Same reasoning, and more of it: the shipped line names the keys this
+    /// tool binds, and anybody who has been driving fzf has a line of their
+    /// own that names the same keys in their own words.
+    pub hint: Option<String>,
+    /// What this picker calls its preview pane.
+    pub preview_label: Option<String>,
+    /// Where the preview pane goes.
+    pub preview: Option<crate::picker::Preview>,
+    /// The preview's share of the popup.
+    pub preview_percent: Option<u16>,
+    /// The line the box is drawn with.
+    pub border: Option<crate::picker::BorderKind>,
+    /// Where the picker's own label sits.
+    pub label_position: Option<crate::picker::LabelPosition>,
+    /// Cells of border left showing beyond that label.
+    pub label_offset: Option<u16>,
+    /// Which end the line explaining the keys sits at.
+    pub hint_position: Option<crate::picker::Edge>,
+    /// Which end the query sits at.
+    pub prompt_position: Option<crate::picker::Edge>,
+    /// Which end the first row sits at.
+    pub list_from: Option<crate::picker::Edge>,
+    /// Whether the matched/total counter is drawn.
+    pub counter: Option<bool>,
+    /// Rules between the hint, the list and the query.
+    pub rules: Option<bool>,
+    /// What is drawn in front of the row the cursor is on.
+    pub marker: Option<String>,
+    /// The order a row's columns are drawn in.
+    pub column_order: Option<Vec<usize>>,
+    /// Whether the preview gets a line between it and the list.
+    pub preview_border: Option<bool>,
+    /// Where the preview's label sits on that line.
+    pub preview_label_position: Option<crate::picker::LabelPosition>,
+    /// Cells of that line left showing beyond the preview's label.
+    pub preview_label_offset: Option<u16>,
+}
+
+/// Which picker is asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Picker {
+    /// The key search.
+    Keys,
+    /// The project and session list.
+    Project,
+    /// The directory list a new window opens at.
+    Window,
+    /// The colour themes.
+    Theme,
+    /// The shell history.
+    Run,
+    /// The application chooser `open --choose` shows.
+    Open,
+}
+
+impl PickerLayout {
+    /// One picker's exceptions, as written.
+    pub fn overrides(&self, which: Picker) -> &PickerOverride {
+        match which {
+            Picker::Keys => &self.keys,
+            Picker::Project => &self.project,
+            Picker::Window => &self.window,
+            Picker::Theme => &self.theme,
+            Picker::Run => &self.run,
+            Picker::Open => &self.open,
+        }
+    }
+
+    /// This layout with one picker's exceptions folded in.
+    pub fn for_picker(&self, which: Picker) -> Self {
+        let over = self.overrides(which);
+        let mut out = self.clone();
+        let look = &mut out.look;
+        if let Some(v) = over.preview {
+            out.preview = v;
+        }
+        if let Some(v) = over.preview_percent {
+            out.preview_percent = v;
+        }
+        if let Some(v) = over.border {
+            look.border = v;
+        }
+        if let Some(v) = over.label_position {
+            look.label_position = v;
+        }
+        if let Some(v) = over.label_offset {
+            look.label_offset = v;
+        }
+        if let Some(v) = over.hint_position {
+            look.hint_position = v;
+        }
+        if let Some(v) = over.prompt_position {
+            look.prompt_position = v;
+        }
+        if let Some(v) = over.list_from {
+            look.list_from = v;
+        }
+        if let Some(v) = over.counter {
+            look.counter = v;
+        }
+        if let Some(v) = over.rules {
+            look.rules = v;
+        }
+        if let Some(v) = over.marker.clone() {
+            look.marker = v;
+        }
+        if let Some(v) = over.column_order.clone() {
+            look.column_order = v;
+        }
+        if let Some(v) = over.preview_border {
+            look.preview_border = v;
+        }
+        if let Some(v) = over.preview_label_position {
+            look.preview_label_position = v;
+        }
+        if let Some(v) = over.preview_label_offset {
+            look.preview_label_offset = v;
+        }
+        out
+    }
 }
 
 impl Default for PickerLayout {
@@ -138,6 +344,13 @@ impl Default for PickerLayout {
         Self {
             preview: crate::picker::Preview::Right,
             preview_percent: 55,
+            look: crate::picker::Look::default(),
+            keys: PickerOverride::default(),
+            project: PickerOverride::default(),
+            window: PickerOverride::default(),
+            theme: PickerOverride::default(),
+            run: PickerOverride::default(),
+            open: PickerOverride::default(),
         }
     }
 }
@@ -1566,6 +1779,57 @@ pub fn dump_defaults() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_applications_open_offers_are_read_as_a_list() {
+        let c = parse(
+            r#"
+[open]
+split = "bottom"
+
+[[open.application]]
+name = "chrome"
+command = "open -a 'Google Chrome' {url}"
+
+[[open.application]]
+name = "vim"
+command = "nvim {path}"
+pane = true
+"#,
+            std::path::Path::new("test.toml"),
+        )
+        .expect("parses");
+        assert_eq!(c.open.applications.len(), 2);
+        assert_eq!(c.open.applications[0].name, "chrome");
+        assert!(!c.open.applications[0].pane, "a browser wants no pane");
+        assert_eq!(c.open.applications[1].name, "vim");
+        assert!(c.open.applications[1].pane, "an editor wants one");
+    }
+
+    #[test]
+    fn one_picker_can_be_given_its_own_look() {
+        let c = parse(
+            r#"
+[picker]
+border = "plain"
+counter = true
+
+[picker.keys]
+border = "double"
+preview = "bottom"
+"#,
+            std::path::Path::new("test.toml"),
+        )
+        .expect("parses");
+        let keys = c.picker.for_picker(Picker::Keys);
+        assert_eq!(keys.look.border, crate::picker::BorderKind::Double);
+        assert_eq!(keys.preview, crate::picker::Preview::Bottom);
+        // And what it did not override still comes from [picker].
+        assert!(keys.look.counter);
+        // Another picker keeps the shared answer.
+        let theme = c.picker.for_picker(Picker::Theme);
+        assert_eq!(theme.look.border, crate::picker::BorderKind::Plain);
+    }
 
     #[test]
     fn an_empty_file_is_the_defaults() {
