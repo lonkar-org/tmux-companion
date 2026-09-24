@@ -566,7 +566,7 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
         "the second session never grew a pane"
     );
     t.tmux(&["set", "-t", "second", "-u", "@theme-session-name-bg"]);
-    let (_, err, ok) = t.run(&["theme", "apply", "second", "-t", ""]);
+    let (out, err, ok) = t.run(&["theme", "apply", "second", "-t", ""]);
     assert!(ok, "theme apply with an empty target failed: {err}");
     // The example config's session-created hook is a `run-shell`, which tmux
     // does not wait for, so this reads the same option the hook writes and has
@@ -578,8 +578,43 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
     let second = t.tmux(&["show", "-t", "second", "-v", "@theme-session-name-bg"]);
     assert!(
         second.starts_with("colour"),
-        "an empty target painted something other than the named session: {second:?}"
+        "an empty target painted something other than the named session: {second:?}\n{}",
+        // This assertion has failed on the ubuntu job and nowhere else, and it
+        // has survived two fixes aimed at guesses about why: the pane not
+        // being ready, and the suite reading the runner's own home. Neither was
+        // it. It does not reproduce here in twenty-two runs, idle or under
+        // load, and a tmux 3.4 container does everything this needs, a nested
+        // source-file carrying its target included. So the next failure brings
+        // its evidence rather than another theory.
+        theme_forensics(&t, "second", &out, &err)
     );
+}
+
+/// What the theme test needs to say when it fails on a machine nobody can
+/// reach: which tmux, which themes are on disk, what the tool printed, and
+/// what the sessions actually hold.
+fn theme_forensics(t: &Tmux, session: &str, out: &str, err: &str) -> String {
+    let dir = t.sandbox.join("config/tmux/themes");
+    let mut themes: Vec<String> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    themes.sort();
+    format!(
+        "  tmux:         {}\n             themes dir:   {} ({} files)\n             ink.tmux:     {}\n             _apply.tmux:  {}\n             first ten:    {:?}\n             apply stdout: {out:?}\n             apply stderr: {err:?}\n             sessions:     {:?}\n             {session} options: {:?}\n             global:       {:?}",
+        t.tmux(&["-V"]),
+        dir.display(),
+        themes.len(),
+        dir.join("ink.tmux").is_file(),
+        dir.join("_apply.tmux").is_file(),
+        themes.iter().take(10).collect::<Vec<_>>(),
+        t.tmux(&["list-sessions", "-F", "#{session_name}"]),
+        t.tmux(&["show", "-t", session]),
+        t.tmux(&["show", "-g", "@theme-session-name-bg"]),
+    )
 }
 
 /// With no themes on disk at all there is nothing to source, and that is a
