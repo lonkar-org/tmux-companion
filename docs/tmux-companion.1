@@ -41,6 +41,29 @@ answers with git, bandwidth and battery in one call.
 Commands that draw on a terminal -- the pickers, the dialogs -- run in the
 client process.
 The daemon has no terminal; it answers with rows and the client draws them.
+.Ss Daemon lifetime
+One daemon answers for one socket.
+A start takes an exclusive lock on
+.Pa <socket>.lock
+before it touches the socket file, and a start that cannot take the lock exits
+quietly, leaving the daemon that holds it to answer.
+Without the lock two starts in the same moment both unlink the socket file and
+both bind, and the one whose file was taken away keeps running where no client
+can reach it.
+.Pp
+A daemon exits when the socket file it bound is deleted or replaced, which it
+checks every thirty seconds.
+That is the only thing that ends a daemon besides a signal or
+.Ic __shutdown ,
+and it is what stops an abandoned daemon from outliving the socket it was
+started for.
+The next client starts a fresh one, which costs one cold
+.Xr git 1
+status.
+.Pp
+.Ic __shutdown
+removes the socket file on its way out, so a path with no socket file means no
+daemon rather than a daemon that has stopped answering.
 .Sh GETTING IN
 .Bl -tag -width Ds
 .It Ic start Oo Ar directory Oc Op Fl -last
@@ -494,6 +517,9 @@ themes, and the two files that apply them
 saved per-project layouts
 .It Pa /tmp/tmux-companion-$UID.sock
 the daemon's socket
+.It Pa /tmp/tmux-companion-$UID.sock.lock
+the lock one daemon holds for the life of the process, so a second start
+cannot unlink the socket out from under the first
 .It Pa ~/.z
 the z database, read when
 .Ic [project] dirs_source

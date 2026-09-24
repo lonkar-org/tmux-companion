@@ -7,6 +7,35 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- Daemons accumulated instead of exiting, one per test run, benchmark or
+  recording. Two bugs, and either alone was enough. The daemon unlinks the
+  socket file before it binds, because that is how a crashed predecessor's
+  file gets cleared, and unlinking is exactly what makes `AddrInUse`
+  unreachable: two starts racing each other both passed the connect check,
+  both unlinked, and both bound, with the second unlink taking the first
+  daemon's socket file away. And nothing bounded a daemon's life, so a harness
+  that pointed `TMUX_COMPANION_SOCK` at a sandbox and then deleted the sandbox
+  left a daemon holding an unlinked inode with no way to reach it and no
+  reason to stop. A start now takes an exclusive lock on `<socket>.lock`
+  before it touches the socket file, and a daemon exits once the socket file
+  it bound is gone or has been replaced.
+
+- `__shutdown` removes the socket file on its way out. A daemon that exited
+  and left the file behind read as a live daemon to anything that stats the
+  path rather than connecting to it, and an interrupted suite left one such
+  file per test.
+
+### Added
+
+- `scripts/reap-daemons.sh`, and `just reap`, which kills the daemons nothing
+  can reach any more and leaves the live one alone. It classifies by the
+  socket a process holds rather than by its command line, because
+  `pkill -f 'tmux-companion server'` matches the live daemon too, and a
+  leftover socket file does not mean a live daemon, so each one is probed by
+  connecting rather than stat'ed. `just test` runs it on the way out however
+  the run ends, since the runs that leak a daemon are the ones that failed or
+  were interrupted.
+
 - The end-to-end tests told the tool which config to read and which daemon
   socket to use, but never which tmux to talk to, so every tmux command the
   binary ran under test went to the default socket rather than to the server

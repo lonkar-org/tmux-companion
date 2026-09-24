@@ -14,6 +14,14 @@ use tokio::{
 
 use crate::{client::sock_path, proto::Request, server::state::ServerState};
 
+/// How often the daemon checks that the socket file it bound is still the one
+/// clients reach.
+///
+/// A stat of one path.  Thirty seconds is slow enough to cost nothing and
+/// quick enough that a sandbox teardown does not leave a daemon standing for
+/// the rest of the day.
+const SOCKET_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Bind the socket and serve until killed.
 ///
 /// Exits quietly, and successfully, if another server is already listening:
@@ -21,6 +29,33 @@ use crate::{client::sock_path, proto::Request, server::state::ServerState};
 /// ordinary case rather than an error.
 pub async fn run() -> anyhow::Result<()> {
     let sock = sock_path();
+
+    // Everything from here to the bind is one critical section, and it has to
+    // be one.  A daemon unlinks the socket file before it binds, because that
+    // is the only way to clear the file a crashed predecessor left behind, and
+    // unlinking is exactly what makes `AddrInUse` unreachable: two starts that
+    // race each other both pass the connect check, both unlink, and both bind.
+    // The second unlink takes the first one's socket file away.  What is left
+    // is a daemon nobody can connect to, holding an unlinked inode, with
+    // nothing in the process that would ever tell it to stop.
+    //
+    // That is not a theoretical race.  It is where the orphaned daemons come
+    // from, and they arrive in pairs: two starts in the same second, one of
+    // them unreachable from birth.
+    //
+    // Losing the lock is the ordinary case, the same way losing the bind was:
+    // the client that spawned this process is already retrying its connect,
+    // and whoever holds the lock is the daemon it will reach.
+    let _lock = match start_lock(&lock_path(&sock)) {
+        StartLock::Held(l) => Some(l),
+        StartLock::Busy => return Ok(()),
+        // No lock is worse than a lock and better than no daemon.  A /tmp this
+        // process cannot write to is a broken machine, not a race to lose.
+        StartLock::Unavailable(e) => {
+            eprintln!("tmux-companion: starting without the start lock: {e}");
+            None
+        }
+    };
 
     // If an existing server is accepting connections, exit quietly.
     if tokio::net::UnixStream::connect(&sock).await.is_ok() {
@@ -67,11 +102,25 @@ pub async fn run() -> anyhow::Result<()> {
             l
         }
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            // Another server raced us to the bind — exit quietly.
+            // Another server raced us to the bind — exit quietly.  With the
+            // start lock held this is unreachable; it stays because a daemon
+            // from a build without the lock can still be mid-start beside us.
             return Ok(());
         }
         Err(e) => return Err(e.into()),
     };
+
+    // The one thing that bounds this process's life.  Everything else here
+    // runs forever on purpose.
+    match socket_identity(&sock) {
+        Some(mine) => {
+            tokio::spawn(watch_socket(sock.clone(), mine));
+        }
+        None => eprintln!(
+            "tmux-companion: cannot stat the socket just bound; \
+             the unreachable-daemon watchdog is off for this process"
+        ),
+    }
 
     // Started before the accept loop, so it runs for as long as the daemon
     // does and stops when it stops. That is the whole of the lifetime
@@ -137,6 +186,92 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
+/// The lock file beside a socket: the same path with `.lock` on the end.
+///
+/// Beside the socket rather than in a fixed directory, because the socket path
+/// is what `TMUX_COMPANION_SOCK` moves.  A test harness that gives itself its
+/// own socket gets its own lock for free, and two harnesses running at once do
+/// not serialise against each other.
+fn lock_path(sock: &std::path::Path) -> std::path::PathBuf {
+    let mut p = sock.as_os_str().to_os_string();
+    p.push(".lock");
+    std::path::PathBuf::from(p)
+}
+
+/// What a start got when it asked for the lock.
+enum StartLock {
+    /// Ours until this process exits.
+    Held(nix::fcntl::Flock<std::fs::File>),
+    /// Another start is in flight, or a daemon is running.
+    Busy,
+    /// The lock file could not be opened at all.
+    Unavailable(std::io::Error),
+}
+
+/// Take the exclusive lock a daemon holds from before it unlinks the socket
+/// until it exits.
+///
+/// `flock` and not a PID file: the kernel drops it when the process goes,
+/// however it goes, so there is no stale lock to reason about and no second
+/// liveness check to get wrong.  A daemon killed with SIGKILL leaves the lock
+/// file on disk and the lock itself released, which is the state the next
+/// start wants.
+fn start_lock(path: &std::path::Path) -> StartLock {
+    use nix::fcntl::{Flock, FlockArg};
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) => return StartLock::Unavailable(e),
+    };
+
+    match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+        Ok(l) => StartLock::Held(l),
+        Err((_, _)) => StartLock::Busy,
+    }
+}
+
+/// The device and inode of a socket file, or `None` if nothing is there.
+///
+/// The pair and not the path: a replacement socket at the same path is a
+/// different file, and it is exactly the case a daemon has to notice.
+fn socket_identity(sock: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(sock).ok()?;
+    Some((m.dev(), m.ino()))
+}
+
+/// Exit once the socket file this daemon bound is gone or has been replaced.
+///
+/// Until this existed nothing bounded a daemon's life but a signal.  A test
+/// harness or a demo script that pointed `TMUX_COMPANION_SOCK` at a sandbox,
+/// ran, and then deleted the sandbox left a daemon holding an unlinked inode
+/// forever: unreachable, idle, and invisible to every `pkill` pattern aimed at
+/// the installed binary.  They accumulate one per run, and nothing in the
+/// process ever notices.
+///
+/// Exiting on a missing socket is right for the live daemon too.  A socket
+/// file that has gone is a daemon no client can reach, and the next client
+/// starts a fresh one in a few milliseconds.
+async fn watch_socket(sock: std::path::PathBuf, mine: (u64, u64)) {
+    loop {
+        tokio::time::sleep(SOCKET_WATCH_INTERVAL).await;
+        if socket_identity(&sock) != Some(mine) {
+            eprintln!(
+                "tmux-companion: {} is no longer this daemon's socket; exiting.",
+                sock.display()
+            );
+            std::process::exit(0);
+        }
+    }
+}
+
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     state: Arc<Mutex<ServerState>>,
@@ -175,4 +310,62 @@ pub fn state_dir() -> Option<std::path::PathBuf> {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
         })
         .map(|d| d.join("tmux-companion"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lock_sits_beside_the_socket_it_guards() {
+        assert_eq!(
+            lock_path(std::path::Path::new("/tmp/tmux-companion-501.sock")),
+            std::path::PathBuf::from("/tmp/tmux-companion-501.sock.lock")
+        );
+    }
+
+    #[test]
+    fn a_second_start_finds_the_lock_busy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("s.sock.lock");
+
+        let first = start_lock(&path);
+        assert!(matches!(first, StartLock::Held(_)));
+        // Same process, so this is flock's own semantics rather than a
+        // cross-process assertion: flock is per open file description, and two
+        // opens of one path are two descriptions.
+        assert!(matches!(start_lock(&path), StartLock::Busy));
+
+        drop(first);
+        assert!(matches!(start_lock(&path), StartLock::Held(_)));
+    }
+
+    #[test]
+    fn a_lock_file_that_cannot_be_opened_is_unavailable_not_busy() {
+        // The difference decides whether a daemon starts: busy means somebody
+        // else is doing it, unavailable means nobody will.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("no-such-directory").join("s.lock");
+        assert!(matches!(start_lock(&path), StartLock::Unavailable(_)));
+    }
+
+    #[test]
+    fn a_replaced_file_is_not_the_file_that_was_there() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("s.sock");
+
+        std::fs::write(&path, b"").expect("write");
+        let first = socket_identity(&path).expect("stat");
+        assert_eq!(socket_identity(&path), Some(first));
+
+        std::fs::remove_file(&path).expect("remove");
+        assert_eq!(socket_identity(&path), None);
+
+        std::fs::write(&path, b"").expect("write again");
+        assert_ne!(
+            socket_identity(&path),
+            Some(first),
+            "a new file at the same path must not pass for the old one"
+        );
+    }
 }

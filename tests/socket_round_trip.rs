@@ -404,3 +404,68 @@ fn a_client_replaces_a_daemon_from_another_build() {
     shut_down(&sock);
     let _ = std::fs::remove_file(&sock);
 }
+
+/// Twelve starts at once leave exactly one daemon.
+///
+/// The daemon unlinks the socket file before it binds, because that is the
+/// only way to clear what a crashed predecessor left behind, and unlinking is
+/// what makes `AddrInUse` unreachable. Before the start lock, starts that
+/// raced each other all passed the connect check, all unlinked and all bound,
+/// and every one but the last was left holding an inode with no name on it:
+/// unreachable, idle, and with nothing in the process that would ever tell it
+/// to stop. They arrived in pairs, one pair per sandbox that had two clients
+/// call at the same moment.
+///
+/// Twelve rather than two because one pair is what a race produces on a quiet
+/// machine and this has to fail on a quiet machine too.
+#[test]
+fn starts_that_race_each_other_leave_one_daemon() {
+    let sock = std::path::PathBuf::from(format!("/tmp/tc-race-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_file(format!("{}.lock", sock.display()));
+
+    let mut started: Vec<Child> = (0..12)
+        .map(|_| {
+            Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+                .arg("server")
+                .env("TMUX_COMPANION_SOCK", &sock)
+                .spawn()
+                .expect("server spawns")
+        })
+        .collect();
+
+    // The losers exit successfully and at once; the winner is still running.
+    // Counting exits rather than processes keeps this off `ps`, which would
+    // see every other test's daemons too.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut exited = 0;
+    while Instant::now() < deadline && exited < 11 {
+        exited = 0;
+        for c in started.iter_mut() {
+            if matches!(c.try_wait(), Ok(Some(_))) {
+                exited += 1;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // And the one that stayed is the one clients reach.
+    let answered = exited == 11 && send_to(&sock, Request::build("noop", &())).error.is_none();
+
+    // Before the assert, not after it.  A panic here skips whatever follows,
+    // and what followed was the line that stopped the surviving daemon: it
+    // outlived the run holding cargo's stdout, so `cargo test | tail` waited
+    // for an EOF that was never coming and the failure looked like a hang.
+    shut_down(&sock);
+    for mut c in started {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_file(format!("{}.lock", sock.display()));
+
+    assert_eq!(
+        exited, 11,
+        "eleven of the twelve starts should have stood down, not {exited}"
+    );
+    assert!(answered, "the surviving daemon answers");
+}

@@ -153,6 +153,13 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 // Answer first, exit after: a client that gets no response
                 // cannot tell "it stopped" from "it was never there".
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                // Take the socket file with it.  A daemon that exits and
+                // leaves the file behind reads as a live daemon to anything
+                // that stats the path instead of connecting to it, and the
+                // next start has to unlink it anyway.  Leaving it also meant
+                // an interrupted test run left a socket file per test with
+                // nothing behind it.
+                let _ = std::fs::remove_file(crate::client::sock_path());
                 std::process::exit(0);
             });
             Ok(String::new())

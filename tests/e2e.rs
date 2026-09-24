@@ -28,9 +28,19 @@ use std::{
 /// A private tmux server, a private daemon socket and a sandbox to run in.
 struct Tmux {
     socket: String,
+    daemon_sock: PathBuf,
     sandbox: PathBuf,
     binary: PathBuf,
 }
+
+/// Serial numbers for the daemon sockets, so each test gets its own.
+///
+/// One socket for the whole binary was the obvious thing and it leaked a
+/// daemon per run. Tests run in parallel, so one test's teardown sent
+/// `__shutdown` while another test's client was still calling, and that client
+/// started a replacement daemon a moment after the shutdown that was supposed
+/// to be the last one. Nothing was left to stop the replacement.
+static DAEMON_SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl Tmux {
     /// Start a server with the config this repository ships.
@@ -52,8 +62,12 @@ impl Tmux {
         // `tmux-companion` and that is the thing under test.
         let _ = std::os::unix::fs::symlink(&binary, sandbox.join("bin/tmux-companion"));
 
+        // Short, and not built from `name`: a socket address holds about a
+        // hundred bytes and these test names run to sixty.
+        let serial = DAEMON_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let t = Tmux {
             socket: format!("tce2e{name}{}", std::process::id()),
+            daemon_sock: PathBuf::from(format!("/tmp/tce2e{}-{serial}.sock", std::process::id())),
             sandbox,
             binary,
         };
@@ -105,10 +119,7 @@ impl Tmux {
             .env("XDG_CONFIG_HOME", self.sandbox.join("config"))
             .env("XDG_STATE_HOME", self.sandbox.join("state"))
             .env("_ZO_DATA_DIR", self.sandbox.join("zoxide"))
-            .env(
-                "TMUX_COMPANION_SOCK",
-                format!("/tmp/tce2e{}.sock", std::process::id()),
-            )
+            .env("TMUX_COMPANION_SOCK", &self.daemon_sock)
             .env("PS1", "demo %# ")
             .env("PROMPT", "demo %# ");
     }
@@ -184,6 +195,11 @@ impl Drop for Tmux {
         cmd.arg("__shutdown");
         self.env(&mut cmd);
         let _ = cmd.output();
+        // The daemon unlinks this itself on the way out. Removed again here
+        // because a daemon that never started still leaves the client's own
+        // failed bind behind, and a socket file with nothing behind it reads
+        // as a live daemon to anything that stats the path.
+        let _ = std::fs::remove_file(&self.daemon_sock);
         let _ = std::fs::remove_dir_all(&self.sandbox);
     }
 }

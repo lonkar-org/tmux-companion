@@ -203,10 +203,31 @@ playground-smoke:
 prompt-marks *SHELLS:
     ./scripts/check-prompt-marks.sh {{SHELLS}}
 
+# Lists by default and kills nothing: the live daemon and a test run in
+# progress look alike from the outside, and a reaper that guesses wrong takes
+# the status bar down with it. Pass --force once the list is the list you
+# expected. `just reap -- --force --sweep-files` also removes the socket files
+# an interrupted suite leaves under /tmp.
+
+# Kill the daemons nothing can reach any more.
+reap *ARGS:
+    ./scripts/reap-daemons.sh {{ARGS}}
+
 # --no-fail-fast is not a preference. See the note at the top of this file.
+
+# The reap afterwards is not tidiness. The suite gives every test binary its
+# own daemon on its own socket, and an interrupted run leaves that daemon
+# behind with nothing to stop it; they accumulate one per run. --min-age keeps
+# the reaper off a suite running in another terminal.
 
 # Every test, including the ones a failure would otherwise hide.
 test:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    # On the way out however it goes, which is the point: the runs that leak a
+    # daemon are the ones that failed or were interrupted, and a cleanup line
+    # after the cargo line would be the one line those runs never reach.
+    trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
     nice -n 15 cargo test -j 4 --all-targets --no-fail-fast
 
 # A green run is not a quiet one. Four actions sat on Node 20 for weeks with
