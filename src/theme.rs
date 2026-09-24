@@ -461,6 +461,27 @@ pub fn shade_ramp(main: &str) -> Vec<String> {
         .collect()
 }
 
+/// How the text reads on the background, as WCAG measures it.
+///
+/// `None` when either colour cannot be resolved, because a made-up number here
+/// is worse than none: this is the one figure somebody would act on.
+pub fn contrast_of(text: &str, background: &str) -> Option<f64> {
+    Some(contrast(resolve_colour(text)?, resolve_colour(background)?))
+}
+
+/// The ratio, and whether it clears the bar, as a few words for a card.
+///
+/// 4.5 is WCAG AA for body text and 3.0 is the large-text floor. Below that
+/// the sample underneath is the evidence and this is the reason.
+pub fn contrast_note(text: &str, background: &str) -> String {
+    match contrast_of(text, background) {
+        Some(r) if r >= 4.5 => format!("   {r:.1}:1"),
+        Some(r) if r >= 3.0 => format!("   {r:.1}:1 (large text only)"),
+        Some(r) => format!("   {r:.1}:1 \u{2717} unreadable"),
+        None => String::new(),
+    }
+}
+
 /// What a theme looks like, as a card.
 ///
 /// This is `preview-tmux-theme.zsh` without the shell: the three colours it is
@@ -491,17 +512,50 @@ pub fn preview_card(settings: &std::collections::HashMap<String, String>, width:
             m
         }
     };
+    // `@theme-color-border` is what the generator writes and what
+    // `_apply.tmux` reads. `@theme-color-secondary` was the name in the shell
+    // script this card comes from, and no theme file on disk carries it, so
+    // every border here was drawn in the fallback grey.
     let secondary = {
-        let s = get("@theme-color-secondary");
-        if s.is_empty() {
-            "colour238".to_string()
+        let b = get("@theme-color-border");
+        if !b.is_empty() {
+            b
         } else {
-            s
+            let s = get("@theme-color-secondary");
+            if s.is_empty() {
+                "colour238".to_string()
+            } else {
+                s
+            }
         }
     };
+
+    // The text colour is `@theme-color-on-main`, which `theme gen` chose for
+    // contrast against the main colour and which `_apply.tmux` uses. Reading
+    // `@theme-color-black` instead -- another name from the shell script that
+    // no theme file has -- fell back to literal black, so every sample in this
+    // card was black on the theme's own background. On Blue Dark that is black
+    // on #00005f, a ratio of 1.1 to 1: the sample exists to show whether the
+    // text can be read, and it could not be read.
+    //
+    // With nothing on disk to go on the readable one is computed rather than
+    // guessed, because a card that cannot say is worse than one that works it
+    // out.
     let text_colour = {
-        let b = get("@theme-color-black");
-        if b.is_empty() { "black".to_string() } else { b }
+        let on_main = get("@theme-color-on-main");
+        if !on_main.is_empty() {
+            on_main
+        } else {
+            let black = get("@theme-color-black");
+            if !black.is_empty() {
+                black
+            } else {
+                match resolve_colour(&main) {
+                    Some(rgb) => readable_on_rgb(rgb).0.to_string(),
+                    None => "colour231".to_string(),
+                }
+            }
+        }
     };
 
     // The bar the status line is drawn on, which is not part of the theme:
@@ -525,7 +579,14 @@ pub fn preview_card(settings: &std::collections::HashMap<String, String>, width:
     out.push_str(&format!("  {}▉▉▉{reset}  {name}\n", sgr(&main, "")));
     out.push_str(&format!("     main       {}\n", label_of(&main)));
     out.push_str(&format!("     border     {}\n", label_of(&secondary)));
-    out.push_str(&format!("     text       {}\n\n", label_of(&text_colour)));
+    // The ratio, because the one thing anybody wants from a theme preview is
+    // whether the text on that background can be read, and a pair of colour
+    // names does not answer it. WCAG wants 4.5 to 1 for body text.
+    out.push_str(&format!(
+        "     text       {}{}\n\n",
+        label_of(&text_colour),
+        contrast_note(&text_colour, &main)
+    ));
 
     let ramp = shade_ramp(&main);
     if !ramp.is_empty() {
@@ -936,11 +997,13 @@ mod tests {
     // ── the preview card ─────────────────────────────────────────────────────
 
     fn amber() -> std::collections::HashMap<String, String> {
+        // The keys the generator actually writes, which is the point: the card
+        // used to read two names that no theme file has ever carried.
         [
             ("@theme-name", "Amber Light"),
             ("@theme-color-main-1", "colour215"),
-            ("@theme-color-secondary", "colour238"),
-            ("@theme-color-black", "black"),
+            ("@theme-color-border", "colour238"),
+            ("@theme-color-on-main", "colour16"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -992,6 +1055,69 @@ mod tests {
                 "{expected:?} missing from:\n{card}"
             );
         }
+    }
+
+    #[test]
+    fn the_card_reads_the_keys_the_generator_writes() {
+        // `@theme-color-on-main` is the text colour `theme gen` picked for
+        // contrast and `_apply.tmux` uses. The card read `@theme-color-black`,
+        // which is a name from the shell script it came from and which no
+        // theme file has, so it fell back to literal black: on Blue Dark that
+        // is black on #00005f, and the sample meant to show whether the text
+        // could be read could not be read.
+        let blue: std::collections::HashMap<String, String> = [
+            ("@theme-name", "Blue Dark"),
+            ("@theme-color-main-1", "colour17"),
+            ("@theme-color-on-main", "colour231"),
+            ("@theme-color-border", "colour103"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+        let card = plain(&preview_card(&blue, 60));
+        assert!(card.contains("colour231"), "the text colour:\n{card}");
+        assert!(card.contains("colour103"), "the border colour:\n{card}");
+        assert!(!card.contains("black (#000000)"), "not black:\n{card}");
+    }
+
+    #[test]
+    fn a_theme_with_no_text_colour_gets_a_readable_one_rather_than_black() {
+        // Nothing on disk to go on, so it is computed. Guessing black here is
+        // what produced an unreadable card.
+        let dark: std::collections::HashMap<String, String> =
+            [("@theme-name", "Ink"), ("@theme-color-main-1", "colour17")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+        let card = plain(&preview_card(&dark, 60));
+        assert!(!card.contains("black (#000000)"), "{card}");
+        assert!(
+            contrast_of("colour231", "colour17").expect("both resolve") > 4.5,
+            "the computed answer has to clear the bar"
+        );
+    }
+
+    #[test]
+    fn the_card_says_how_readable_the_text_is() {
+        // A pair of colour names does not answer the only question anybody
+        // opens a theme preview to ask.
+        assert!(contrast_note("colour231", "colour17").contains(":1"));
+        assert!(!contrast_note("colour231", "colour17").contains("unreadable"));
+        // Black on Blue Dark, which is what this used to draw.
+        let bad = contrast_note("black", "colour17");
+        assert!(bad.contains("unreadable"), "{bad}");
+        // Nothing to measure is no claim at all.
+        assert_eq!(contrast_note("chartreuse", "colour17"), "");
+    }
+
+    #[test]
+    fn the_ratio_is_the_one_wcag_defines() {
+        // White on black is 21:1, and a colour against itself is 1:1.
+        let white_on_black = contrast_of("#ffffff", "#000000").expect("resolves");
+        assert!((white_on_black - 21.0).abs() < 0.01, "{white_on_black}");
+        let same = contrast_of("colour17", "colour17").expect("resolves");
+        assert!((same - 1.0).abs() < 0.001, "{same}");
     }
 
     #[test]

@@ -76,6 +76,20 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- The theme card draws a theme in its own colours rather than in black. It read
+  `@theme-color-black` and `@theme-color-secondary`, two names carried over
+  from the shell script it replaced and written by no theme file the generator
+  produces, so every sample fell back to literal black on the theme's own
+  background. On a dark theme that is black on `#00005f`, a contrast ratio of
+  1.1 to 1: the samples exist to show whether the text can be read and they
+  could not be read. It reads `@theme-color-on-main` and `@theme-color-border`
+  now, which are what `theme gen` writes and what `_apply.tmux` uses, and
+  computes a readable colour when a theme carries neither.
+
+- The theme card says how readable the text is, as the WCAG ratio, because a
+  pair of colour names does not answer the only question anybody opens a theme
+  preview to ask. Below 4.5 to 1 it says so.
+
 - The arrows mean down and up the screen. With `list_from = "bottom"` the list
   is drawn in reverse, so the index meaning "further down" is the smaller one,
   and Up moved the cursor down in every picker. Paging had it too.
