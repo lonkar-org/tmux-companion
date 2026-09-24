@@ -160,33 +160,27 @@ impl Default for Open {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct PickerLayout {
-    /// Where the preview pane goes, or `none` for no preview at all.
+    /// What every picker gets unless its own table says otherwise.
     ///
-    /// Unset means each picker's own answer, which is the useful default: a
-    /// theme wants a tall card beside a narrow list, a key binding wants three
-    /// lines under a wide one, and a shell history wants no pane at all. One
-    /// number here would be wrong for two of the three.
-    pub preview: Option<crate::picker::Preview>,
-    /// The preview's share of the popup, as a percentage. Clamped to 20-80:
-    /// outside that one half of the split is too narrow to read.
-    ///
-    /// Unset means each picker's own answer. See `preview`.
-    pub preview_percent: Option<u16>,
-    /// The border, the labels, the rules and where each one sits.
+    /// The same shape as one picker's table, and for the same reason: a field
+    /// nobody wrote has to be telling apart from one somebody wrote to the
+    /// value that happens to be the default. Comparing against the default was
+    /// what this did before, and it meant writing `preview_label_position =
+    /// "bottom-center"` here quietly stopped every picker using its own
+    /// answer for it.
     ///
     /// Flattened, so these are written straight under `[picker]` rather than
     /// under a `[picker.look]` nobody would guess the name of.
     #[serde(flatten)]
-    pub look: crate::picker::Look,
+    pub global: PickerOverride,
 
-    /// One picker's answer where it differs from the rest.
+    /// `[picker.keys]`, for the key search.
     ///
-    /// The shape is shared on purpose -- five pickers that each drift into
-    /// their own is five things to learn rather than one -- but the preview is
-    /// genuinely not the same question for each: a theme wants a tall pane
-    /// beside a narrow list, a key binding wants three lines under a wide one,
-    /// and a list of sessions wants most of the popup. So `[picker]` is the
-    /// answer and `[picker.keys]` is the exception.
+    /// One picker's answer where it differs from the rest. The shape is shared
+    /// on purpose -- six pickers that each drift into their own is six things
+    /// to learn rather than one -- but the preview is genuinely not the same
+    /// question for each, so `[picker]` is the answer and `[picker.keys]` is
+    /// the exception.
     #[serde(default)]
     pub keys: PickerOverride,
     /// `[picker.project]`, for the project and session list.
@@ -254,6 +248,8 @@ pub struct PickerOverride {
     pub marker: Option<String>,
     /// The order a row's columns are drawn in.
     pub column_order: Option<Vec<usize>>,
+    /// The fewest columns a list may keep before a side preview moves under it.
+    pub min_list_width: Option<u16>,
     /// How much of a border the preview pane gets.
     pub preview_border: Option<crate::picker::PreviewBorder>,
     /// Where the preview's label sits on that line.
@@ -328,72 +324,95 @@ impl PickerLayout {
         }
     }
 
-    /// This layout with one picker's exceptions folded in.
-    pub fn for_picker(&self, which: Picker) -> Self {
-        let over = self.overrides(which);
-        let mut out = self.clone();
-
-        // Three layers, narrowest last: what this picker is shaped like, then
-        // whatever `[picker]` says for all of them, then this picker's own
-        // table. A field nobody set at either level keeps the built-in, which
-        // is what makes a machine with no config get sensible pickers rather
-        // than six of the same shape.
+    /// What this picker actually looks like, once every layer has had its say.
+    ///
+    /// Four of them, narrowest last: the tool's own defaults, then the shape
+    /// this particular picker is built for, then whatever `[picker]` says for
+    /// all of them, then this picker's own table. A field nobody wrote at
+    /// either level keeps the built-in, which is what makes a machine with no
+    /// config get pickers shaped like what they hold rather than six of the
+    /// same shape.
+    pub fn resolved(&self, which: Picker) -> Resolved {
         let (preview, percent, preview_border, preview_label) = builtin(which);
-        out.preview = Some(self.preview.unwrap_or(preview));
-        out.preview_percent = Some(self.preview_percent.unwrap_or(percent));
-        let look = &mut out.look;
-        if self.look.preview_border == crate::picker::PreviewBorder::default() {
-            look.preview_border = preview_border;
-        }
-        if self.look.preview_label_position == crate::picker::LabelPosition::default() {
-            look.preview_label_position = preview_label;
-        }
-        if let Some(v) = over.preview {
-            out.preview = Some(v);
-        }
-        if let Some(v) = over.preview_percent {
-            out.preview_percent = Some(v);
-        }
-        if let Some(v) = over.border {
-            look.border = v;
-        }
-        if let Some(v) = over.label_position {
-            look.label_position = v;
-        }
-        if let Some(v) = over.label_offset {
-            look.label_offset = v;
-        }
-        if let Some(v) = over.hint_position {
-            look.hint_position = v;
-        }
-        if let Some(v) = over.prompt_position {
-            look.prompt_position = v;
-        }
-        if let Some(v) = over.list_from {
-            look.list_from = v;
-        }
-        if let Some(v) = over.counter {
-            look.counter = v;
-        }
-        if let Some(v) = over.rules {
-            look.rules = v;
-        }
-        if let Some(v) = over.marker.clone() {
-            look.marker = v;
-        }
-        if let Some(v) = over.column_order.clone() {
-            look.column_order = v;
-        }
-        if let Some(v) = over.preview_border {
-            look.preview_border = v;
-        }
-        if let Some(v) = over.preview_label_position {
-            look.preview_label_position = v;
-        }
-        if let Some(v) = over.preview_label_offset {
-            look.preview_label_offset = v;
+        let mut out = Resolved {
+            preview,
+            preview_percent: percent,
+            look: crate::picker::Look {
+                preview_border,
+                preview_label_position: preview_label,
+                ..crate::picker::Look::default()
+            },
+        };
+        for layer in [&self.global, self.overrides(which)] {
+            layer.apply_to(&mut out);
         }
         out
+    }
+}
+
+/// One picker's settings with nothing left unanswered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    /// Where the preview pane goes.
+    pub preview: crate::picker::Preview,
+    /// The preview's share of the popup.
+    pub preview_percent: u16,
+    /// The border, the labels, the rules and where each one sits.
+    pub look: crate::picker::Look,
+}
+
+impl PickerOverride {
+    /// Write whatever this layer says over what is there.
+    fn apply_to(&self, out: &mut Resolved) {
+        let look = &mut out.look;
+        if let Some(v) = self.preview {
+            out.preview = v;
+        }
+        if let Some(v) = self.preview_percent {
+            out.preview_percent = v;
+        }
+        if let Some(v) = self.border {
+            look.border = v;
+        }
+        if let Some(v) = self.label_position {
+            look.label_position = v;
+        }
+        if let Some(v) = self.label_offset {
+            look.label_offset = v;
+        }
+        if let Some(v) = self.hint_position {
+            look.hint_position = v;
+        }
+        if let Some(v) = self.prompt_position {
+            look.prompt_position = v;
+        }
+        if let Some(v) = self.list_from {
+            look.list_from = v;
+        }
+        if let Some(v) = self.counter {
+            look.counter = v;
+        }
+        if let Some(v) = self.rules {
+            look.rules = v;
+        }
+        if let Some(v) = self.marker.clone() {
+            look.marker = v;
+        }
+        if let Some(v) = self.column_order.clone() {
+            look.column_order = v;
+        }
+        if let Some(v) = self.min_list_width {
+            look.min_list_width = v;
+        }
+        if let Some(v) = self.preview_border {
+            look.preview_border = v;
+        }
+        if let Some(v) = self.preview_label_position {
+            look.preview_label_position = v;
+        }
+        if let Some(v) = self.preview_label_offset {
+            look.preview_label_offset = v;
+        }
     }
 }
 
@@ -1863,14 +1882,55 @@ preview = "bottom"
             std::path::Path::new("test.toml"),
         )
         .expect("parses");
-        let keys = c.picker.for_picker(Picker::Keys);
+        let keys = c.picker.resolved(Picker::Keys);
         assert_eq!(keys.look.border, crate::picker::BorderKind::Double);
-        assert_eq!(keys.preview, Some(crate::picker::Preview::Bottom));
+        assert_eq!(keys.preview, crate::picker::Preview::Bottom);
         // And what it did not override still comes from [picker].
         assert!(keys.look.counter);
         // Another picker keeps the shared answer.
-        let theme = c.picker.for_picker(Picker::Theme);
+        let theme = c.picker.resolved(Picker::Theme);
         assert_eq!(theme.look.border, crate::picker::BorderKind::Plain);
+    }
+
+    #[test]
+    fn a_global_setting_does_not_stop_a_picker_using_its_own_default() {
+        // This is what the old "equals the default means nobody wrote it" test
+        // got wrong. `bottom-center` is a real preference somebody typed, and
+        // it happened to make every picker's own answer for the *other*
+        // settings unreachable. Layers, not comparisons.
+        let c = parse(
+            r#"
+[picker]
+preview_label_position = "bottom-center"
+
+[picker.theme]
+border = "none"
+"#,
+            std::path::Path::new("test.toml"),
+        )
+        .expect("parses");
+
+        let theme = c.picker.resolved(Picker::Theme);
+        // Written globally, so it wins over the theme picker's own.
+        assert_eq!(
+            theme.look.preview_label_position,
+            crate::picker::LabelPosition::BottomCenter
+        );
+        // Not written anywhere, so the theme picker's own answers stand: a
+        // framed card beside a narrow column of names.
+        assert_eq!(theme.preview, crate::picker::Preview::Right);
+        assert_eq!(theme.preview_percent, 70);
+        assert_eq!(
+            theme.look.preview_border,
+            crate::picker::PreviewBorder::Full
+        );
+        // And its own table still wins over both.
+        assert_eq!(theme.look.border, crate::picker::BorderKind::None);
+
+        // A different picker keeps its own shape throughout.
+        let keys = c.picker.resolved(Picker::Keys);
+        assert_eq!(keys.preview, crate::picker::Preview::Bottom);
+        assert_eq!(keys.preview_percent, 30);
     }
 
     #[test]

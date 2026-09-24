@@ -201,6 +201,12 @@ pub struct Look {
     /// is a column that is not drawn, which is how a picker is made narrower
     /// without touching the code that fills it.
     pub column_order: Vec<usize>,
+    /// The fewest columns a list may be left with before a preview beside it
+    /// is moved underneath instead.
+    ///
+    /// Zero turns the rule off, which is what fzf does: it splits whatever it
+    /// is given and truncates the rows.
+    pub min_list_width: u16,
     /// How much of a border the preview pane gets.
     pub preview_border: PreviewBorder,
     /// Where the preview's label sits on that line.
@@ -222,6 +228,7 @@ impl Default for Look {
             rules: true,
             marker: "\u{258c}".to_string(),
             column_order: Vec::new(),
+            min_list_width: 24,
             preview_border: PreviewBorder::Edge,
             preview_label_position: LabelPosition::BottomCenter,
             preview_label_offset: 2,

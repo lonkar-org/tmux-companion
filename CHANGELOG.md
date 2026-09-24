@@ -53,6 +53,13 @@ entry per phase of the comrades port.
 
 ### Changed
 
+- `[picker]` is a layer rather than a set of values. A setting nobody wrote is
+  now telling apart from one somebody wrote to the value that happens to be the
+  default, which it was not: writing `preview_label_position = "bottom-center"`
+  under `[picker]` quietly stopped every picker using its own answer for the
+  other settings too. Four layers now, narrowest last: the tool's defaults, the
+  shape that picker is built for, `[picker]`, then `[picker.<name>]`.
+
 - Each picker has its own preview shape before anybody configures it, because
   what goes in a preview is not the same thing twice: three lines of tmux
   command, a screen of whatever another session is doing, a directory listing,
@@ -68,6 +75,24 @@ entry per phase of the comrades port.
   divider, a theme card wants a frame.
 
 ### Fixed
+
+- The arrows mean down and up the screen. With `list_from = "bottom"` the list
+  is drawn in reverse, so the index meaning "further down" is the smaller one,
+  and Up moved the cursor down in every picker. Paging had it too.
+
+- A preview beside the list stays beside it unless the list would be genuinely
+  too narrow to read. The rule was a popup-width constant of 96 columns, and
+  tmux's own default popup on a 170-column terminal is 83, so a theme list
+  configured to sit beside its card was stacked above it instead. What decides
+  it now is the columns the list keeps rather than the width of the popup --
+  the same popup leaves 37 columns at a 55% preview and 25 at 70% — and
+  `min_list_width` is the setting, zero being fzf's behaviour of splitting
+  whatever it is given.
+
+- The record of a config the daemon refused to start on is removed when one
+  starts cleanly. It was written on a bad start and never taken away, so
+  `doctor` went on reporting a parse error somebody had already fixed, and a
+  client that failed to connect for an unrelated reason blamed the config.
 
 - An empty query keeps the rows in the order they were built. They were being
   ranked, and with nothing to match on the ranking fell through to row length,

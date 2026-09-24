@@ -365,6 +365,23 @@ pub(super) fn preview_label_area(pane: Rect, outer: Rect, previewing: Option<Pre
     }
 }
 
+/// How far the cursor moves for an arrow, given which way the list is drawn.
+///
+/// A list drawn from the bottom is drawn in reverse, so the index that means
+/// "further down the screen" is the smaller one. Without this, Up moved the
+/// cursor down and Down moved it up, and the fix belongs here rather than at
+/// the two key arms because the paging keys have the same problem.
+///
+/// Positive is towards the end of the list, whichever end that is drawn at.
+pub(super) fn arrow_step(towards_screen_bottom: bool, distance: isize, from: Edge) -> isize {
+    let down_is_forward = from == Edge::Top;
+    if towards_screen_bottom == down_is_forward {
+        distance
+    } else {
+        -distance
+    }
+}
+
 /// A pane holding `rows` rows, pushed to the bottom of the space it was given.
 ///
 /// Pure, so the arithmetic that decides whether a short list sits against the
@@ -623,7 +640,12 @@ pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Resul
     // the person with no way to read the panic.
     let result = (|| -> anyhow::Result<Ended> {
         loop {
-            let preview = super::fitting_preview(chrome.preview, terminal.size()?.width);
+            let preview = super::fitting_preview(
+                chrome.preview,
+                state.preview_percent,
+                terminal.size()?.width,
+                chrome.look.min_list_width,
+            );
             terminal.draw(|frame| draw(frame, &mut state, chrome, preview))?;
 
             let Event::Key(key) = event::read()? else {
@@ -646,10 +668,13 @@ pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Resul
                         None => Ended::Typed(state.query.clone()),
                     });
                 }
-                KeyCode::Up => state.move_by(-1),
-                KeyCode::Down => state.move_by(1),
-                KeyCode::PageUp => state.move_by(-10),
-                KeyCode::PageDown => state.move_by(10),
+                // Down and Up mean down and up the screen, which is not the
+                // same as forwards and backwards through the list once the
+                // list is drawn from the bottom.
+                KeyCode::Down => state.move_by(arrow_step(true, 1, chrome.look.list_from)),
+                KeyCode::Up => state.move_by(arrow_step(false, 1, chrome.look.list_from)),
+                KeyCode::PageDown => state.move_by(arrow_step(true, 10, chrome.look.list_from)),
+                KeyCode::PageUp => state.move_by(arrow_step(false, 10, chrome.look.list_from)),
                 // ctrl-j and ctrl-k scroll the preview rather than the list,
                 // which is what the fzf bindings this replaces did.
                 KeyCode::Char('k') if ctrl => {
@@ -868,6 +893,36 @@ mod tests {
         let state = State::new(&items, "   ", 0, &[]);
         let order: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
         assert_eq!(order, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn the_arrows_mean_down_and_up_the_screen_whichever_way_the_list_runs() {
+        // Drawn from the top, further down the screen is further along the
+        // list. Drawn from the bottom it is the other way, and without this
+        // Up moved the cursor down.
+        assert_eq!(
+            arrow_step(true, 1, Edge::Top),
+            1,
+            "down, drawn from the top"
+        );
+        assert_eq!(
+            arrow_step(false, 1, Edge::Top),
+            -1,
+            "up, drawn from the top"
+        );
+        assert_eq!(
+            arrow_step(true, 1, Edge::Bottom),
+            -1,
+            "down, drawn from the bottom"
+        );
+        assert_eq!(
+            arrow_step(false, 1, Edge::Bottom),
+            1,
+            "up, drawn from the bottom"
+        );
+        // Paging has the same problem and the same answer.
+        assert_eq!(arrow_step(true, 10, Edge::Bottom), -10);
+        assert_eq!(arrow_step(false, 10, Edge::Bottom), 10);
     }
 
     #[test]

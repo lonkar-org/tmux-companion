@@ -285,20 +285,17 @@ impl Default for Chrome {
 }
 
 impl Chrome {
-    /// Take the shape from the config, leaving the labels alone.
-    pub fn laid_out_by(mut self, layout: &crate::config::PickerLayout) -> Self {
-        // Unset means the picker's own answer, which `for_picker` has already
-        // filled in. A `Chrome` built straight from `[picker]` without going
-        // through that keeps whatever it had.
-        if let Some(p) = layout.preview {
-            self.preview = p;
-        }
-        if let Some(n) = layout.preview_percent {
-            // Zero is "no preview at all", which `run` uses, and clamping that
-            // up to twenty would give it a pane holding nothing.
-            self.preview_percent = if n == 0 { 0 } else { n.clamp(20, 80) };
-        }
-        self.look = layout.look.clone();
+    /// Take the shape from a resolved layout, leaving the labels alone.
+    pub fn laid_out_by(mut self, resolved: &crate::config::Resolved) -> Self {
+        self.preview = resolved.preview;
+        // Zero is "no preview at all", which `run` uses, and clamping that up
+        // to twenty would give it a pane holding nothing.
+        self.preview_percent = if resolved.preview_percent == 0 {
+            0
+        } else {
+            resolved.preview_percent.clamp(20, 80)
+        };
+        self.look = resolved.look.clone();
         self
     }
 
@@ -311,7 +308,7 @@ impl Chrome {
         layout: &crate::config::PickerLayout,
         which: crate::config::Picker,
     ) -> Self {
-        let resolved = layout.for_picker(which);
+        let resolved = layout.resolved(which);
         let over = layout.overrides(which);
         if let Some(v) = over.label.clone() {
             self.title = v;
@@ -383,25 +380,39 @@ pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow:
     })
 }
 
-/// Narrower than this and a side-by-side preview leaves neither half readable.
+/// Where the preview really goes, once the popup has had its say.
 ///
-/// Measured against what the popups in the shipped config actually get: a
-/// picker opened at 70% of a 100-column terminal is 70 columns, and splitting
-/// that 45/55 gives the list 31 columns, which truncates most rows in it. Under
-/// this the preview goes below the list instead, where it has the full width.
-const MIN_SIDE_BY_SIDE: u16 = 96;
-
-/// Where the preview really goes, once the terminal has had its say.
+/// A percentage-sized popup on a small terminal is a small popup, and a split
+/// of whatever it is given can leave the list too narrow to read a row in.
+/// Turning the split sideways rather than obeying is the difference between a
+/// readable list and two unreadable columns.
 ///
-/// A percentage-sized popup on a small terminal is a small popup, and the
-/// layout splits whatever it is given however narrow that is. Turning the split
-/// sideways rather than obeying is the difference between a readable list and
-/// two unreadable columns.
-pub fn fitting_preview(preview: Preview, width: u16) -> Option<Preview> {
-    match preview {
-        Preview::Right | Preview::Left if width < MIN_SIDE_BY_SIDE => Some(Preview::Bottom),
-        other => other.pane(),
+/// What decides it is how many columns the **list** would be left with, not
+/// how wide the popup is. Those are not the same question once the preview's
+/// share is a setting: the same popup leaves 37 columns at a 55% preview and
+/// 25 at 70%, and a rule written against the popup width answers the same for
+/// both. It used to be a popup-width constant of 96, which on a 170-column
+/// terminal flipped tmux's own default popup -- 83 columns -- onto its back,
+/// so a theme list configured to sit beside its card was stacked above it
+/// instead. fzf, which these pickers are shaped after, has no such rule at
+/// all and simply truncates.
+///
+/// Pure, and the arithmetic is the whole of it.
+pub fn fitting_preview(
+    preview: Preview,
+    preview_percent: u16,
+    width: u16,
+    min_list_width: u16,
+) -> Option<Preview> {
+    let sideways = matches!(preview, Preview::Right | Preview::Left);
+    if !sideways {
+        return preview.pane();
     }
+    let list = u32::from(width) * u32::from(100 - preview_percent.min(100)) / 100;
+    if list < u32::from(min_list_width) {
+        return Some(Preview::Bottom);
+    }
+    preview.pane()
 }
 
 /// Whether this list has a preview pane at all.
@@ -562,50 +573,90 @@ mod tests {
     }
 
     #[test]
-    fn a_narrow_popup_puts_the_preview_underneath_instead() {
-        // 45/55 of a 70-column popup gives the list 31 columns, which cuts
-        // most rows in half. Below the threshold the split turns sideways.
-        assert_eq!(fitting_preview(Preview::Right, 70), Some(Preview::Bottom));
-        assert_eq!(fitting_preview(Preview::Left, 70), Some(Preview::Bottom));
-        // Wide enough, and it is left alone.
-        assert_eq!(fitting_preview(Preview::Right, 160), Some(Preview::Right));
+    fn a_popup_too_narrow_to_split_puts_the_preview_underneath() {
+        // What decides it is the columns the list is left with, not the width
+        // of the popup. tmux's own default popup on a 170-column terminal is
+        // 83 columns, and the rule this replaces -- a popup-width constant of
+        // 96 -- flipped it onto its back, so a theme list configured to sit
+        // beside its card was stacked above it instead.
+        assert_eq!(
+            fitting_preview(Preview::Right, 70, 83, 24),
+            Some(Preview::Right),
+            "25 columns of list is a column of names, which is what it holds"
+        );
+        // Genuinely too narrow: a 40-column popup at 70% leaves 12.
+        assert_eq!(
+            fitting_preview(Preview::Right, 70, 40, 24),
+            Some(Preview::Bottom)
+        );
+        assert_eq!(
+            fitting_preview(Preview::Left, 70, 40, 24),
+            Some(Preview::Bottom)
+        );
+        // The same popup with a smaller preview keeps its side-by-side split,
+        // which a rule written against the popup width could not express.
+        assert_eq!(
+            fitting_preview(Preview::Right, 30, 40, 24),
+            Some(Preview::Right)
+        );
         // A preview already below, or switched off, is not second-guessed.
-        assert_eq!(fitting_preview(Preview::Bottom, 70), Some(Preview::Bottom));
-        assert_eq!(fitting_preview(Preview::None, 200), None);
+        assert_eq!(
+            fitting_preview(Preview::Bottom, 70, 40, 24),
+            Some(Preview::Bottom)
+        );
+        assert_eq!(fitting_preview(Preview::None, 70, 200, 24), None);
+    }
+
+    #[test]
+    fn nothing_flips_when_the_minimum_is_zero() {
+        // Which is how somebody turns the rule off: fzf has no such rule and
+        // simply truncates.
+        assert_eq!(
+            fitting_preview(Preview::Right, 90, 30, 0),
+            Some(Preview::Right)
+        );
     }
 
     #[test]
     fn an_absurd_preview_share_is_clamped_rather_than_obeyed() {
         let layout = crate::config::PickerLayout {
-            preview_percent: Some(99),
-            ..crate::config::PickerLayout::default()
+            global: crate::config::PickerOverride {
+                preview_percent: Some(99),
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 80);
+        let resolved = layout.resolved(crate::config::Picker::Theme);
+        assert_eq!(Chrome::default().laid_out_by(&resolved).preview_percent, 80);
 
         let layout = crate::config::PickerLayout {
-            preview_percent: Some(1),
-            ..crate::config::PickerLayout::default()
+            global: crate::config::PickerOverride {
+                preview_percent: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 20);
+        let resolved = layout.resolved(crate::config::Picker::Theme);
+        assert_eq!(Chrome::default().laid_out_by(&resolved).preview_percent, 20);
     }
 
     #[test]
     fn the_look_comes_from_the_config_rather_than_from_the_call_site() {
-        // Five pickers, one answer to what a picker looks like. The labels
-        // stay with the call site, because only it knows what this one is.
+        // Six pickers, one answer to what a picker looks like. The labels stay
+        // with the call site, because only it knows what this one is.
         let layout = crate::config::PickerLayout {
-            look: Look {
-                border: BorderKind::Double,
-                counter: true,
-                ..Look::default()
+            global: crate::config::PickerOverride {
+                border: Some(BorderKind::Double),
+                counter: Some(true),
+                ..Default::default()
             },
-            ..crate::config::PickerLayout::default()
+            ..Default::default()
         };
         let chrome = Chrome {
             title: "[ Keys ]".into(),
             ..Chrome::default()
         }
-        .laid_out_by(&layout);
+        .configured(&layout, crate::config::Picker::Keys);
         assert_eq!(chrome.look.border, BorderKind::Double);
         assert!(chrome.look.counter);
         assert_eq!(chrome.title, "[ Keys ]", "the label is the call site's");

@@ -73,7 +73,16 @@ pub async fn run() -> anyhow::Result<()> {
     // The error goes to stderr and to the state file, which is where a client
     // looks when its own start attempt produced no server.
     let config = match crate::config::load() {
-        Ok((c, _)) => c,
+        Ok((c, _)) => {
+            // The record of the last refusal goes when a daemon gets past the
+            // config, because from here on it is not true any more. Without
+            // this it was written on a bad start and never taken away, so
+            // `doctor` kept reporting a parse error somebody had already
+            // fixed, and a later client that failed to connect for some
+            // unrelated reason blamed the config for it.
+            clear_config_error();
+            c
+        }
         Err(e) => {
             record_config_error(&e);
             return Err(anyhow::anyhow!("{e}"));
@@ -311,8 +320,28 @@ async fn handle_connection(
 fn record_config_error(e: &crate::config::ConfigError) {
     eprintln!("tmux-companion: {e}");
     let Some(dir) = state_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join("last-error"), format!("{e}\n"));
+    write_config_error(&dir, &e.to_string());
+}
+
+/// Forget the last refusal, because a daemon has just started without one.
+fn clear_config_error() {
+    let Some(dir) = state_dir() else { return };
+    forget_config_error(&dir);
+}
+
+/// The file half of [`record_config_error`], against a directory it is given.
+///
+/// Split out so both halves are tested against a temporary directory rather
+/// than against whatever `$XDG_STATE_HOME` happens to be on the machine
+/// running the suite.
+fn write_config_error(dir: &std::path::Path, message: &str) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join("last-error"), format!("{message}\n"));
+}
+
+/// The file half of [`clear_config_error`].
+fn forget_config_error(dir: &std::path::Path) {
+    let _ = std::fs::remove_file(dir.join("last-error"));
 }
 
 /// `$XDG_STATE_HOME/tmux-companion`, or `~/.local/state/tmux-companion`.
@@ -328,6 +357,40 @@ pub fn state_dir() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_daemon_that_starts_cleanly_takes_the_last_refusal_away() {
+        // It used to be written on a bad start and never removed, so `doctor`
+        // went on reporting a parse error somebody had already fixed, and a
+        // client that failed to connect for an unrelated reason blamed the
+        // config for it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("last-error");
+
+        write_config_error(dir.path(), "config.toml: unknown field `bogus`");
+        let written = std::fs::read_to_string(&file).expect("written");
+        assert!(written.contains("unknown field"), "{written}");
+        assert!(
+            written.ends_with('\n'),
+            "a line, not a fragment: {written:?}"
+        );
+
+        forget_config_error(dir.path());
+        assert!(!file.exists(), "the refusal should be gone");
+    }
+
+    #[test]
+    fn forgetting_a_refusal_nobody_recorded_is_not_an_error() {
+        // The ordinary case: every daemon that has ever started cleanly on a
+        // machine with a good config takes this path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        forget_config_error(dir.path());
+        forget_config_error(dir.path());
+        assert!(!dir.path().join("last-error").exists());
+
+        // And a directory that is not there either.
+        forget_config_error(&dir.path().join("no-such-directory"));
+    }
 
     #[test]
     fn the_lock_sits_beside_the_socket_it_guards() {
