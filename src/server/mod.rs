@@ -237,14 +237,27 @@ fn start_lock(path: &std::path::Path) -> StartLock {
     }
 }
 
-/// The device and inode of a socket file, or `None` if nothing is there.
+/// What identifies the socket file this daemon bound.
 ///
-/// The pair and not the path: a replacement socket at the same path is a
-/// different file, and it is exactly the case a daemon has to notice.
-fn socket_identity(sock: &std::path::Path) -> Option<(u64, u64)> {
+/// Device, inode, and the inode's change time. Not the path: a replacement
+/// socket at the same path is a different file, and that is exactly the case a
+/// daemon has to notice.
+///
+/// The change time is in there because device and inode are not enough on
+/// Linux, where an inode number is handed straight back out after the file
+/// using it is unlinked. A harness that deletes a socket and starts a daemon
+/// that binds a new one at the same path gets the same inode often enough to
+/// matter, and the old daemon then decides it is still looking at its own
+/// socket. macOS does not reuse them that eagerly, which is why this passed
+/// here and failed on the Linux runner.
+///
+/// Nothing touches the socket file after the `chmod` that follows the bind, so
+/// the change time is stable for the life of the daemon. The identity is taken
+/// after that `chmod` for the same reason.
+fn socket_identity(sock: &std::path::Path) -> Option<(u64, u64, i64, i64)> {
     use std::os::unix::fs::MetadataExt;
     let m = std::fs::metadata(sock).ok()?;
-    Some((m.dev(), m.ino()))
+    Some((m.dev(), m.ino(), m.ctime(), m.ctime_nsec()))
 }
 
 /// Exit once the socket file this daemon bound is gone or has been replaced.
@@ -259,7 +272,7 @@ fn socket_identity(sock: &std::path::Path) -> Option<(u64, u64)> {
 /// Exiting on a missing socket is right for the live daemon too.  A socket
 /// file that has gone is a daemon no client can reach, and the next client
 /// starts a fresh one in a few milliseconds.
-async fn watch_socket(sock: std::path::PathBuf, mine: (u64, u64)) {
+async fn watch_socket(sock: std::path::PathBuf, mine: (u64, u64, i64, i64)) {
     loop {
         tokio::time::sleep(SOCKET_WATCH_INTERVAL).await;
         if socket_identity(&sock) != Some(mine) {
@@ -351,6 +364,11 @@ mod tests {
 
     #[test]
     fn a_replaced_file_is_not_the_file_that_was_there() {
+        // The version of this that compared device and inode alone passed on
+        // macOS and failed on the Linux runner, because Linux hands an inode
+        // number straight back out after the file using it is unlinked: the
+        // replacement came back with the same pair. That was a real hole in
+        // the watchdog and not only in the test.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("s.sock");
 
@@ -361,6 +379,10 @@ mod tests {
         std::fs::remove_file(&path).expect("remove");
         assert_eq!(socket_identity(&path), None);
 
+        // Slept on purpose: the two files are distinguished by the inode's
+        // change time when the number is reused, and a filesystem whose
+        // timestamps have coarse resolution needs a moment between them.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&path, b"").expect("write again");
         assert_ne!(
             socket_identity(&path),

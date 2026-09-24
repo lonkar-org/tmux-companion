@@ -145,11 +145,24 @@ impl State {
             }
         }
 
-        // Best score first, then the shorter row, then the order they arrived
-        // in. The length tie-break is doing real work: `zoom` and `a long way
-        // to say zoom` score the same, and a picker where the exact answer
-        // sits below a sentence containing it is one people stop trusting.
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        // An empty query is not a search, so nothing is ranked: the rows keep
+        // the order the caller built them in.
+        //
+        // This is the whole of what the project list is. It puts the live
+        // sessions first and then the directories by how often they are
+        // visited, and that order is the answer to "where do I want to be",
+        // which no amount of matching can improve on. Ranking an empty query
+        // sorted every row by length and scattered the sessions through the
+        // directories.
+        //
+        // With a query, best score first, then the shorter row, then arrival
+        // order. The length tie-break is doing real work there: `zoom` and `a
+        // long way to say zoom` score the same, and a picker where the exact
+        // answer sits below a sentence containing it is one people stop
+        // trusting.
+        if !self.query.trim().is_empty() {
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        }
 
         self.hits = scored
             .into_iter()
@@ -562,19 +575,17 @@ pub(super) fn draw(
     if let Some(area) = panes.preview
         && let Some(row) = state.current()
     {
-        let (borders, set) = match (look.preview_border, look.border.set()) {
-            (true, Some(set)) => (
-                match previewing {
-                    Some(Preview::Right) => Borders::LEFT,
-                    Some(Preview::Left) => Borders::RIGHT,
-                    Some(Preview::Bottom) => Borders::TOP,
-                    Some(Preview::Top) => Borders::BOTTOM,
-                    _ => Borders::NONE,
-                },
-                set,
-            ),
-            _ => (Borders::NONE, ratatui::symbols::border::PLAIN),
-        };
+        // The line the preview is drawn with is the outer box's when there is
+        // one, and rounded when there is not. Taking it from the outer border
+        // alone is what made `border = "none"` silently remove the preview's
+        // frame as well: the theme picker opens in a tmux popup that already
+        // has a border, turns its own off to avoid two, and lost the box round
+        // its card with it.
+        let set = look
+            .border
+            .set()
+            .unwrap_or(ratatui::symbols::border::ROUNDED);
+        let borders = previewing.map_or(Borders::NONE, |p| look.preview_border.sides(p));
         let block = Block::default().borders(borders).border_set(set);
         let body = block.inner(area);
         frame.render_widget(block, area);
@@ -764,6 +775,18 @@ mod tests {
     }
 
     #[test]
+    fn a_picker_with_no_box_of_its_own_still_frames_its_preview() {
+        // The theme picker opens in a tmux popup that already has a border and
+        // turns its own off so there are not two. Taking the preview's line
+        // from the outer border alone removed its frame with it.
+        let bare = crate::picker::style::BorderKind::None;
+        assert!(bare.set().is_none(), "no outer box");
+        // The fallback the drawing uses, which is what keeps the frame.
+        let set = bare.set().unwrap_or(ratatui::symbols::border::ROUNDED);
+        assert_eq!(set.top_left, ratatui::symbols::border::ROUNDED.top_left);
+    }
+
+    #[test]
     fn a_side_previews_label_goes_on_the_outer_border_under_its_own_column() {
         // The preview's own border there is the one-cell edge between the
         // columns, with nowhere on it for words. The outer border has a
@@ -826,10 +849,25 @@ mod tests {
 
     #[test]
     fn an_empty_query_keeps_every_row_in_the_order_it_arrived() {
-        let items = vec![Item::new("b"), Item::new("a"), Item::new("c")];
+        // Rows of different lengths, because the version of this test that
+        // used "a", "b" and "c" passed while an empty query was being sorted
+        // by row length: every row was one character, so nothing moved. The
+        // project list is sessions first and then directories by how often
+        // they are visited, and sorting scattered the sessions through them.
+        let items = vec![
+            Item::new("session  alpha"),
+            Item::new("session  a-much-longer-session-name"),
+            Item::new("dir      x"),
+            Item::new("dir      a-long-directory-name"),
+        ];
         let state = State::new(&items, "", 0, &[]);
         let order: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
-        assert_eq!(order, vec![0, 1, 2]);
+        assert_eq!(order, vec![0, 1, 2, 3]);
+
+        // Whitespace is not a query either.
+        let state = State::new(&items, "   ", 0, &[]);
+        let order: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
+        assert_eq!(order, vec![0, 1, 2, 3]);
     }
 
     #[test]

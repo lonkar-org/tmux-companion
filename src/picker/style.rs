@@ -101,6 +101,49 @@ impl LabelPosition {
     }
 }
 
+/// How much of a border the preview pane gets.
+///
+/// Three answers because fzf has three: `--preview-window=right,40%` draws a
+/// box, `…,border-left` draws only the edge between the two panes, and
+/// `…,border-none` draws nothing. Which one is right depends on what is in
+/// there -- a directory listing wants a divider and a theme card wants a frame
+/// around it -- so it is a setting and not a shape.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewBorder {
+    /// Nothing.
+    None,
+    /// Only the side facing the list, which is fzf's `border-left` and the
+    /// rest of that family.
+    #[default]
+    Edge,
+    /// All four sides.
+    Full,
+}
+
+impl PreviewBorder {
+    /// Which sides to draw, given where the preview sits.
+    ///
+    /// Pure, and worth its own test: the edge facing the list is a different
+    /// side for each of the four positions, and getting one wrong draws a line
+    /// down the outside of the popup.
+    pub fn sides(self, preview: crate::picker::Preview) -> ratatui::widgets::Borders {
+        use crate::picker::Preview;
+        use ratatui::widgets::Borders;
+        match self {
+            PreviewBorder::None => Borders::NONE,
+            PreviewBorder::Full => Borders::ALL,
+            PreviewBorder::Edge => match preview {
+                Preview::Right => Borders::LEFT,
+                Preview::Left => Borders::RIGHT,
+                Preview::Bottom => Borders::TOP,
+                Preview::Top => Borders::BOTTOM,
+                Preview::None => Borders::NONE,
+            },
+        }
+    }
+}
+
 /// Which end of the list a line sits at.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -158,8 +201,8 @@ pub struct Look {
     /// is a column that is not drawn, which is how a picker is made narrower
     /// without touching the code that fills it.
     pub column_order: Vec<usize>,
-    /// Whether the preview pane gets a line between it and the list.
-    pub preview_border: bool,
+    /// How much of a border the preview pane gets.
+    pub preview_border: PreviewBorder,
     /// Where the preview's label sits on that line.
     pub preview_label_position: LabelPosition,
     /// How many cells of that line are left showing beyond the label.
@@ -179,7 +222,7 @@ impl Default for Look {
             rules: true,
             marker: "\u{258c}".to_string(),
             column_order: Vec::new(),
-            preview_border: true,
+            preview_border: PreviewBorder::Edge,
             preview_label_position: LabelPosition::BottomCenter,
             preview_label_offset: 2,
         }
@@ -216,6 +259,21 @@ mod tests {
         assert!(LabelPosition::TopRight.on_top());
         assert!(!LabelPosition::BottomRight.on_top());
         assert!(!LabelPosition::Hidden.on_top());
+    }
+
+    #[test]
+    fn the_previews_border_faces_the_list_whichever_side_it_is_on() {
+        use crate::picker::Preview;
+        use ratatui::widgets::Borders;
+        // Getting one of these wrong draws a line down the outside of the
+        // popup instead of between the two panes.
+        assert_eq!(PreviewBorder::Edge.sides(Preview::Right), Borders::LEFT);
+        assert_eq!(PreviewBorder::Edge.sides(Preview::Left), Borders::RIGHT);
+        assert_eq!(PreviewBorder::Edge.sides(Preview::Bottom), Borders::TOP);
+        assert_eq!(PreviewBorder::Edge.sides(Preview::Top), Borders::BOTTOM);
+
+        assert_eq!(PreviewBorder::Full.sides(Preview::Right), Borders::ALL);
+        assert_eq!(PreviewBorder::None.sides(Preview::Right), Borders::NONE);
     }
 
     #[test]

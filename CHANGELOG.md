@@ -51,7 +51,41 @@ entry per phase of the comrades port.
   one-line prompt is still there for a client too small or too detached for a
   popup, which is when `display-popup` fails.
 
+### Changed
+
+- Each picker has its own preview shape before anybody configures it, because
+  what goes in a preview is not the same thing twice: three lines of tmux
+  command, a screen of whatever another session is doing, a directory listing,
+  a theme card, nothing at all. `keys` gets 30% underneath, `project` 80%
+  beside, `window` 40% beside, `theme` 70% beside and framed, `run` none.
+  `[picker] preview` and `preview_percent` are now unset by default and
+  override all six at once when written, which is almost never what anybody
+  wants; `[picker.<name>]` is the place.
+
+- `preview_border` says how much of a border the preview gets — `none`, `edge`
+  or `full` — rather than whether it gets one. fzf has the same three, and
+  which is right depends on what is in the pane: a directory listing wants a
+  divider, a theme card wants a frame.
+
 ### Fixed
+
+- An empty query keeps the rows in the order they were built. They were being
+  ranked, and with nothing to match on the ranking fell through to row length,
+  which scattered the live sessions through the directories in the project
+  list. That order is the whole of what that list is: the sessions first, then
+  the directories by how often they are visited.
+
+- The watchdog notices a socket that was replaced on Linux. It compared device
+  and inode, and Linux hands an inode number straight back out after the file
+  using it is unlinked, so a new socket at the same path came back looking
+  like the old one. The inode's change time is in the comparison now. macOS
+  does not reuse them that eagerly, which is why this passed locally and
+  failed on the Linux runner.
+
+- A picker with `border = "none"` keeps the frame round its preview. The line
+  was taken from the outer border, so turning that off — which the theme
+  picker does, because its popup already has one — silently took the preview's
+  box with it.
 
 - `tmux-companion --help` opens with a description of the tool. clap takes a
   doc comment's first line as `about` and the rest as `long_about`, so the note

@@ -157,14 +157,21 @@ impl Default for Open {
 ///
 /// One setting for all of them, because five pickers that each drift into
 /// their own shape are five things to learn rather than one.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct PickerLayout {
     /// Where the preview pane goes, or `none` for no preview at all.
-    pub preview: crate::picker::Preview,
+    ///
+    /// Unset means each picker's own answer, which is the useful default: a
+    /// theme wants a tall card beside a narrow list, a key binding wants three
+    /// lines under a wide one, and a shell history wants no pane at all. One
+    /// number here would be wrong for two of the three.
+    pub preview: Option<crate::picker::Preview>,
     /// The preview's share of the popup, as a percentage. Clamped to 20-80:
     /// outside that one half of the split is too narrow to read.
-    pub preview_percent: u16,
+    ///
+    /// Unset means each picker's own answer. See `preview`.
+    pub preview_percent: Option<u16>,
     /// The border, the labels, the rules and where each one sits.
     ///
     /// Flattened, so these are written straight under `[picker]` rather than
@@ -247,8 +254,8 @@ pub struct PickerOverride {
     pub marker: Option<String>,
     /// The order a row's columns are drawn in.
     pub column_order: Option<Vec<usize>>,
-    /// Whether the preview gets a line between it and the list.
-    pub preview_border: Option<bool>,
+    /// How much of a border the preview pane gets.
+    pub preview_border: Option<crate::picker::PreviewBorder>,
     /// Where the preview's label sits on that line.
     pub preview_label_position: Option<crate::picker::LabelPosition>,
     /// Cells of that line left showing beyond the preview's label.
@@ -272,6 +279,42 @@ pub enum Picker {
     Open,
 }
 
+/// What one picker looks like before anybody configures it.
+///
+/// The preview is not one question with one answer. What goes in it differs by
+/// picker -- a card, three lines of tmux command, a screenshot of another
+/// session, a directory listing, nothing at all -- and so does how much room
+/// that needs. These are those answers, and they are here rather than in the
+/// example file so a machine with no config still gets a picker shaped like
+/// what it holds.
+fn builtin(
+    which: Picker,
+) -> (
+    crate::picker::Preview,
+    u16,
+    crate::picker::PreviewBorder,
+    crate::picker::LabelPosition,
+) {
+    use crate::picker::{LabelPosition as L, Preview as P, PreviewBorder as B};
+    match which {
+        // Three lines: the chord and what it runs. Wide and short.
+        Picker::Keys => (P::Bottom, 30, B::Edge, L::TopCenter),
+        // Whatever the other session is doing. Most of the popup, because the
+        // question it answers is "what is happening over there".
+        Picker::Project => (P::Right, 80, B::Edge, L::BottomCenter),
+        // A directory listing, which needs less room than a screen does.
+        Picker::Window => (P::Right, 40, B::Edge, L::BottomCenter),
+        // A card showing what the theme paints, framed, beside a narrow column
+        // of names. The list is the thing being searched and the card is the
+        // thing being read, so the column stays narrow and tall.
+        Picker::Theme => (P::Right, 70, B::Full, L::Hidden),
+        // The command is the row. There is nothing to put beside it.
+        Picker::Run => (P::None, 0, B::None, L::Hidden),
+        // The command the chosen application would run.
+        Picker::Open => (P::Bottom, 30, B::Edge, L::TopCenter),
+    }
+}
+
 impl PickerLayout {
     /// One picker's exceptions, as written.
     pub fn overrides(&self, which: Picker) -> &PickerOverride {
@@ -289,12 +332,27 @@ impl PickerLayout {
     pub fn for_picker(&self, which: Picker) -> Self {
         let over = self.overrides(which);
         let mut out = self.clone();
+
+        // Three layers, narrowest last: what this picker is shaped like, then
+        // whatever `[picker]` says for all of them, then this picker's own
+        // table. A field nobody set at either level keeps the built-in, which
+        // is what makes a machine with no config get sensible pickers rather
+        // than six of the same shape.
+        let (preview, percent, preview_border, preview_label) = builtin(which);
+        out.preview = Some(self.preview.unwrap_or(preview));
+        out.preview_percent = Some(self.preview_percent.unwrap_or(percent));
         let look = &mut out.look;
+        if self.look.preview_border == crate::picker::PreviewBorder::default() {
+            look.preview_border = preview_border;
+        }
+        if self.look.preview_label_position == crate::picker::LabelPosition::default() {
+            look.preview_label_position = preview_label;
+        }
         if let Some(v) = over.preview {
-            out.preview = v;
+            out.preview = Some(v);
         }
         if let Some(v) = over.preview_percent {
-            out.preview_percent = v;
+            out.preview_percent = Some(v);
         }
         if let Some(v) = over.border {
             look.border = v;
@@ -336,22 +394,6 @@ impl PickerLayout {
             look.preview_label_offset = v;
         }
         out
-    }
-}
-
-impl Default for PickerLayout {
-    fn default() -> Self {
-        Self {
-            preview: crate::picker::Preview::Right,
-            preview_percent: 55,
-            look: crate::picker::Look::default(),
-            keys: PickerOverride::default(),
-            project: PickerOverride::default(),
-            window: PickerOverride::default(),
-            theme: PickerOverride::default(),
-            run: PickerOverride::default(),
-            open: PickerOverride::default(),
-        }
     }
 }
 
@@ -1823,7 +1865,7 @@ preview = "bottom"
         .expect("parses");
         let keys = c.picker.for_picker(Picker::Keys);
         assert_eq!(keys.look.border, crate::picker::BorderKind::Double);
-        assert_eq!(keys.preview, crate::picker::Preview::Bottom);
+        assert_eq!(keys.preview, Some(crate::picker::Preview::Bottom));
         // And what it did not override still comes from [picker].
         assert!(keys.look.counter);
         // Another picker keeps the shared answer.

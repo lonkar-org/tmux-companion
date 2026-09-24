@@ -12,8 +12,8 @@
 //! What a person coming from fzf has in their hands is a label on the bottom
 //! border saying which picker this is, a line at the top saying what the keys
 //! do, and a preview pane with a label of its own. Those are the settings in
-//! [`style::Look`], and they are settings because somebody's tmux already looks
-//! a particular way and the picker has to join it.
+//! [`crate::picker::Look`], and they are settings because somebody's tmux
+//! already looks a particular way and the picker has to join it.
 //!
 //! The matching is [`nucleo_matcher`], which is the matcher helix uses, and the
 //! drawing is ratatui. Both were already dependencies before this replaced
@@ -36,7 +36,7 @@ pub mod style;
 
 use ratatui::style::Color;
 
-pub use style::{BorderKind, Edge, LabelPosition, Look};
+pub use style::{BorderKind, Edge, LabelPosition, Look, PreviewBorder};
 
 /// One row a picker can show.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -287,8 +287,17 @@ impl Default for Chrome {
 impl Chrome {
     /// Take the shape from the config, leaving the labels alone.
     pub fn laid_out_by(mut self, layout: &crate::config::PickerLayout) -> Self {
-        self.preview = layout.preview;
-        self.preview_percent = layout.preview_percent.clamp(20, 80);
+        // Unset means the picker's own answer, which `for_picker` has already
+        // filled in. A `Chrome` built straight from `[picker]` without going
+        // through that keeps whatever it had.
+        if let Some(p) = layout.preview {
+            self.preview = p;
+        }
+        if let Some(n) = layout.preview_percent {
+            // Zero is "no preview at all", which `run` uses, and clamping that
+            // up to twenty would give it a pane holding nothing.
+            self.preview_percent = if n == 0 { 0 } else { n.clamp(20, 80) };
+        }
         self.look = layout.look.clone();
         self
     }
@@ -568,13 +577,13 @@ mod tests {
     #[test]
     fn an_absurd_preview_share_is_clamped_rather_than_obeyed() {
         let layout = crate::config::PickerLayout {
-            preview_percent: 99,
+            preview_percent: Some(99),
             ..crate::config::PickerLayout::default()
         };
         assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 80);
 
         let layout = crate::config::PickerLayout {
-            preview_percent: 1,
+            preview_percent: Some(1),
             ..crate::config::PickerLayout::default()
         };
         assert_eq!(Chrome::default().laid_out_by(&layout).preview_percent, 20);

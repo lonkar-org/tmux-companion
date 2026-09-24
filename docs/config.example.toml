@@ -603,15 +603,31 @@ current_window_background = "color236"
 # Where the preview pane goes: right, left, bottom, top, or none for no
 # preview at all. A picker whose rows have nothing to preview gets the whole
 # width for its list whatever this says.
-preview = "right"
+#
+# Left out, each picker uses its own answer, and that is the useful default
+# because what goes in a preview is not the same thing twice:
+#
+#   keys      bottom, 30%   three lines: the chord and what it runs
+#   project   right,  80%   a screen of whatever that session is doing
+#   window    right,  40%   a directory listing
+#   theme     right,  70%   a card showing what the theme paints, framed,
+#                           beside a narrow column of names
+#   run       none          the command is the row
+#   open      bottom, 30%   the command the application would run
+#
+# Setting it here overrides all six at once, which is almost never what you
+# want; set it under `[picker.<name>]` instead.
+# preview = "right"
 
 # The preview's share of the popup, as a percentage. Clamped to 20-80, because
 # outside that one half of the split is too narrow to read.
 #
+# Left out, each picker uses its own share; the table above `preview` has them.
+#
 # ctrl-p inside a picker cycles this through 30, 50, 70 and off, because there
 # is no drag-resize to reach for: a row too long for the list column can only be
 # read by giving the column more room.
-preview_percent = 55
+# preview_percent = 55
 
 # How big the popup itself is belongs in tmux.conf, on the `display-popup -w`
 # and `-h` of the binding that opens it. Everything below is what the picker
@@ -681,8 +697,17 @@ marker = "▌"
 # that fills it.
 column_order = []
 
-# Whether the preview gets a line between it and the list.
-preview_border = true
+# How much of a border the preview pane gets: none, edge or full.
+#
+# `edge` draws only the side facing the list, which is fzf's `border-left` and
+# the rest of that family. `full` draws a box round it. Which one is right
+# depends on what is in there: a directory listing wants a divider, a theme
+# card wants a frame.
+#
+# The line is the one `border` above draws, or a rounded one when that is
+# `none`, so a picker inside a popup that already has a border can turn its own
+# off without losing the frame round its preview.
+preview_border = "edge"
 
 # Where the preview's label sits. The same seven positions as `label_position`.
 #
