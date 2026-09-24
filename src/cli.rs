@@ -1513,14 +1513,35 @@ fn run_shell_init(shell: Option<String>) -> anyhow::Result<()> {
     }
 }
 
+/// Refuse a capture that could not read every line tmux gave it.
+///
+/// Restoring is a deliberate act, so saving is held to the same bargain: what
+/// lands on disk is the whole session or the file that was already there. A
+/// dropped line is one pane or one window missing from a layout that otherwise
+/// looks complete and reports success, which is the one failure nobody would
+/// notice until they opened the project and a pane was gone.
+fn whole_or_nothing(c: &crate::saved::Captured, session: &str) -> anyhow::Result<()> {
+    if c.skipped.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "could not read {} line{} of {session}, so nothing was saved and the layout on disk \
+         is unchanged:\n  {}",
+        c.skipped.len(),
+        if c.skipped.len() == 1 { "" } else { "s" },
+        c.skipped.join("\n  ")
+    )
+}
+
 /// Capture a session's layout on the way out.
 async fn save_before_close(session: &str) -> anyhow::Result<()> {
     let path = project_of(session).await;
     if path.is_empty() {
         anyhow::bail!("no directory for session {session}");
     }
-    let (saved, guessed) = capture_session(session, &path, true).await?;
-    crate::saved::store_rendered(&saved, &guessed)?;
+    let c = capture_session(session, &path, true).await?;
+    whole_or_nothing(&c, session)?;
+    crate::saved::store_rendered(&c.layout, &c.guessed)?;
     Ok(())
 }
 
@@ -1568,20 +1589,21 @@ async fn current_project() -> anyhow::Result<(String, String)> {
 /// `project save`: capture this session and write it for this project.
 async fn run_project_save(with_commands: bool) -> anyhow::Result<()> {
     let (session, path) = current_project().await?;
-    let (saved, guessed) = capture_session(&session, &path, with_commands).await?;
-    let file = crate::saved::store_rendered(&saved, &guessed)?;
+    let c = capture_session(&session, &path, with_commands).await?;
+    whole_or_nothing(&c, &session)?;
+    let file = crate::saved::store_rendered(&c.layout, &c.guessed)?;
     println!(
         "saved {} window{} for {}\n  {}",
-        saved.window.len(),
-        if saved.window.len() == 1 { "" } else { "s" },
+        c.layout.window.len(),
+        if c.layout.window.len() == 1 { "" } else { "s" },
         path,
         file.display()
     );
-    if !guessed.is_empty() {
+    if !c.guessed.is_empty() {
         println!(
             "  {} pane{} took its command from the running process, so any arguments are gone",
-            guessed.len(),
-            if guessed.len() == 1 { "" } else { "s" }
+            c.guessed.len(),
+            if c.guessed.len() == 1 { "" } else { "s" }
         );
     }
     Ok(())
@@ -1592,17 +1614,17 @@ async fn capture_session(
     session: &str,
     path: &str,
     with_commands: bool,
-) -> anyhow::Result<(crate::saved::SavedLayout, Vec<(usize, usize)>)> {
+) -> anyhow::Result<crate::saved::Captured> {
     let target = format!("={session}");
-    let windows = tmux_capture(&[
+    let windows = tmux_capture_checked(&[
         "list-windows",
         "-t",
         &target,
         "-F",
         "#{window_index}\t#{window_name}\t#{window_width}\t#{window_height}\t#{window_layout}",
     ])
-    .await;
-    let panes = tmux_capture(&[
+    .await?;
+    let panes = tmux_capture_checked(&[
         "list-panes",
         "-s",
         "-t",
@@ -1610,7 +1632,7 @@ async fn capture_session(
         "-F",
         "#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}",
     ])
-    .await;
+    .await?;
 
     let home = std::env::var("HOME").unwrap_or_default();
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -2547,6 +2569,34 @@ async fn pane_command(id: &str) -> String {
 }
 
 /// One tmux command, giving back its stdout.
+/// [`tmux_capture`], but a tmux that failed is an error rather than an empty
+/// answer.
+///
+/// The lenient version is right for a status segment or a picker, where tmux
+/// having nothing to say and tmux not answering look the same and both mean
+/// "draw nothing". It is wrong for a capture: `list-windows` against a session
+/// that has just been renamed exits non-zero with an empty stdout, which parses
+/// as a session with no windows, which used to be written over a good layout as
+/// though it were a true picture of the session.
+async fn tmux_capture_checked(args: &[&str]) -> anyhow::Result<String> {
+    let out = tokio::process::Command::new("tmux")
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("could not run tmux {}: {e}", args.join(" ")))?;
+    if !out.status.success() {
+        let why = String::from_utf8_lossy(&out.stderr);
+        let why = why.trim();
+        anyhow::bail!(
+            "tmux {} failed{}{}",
+            args.join(" "),
+            if why.is_empty() { "" } else { ": " },
+            why
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 async fn tmux_capture(args: &[&str]) -> String {
     let out = tokio::process::Command::new("tmux")
         .args(args)

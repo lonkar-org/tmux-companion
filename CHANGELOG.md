@@ -3,6 +3,24 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+### Fixed
+
+- `project save` and the save `close-project` does on the way out are all or
+  nothing. Three things could each lose part of a layout while reporting
+  success: a pane or window line tmux answered with that did not parse was
+  dropped silently, so a smaller layout replaced a larger one; a tmux command
+  that failed outright returned an empty string, which parsed as a session with
+  no windows and was written over a good file, and because a saved layout wins
+  over the config that empty file then shadowed the `[[layout]]` the project
+  used to open with; and the write truncated the old file before writing the
+  new one, so an interruption left half a layout. Now a failed tmux read is an
+  error, a line that cannot be parsed is quoted back and nothing is written, a
+  layout with no windows is refused, and the file is written under a temporary
+  name and renamed over the old one. A layout file with no windows that is
+  already on disk reads as no layout rather than as an empty one.
+
 ## 0.1.0 - 2026-09-23
 
 ### Added

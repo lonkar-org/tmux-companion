@@ -166,6 +166,12 @@ Bound to
 Capture this session's windows and panes as the layout this project opens
 with.
 A saved layout wins over the config.
+The save is all or nothing: if tmux cannot be read, or answers with a line this
+cannot parse, nothing is written and the layout already on disk is left alone,
+because a layout quietly missing a pane is worse than one that is out of date.
+The file is written through a temporary name and renamed over the old one, so a
+save interrupted halfway leaves the previous layout rather than half of a new
+one.
 Bound to
 .Ql prefix S .
 .It Ic project forget

@@ -71,7 +71,7 @@ on a machine where you would rather not have a resident process.
 | `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--plain` prints and exits |
 | `start [DIR]` | The way in from a shell that is not in tmux yet: the project picker, then attach. `--last` goes back to the session used most recently without asking; `DIR` skips the picker. Inside tmux it switches rather than attaching, so it is the same thing as `project` |
 | `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then the directories `[project] dirs_source` knows — zoxide by default, or `z`, `cdr`, `ghq`, a `dirs_command`, or none at all; `--print` lists and exits |
-| `project save` | Capture this session's windows and panes as this project's layout. `--no-commands` keeps the shape and leaves every pane a shell |
+| `project save` | Capture this session's windows and panes as this project's layout. All or nothing: a line tmux cannot answer for leaves the saved layout untouched. `--no-commands` keeps the shape and leaves every pane a shell |
 | `project forget` | Delete this project's saved layout, so the config decides again |
 | `project show` | Which layout this project gets, which file decided, and the windows it opens |
 

@@ -79,28 +79,47 @@ pub fn path_for(project_path: &str) -> Option<std::path::PathBuf> {
     crate::server::state_dir().map(|d| path_in(&d, project_path))
 }
 
-/// Read a project's saved layout, treating an unreadable or unparseable file as
-/// no layout at all.
+/// Read a project's saved layout, treating an unreadable, unparseable or empty
+/// file as no layout at all.
 ///
 /// A corrupt file costs the windows and not the session, the same bargain a
 /// misspelled layout name already makes: somebody opening a project wants the
 /// project, and a parse error in a cache is not their problem to solve at that
 /// moment.
 pub fn load(project_path: &str) -> Option<SavedLayout> {
-    let file = path_for(project_path)?;
+    load_in(&crate::server::state_dir()?, project_path)
+}
+
+/// [`load`] from a named state directory.
+///
+/// The directory is a parameter so a test can hand over a temporary one
+/// instead of setting `XDG_STATE_HOME`. Tests run in parallel threads of one
+/// process, so an environment variable is shared mutable state between them,
+/// which is a race waiting for a slow machine.
+pub fn load_in(state_dir: &std::path::Path, project_path: &str) -> Option<SavedLayout> {
+    let file = path_in(state_dir, project_path);
     let text = std::fs::read_to_string(file).ok()?;
-    toml::from_str(&text).ok()
+    let saved: SavedLayout = toml::from_str(&text).ok()?;
+    // A layout with no windows is not an answer, it is a file an older build
+    // wrote after a capture that read nothing. Treating it as absent sends the
+    // project back to its `[[layout]]`, which is what it had before the empty
+    // file appeared. New ones cannot be written -- `write_layout` refuses --
+    // so this is only ever about a file that is already there.
+    (!saved.window.is_empty()).then_some(saved)
 }
 
 /// Write a project's layout, creating the directory the first time.
 pub fn store(saved: &SavedLayout) -> anyhow::Result<std::path::PathBuf> {
-    let file = path_for(&saved.path)
-        .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&file, render(saved))?;
-    Ok(file)
+    write_layout(saved, render(saved))
+}
+
+/// [`store`] under a named state directory.
+#[cfg(test)]
+pub fn store_in(
+    state_dir: &std::path::Path,
+    saved: &SavedLayout,
+) -> anyhow::Result<std::path::PathBuf> {
+    write_layout_in(state_dir, saved, render(saved))
 }
 
 /// [`store`], marking the panes a capture had to guess at.
@@ -108,13 +127,65 @@ pub fn store_rendered(
     saved: &SavedLayout,
     guessed: &[(usize, usize)],
 ) -> anyhow::Result<std::path::PathBuf> {
-    let file = path_for(&saved.path)
+    write_layout(saved, render_with(saved, guessed))
+}
+
+/// The one place a layout file is written, so the refusal and the rename
+/// cannot be skipped by adding another caller.
+fn write_layout(saved: &SavedLayout, contents: String) -> anyhow::Result<std::path::PathBuf> {
+    let dir = crate::server::state_dir()
         .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
+    write_layout_in(&dir, saved, contents)
+}
+
+/// [`write_layout`] under a named state directory, so a test can point it at a
+/// temporary one rather than at the environment.
+fn write_layout_in(
+    state_dir: &std::path::Path,
+    saved: &SavedLayout,
+    contents: String,
+) -> anyhow::Result<std::path::PathBuf> {
+    let file = path_in(state_dir, &saved.path);
+    // A session always has at least one window, so a capture with none is a
+    // capture that failed: tmux answered with nothing and every line was
+    // skipped. Writing it would replace a good layout with a file that says
+    // the project opens as a bare shell, and, because a saved layout wins over
+    // the config, it would shadow the `[[layout]]` that used to cover this
+    // project rather than fall back to it.
+    if saved.window.is_empty() {
+        anyhow::bail!(
+            "refusing to save a layout with no windows for {}: nothing was captured,              so the file on disk is left alone",
+            saved.path
+        );
+    }
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(&file, render_with(saved, guessed))?;
+    write_atomically(&file, &contents)?;
     Ok(file)
+}
+
+/// Write through a temporary file in the same directory and rename over the
+/// target.
+///
+/// `std::fs::write` truncates first and writes second, so an interruption
+/// between the two -- a full disk, a killed process, a container stopped
+/// mid-save -- leaves a half-written file where a layout used to be. A rename
+/// within one directory is atomic on every platform this runs on, so a reader
+/// sees either the old file or the new one and never a piece of both.
+///
+/// The temporary file carries the process id, so two saves racing each other
+/// cannot write to one scratch path. The loser of that race still leaves a
+/// whole file behind, which is the property worth having.
+fn write_atomically(file: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let tmp = file.with_extension(format!("toml.{}.tmp", std::process::id()));
+    match std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, file)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 /// Delete a project's saved layout, answering whether there was one.
@@ -166,6 +237,26 @@ pub struct PaneReport {
     pub start: String,
 }
 
+/// Everything one capture produced: the layout, what it guessed at, and what it
+/// could not read at all.
+///
+/// `skipped` is the difference between a lossy capture and a wrong one.
+/// Guessing a command loses the arguments and the file says so; a line that
+/// does not parse loses a whole pane or a whole window, silently, and the
+/// layout that replaces the old one is simply smaller than the session it came
+/// from. Carrying the dropped lines out of here is what lets the caller refuse
+/// to write rather than report success over a hole.
+#[derive(Debug, Clone, Default)]
+pub struct Captured {
+    /// The layout as it would be written.
+    pub layout: SavedLayout,
+    /// `(window, pane)` positions whose command came from the running process.
+    pub guessed: Vec<(usize, usize)>,
+    /// Lines tmux returned that could not be parsed, verbatim, so an error can
+    /// quote the one that broke rather than describe it.
+    pub skipped: Vec<String>,
+}
+
 /// What a capture decided about one pane's command, so the file can say which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Confidence {
@@ -185,22 +276,32 @@ fn fields(line: &str, n: usize) -> Option<Vec<&str>> {
 
 /// Parse `list-panes -F '#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}'`.
 pub fn parse_panes(text: &str) -> Vec<PaneReport> {
-    let mut out: Vec<PaneReport> = text
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| {
-            let f = fields(l, 5)?;
-            Some(PaneReport {
-                window: f[0].parse().ok()?,
-                index: f[1].parse().ok()?,
-                cwd: f[2].to_string(),
-                current: f[3].to_string(),
-                start: f[4].to_string(),
-            })
-        })
-        .collect();
+    parse_panes_reporting(text).0
+}
+
+/// [`parse_panes`], also answering with the lines it could not read.
+pub fn parse_panes_reporting(text: &str) -> (Vec<PaneReport>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut skipped = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match parse_pane(line) {
+            Some(p) => out.push(p),
+            None => skipped.push(line.to_string()),
+        }
+    }
     out.sort_by_key(|p| (p.window, p.index));
-    out
+    (out, skipped)
+}
+
+fn parse_pane(line: &str) -> Option<PaneReport> {
+    let f = fields(line, 5)?;
+    Some(PaneReport {
+        window: f[0].parse().ok()?,
+        index: f[1].parse().ok()?,
+        cwd: f[2].to_string(),
+        current: f[3].to_string(),
+        start: f[4].to_string(),
+    })
 }
 
 /// What to restore in a pane, and how sure the capture is about it.
@@ -255,8 +356,8 @@ pub struct Capture<'a> {
 /// The guesses come back separately rather than being flagged inside the
 /// layout, because the layout is a config type that a person may also write by
 /// hand and it should not grow a field that only a capture ever sets.
-pub fn capture(c: &Capture) -> (SavedLayout, Vec<(usize, usize)>) {
-    let panes = parse_panes(c.panes);
+pub fn capture(c: &Capture) -> Captured {
+    let (panes, mut skipped) = parse_panes_reporting(c.panes);
     let mut layout = SavedLayout {
         path: c.project.to_string(),
         captured_at: c.at.to_string(),
@@ -265,8 +366,12 @@ pub fn capture(c: &Capture) -> (SavedLayout, Vec<(usize, usize)>) {
     let mut guessed = Vec::new();
 
     for line in c.windows.lines().filter(|l| !l.trim().is_empty()) {
-        let Some(f) = fields(line, 5) else { continue };
+        let Some(f) = fields(line, 5) else {
+            skipped.push(line.to_string());
+            continue;
+        };
         let Ok(index) = f[0].parse::<u32>() else {
+            skipped.push(line.to_string());
             continue;
         };
         layout.width = layout.width.max(f[2].parse().unwrap_or(0));
@@ -320,7 +425,11 @@ pub fn capture(c: &Capture) -> (SavedLayout, Vec<(usize, usize)>) {
         layout.window.push(window);
     }
 
-    (layout, guessed)
+    Captured {
+        layout,
+        guessed,
+        skipped,
+    }
 }
 
 /// `~/x` for a directory under home, unchanged otherwise.
@@ -578,39 +687,42 @@ mod tests {
     fn a_one_pane_window_is_captured_in_the_short_form() {
         // A captured file sits next to a hand-written one, so a window holding
         // one pane should read the way somebody would have typed it.
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tabcd,80x24,0,0,0\n",
             "0\t0\t/w/proj\tnvim\tnvim\n",
         ));
-        assert_eq!(l.window.len(), 1);
-        assert_eq!(l.window[0].command, "nvim");
-        assert!(l.window[0].pane.is_empty());
-        assert_eq!(l.window[0].layout, None, "one pane needs no layout string");
+        assert_eq!(c.layout.window.len(), 1);
+        assert_eq!(c.layout.window[0].command, "nvim");
+        assert!(c.layout.window[0].pane.is_empty());
+        assert_eq!(
+            c.layout.window[0].layout, None,
+            "one pane needs no layout string"
+        );
     }
 
     #[test]
     fn a_multi_pane_window_keeps_the_raw_layout_string() {
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tbb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}\n",
             "0\t0\t/w/proj\tnvim\tnvim\n0\t1\t/w/proj\tzsh\t\n",
         ));
         assert_eq!(
-            l.window[0].layout.as_deref(),
+            c.layout.window[0].layout.as_deref(),
             Some("bb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}")
         );
-        assert_eq!(l.window[0].pane.len(), 2);
-        assert_eq!(l.window[0].pane[0].command, "nvim");
-        assert_eq!(l.window[0].pane[1].command, "");
+        assert_eq!(c.layout.window[0].pane.len(), 2);
+        assert_eq!(c.layout.window[0].pane[0].command, "nvim");
+        assert_eq!(c.layout.window[0].pane[1].command, "");
     }
 
     #[test]
     fn a_pane_in_the_project_directory_stores_no_cwd() {
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tx\n",
             "0\t0\t/w/proj\tnvim\tnvim\n0\t1\t/home/me/src\tzsh\t\n",
         ));
-        assert_eq!(l.window[0].pane[0].cwd, None);
-        assert_eq!(l.window[0].pane[1].cwd.as_deref(), Some("~/src"));
+        assert_eq!(c.layout.window[0].pane[0].cwd, None);
+        assert_eq!(c.layout.window[0].pane[1].cwd.as_deref(), Some("~/src"));
     }
 
     #[test]
@@ -619,77 +731,91 @@ mod tests {
         // and they are the same directory.
         let mut c = cap("0\tedit\t80\t24\tx\n", "0\t0\t/private/w/proj\tzsh\t\n");
         c.project_real = "/private/w/proj";
-        let (l, _) = capture(&c);
-        assert_eq!(l.window[0].pane.len(), 0, "the short form, with no cwd");
+        let c = capture(&c);
+        assert_eq!(
+            c.layout.window[0].pane.len(),
+            0,
+            "the short form, with no cwd"
+        );
     }
 
     #[test]
     fn a_single_pane_that_wandered_keeps_its_table_rather_than_losing_the_cwd() {
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tx\n",
             "0\t0\t/elsewhere\tnvim\tnvim\n",
         ));
-        assert_eq!(l.window[0].pane.len(), 1);
-        assert_eq!(l.window[0].pane[0].cwd.as_deref(), Some("/elsewhere"));
-        assert_eq!(l.window[0].command, "", "the command moved into the pane");
+        assert_eq!(c.layout.window[0].pane.len(), 1);
+        assert_eq!(
+            c.layout.window[0].pane[0].cwd.as_deref(),
+            Some("/elsewhere")
+        );
+        assert_eq!(
+            c.layout.window[0].command, "",
+            "the command moved into the pane"
+        );
     }
 
     #[test]
     fn the_guesses_come_back_with_their_window_and_pane() {
-        let (_, guessed) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tx\n1\tai\t80\t24\tx\n",
             "0\t0\t/w/proj\tnvim\t\n1\t0\t/w/proj\tclaude\tclaude --resume\n",
         ));
-        assert_eq!(guessed, vec![(0, 0)], "only the one with no start command");
+        assert_eq!(
+            c.guessed,
+            vec![(0, 0)],
+            "only the one with no start command"
+        );
     }
 
     #[test]
     fn no_commands_records_the_shape_and_nothing_that_was_running() {
         let mut c = cap("0\tedit\t80\t24\tx\n", "0\t0\t/w/proj\tnvim\tnvim\n");
         c.with_commands = false;
-        let (l, guessed) = capture(&c);
-        assert_eq!(l.window[0].command, "");
+        let c = capture(&c);
+        assert_eq!(c.layout.window[0].command, "");
         assert!(
-            guessed.is_empty(),
-            "nothing was guessed because nothing was asked"
+            c.guessed.is_empty(),
+            "nothing was c.guessed because nothing was asked"
         );
     }
 
     #[test]
     fn the_size_is_the_largest_window_seen() {
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tx\n1\tai\t272\t67\tx\n",
             "0\t0\t/w/proj\tzsh\t\n1\t0\t/w/proj\tzsh\t\n",
         ));
-        assert_eq!((l.width, l.height), (272, 67));
+        assert_eq!((c.layout.width, c.layout.height), (272, 67));
     }
 
     #[test]
     fn capture_records_the_project_and_the_time() {
-        let (l, _) = capture(&cap("0\tedit\t80\t24\tx\n", "0\t0\t/w/proj\tzsh\t\n"));
-        assert_eq!(l.path, "/w/proj");
-        assert_eq!(l.captured_at, "2026-09-22 10:00:00 UTC");
+        let c = capture(&cap("0\tedit\t80\t24\tx\n", "0\t0\t/w/proj\tzsh\t\n"));
+        assert_eq!(c.layout.path, "/w/proj");
+        assert_eq!(c.layout.captured_at, "2026-09-22 10:00:00 UTC");
     }
 
     // ── the file ─────────────────────────────────────────────────────────────
 
     #[test]
     fn what_is_written_parses_back_to_what_was_captured() {
-        let (l, _) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tbb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}\n1\tai\t80\t24\tx\n",
             "0\t0\t/w/proj\tnvim\tnvim src/config.rs\n0\t1\t/home/me/src\tzsh\t\n1\t0\t/w/proj\tclaude\tclaude\n",
         ));
-        let back: SavedLayout = toml::from_str(&render(&l)).expect("round trip");
-        assert_eq!(back, l);
+        let back: SavedLayout = toml::from_str(&render(&c.layout)).expect("round trip");
+        assert_eq!(back, c.layout);
     }
 
     #[test]
     fn a_guess_carries_a_comment_saying_so() {
-        let (l, guessed) = capture(&cap(
+        let c = capture(&cap(
             "0\tedit\t80\t24\tx\n",
             "0\t0\t/w/proj\tnvim\t\n0\t1\t/w/proj\tzsh\t\n",
         ));
-        let text = render_with(&l, &guessed);
+        let text = render_with(&c.layout, &c.guessed);
         let line = text
             .lines()
             .position(|l| l.contains("arguments it had are gone"))
@@ -834,5 +960,128 @@ mod tests {
         std::fs::write(&file, render(&l)).unwrap();
         let back: SavedLayout = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(back, l);
+    }
+
+    // ── all or nothing ───────────────────────────────────────────────────────
+
+    #[test]
+    fn a_pane_line_that_does_not_parse_is_reported_rather_than_dropped() {
+        // Restore is a deliberate act, so a save is held to the same bargain.
+        // This used to vanish: the pane was filtered out, the layout came back
+        // one pane short, and `project save` said it had saved the session.
+        let c = capture(&cap(
+            "0\tedit\t80\t24\tbb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}\n",
+            "0\t0\t/w/proj\tnvim\t\nnot a pane line at all\n0\t1\t/w/proj\tzsh\t\n",
+        ));
+        assert_eq!(c.skipped, vec!["not a pane line at all".to_string()]);
+    }
+
+    #[test]
+    fn a_window_line_that_does_not_parse_is_reported_too() {
+        let c = capture(&cap(
+            "0\tedit\t80\t24\tx\nrubbish\n",
+            "0\t0\t/w/proj\tzsh\t\n",
+        ));
+        assert_eq!(c.skipped, vec!["rubbish".to_string()]);
+    }
+
+    #[test]
+    fn a_window_index_that_is_not_a_number_is_reported() {
+        let c = capture(&cap("x\tedit\t80\t24\tx\n", "0\t0\t/w/proj\tzsh\t\n"));
+        assert_eq!(c.skipped.len(), 1);
+        assert!(c.layout.window.is_empty());
+    }
+
+    #[test]
+    fn a_clean_capture_reports_nothing_skipped() {
+        let c = capture(&cap("0\tedit\t80\t24\tx\n", "0\t0\t/w/proj\tzsh\t\n"));
+        assert!(c.skipped.is_empty(), "{:?}", c.skipped);
+    }
+
+    #[test]
+    fn an_empty_capture_is_refused_rather_than_written() {
+        // The failure this exists for: tmux answers with nothing, every line
+        // is skipped, and a layout with no windows replaces a good one. The
+        // command then prints "saved 0 windows" and exits 0.
+        let t = tempfile::tempdir().unwrap();
+        let empty = SavedLayout {
+            path: "/w/proj".to_string(),
+            ..Default::default()
+        };
+        let err = store_in(t.path(), &empty).expect_err("an empty layout must be refused");
+        assert!(
+            err.to_string().contains("no windows"),
+            "the error says why: {err}"
+        );
+    }
+
+    #[test]
+    fn a_refused_save_leaves_the_file_that_was_there() {
+        let t = tempfile::tempdir().unwrap();
+        let good = SavedLayout {
+            path: "/w/keepme".to_string(),
+            window: vec![LayoutWindow {
+                name: "edit".to_string(),
+                command: "nvim".to_string(),
+                hold_name: true,
+                layout: None,
+                main_size: None,
+                pane: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let file = store_in(t.path(), &good).expect("the good one is written");
+        let before = std::fs::read_to_string(&file).unwrap();
+
+        let empty = SavedLayout {
+            path: "/w/keepme".to_string(),
+            ..Default::default()
+        };
+        assert!(store_in(t.path(), &empty).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            before,
+            "the layout on disk is untouched by a refused save"
+        );
+    }
+
+    #[test]
+    fn an_empty_file_already_on_disk_reads_as_no_layout() {
+        // Written by a build from before the refusal existed. Treating it as a
+        // layout means the project opens as a bare shell with its [[layout]]
+        // shadowed rather than used.
+        let t = tempfile::tempdir().unwrap();
+        let file = path_in(t.path(), "/w/empty");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "path = \"/w/empty\"\ncaptured_at = \"now\"\n").unwrap();
+        assert!(load_in(t.path(), "/w/empty").is_none());
+    }
+
+    #[test]
+    fn writing_leaves_no_temporary_file_behind() {
+        // The rename is the point: a reader sees the old file or the new one.
+        // A leftover scratch file would mean the rename never happened.
+        let t = tempfile::tempdir().unwrap();
+        let l = SavedLayout {
+            path: "/w/tmpcheck".to_string(),
+            window: vec![LayoutWindow {
+                name: "edit".to_string(),
+                command: String::new(),
+                hold_name: true,
+                layout: None,
+                main_size: None,
+                pane: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let file = store_in(t.path(), &l).unwrap();
+        let dir = file.parent().unwrap();
+        let strays: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp"))
+            .collect();
+        assert!(strays.is_empty(), "left behind: {strays:?}");
     }
 }
