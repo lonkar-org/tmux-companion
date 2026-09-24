@@ -13,10 +13,21 @@ use clap::{Parser, Subcommand};
 /// to decide whether it has anything to do. During development every build
 /// carries the same version number, so the crate version on its own answers the
 /// wrong question.
+///
+/// `long_about` is spelled out rather than left to clap, and that is the point
+/// of it: clap takes a doc comment's first line as `about` and the rest as
+/// `long_about`, so the paragraph above -- a note to whoever is editing this
+/// file -- was what `tmux-companion --help` opened with. The first thing
+/// somebody sees after installing it read like somebody else's memo.
 #[derive(Parser)]
 #[command(
     name = "tmux-companion",
-    about = "Singleton tmux status server",
+    about = "A status line, a set of pickers and a project manager for tmux",
+    long_about = "A status line, a set of pickers and a project manager for tmux.
+
+One daemon answers for all of it. `server` is that daemon; every other command is a client that connects to it, starting one if nothing is listening, prints what it gets back and exits. The point of the split is the status bar: tmux spawns a process per `#()` per refresh per attached client, so the bill is the number of distinct commands rather than what they do.
+
+`tmux-companion doctor` prints what a bug report needs. The manual page, `man tmux-companion`, has the rest.",
     version = crate::proto::BUILD_ID
 )]
 pub struct Cli {
@@ -3061,4 +3072,56 @@ async fn run_zen(pane: Option<String>) -> anyhow::Result<()> {
         tmux(&["set", "-g", "status"]).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_help_opens_with_something_written_for_whoever_is_reading_it() {
+        // clap takes a doc comment's first line as `about` and the rest as
+        // `long_about`, so the note above `Cli` -- which is addressed to
+        // whoever is editing this file -- was what `--help` opened with. The
+        // first thing somebody sees after installing this read like somebody
+        // else's memo.
+        let help = Cli::command().render_long_help().to_string();
+        assert!(
+            !help.contains("The parsed command line"),
+            "the struct's own doc comment is in --help:\n{help}"
+        );
+        assert!(
+            !help.contains("crate version"),
+            "the note about the build stamp is in --help:\n{help}"
+        );
+        assert!(
+            help.starts_with("A status line, a set of pickers and a project manager for tmux"),
+            "{help}"
+        );
+    }
+
+    #[test]
+    fn the_help_and_the_manual_describe_the_same_tool() {
+        // Word for word what `.Nd` says in docs/tmux-companion.1, so the two
+        // places somebody meets a one-line description agree. The Homebrew
+        // formula's `desc` is a third wording on purpose: `brew audit` rejects
+        // one that starts with an article.
+        let about = Cli::command().get_about().map(|s| s.to_string());
+        assert_eq!(
+            about.as_deref(),
+            Some("A status line, a set of pickers and a project manager for tmux")
+        );
+    }
+
+    #[test]
+    fn the_short_help_is_short() {
+        // `-h` is the one people press by accident, and a page of prose there
+        // is worse than a line.
+        let short = Cli::command().render_help().to_string();
+        assert!(
+            !short.contains("One daemon answers for all of it"),
+            "{short}"
+        );
+    }
 }

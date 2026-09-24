@@ -53,6 +53,14 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- `tmux-companion --help` opens with a description of the tool. clap takes a
+  doc comment's first line as `about` and the rest as `long_about`, so the note
+  above `Cli` — which is addressed to whoever is editing that file, and is
+  about why `--version` reports a build stamp — was what the help opened with.
+  The first thing somebody saw after installing it read like somebody else's
+  memo. `about` is now the sentence the manual's `.Nd` already used, and three
+  tests keep the doc comment out of both the short and the long help.
+
 - The directory list a new window opens at previews what is in the directory.
   The preview was the path, which is what the row already says: a pane of one
   line repeating the line you are looking at.
