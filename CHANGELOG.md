@@ -86,6 +86,20 @@ entry per phase of the comrades port.
   now, which are what `theme gen` writes and what `_apply.tmux` uses, and
   computes a readable colour when a theme carries neither.
 
+- The theme card's two pane-border samples are the colours tmux will draw.
+  `_apply.tmux` gives the active border `@theme-color-border` and the inactive
+  one `@theme-color-secondary`, which it pins to colour242 with its reasoning
+  beside it. The card had them the wrong way round and drew the active border
+  in the main colour, which on a dark theme is very nearly the background, so
+  the two lines looked alike and both were wrong.
+
+- A preview is clipped at the pane edge rather than reflowed. The theme card's
+  sample bars are built wider than any pane on purpose, so they reach its edge,
+  and wrapping folded the overhang onto the next line as a stray block of
+  colour. A preview is either a capture of somebody else's screen, which is
+  already the shape it wants, or a card drawn to a width it chose before the
+  pane existed; neither is improved by reflowing.
+
 - The theme card says how readable the text is, as the WCAG ratio, because a
   pair of colour names does not answer the only question anybody opens a theme
   preview to ask. Below 4.5 to 1 it says so.

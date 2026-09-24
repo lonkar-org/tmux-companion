@@ -2129,10 +2129,12 @@ fn theme_preview(row: &crate::theme::ThemeRow) -> String {
     let text = std::fs::read_to_string(&row.path).unwrap_or_default();
     let settings = crate::theme::parse_settings(&text);
 
-    // Wide enough for the sample bars to read as bars. The preview pane is
-    // whatever share of the popup the config gives it, and the card is drawn
-    // before the pane exists, so this is a width rather than a measurement.
-    let card = crate::theme::preview_card(&settings, 60);
+    // Wider than any preview pane, so the sample bars reach its edge whatever
+    // that turns out to be and the pane clips the rest. The card is built
+    // before the pane exists, so this cannot be a measurement; 60 was a guess
+    // and on a pane narrower than that the overhang wrapped onto the next
+    // line as a stray block of colour.
+    let card = crate::theme::preview_card(&settings, 400);
 
     let mut keys: Vec<&String> = settings.keys().collect();
     keys.sort();

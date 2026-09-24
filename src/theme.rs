@@ -461,6 +461,15 @@ pub fn shade_ramp(main: &str) -> Vec<String> {
         .collect()
 }
 
+/// What `_apply.tmux` draws an inactive pane border in when a theme names no
+/// secondary colour.
+///
+/// Pinned there with its reasoning, and repeated here so the card shows what
+/// tmux will show: colour238 measures 1.64 to 1 against the terminal
+/// background, and this is the first step up the greyscale ramp that clears
+/// 3.0 without the inactive border starting to compete with the active one.
+pub const INACTIVE_BORDER: &str = "colour242";
+
 /// How the text reads on the background, as WCAG measures it.
 ///
 /// `None` when either colour cannot be resolved, because a made-up number here
@@ -491,6 +500,12 @@ pub fn contrast_note(text: &str, background: &str) -> String {
 /// tells you nothing about whether the text on that background can be read,
 /// and that is the only question anybody opens this to answer.
 ///
+/// `width` is how wide the sample bars are drawn. They are meant to reach the
+/// edge of whatever pane shows the card, and the card is built before that
+/// pane exists, so a caller passes something wider than any pane and the pane
+/// clips it. Passing a guess instead is what put a stray block of colour on
+/// the line under each bar.
+///
 /// Pure: settings in, ANSI out, so the whole card is tested without a terminal.
 pub fn preview_card(settings: &std::collections::HashMap<String, String>, width: usize) -> String {
     let get = |k: &str| settings.get(k).cloned().unwrap_or_default();
@@ -512,21 +527,27 @@ pub fn preview_card(settings: &std::collections::HashMap<String, String>, width:
             m
         }
     };
-    // `@theme-color-border` is what the generator writes and what
-    // `_apply.tmux` reads. `@theme-color-secondary` was the name in the shell
-    // script this card comes from, and no theme file on disk carries it, so
-    // every border here was drawn in the fallback grey.
-    let secondary = {
+    // What tmux will actually draw the two pane borders in, which is not one
+    // colour and a shade of it. `_apply.tmux` sets the active border to
+    // `@theme-color-border`, falling back to the main colour, and the inactive
+    // one to `@theme-color-secondary`, which it pins to colour242 with the
+    // reasoning beside it: colour238 measures 1.64 to 1 against the terminal
+    // background, and colour242 is the first step up the greyscale ramp that
+    // clears 3.0 without starting to compete with the active border.
+    //
+    // The card had these the wrong way round and drew the active border in the
+    // main colour, which on a dark theme is very nearly the background. Two
+    // lines that looked the same were two lines drawn in the wrong colours.
+    let active_border = {
         let b = get("@theme-color-border");
-        if !b.is_empty() {
-            b
+        if b.is_empty() { main.clone() } else { b }
+    };
+    let inactive_border = {
+        let s = get("@theme-color-secondary");
+        if s.is_empty() {
+            INACTIVE_BORDER.to_string()
         } else {
-            let s = get("@theme-color-secondary");
-            if s.is_empty() {
-                "colour238".to_string()
-            } else {
-                s
-            }
+            s
         }
     };
 
@@ -578,7 +599,7 @@ pub fn preview_card(settings: &std::collections::HashMap<String, String>, width:
     out.push('\n');
     out.push_str(&format!("  {}▉▉▉{reset}  {name}\n", sgr(&main, "")));
     out.push_str(&format!("     main       {}\n", label_of(&main)));
-    out.push_str(&format!("     border     {}\n", label_of(&secondary)));
+    out.push_str(&format!("     border     {}\n", label_of(&active_border)));
     // The ratio, because the one thing anybody wants from a theme preview is
     // whether the text on that background can be read, and a pair of colour
     // names does not answer it. WCAG wants 4.5 to 1 for body text.
@@ -615,10 +636,13 @@ pub fn preview_card(settings: &std::collections::HashMap<String, String>, width:
 
     let rule = "\u{2500}".repeat(20);
     out.push_str("  pane borders\n");
-    out.push_str(&format!("  {}{rule}{reset} active\n", sgr(&main, "")));
+    out.push_str(&format!(
+        "  {}{rule}{reset} active\n",
+        sgr(&active_border, "")
+    ));
     out.push_str(&format!(
         "  {}{rule}{reset} inactive\n\n",
-        sgr(&secondary, "")
+        sgr(&inactive_border, "")
     ));
 
     out.push_str(&format!(
@@ -1155,15 +1179,73 @@ mod tests {
     }
 
     #[test]
-    fn the_sample_bars_are_as_wide_as_the_card() {
+    fn the_sample_bars_are_as_wide_as_the_card_asks_for() {
         // A message-style sample narrower than the pane reads as text rather
-        // than as a bar, which is the thing it exists to show.
+        // than as a bar, which is the thing it exists to show. Callers pass a
+        // width wider than any pane and let the pane clip it, because the card
+        // is built before the pane exists.
         let card = plain(&preview_card(&amber(), 40));
         let bar = card
             .lines()
             .find(|l| l.contains("Config Reloaded!"))
             .expect("the message sample");
         assert_eq!(bar.chars().count(), 38, "{bar:?}");
+
+        // And at the width the picker actually passes, so nothing else on the
+        // card grows with it and starts wrapping too.
+        let wide = plain(&preview_card(&amber(), 400));
+        for line in wide.lines() {
+            let n = line.chars().count();
+            assert!(
+                n <= 398,
+                "a line wider than the bars would wrap before they do: {n} {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_pane_borders_are_the_colours_tmux_will_draw() {
+        // `_apply.tmux` gives the active border `@theme-color-border` and the
+        // inactive one `@theme-color-secondary`, which it pins to colour242.
+        // The card had them the wrong way round and drew the active border in
+        // the main colour, which on a dark theme is nearly the background, so
+        // the two lines looked the same and both were wrong.
+        let card = preview_card(&amber(), 60);
+        let active = card
+            .lines()
+            .find(|l| l.contains("active") && !l.contains("inactive"))
+            .expect("the active sample");
+        let inactive = card
+            .lines()
+            .find(|l| l.contains("inactive"))
+            .expect("the inactive sample");
+
+        assert!(
+            active.contains(&sgr("colour238", "")),
+            "active is the border colour"
+        );
+        assert!(
+            inactive.contains(&sgr(INACTIVE_BORDER, "")),
+            "inactive is the greyscale step _apply.tmux pins"
+        );
+        // Same glyphs by design; it is the colour that has to differ, and two
+        // lines drawn in one colour say nothing.
+        assert_ne!(
+            sgr("colour238", ""),
+            sgr(INACTIVE_BORDER, ""),
+            "two lines that look the same say nothing"
+        );
+    }
+
+    #[test]
+    fn a_theme_naming_its_own_secondary_keeps_it() {
+        let mut theme = amber();
+        theme.insert("@theme-color-secondary".into(), "colour59".into());
+        let card = preview_card(&theme, 60);
+        assert!(
+            card.contains(&sgr("colour59", "")),
+            "the theme's own choice"
+        );
     }
 
     #[test]

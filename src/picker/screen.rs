@@ -613,10 +613,14 @@ pub(super) fn draw(
             look.preview_label_position,
             look.preview_label_offset,
         );
+        // Clipped at the pane edge rather than reflowed. A preview is either
+        // a capture of somebody else's screen, which is already the shape it
+        // wants to be, or a card drawn to a width it picked before this pane
+        // existed. Wrapping took the theme card's sample bars -- built wider
+        // than the pane on purpose, so they reach its edge -- and folded the
+        // overhang onto the next line as a stray block of colour.
         frame.render_widget(
-            Paragraph::new(super::ansi::into_lines(&row.preview))
-                .scroll((state.preview_scroll, 0))
-                .wrap(ratatui::widgets::Wrap { trim: false }),
+            Paragraph::new(super::ansi::into_lines(&row.preview)).scroll((state.preview_scroll, 0)),
             body,
         );
     }
