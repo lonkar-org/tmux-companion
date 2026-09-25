@@ -381,9 +381,27 @@ the key and enter is another window here.
 A path the source has never seen opens when it is typed in full.
 Bound to
 .Ql prefix c .
-.It Ic run
+.It Ic run Op Fl -pane Ar id
 A command from shell history, run in a pane that slides out beside this one
 and waits for an answer before closing.
+.Fl -pane
+names the pane the side pane belongs beside.
+The shipped binding passes nothing, and then the session an attached client is
+looking at decides.
+Both exist because the picker draws inside
+.Ic display-popup ,
+which is not a client: an untargeted split is resolved against whichever
+session the server touched last, so the command ran in a window nobody was
+looking at.
+tmux does not expand
+.Ql #{pane_id}
+in a
+.Ic display-popup
+command at all, and expands it in a
+.Ic run-shell
+one to the pane the server touched last rather than the pane the key was
+pressed in, which is why the flag is for a caller that knows the pane and not
+for the binding.
 Bound to
 .Ql prefix e .
 .It Ic theme pick Op Fl -themes Ar dir

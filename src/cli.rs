@@ -288,6 +288,9 @@ pub enum Cmd {
         /// List the history and exit, instead of opening the picker
         #[arg(long)]
         print: bool,
+        /// The pane this is for, as `#{pane_id}` from the binding that ran it
+        #[arg(long)]
+        pane: Option<String>,
         /// Internal: run this command in this pane and show the exit dialog
         #[arg(long, hide = true)]
         exec: Option<String>,
@@ -682,12 +685,13 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Probe { what } => run_probe(what)?,
         Cmd::Run {
             print,
+            pane,
             exec,
             dialog,
             out,
         } => match dialog {
             Some(code) => run_dialog(code, out)?,
-            None => run_command(print, exec).await?,
+            None => run_command(print, pane, exec).await?,
         },
         Cmd::Toggle { session, window } => run_toggle(session, window).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
@@ -3061,7 +3065,11 @@ fn source_theme(path: &std::path::Path, target: Option<&str>) {
 }
 
 /// `run`: pick a command from history and run it in a pane beside this one.
-async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
+async fn run_command(
+    print: bool,
+    pane: Option<String>,
+    exec: Option<String>,
+) -> anyhow::Result<()> {
     let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
 
@@ -3106,17 +3114,25 @@ async fn run_command(print: bool, exec: Option<String>) -> anyhow::Result<()> {
     };
 
     let exe = std::env::current_exe()?;
-    let width = crate::run::pane_width(window_width().await, config.run.width_percent);
+    // No `--pane` means an older binding, or somebody typing this at a shell.
+    // The shell case is fine and tmux resolves it; the popup case is not, so
+    // the session an attached client is looking at stands in for the pane.
+    let pane = match pane {
+        Some(p) if !p.is_empty() => Some(p),
+        _ => attached_session().await.map(|s| format!("{s}:")),
+    };
+    let width = crate::run::pane_width(
+        window_width(pane.as_deref()).await,
+        config.run.width_percent,
+    );
     let opening = if config.run.slide_steps > 0 { 1 } else { width };
 
-    tmux(&[
-        "split-window",
-        "-fh",
-        "-l",
-        &opening.to_string(),
+    let args = crate::run::split_args(
+        pane.as_deref(),
+        opening,
         &format!("{} run --exec {}", exe.display(), shell_quote(&command)),
-    ])
-    .await;
+    );
+    tmux(&args.iter().map(String::as_str).collect::<Vec<_>>()).await;
     Ok(())
 }
 
@@ -3186,9 +3202,37 @@ async fn open_with_chosen(
     Ok(())
 }
 
-/// The width of the window this pane is in.
-async fn window_width() -> u16 {
-    tmux_display("#{window_width}").await.parse().unwrap_or(180)
+/// The session an attached client is looking at, if there is one.
+///
+/// `list-clients` rather than `display-message`, because the caller is a popup
+/// and a popup is not a client: every untargeted question it asks tmux is
+/// answered for whichever session the server touched last, which after a
+/// project switch is a session nobody is looking at. With more than one client
+/// attached this takes the first, which is the same guess tmux itself makes.
+async fn attached_session() -> Option<String> {
+    let out = tokio::process::Command::new("tmux")
+        .args(["list-clients", "-F", "#{client_session}"])
+        .output()
+        .await
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+/// The width of the window a pane is in, or of whatever tmux calls current.
+///
+/// The argument is why this takes one at all: the picker runs inside
+/// `display-popup -E`, and a popup is not a client, so tmux resolves an
+/// untargeted `#{window_width}` against the session it touched most recently
+/// rather than the one on screen.
+async fn window_width(pane: Option<&str>) -> u16 {
+    tmux_display_at(pane, "#{window_width}")
+        .await
+        .parse()
+        .unwrap_or(180)
 }
 
 /// Run the command here, then offer the dialog, repeating on Restart.
@@ -3197,7 +3241,10 @@ async fn run_in_this_pane(command: &str, config: &crate::config::Config) -> anyh
 
     let pane = std::env::var("TMUX_PANE").unwrap_or_default();
     let target = pane.clone();
-    let width = crate::run::pane_width(window_width().await, config.run.width_percent);
+    let width = crate::run::pane_width(
+        window_width(if pane.is_empty() { None } else { Some(&pane) }).await,
+        config.run.width_percent,
+    );
     slide(&target, 1, width, config).await;
 
     loop {

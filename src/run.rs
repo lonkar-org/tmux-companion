@@ -134,6 +134,28 @@ pub fn dedupe(commands: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// The `split-window` that opens the side pane.
+///
+/// `-t` is the whole point of this function. The picker runs inside
+/// `display-popup -E`, and a popup is not a client: an untargeted split is
+/// resolved against whichever session the server touched most recently, which
+/// after a project switch is not the session on screen. The pane opened, ran
+/// the command and drew its dialog in a window nobody was looking at, and the
+/// reel recorded a picker that closed onto an empty prompt.
+pub fn split_args(pane: Option<&str>, opening: u16, command: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec!["split-window".into(), "-fh".into()];
+    if let Some(p) = pane {
+        if !p.is_empty() {
+            args.push("-t".into());
+            args.push(p.to_string());
+        }
+    }
+    args.push("-l".into());
+    args.push(opening.to_string());
+    args.push(command.to_string());
+    args
+}
+
 /// The widths a pane passes through while it slides out.
 ///
 /// tmux has no animation primitive, so a stepped `resize-pane` is the closest
@@ -488,6 +510,39 @@ mod tests {
     #[test]
     fn whitespace_only_history_entries_are_dropped() {
         assert_eq!(dedupe(vec!["  ".into(), "ls".into()]), vec!["ls"]);
+    }
+
+    #[test]
+    fn the_split_is_aimed_at_the_pane_the_binding_named() {
+        let args = split_args(Some("%12"), 1, "tc run --exec 'git log'");
+        assert_eq!(
+            args,
+            vec![
+                "split-window",
+                "-fh",
+                "-t",
+                "%12",
+                "-l",
+                "1",
+                "tc run --exec 'git log'"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_pane_the_split_is_left_to_tmux() {
+        // Typed at a shell rather than pressed, where tmux's own current pane
+        // is the right answer and $TMUX_PANE is already set.
+        let args = split_args(None, 56, "tc run --exec 'ls'");
+        assert!(!args.iter().any(|a| a == "-t"), "{args:?}");
+        assert_eq!(args.first().map(String::as_str), Some("split-window"));
+    }
+
+    #[test]
+    fn an_empty_pane_is_the_same_as_no_pane() {
+        // `#{pane_id}` from a binding that fired outside a pane comes through
+        // as an empty string, and `-t ''` is an error rather than a default.
+        assert!(!split_args(Some(""), 1, "x").iter().any(|a| a == "-t"));
     }
 
     #[test]

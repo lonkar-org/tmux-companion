@@ -104,6 +104,15 @@ bind -N "custom: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
 bind -N "custom: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
+# No --pane here, unlike the copy-mode `o` binding below, and the reason is
+# worth writing down: tmux expands #{pane_id} in a run-shell command and does
+# not expand it in a display-popup one, so the obvious version passes the
+# eleven characters `#{pane_id}` and the split lands nowhere. Wrapping the
+# popup in run-shell does expand it, and then hands over the pane tmux last
+# touched rather than the one the key was pressed in, which in a session you
+# just switched away from is worse than not asking. Given no pane, `run` puts
+# the side pane in the session an attached client is looking at, which is the
+# one whose key you pressed.
 bind -N "custom: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
 bind -N "custom: config pick a colour theme" C-t \
