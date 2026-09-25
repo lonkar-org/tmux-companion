@@ -8,6 +8,8 @@ list, and `tmux-companion <command> --help` the flags.
 | Command | Does |
 | --- | --- |
 | `server` | Bind the socket and serve until killed. Started automatically by any client that finds nothing listening, so you rarely type it. |
+| `shutdown` | Stop the daemon. tmux is not touched; the next client starts a new one |
+| `restart` | Stop the daemon and start a fresh one. This is how a change to `config.toml` takes effect, since the file is read once at startup and held for the daemon's whole life |
 
 ## Status segments
 
@@ -24,8 +26,9 @@ Each one prints tmux markup on stdout and exits.
 | `window -i INDEX [flags]` | One window's status. Driven by tmux format strings: `-c` current, `-n` name, `-w` path, `-p` process, `-s` start path, `-f` flags, `-P` pane count, `-A` pane index |
 | `preview` | Sample segments in every style, locally, with no daemon |
 
-`vim-bg PANE_PID` still works and is `sh-jobs` under its old name. It prints a
-line saying so, and goes away after one release.
+`vim-bg PANE_PID` still works and is `sh-jobs` under its old name, and
+`close-project` still works and is `project close`. Both print a line saying so,
+and go away after one release.
 
 ### Using `gst` and `net` outside tmux
 
@@ -74,6 +77,7 @@ on a machine where you would rather not have a resident process.
 | `project save` | Capture this session's windows and panes as this project's layout. All or nothing: a line tmux cannot answer for leaves the saved layout untouched. `--no-commands` keeps the shape and leaves every pane a shell |
 | `project forget` | Delete this project's saved layout, so the config decides again |
 | `project show` | Which layout this project gets, which file decided, and the windows it opens |
+| `project close` | Close this project by letting every window exit, capturing the layout on the way out. `--discard` quits editors with `:qa!`, `--no-save` leaves the saved layout alone. `close-project` is the old name and works for one release |
 
 `--all` opens with no query, `--query` sets a different one, `--refresh`
 rebuilds from tmux rather than using what the daemon holds, and `--print` lists
@@ -101,9 +105,47 @@ no terminal.
 | `toggle [SESSION] [WINDOW]` | Move to the next window in this session's layout, falling back to tmux's last-window when the current window isn't in one |
 | `autosave --once` | Save the session list now |
 | `autosave --status` | Say when the last save happened |
+| `sessions save` | Capture every session on the server as a new generation. All or nothing, like `project save`. `--skip-pane-history` leaves out what was on each pane's screen; `--exclude a,b` adds to `[sessions] exclude` |
+| `sessions resurrect [STAMP]` | Rebuild a server from a generation, newest by default, falling back to tmux-resurrect's own newest save when there is no generation of ours. Refuses a server that already holds sessions; `--merge` adds only what is missing. `--dry-run` prints the exact tmux commands, `--only`/`--exclude` pick, `--yes` runs everything the table claimed without asking, `--detach` leaves the server running. Exit codes 0/2/3/4/1 |
+| `sessions autosave --once` | Take a snapshot now, the same one the daemon's timer takes |
+| `sessions autosave --status` | When the last snapshot was, what the timer is set to, and whether the last daemon stopped cleanly |
+| `sessions shutdown` | Save every session, then stop the tmux server. `--exclude a,b` is not "leave these alone" — the server takes every session with it either way, so an excluded one does not come back, and the command says which before it acts. `--daemon-too` stops the daemon as well. `--dry-run` says what it would do |
+| `sessions restart` | The same, then bring the server back with what it had. Stops the daemon by default so `config.toml` is reread; `--keep-daemon` turns that off |
+| `sessions list` | Every generation, newest first, with what each holds and whether a clean shutdown was recorded. `--json` for a script |
+| `sessions show [STAMP]` | What one generation holds, down to each pane's directory and command, defaulting to the newest. `--json` prints the snapshot itself |
 
 The autosave loop itself runs in the daemon, so there's nothing to start and
 nothing to keep from starting twice.
+
+`sessions shutdown` and `sessions restart` refuse to run from inside tmux, and
+there is no flag for it: stopping the server would take the pane they were typed
+into, and nothing after that would run. `~/git-repos/mysetup/scripts/tmux-restart.sh`
+is the shell version of the same sequence and can go once these work.
+
+`project` and `sessions` answer different questions and neither replaces the
+other. A project's layout is a catalogue entry: one file, overwritten when you
+press the key, edited by hand, kept for good. A snapshot is a moment: one file
+per capture, kept in generations, dropped oldest first. A session with no
+project to be keyed on, a scratch session you named yourself, exists only in
+the second.
+
+When a restore does not know what a pane should run and somebody is watching, it
+shows the list and counts down before going ahead — never on a count of panes,
+only on what it is unsure of. `[sessions] confirm_secs` is the countdown, zero
+never draws it, and any key stops the clock. A pane left unapproved still opens
+in the right directory, at a prompt.
+
+What a restore is allowed to run lives in `[[restore.program]]`, and it is
+default deny: `match` is a regular expression against the whole saved command,
+`command` is what runs with `{command}` and `{cwd}` filled in, and `run = false`
+refuses a program outright. A command no row claims is shown and left alone,
+because restoring is executing what your own machine recorded weeks ago.
+
+Pane history is a directory of one file per pane beside the snapshot rather than
+an archive, because this crate has no tar or gzip dependency and fourteen panes
+come to 50 KB uncompressed against 16.7 KB gzipped. Twenty generations is a
+megabyte either way. Both the snapshot and the history are written `0600` under
+a `0700` directory, since the history is the text that was on your screen.
 
 ## Themes
 

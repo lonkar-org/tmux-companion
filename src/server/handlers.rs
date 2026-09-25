@@ -149,6 +149,12 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // then start one. Anybody who can send this could already send any
         // other command, and the socket is 0600.
         "__shutdown" => {
+            // Going politely, so the marker comes off. A daemon that is killed
+            // outright leaves it, and that is what tells the next restore the
+            // machine went down badly.
+            if let Some(dir) = crate::server::state_dir() {
+                crate::sessions::timer::clear_marker_in(&dir);
+            }
             tokio::spawn(async {
                 // Answer first, exit after: a client that gets no response
                 // cannot tell "it stopped" from "it was never there".

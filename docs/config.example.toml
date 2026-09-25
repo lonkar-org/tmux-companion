@@ -483,6 +483,10 @@ files = []
 # started right after a config edit would source the file at startup, which is
 # a surprise, and a loop when the config is what starts the daemon.
 
+# Deprecated: `[sessions]` below does this and more. This shells out to a
+# plugin's save script and keeps one file; that keeps generations of its own
+# and records what each pane was running, arguments and all. It still works,
+# and `config check` says so. It is off by default now.
 [autosave]
 # Whether the daemon saves the session list on a timer, so a reboot does not
 # cost the layout.
@@ -495,13 +499,164 @@ files = []
 # Not tmux-continuum, which is the usual answer: continuum drives its timer by
 # appending #{continuum_save} to status-right, and status-right here is a
 # single #() into this binary, tuned down from five spawns a second.
-enabled = true
+#
+# Off since `[sessions]` arrived. A config that still asks for this keeps it.
+enabled = false
 
 # Seconds between saves.
 interval_secs = 900
 
 # The script that does the saving. Unset means tmux-resurrect's.
 # script = "~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh"
+
+[sessions]
+# Snapshots of the whole tmux server, kept in generations, so a reboot does not
+# cost the sessions you had open.
+#
+# This is the saving half. Restoring stays a command you run, because an
+# automatic restore drops a stale layout over a session you have already
+# started working in, which is a worse failure than losing a layout to a
+# reboot.
+#
+# `[autosave]` above is the older, narrower version of this and is going away:
+# it shells out to a plugin's save script and keeps one file. This keeps
+# generations of its own and knows what each pane was running.
+
+# When the daemon takes one by itself.
+#
+#   off        never; a snapshot is whatever you ask for by hand
+#   interval   every interval_secs
+#   cron       on the schedule below, for people who want it on the hour
+#
+# An earlier design had a fourth mode that wrote on every change the daemon
+# noticed. It is gone, because setting interval_secs = 10 buys the same thing
+# with the cost written down instead of hidden behind a word.
+autosave = "off"
+
+# Seconds between snapshots under `interval`. The floor is 10: below that the
+# writes start overlapping the capture on a busy machine, and a number under it
+# is an error rather than something quietly rounded up.
+#
+# What it costs, measured on one laptop with 7 sessions and 14 panes. The
+# 40-pane column is that rate extrapolated, not measured:
+#
+#   interval_secs   14 panes   40 panes   what keep = 20 spans
+#   900 (default)   0.015%     0.04%      5 hours
+#   60              0.2%       0.6%       20 minutes
+#   10              1.3%       3.7%       200 seconds
+#   10, no history  0.01%      0.03%      200 seconds
+#
+# That last column is the one nobody expects. Generations are counted, not
+# timed, so a ten second interval with the default `keep` holds under four
+# minutes of history, and a crash you notice after lunch has already rolled off
+# the end of it. Short interval wants a large `keep`, or `keep_days`.
+interval_secs = 900
+
+# The schedule under `cron`. Five fields, the usual order.
+cron = "0 * * * *"
+
+# How many generations to keep. Pruning runs after a successful write, oldest
+# first, and never touches the one the `last` pointer names.
+keep = 20
+
+# Also keep anything younger than this many days, however many files that turns
+# out to be. This is how you keep a month of hourly snapshots without setting
+# `keep` to 700. Zero leaves the count to decide on its own.
+keep_days = 0
+
+# Whether to capture what was on each pane's screen.
+#
+# This is the expensive half, at 9.3 ms per pane against 1 ms for the metadata
+# of a whole server, and it is what makes a short interval costly. Turning it
+# off leaves the half that carries what each pane was running and where, which
+# is the half worth having often.
+#
+# It is also the half that holds secrets. Pane history is the text that was on
+# your screen, so it contains whatever you printed, including the token you
+# echoed and the .env you catted. The directory is created 0700 and every file
+# in it 0600, and this is how you keep it off the disk entirely.
+pane_history = true
+
+# How many lines of each pane to capture.
+pane_history_lines = 2000
+
+# Sessions never captured, by name.
+#
+# On a shutdown this means the session is not saved and does not come back,
+# since stopping the server takes every session with it either way. The command
+# says so before it acts rather than leaving you to find out.
+exclude = []
+
+# How long the restore summary counts down before going ahead.
+#
+# It opens only when the restore does not know something: a pane no
+# [[restore.program]] row claims, one a row refused, or a command the capture
+# had to read off a running process so its arguments are already gone. A
+# restore where everything is known goes straight through, however many panes
+# that is, because a confirmation on every restore is one people turn off.
+#
+# Touch any key and the countdown stops. Zero never draws it, which is `--yes`
+# made permanent: the panes it would have asked about still open, in the right
+# directory, at a prompt.
+confirm_secs = 5
+
+# What a restore is allowed to run in a pane it is rebuilding.
+#
+# Default deny. Restoring means executing commands your own machine recorded
+# weeks ago, and "re-run anything I saw" is one bad afternoon away from
+# restoring a `curl | sh` that was in a pane six weeks back. A command no row
+# claims is captured, shown, and left to you.
+#
+# `match` is a regular expression against the whole saved command, not against
+# the process name. The process name of an agent is its version string --
+# `2.1.281` rather than `claude` -- and everything worth matching on is in the
+# arguments.
+#
+# `command` is what actually runs. `{command}` is the saved command verbatim and
+# `{cwd}` the pane's directory.
+#
+# `run = false` is how you say "never bring this back" without leaving it to
+# fall through to the unknown pile and be asked about every time.
+#
+# Writing this table replaces the shipped rows rather than adding to them, so
+# copy what you want to keep. `tmux-companion config dump` prints them.
+
+[[restore.program]]
+# An agent keeps which conversation it is in inside its own arguments, so
+# replaying them verbatim is what brings the conversation back. A bare `claude`
+# stays bare. `claude --continue` here instead would take the most recent
+# conversation in that directory, which survives a stale snapshot and picks
+# wrong when two agents were running in one repository.
+match = "^claude( |$)"
+command = "{command}"
+
+[[restore.program]]
+match = "^(codex|gemini|cursor-agent|aider|opencode)( |$)"
+command = "{command}"
+
+[[restore.program]]
+# An editor with a session plugin restores itself from the directory, and one
+# without it opens empty. Either way the saved arguments are a file list from an
+# hour ago, so they are dropped. Reopening your buffers is the editor's job:
+# auto-session and persistence.nvim both do it per directory.
+match = "^n?vim( |$)"
+command = "nvim"
+
+[[restore.program]]
+match = "^(lazygit|tig|gitui)( |$)"
+command = "{command}"
+
+[[restore.program]]
+match = "^(htop|top|btop|watch)( |$)"
+command = "{command}"
+
+[[restore.program]]
+match = "^(tail|less|journalctl)( |$)"
+command = "{command}"
+
+[[restore.program]]
+match = "^ssh( |$)"
+command = "{command}"
 
 [run]
 # Where the commands come from: auto, zsh, bash, fish or atuin.

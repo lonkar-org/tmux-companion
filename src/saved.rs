@@ -258,13 +258,19 @@ pub struct Captured {
 }
 
 /// What a capture decided about one pane's command, so the file can say which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// It is written into a session snapshot as well as reported by a project
+/// capture, so a restore can tell a command somebody chose from one the
+/// capture had to read off a running process.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum Confidence {
     /// The pane was created with this command, arguments and all.
     Exact,
     /// Taken from the running process, so any arguments are gone.
     Guessed,
     /// A shell prompt, which restores as a shell.
+    #[default]
     Shell,
 }
 
@@ -304,6 +310,52 @@ fn parse_pane(line: &str) -> Option<PaneReport> {
     })
 }
 
+/// The last component of a path, or the whole thing when it has no separator.
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// One layer of surrounding matched double quotes removed.
+///
+/// tmux writes `default-command` back from `show-options` bare and reports it
+/// in `pane_start_command` quoted, so the two spellings of one setting have to
+/// be read as one thing before they can be compared.
+fn unquote(s: &str) -> &str {
+    s.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or(s)
+}
+
+/// Whether a start command is a wrapper that ends up running the login shell,
+/// as `reattach-to-user-namespace -l /bin/zsh` and `env FOO=1 /bin/zsh` both
+/// do.
+///
+/// This is the shape test, not a list of the programs people wrap their shell
+/// in, because the list would be wrong the first time somebody used a launcher
+/// nobody here had heard of. It only has to answer when there is no
+/// `default-command` to compare against.
+fn wraps_the_shell(start: &str, shell: &str, shell_name: &str) -> bool {
+    let words: Vec<&str> = start.split_whitespace().collect();
+    words.len() > 1
+        && words
+            .last()
+            .is_some_and(|w| *w == shell || *w == shell_name)
+}
+
+/// Whether the process a pane is running is the one `default-command` starts
+/// anyway.
+///
+/// `pane_current_command` is a process name with no path, so the setting is
+/// compared by the basename of its last word: a server set to
+/// `/usr/local/bin/fish` reports `fish` in every idle pane, and that is the
+/// prompt that server gives out rather than a command anybody asked for.
+fn is_the_default_program(current: &str, default: &str) -> bool {
+    match default.split_whitespace().next_back() {
+        Some(last) => current == last || current == basename(last),
+        None => false,
+    }
+}
+
 /// What to restore in a pane, and how sure the capture is about it.
 ///
 /// `pane_start_command` is the only exact answer and it is empty for every pane
@@ -311,14 +363,41 @@ fn parse_pane(line: &str) -> Option<PaneReport> {
 /// arguments, and falling back to it when the running process is the login
 /// shell would write a command that opens a shell inside the shell tmux already
 /// started, so that case becomes no command at all.
-pub fn command_for(pane: &PaneReport, shell: &str) -> (String, Confidence) {
-    let shell_name = shell.rsplit('/').next().unwrap_or(shell);
-    let start = pane.start.trim();
-    if !start.is_empty() && start != shell && start != shell_name {
+///
+/// A server with `default-command` set never reports an empty start command to
+/// fall back from: tmux hands that setting back as the start command of every
+/// pane nobody gave a command to, so on a machine with the usual macOS
+/// `set -g default-command "reattach-to-user-namespace -l $SHELL"` every pane
+/// claimed to be certain about a command that only opens a second shell.
+/// Comparing the start command against the setting is what tells a wrapper from
+/// a command somebody meant, whatever they wrapped their shell in, and the
+/// program the setting ends in is then the prompt that server hands out rather
+/// than a command, however real a program it is. With no setting to compare
+/// against, a start command whose last word is the shell is read the same way.
+pub fn command_for(pane: &PaneReport, shell: &str, default_command: &str) -> (String, Confidence) {
+    let shell_name = basename(shell);
+    let default = unquote(default_command.trim());
+    let start = unquote(pane.start.trim());
+
+    // Nothing the pane was started with that it would not have been started
+    // with anyway.
+    let nothing_asked_for = start.is_empty()
+        || start == shell
+        || start == shell_name
+        || (!default.is_empty() && start == default)
+        || (default.is_empty() && wraps_the_shell(start, shell, shell_name));
+    if !nothing_asked_for {
         return (start.to_string(), Confidence::Exact);
     }
+
+    // Whatever a pane with no command of its own ends up running: the login
+    // shell, or the program `default-command` puts in front of it.
     let current = pane.current.trim();
-    if current.is_empty() || current == shell_name || current == shell {
+    if current.is_empty()
+        || current == shell
+        || current == shell_name
+        || is_the_default_program(current, default)
+    {
         return (String::new(), Confidence::Shell);
     }
     (current.to_string(), Confidence::Guessed)
@@ -343,6 +422,12 @@ pub struct Capture<'a> {
     pub project_real: &'a str,
     /// `$SHELL`, so a pane at a prompt is recognised as one.
     pub shell: &'a str,
+    /// `show-options -gv default-command`, empty when the server has none.
+    ///
+    /// tmux reports this as `pane_start_command` for every pane it was not
+    /// given an explicit command for, so without it a wrapped shell reads as a
+    /// command somebody chose.
+    pub default_command: &'a str,
     /// Home, so a pane under it stores a `~` and survives a different machine.
     pub home: &'a str,
     /// When this happened, as [`crate::tasks::format_unix`] writes it.
@@ -390,7 +475,7 @@ pub fn capture(c: &Capture) -> Captured {
 
         for (i, p) in mine.iter().enumerate() {
             let (command, how) = if c.with_commands {
-                command_for(p, c.shell)
+                command_for(p, c.shell, c.default_command)
             } else {
                 (String::new(), Confidence::Shell)
             };
@@ -570,6 +655,7 @@ mod tests {
             project: "/w/proj",
             project_real: "/w/proj",
             shell: "/bin/zsh",
+            default_command: "",
             home: "/home/me",
             at: "2026-09-22 10:00:00 UTC",
             with_commands: true,
@@ -610,7 +696,7 @@ mod tests {
     fn a_start_command_wins_because_it_still_has_its_arguments() {
         let p = report(0, 0, "/w/proj", "nvim", "nvim src/config.rs");
         assert_eq!(
-            command_for(&p, "/bin/zsh"),
+            command_for(&p, "/bin/zsh", ""),
             ("nvim src/config.rs".to_string(), Confidence::Exact)
         );
     }
@@ -621,12 +707,12 @@ mod tests {
         // already started in that pane.
         let p = report(0, 0, "/w/proj", "zsh", "");
         assert_eq!(
-            command_for(&p, "/bin/zsh"),
+            command_for(&p, "/bin/zsh", ""),
             (String::new(), Confidence::Shell)
         );
         let full = report(0, 0, "/w/proj", "/bin/zsh", "");
         assert_eq!(
-            command_for(&full, "/bin/zsh"),
+            command_for(&full, "/bin/zsh", ""),
             (String::new(), Confidence::Shell)
         );
     }
@@ -635,7 +721,7 @@ mod tests {
     fn a_pane_whose_start_command_was_the_shell_is_still_a_prompt() {
         let p = report(0, 0, "/w/proj", "zsh", "/bin/zsh");
         assert_eq!(
-            command_for(&p, "/bin/zsh"),
+            command_for(&p, "/bin/zsh", ""),
             (String::new(), Confidence::Shell)
         );
     }
@@ -644,7 +730,7 @@ mod tests {
     fn falling_back_to_the_running_process_is_marked_as_a_guess() {
         let p = report(0, 0, "/w/proj", "nvim", "");
         assert_eq!(
-            command_for(&p, "/bin/zsh"),
+            command_for(&p, "/bin/zsh", ""),
             ("nvim".to_string(), Confidence::Guessed)
         );
     }
@@ -653,7 +739,104 @@ mod tests {
     fn an_empty_pane_report_is_a_shell_rather_than_a_blank_command() {
         let p = report(0, 0, "/w/proj", "", "");
         assert_eq!(
-            command_for(&p, "/bin/zsh"),
+            command_for(&p, "/bin/zsh", ""),
+            (String::new(), Confidence::Shell)
+        );
+    }
+
+    #[test]
+    fn a_pane_started_by_the_servers_default_command_is_a_prompt() {
+        // tmux reports default-command as the start command of every pane it
+        // was not given one for, and quotes it on the way out.
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let p = report(
+            0,
+            0,
+            "/w/proj",
+            "zsh",
+            "\"reattach-to-user-namespace -l /bin/zsh\"",
+        );
+        assert_eq!(
+            command_for(&p, "/bin/zsh", dc),
+            (String::new(), Confidence::Shell)
+        );
+    }
+
+    #[test]
+    fn the_default_command_matches_whether_or_not_tmux_quoted_it() {
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let p = report(
+            0,
+            0,
+            "/w/proj",
+            "zsh",
+            "reattach-to-user-namespace -l /bin/zsh",
+        );
+        assert_eq!(
+            command_for(&p, "/bin/zsh", dc),
+            (String::new(), Confidence::Shell)
+        );
+    }
+
+    #[test]
+    fn a_command_somebody_typed_is_still_exact_under_a_default_command() {
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let p = report(0, 0, "/w/proj", "nvim", "nvim src/config.rs");
+        assert_eq!(
+            command_for(&p, "/bin/zsh", dc),
+            ("nvim src/config.rs".to_string(), Confidence::Exact)
+        );
+    }
+
+    #[test]
+    fn a_pane_running_something_under_the_default_command_is_a_guess() {
+        // The wrapper is not the answer, so the running process is, with its
+        // arguments gone like any other guess.
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let p = report(
+            0,
+            0,
+            "/w/proj",
+            "nvim",
+            "\"reattach-to-user-namespace -l /bin/zsh\"",
+        );
+        assert_eq!(
+            command_for(&p, "/bin/zsh", dc),
+            ("nvim".to_string(), Confidence::Guessed)
+        );
+    }
+
+    #[test]
+    fn a_wrapper_ending_in_the_shell_is_a_prompt_with_no_default_command_to_check() {
+        // show-options can fail or answer nothing, and the capture still has
+        // to recognise the shape rather than record the wrapper.
+        let p = report(
+            0,
+            0,
+            "/w/proj",
+            "zsh",
+            "reattach-to-user-namespace -l /bin/zsh",
+        );
+        assert_eq!(
+            command_for(&p, "/bin/zsh", ""),
+            (String::new(), Confidence::Shell)
+        );
+        let env = report(0, 0, "/w/proj", "zsh", "env FOO=1 /bin/zsh");
+        assert_eq!(
+            command_for(&env, "/bin/zsh", ""),
+            (String::new(), Confidence::Shell)
+        );
+    }
+
+    #[test]
+    fn a_default_command_that_is_a_real_program_is_still_not_a_pane_command() {
+        // Somebody who sets default-command to a program meant it for every
+        // pane, so it belongs in their tmux.conf and not in a saved layout,
+        // where it would say this one pane was started that way.
+        let dc = "/usr/local/bin/fish";
+        let p = report(0, 0, "/w/proj", "fish", "/usr/local/bin/fish");
+        assert_eq!(
+            command_for(&p, "/bin/zsh", dc),
             (String::new(), Confidence::Shell)
         );
     }

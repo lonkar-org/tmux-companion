@@ -227,6 +227,11 @@ pub enum Cmd {
     },
 
     /// Close a project session by letting every window exit
+    ///
+    /// Deprecated: this is `project close`. Kept for one release because it is
+    /// in at least one tmux.conf, and hidden so a new reader is not offered two
+    /// names for the same thing.
+    #[command(hide = true)]
     CloseProject {
         /// The session, defaulting to the current one
         session: Option<String>,
@@ -343,6 +348,19 @@ pub enum Cmd {
         #[arg(long)]
         print: bool,
     },
+
+    /// Snapshots of every session, kept in generations
+    Sessions {
+        /// What to do
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+
+    /// Stop the tmux-companion daemon, leaving tmux alone
+    Shutdown,
+
+    /// Restart the daemon, so it rereads its config
+    Restart,
 
     /// A cheat sheet of the bindings you wrote, in four boxes
     Cheatsheet {
@@ -651,7 +669,12 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             session,
             discard,
             no_save,
-        } => run_close_project(session, discard, !no_save).await?,
+        } => {
+            eprintln!(
+                "tmux-companion: `close-project` is now `project close`; the old name works for now"
+            );
+            run_close_project(session, discard, !no_save).await?
+        }
         Cmd::NewWindow => run_new_window().await?,
         Cmd::ShellInit { shell } => run_shell_init(shell)?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
@@ -673,8 +696,85 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             Some(ProjectAction::Save { no_commands }) => run_project_save(!no_commands).await?,
             Some(ProjectAction::Forget) => run_project_forget().await?,
             Some(ProjectAction::Show) => run_project_show().await?,
+            Some(ProjectAction::Close {
+                session,
+                discard,
+                no_save,
+            }) => run_close_project(session, discard, !no_save).await?,
             None => run_project(dir, print).await?,
         },
+        Cmd::Sessions { action } => match action {
+            SessionsAction::Save {
+                skip_pane_history,
+                exclude,
+            } => run_sessions_save(skip_pane_history, &exclude, false).await?,
+            SessionsAction::Resurrect {
+                stamp,
+                only,
+                exclude,
+                merge,
+                dry_run,
+                yes,
+                detach,
+            } => {
+                let code = run_sessions_resurrect(ResurrectOptions {
+                    stamp,
+                    only,
+                    exclude,
+                    merge,
+                    dry_run,
+                    yes,
+                    detach,
+                })
+                .await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+            SessionsAction::Shutdown {
+                exclude,
+                daemon_too,
+                dry_run,
+            } => {
+                let code = run_lifecycle(Lifecycle {
+                    restart: false,
+                    exclude,
+                    daemon: daemon_too,
+                    dry_run,
+                })
+                .await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+            SessionsAction::Restart {
+                exclude,
+                keep_daemon,
+                dry_run,
+            } => {
+                let code = run_lifecycle(Lifecycle {
+                    restart: true,
+                    exclude,
+                    // Bouncing the daemon is the default here, because
+                    // config.toml is read once at its start and a restart that
+                    // left it running would hand back a new binary with
+                    // yesterday's configuration.
+                    daemon: !keep_daemon,
+                    dry_run,
+                })
+                .await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+            SessionsAction::Autosave { once, status } => {
+                run_sessions_autosave(once, status).await?
+            }
+            SessionsAction::List { json } => run_sessions_list(json)?,
+            SessionsAction::Show { stamp, json } => run_sessions_show(stamp, json)?,
+        },
+        Cmd::Shutdown => run_daemon_shutdown().await?,
+        Cmd::Restart => run_daemon_restart().await?,
         Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => run_theme(action)?,
@@ -1407,6 +1507,114 @@ pub enum ProjectAction {
     Forget,
     /// Which layout this project gets, and which file decided
     Show,
+    /// Close this project by letting every window exit
+    Close {
+        /// The session, defaulting to the current one
+        session: Option<String>,
+        /// Quit editors with :qa! and throw away unsaved work
+        #[arg(long)]
+        discard: bool,
+        /// Close without capturing the layout, leaving any saved one alone
+        #[arg(long)]
+        no_save: bool,
+    },
+}
+
+/// What `sessions` can do to the snapshot store.
+///
+/// A project's layout is a catalogue entry, kept for good and edited by hand.
+/// A snapshot is a moment, kept in generations and thrown away oldest first.
+/// The two are separate commands because they answer different questions, and
+/// `sessions` is plural because it is always about every session at once.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum SessionsAction {
+    /// Capture every session now, as a new generation
+    Save {
+        /// Record the sessions and skip what was on each pane's screen
+        ///
+        /// The expensive half at 9.3 ms a pane against 1 ms for the metadata of
+        /// a whole server, and the half that holds whatever you printed.
+        #[arg(long)]
+        skip_pane_history: bool,
+        /// Sessions not to capture, comma separated
+        ///
+        /// Added to `[sessions] exclude` rather than replacing it.
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
+    },
+    /// Rebuild a server from a snapshot
+    Resurrect {
+        /// Which generation, defaulting to the newest
+        stamp: Option<String>,
+        /// Only these sessions, comma separated
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Never these sessions, comma separated
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
+        /// Add the sessions that are missing instead of refusing a busy server
+        #[arg(long)]
+        merge: bool,
+        /// Print the tmux commands this would run, and exit
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask about panes the restore table did not claim
+        #[arg(long)]
+        yes: bool,
+        /// Leave the server running rather than attaching to it
+        #[arg(long)]
+        detach: bool,
+    },
+    /// Save every session, then stop the tmux server
+    Shutdown {
+        /// Sessions not to save, comma separated
+        ///
+        /// Stopping the server takes every session with it, so a session left
+        /// out here is one that does not come back.
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
+        /// Stop the tmux-companion daemon as well
+        #[arg(long)]
+        daemon_too: bool,
+        /// Print what this would do, and exit
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Save, stop the server, and bring it back with what it had
+    Restart {
+        /// Sessions not to save, comma separated
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
+        /// Leave the daemon running, so it keeps the config it started with
+        #[arg(long)]
+        keep_daemon: bool,
+        /// Print what this would do, and exit
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// The snapshot timer the daemon runs
+    Autosave {
+        /// Take one now
+        #[arg(long)]
+        once: bool,
+        /// Say when the last one happened, and what the timer is set to
+        #[arg(long)]
+        status: bool,
+    },
+    /// Every generation, newest first
+    List {
+        /// Print JSON rather than a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// What one generation holds
+    Show {
+        /// Which generation, defaulting to the newest
+        stamp: Option<String>,
+        /// Print JSON rather than a listing
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// What the project picker shows beside a row.
@@ -1667,6 +1875,680 @@ async fn run_project_save(with_commands: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `sessions save`: capture every session as a new generation.
+///
+/// Client side, like `project save`. The daemon has no reason to be involved:
+/// this runs tmux commands and writes files, and putting it behind the socket
+/// would mean the answer travelled twice for nobody's benefit.
+async fn run_sessions_save(
+    skip_pane_history: bool,
+    extra_exclude: &[String],
+    clean: bool,
+) -> anyhow::Result<()> {
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let taken = crate::sessions::timer::take_snapshot(
+        &config.sessions,
+        extra_exclude,
+        skip_pane_history,
+        clean,
+    )
+    .await?;
+
+    let snap = &taken.captured.snapshot;
+    println!(
+        "saved {} session{}, {} window{}, {} pane{}\n  {}",
+        snap.session.len(),
+        plural(snap.session.len()),
+        snap.window_count(),
+        plural(snap.window_count()),
+        snap.pane_count(),
+        plural(snap.pane_count()),
+        taken.file.display()
+    );
+    if taken.history_panes > 0 {
+        println!(
+            "  {} pane screens, {} lines each",
+            taken.history_panes, config.sessions.pane_history_lines
+        );
+    }
+    if !taken.captured.excluded.is_empty() {
+        println!(
+            "  not saved: {} (excluded)",
+            taken.captured.excluded.join(", ")
+        );
+    }
+    if !taken.captured.guessed.is_empty() {
+        let n = taken.captured.guessed.len();
+        println!(
+            "  {n} pane{} took {} command from the running process, so any arguments are gone",
+            plural(n),
+            if n == 1 { "its" } else { "their" }
+        );
+    }
+    Ok(())
+}
+
+/// The flags `sessions resurrect` takes, as one struct so the signature stays
+/// under what clippy accepts.
+pub struct ResurrectOptions {
+    /// Which generation, newest when absent.
+    pub stamp: Option<String>,
+    /// Only these sessions.
+    pub only: Vec<String>,
+    /// Never these sessions.
+    pub exclude: Vec<String>,
+    /// Add what is missing rather than refusing a busy server.
+    pub merge: bool,
+    /// Print the commands and exit.
+    pub dry_run: bool,
+    /// Do not stop over panes the table did not claim.
+    pub yes: bool,
+    /// Leave the server detached.
+    pub detach: bool,
+}
+
+/// `sessions resurrect`: rebuild a server from a snapshot.
+///
+/// Answers with the exit code rather than a `Result`, because this is the
+/// command a boot script runs with nobody watching: `0` restored, `2` bad
+/// arguments, `3` refused because sessions are live, `4` nothing to restore,
+/// `1` for everything else.
+async fn run_sessions_resurrect(opts: ResurrectOptions) -> i32 {
+    match resurrect(opts).await {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("tmux-companion: {e}");
+            1
+        }
+    }
+}
+
+/// The body of [`run_sessions_resurrect`], so the error path has one home.
+async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let state_dir = crate::server::state_dir()
+        .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
+
+    let snapshot = match &opts.stamp {
+        Some(s) => crate::sessions::store::load_in(&state_dir, s)?,
+        None => match crate::sessions::store::load_last_in(&state_dir) {
+            Ok(snap) => snap,
+            // Nothing of our own, so read what tmux-resurrect left. Somebody
+            // switching over has months of saves and no reason to lose them on
+            // the day they try this.
+            Err(mine) => {
+                let home = std::env::var("HOME").unwrap_or_default();
+                match crate::sessions::import::newest_in(&home) {
+                    Some(snap) => {
+                        println!(
+                            "no snapshot of our own, reading {}",
+                            snap.header.imported_from
+                        );
+                        snap
+                    }
+                    None => return Err(mine),
+                }
+            }
+        },
+    };
+
+    // What is already here. A server that is not running answers nothing,
+    // which is the empty list and the case a restore is for.
+    let live: Vec<String> = tmux_capture(&["list-sessions", "-F", "#{session_name}"])
+        .await
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    // Start the server before asking it anything. `show-option -gv base-index`
+    // against a server that is not running answers nothing, which parsed as
+    // zero and made the first restore move a window that was never there.
+    let _ = tokio::process::Command::new("tmux")
+        .arg("start-server")
+        .status()
+        .await;
+
+    let plan = crate::restore::plan(&config.restore, &snapshot);
+    let missing = crate::sessions::restore::missing_directories(&snapshot, |d| {
+        std::path::Path::new(d).is_dir()
+    });
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    let spec = crate::sessions::restore::RestoreSpec {
+        snapshot: &snapshot,
+        plan: &plan,
+        live: &live,
+        only: &opts.only,
+        exclude: &opts.exclude,
+        merge: opts.merge,
+        home: &home,
+        base_index: tmux_number("base-index").await.unwrap_or(0),
+        pane_base: tmux_number("pane-base-index").await.unwrap_or(0),
+        missing: &missing,
+    };
+
+    let built = match crate::sessions::restore::rebuild(&spec) {
+        Ok(b) => b,
+        Err(refusal) => {
+            eprintln!("{refusal}");
+            return Ok(refusal.code());
+        }
+    };
+
+    // Only the sessions this restore would actually build get a say in whether
+    // it stops to ask. A pane in a session that is already live, or one
+    // `--only` left out, is nobody's decision here.
+    let building: Vec<crate::restore::Planned> = plan
+        .iter()
+        .filter(|p| built.sessions.contains(&p.session))
+        .cloned()
+        .collect();
+    let unsettled: Vec<&crate::restore::Planned> =
+        building.iter().filter(|p| !p.settled()).collect();
+
+    println!(
+        "{} {} session{}, {} pane{}  from {}, {}",
+        if opts.dry_run {
+            "would restore"
+        } else {
+            "restoring"
+        },
+        built.sessions.len(),
+        plural(built.sessions.len()),
+        building.len(),
+        plural(building.len()),
+        snapshot.header.captured_at,
+        if snapshot.header.clean {
+            "clean shutdown"
+        } else {
+            "no clean shutdown recorded"
+        }
+    );
+    if !missing.is_empty() {
+        println!(
+            "  {} director{} not on this machine, opening at {home}:",
+            missing.len(),
+            if missing.len() == 1 { "y" } else { "ies" }
+        );
+        for dir in &missing {
+            println!("    {dir}");
+        }
+    }
+    for line in &built.skipped {
+        println!("  {line}");
+    }
+    if !unsettled.is_empty() {
+        println!(
+            "  {} pane{} nobody has said to run, left at a prompt:",
+            unsettled.len(),
+            plural(unsettled.len())
+        );
+        for p in &unsettled {
+            println!("    {}:{}.{}  {}", p.session, p.window, p.pane, p.saved);
+        }
+        if !opts.yes && !opts.dry_run {
+            println!("  --yes runs everything the table claimed and opens the rest at a prompt");
+        }
+    }
+
+    // Ask, when the restore does not know something and somebody is watching.
+    // Never on a count of panes: a count would stop every ordinary restore here
+    // and stay quiet on the small one holding something unrecognised.
+    let watched = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let mut approved: Vec<usize> = Vec::new();
+    if opts.yes {
+        approved = crate::restore::unsettled_rows(&building);
+    } else if !opts.dry_run && watched && crate::restore::needs_a_look(&building, after_a_crash()) {
+        let rows = crate::sessions::summary::rows(&building);
+        let headline = crate::sessions::summary::headline(
+            built.sessions.len(),
+            snapshot.pane_count(),
+            crate::sessions::summary::agents(&building),
+            &snapshot.header.captured_at,
+            snapshot.header.clean,
+        );
+        let countdown = std::time::Duration::from_secs(config.sessions.confirm_secs);
+        match crate::sessions::summary::confirm(&headline, rows, countdown)? {
+            crate::sessions::summary::Outcome::Go(rows) => approved = rows,
+            crate::sessions::summary::Outcome::Cancelled => {
+                println!("cancelled, nothing restored");
+                return Ok(0);
+            }
+        }
+    }
+
+    // Rebuild against the plan somebody actually agreed to. Without this an
+    // unsettled row would still run, because its decision is already `Run` for
+    // a command the table claims but the capture had to guess at.
+    let agreed =
+        crate::restore::withhold_unapproved(&plan, &approved_in_plan(&plan, &building, &approved));
+    let spec = crate::sessions::restore::RestoreSpec {
+        plan: &agreed,
+        ..spec
+    };
+    let built = crate::sessions::restore::rebuild(&spec).unwrap_or(built);
+
+    use crate::sessions::restore::Step;
+    if opts.dry_run {
+        for step in &built.commands {
+            match step {
+                Step::Tmux(cmd) => println!("tmux {}", cmd.join(" ")),
+                Step::WaitForPrompt(at) => println!("# wait for a prompt in {at}"),
+            }
+        }
+        return Ok(0);
+    }
+
+    for step in &built.commands {
+        match step {
+            Step::Tmux(cmd) => {
+                let borrowed: Vec<&str> = cmd.iter().map(String::as_str).collect();
+                tmux(&borrowed).await;
+            }
+            Step::WaitForPrompt(at) => wait_for_prompt(at).await,
+        }
+    }
+
+    // Attach when somebody is watching and is not already inside tmux. A boot
+    // script has no terminal and wants the server left running.
+    let inside = std::env::var_os("TMUX").is_some();
+    let watched = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    if opts.detach || inside || !watched {
+        println!("  restored, detached. `tmux attach` when you want it");
+        return Ok(0);
+    }
+    let target = snapshot
+        .attach_target()
+        .filter(|t| built.sessions.iter().any(|s| s == t))
+        .or_else(|| built.sessions.first().map(String::as_str));
+    if let Some(target) = target {
+        let _ = tokio::process::Command::new("tmux")
+            .args(["attach", "-t", &format!("={target}")])
+            .status()
+            .await;
+    }
+    Ok(0)
+}
+
+/// `shutdown`: stop the daemon and leave tmux alone.
+async fn run_daemon_shutdown() -> anyhow::Result<()> {
+    if !daemon_is_running().await {
+        println!("no daemon running");
+        return Ok(());
+    }
+    stop_the_daemon().await;
+    println!("daemon stopped. The next client starts one");
+    Ok(())
+}
+
+/// `restart`: stop the daemon and start a fresh one.
+///
+/// The reason this exists on its own is `config.toml`: the daemon reads it once
+/// at startup and holds it for its whole life, so editing the file changes
+/// nothing until this runs. tmux is not touched.
+async fn run_daemon_restart() -> anyhow::Result<()> {
+    let was = daemon_is_running().await;
+    if was {
+        stop_the_daemon().await;
+    }
+    // Any client starts one, and `noop` is the cheapest that does no work.
+    let _ = crate::client::send(crate::proto::Request::raw("noop", serde_json::Value::Null)).await;
+    println!(
+        "daemon {}, now {}",
+        if was { "restarted" } else { "started" },
+        crate::proto::build_id()
+    );
+    Ok(())
+}
+
+/// Whether anything is listening on the socket.
+async fn daemon_is_running() -> bool {
+    tokio::net::UnixStream::connect(crate::client::sock_path())
+        .await
+        .is_ok()
+}
+
+/// Ask the daemon to go, and wait for the socket to be released.
+async fn stop_the_daemon() {
+    let _ = crate::client::send_once(&crate::proto::Request::raw(
+        "__shutdown",
+        serde_json::Value::Null,
+    ))
+    .await;
+    for _ in 0..40 {
+        if !daemon_is_running().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// What `sessions shutdown` and `sessions restart` were asked to do.
+pub struct Lifecycle {
+    /// Bring the server back afterwards.
+    pub restart: bool,
+    /// Sessions not to save.
+    pub exclude: Vec<String>,
+    /// Take the daemon down too.
+    pub daemon: bool,
+    /// Say what would happen, and do none of it.
+    pub dry_run: bool,
+}
+
+/// `sessions shutdown` and `sessions restart`.
+///
+/// Answers with an exit code, like `resurrect`, because these are what a
+/// logout hook or a boot script runs with nobody watching.
+async fn run_lifecycle(opts: Lifecycle) -> i32 {
+    match lifecycle(opts).await {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("tmux-companion: {e}");
+            1
+        }
+    }
+}
+
+/// The body of [`run_lifecycle`].
+async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
+    // Killing the server takes this process's own client with it, and the
+    // restore that was meant to follow never runs. There is no flag for this:
+    // a terminal outside tmux is the only place it works.
+    if std::env::var_os("TMUX").is_some() && !opts.dry_run {
+        eprintln!(
+            "run this from outside tmux: stopping the server would take this pane with it, \
+             and anything after it would never run"
+        );
+        return Ok(2);
+    }
+
+    let live: Vec<String> = tmux_capture(&["list-sessions", "-F", "#{session_name}"])
+        .await
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    if live.is_empty() {
+        println!("no tmux server running, nothing to stop");
+        return Ok(4);
+    }
+
+    // Name what is being dropped before anything happens to it. `--exclude`
+    // here is not "leave it alone": the server takes every session with it
+    // either way, so an excluded one is one that does not come back.
+    let dropped: Vec<&String> = live.iter().filter(|s| opts.exclude.contains(s)).collect();
+    for name in &dropped {
+        println!("not saving: {name} (excluded) -- it will not come back");
+    }
+
+    let what = if opts.restart { "restart" } else { "shutdown" };
+    if opts.dry_run {
+        println!(
+            "would save {} session{}",
+            live.len() - dropped.len(),
+            plural(live.len() - dropped.len())
+        );
+        println!("would stop the tmux server");
+        if opts.daemon {
+            println!("would stop the daemon, so it rereads config.toml");
+        }
+        if opts.restart {
+            println!("would start a server and restore what was saved");
+        }
+        return Ok(0);
+    }
+
+    run_sessions_save(false, &opts.exclude, true).await?;
+    println!("stopping the tmux server");
+    let _ = tokio::process::Command::new("tmux")
+        .arg("kill-server")
+        .status()
+        .await;
+    if opts.daemon {
+        stop_the_daemon().await;
+        println!("daemon stopped");
+    }
+    if !opts.restart {
+        println!("{what} done. `tmux-companion sessions resurrect` brings it back");
+        return Ok(0);
+    }
+
+    resurrect(ResurrectOptions {
+        stamp: None,
+        only: Vec::new(),
+        exclude: Vec::new(),
+        merge: false,
+        dry_run: false,
+        yes: false,
+        detach: false,
+    })
+    .await
+}
+
+/// Whether the last run of the daemon ended badly.
+///
+/// A file the daemon writes at startup and removes on the way out, so one left
+/// behind means the daemon before this never got to leave. A snapshot's own
+/// `clean` flag cannot answer this: a timer's capture writes `false` because
+/// the daemon does not know yet, so believing it would open the summary on
+/// every restore from an automatic save.
+fn after_a_crash() -> bool {
+    crate::server::state_dir().is_some_and(|d| crate::sessions::timer::crashed_in(&d))
+}
+
+/// Translate approvals given against the buildable rows back into positions in
+/// the whole plan.
+///
+/// The screen only ever shows what this restore would build, so its indices are
+/// into that shorter list. Applying them to the full plan without translating
+/// would approve whichever pane happened to sit at the same position, which is
+/// the sort of off-by-one that runs the wrong command in somebody's repository.
+fn approved_in_plan(
+    plan: &[crate::restore::Planned],
+    building: &[crate::restore::Planned],
+    approved: &[usize],
+) -> Vec<usize> {
+    approved
+        .iter()
+        .filter_map(|i| building.get(*i))
+        .filter_map(|wanted| {
+            plan.iter().position(|p| {
+                p.session == wanted.session && p.window == wanted.window && p.pane == wanted.pane
+            })
+        })
+        .collect()
+}
+
+/// Wait until a pane has drawn a prompt, or until the ceiling.
+///
+/// tmux marks a prompt line when the shell says where one begins, which is what
+/// `tmux-companion shell-init` makes it do. A shell that emits the mark answers
+/// in milliseconds; one that does not costs the full wait once per pane and
+/// then gets typed into anyway, which is what every version of this did before
+/// the mark existed.
+///
+/// The alternative is a fixed sleep, which is too short on a slow morning and
+/// wasted every other time.
+async fn wait_for_prompt(at: &str) {
+    use crate::sessions::restore::{PROMPT_POLL, PROMPT_WAIT, has_drawn_a_prompt};
+    let until = std::time::Instant::now() + PROMPT_WAIT;
+    loop {
+        let seen = tmux_capture(&["capture-pane", "-p", "-F", "-S", "-5", "-t", at]).await;
+        if has_drawn_a_prompt(&seen) {
+            return;
+        }
+        if std::time::Instant::now() >= until {
+            return;
+        }
+        tokio::time::sleep(PROMPT_POLL).await;
+    }
+}
+
+/// A numeric server option, or nothing when tmux did not answer with one.
+async fn tmux_number(option: &str) -> Option<u32> {
+    tmux_capture(&["show-option", "-gv", option])
+        .await
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// `sessions autosave`: run the daemon's snapshot once, or say when it last ran.
+async fn run_sessions_autosave(once: bool, status: bool) -> anyhow::Result<()> {
+    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    if status {
+        let state_dir =
+            crate::server::state_dir().ok_or_else(|| anyhow::anyhow!("no state directory"))?;
+        match crate::sessions::store::generations_in(&state_dir).first() {
+            Some(newest) => println!("last snapshot: {}", newest.stamp),
+            None => println!("no snapshots yet"),
+        }
+        println!(
+            "autosave: {}",
+            match config.sessions.autosave {
+                crate::config::SessionsAutosave::Off => "off".to_string(),
+                crate::config::SessionsAutosave::Interval =>
+                    format!("every {} seconds", config.sessions.interval_secs),
+                crate::config::SessionsAutosave::Cron => format!("cron {}", config.sessions.cron),
+            }
+        );
+        println!(
+            "daemon: {}",
+            if after_a_crash() {
+                "running, or the last one did not stop cleanly"
+            } else {
+                "not running, and the last one stopped cleanly"
+            }
+        );
+        return Ok(());
+    }
+    if once {
+        return run_sessions_save(false, &[], false).await;
+    }
+    println!("the timer runs in the daemon; --once takes one now, --status says what it has done");
+    Ok(())
+}
+
+/// `sessions list`: every generation, newest first.
+fn run_sessions_list(json: bool) -> anyhow::Result<()> {
+    let state_dir = crate::server::state_dir()
+        .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
+    let generations = crate::sessions::store::generations_in(&state_dir);
+    let last = crate::sessions::store::last_stamp_in(&state_dir);
+
+    if json {
+        let rows: Vec<serde_json::Value> = generations
+            .iter()
+            .map(|g| {
+                let snap = crate::sessions::store::load_in(&state_dir, &g.stamp).ok();
+                serde_json::json!({
+                    "stamp": g.stamp,
+                    "newest": Some(g.stamp.clone()) == last,
+                    "captured_at": snap.as_ref().map(|s| s.header.captured_at.clone()),
+                    "clean": snap.as_ref().map(|s| s.header.clean),
+                    "hostname": snap.as_ref().map(|s| s.header.hostname.clone()),
+                    "sessions": snap.as_ref().map(|s| s.session.len()),
+                    "windows": snap.as_ref().map(|s| s.window_count()),
+                    "panes": snap.as_ref().map(|s| s.pane_count()),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    if generations.is_empty() {
+        println!("no snapshots yet. `tmux-companion sessions save` takes one");
+        return Ok(());
+    }
+    for g in &generations {
+        let mark = if Some(g.stamp.clone()) == last {
+            "*"
+        } else {
+            " "
+        };
+        match crate::sessions::store::load_in(&state_dir, &g.stamp) {
+            Ok(snap) => println!(
+                "{mark} {}  {} session{}, {} pane{}  {}  {}",
+                g.stamp,
+                snap.session.len(),
+                plural(snap.session.len()),
+                snap.pane_count(),
+                plural(snap.pane_count()),
+                if snap.header.clean {
+                    "clean"
+                } else {
+                    "no clean shutdown recorded"
+                },
+                snap.header.captured_at
+            ),
+            Err(e) => println!("{mark} {}  unreadable: {e}", g.stamp),
+        }
+    }
+    Ok(())
+}
+
+/// `sessions show`: what one generation holds.
+fn run_sessions_show(stamp: Option<String>, json: bool) -> anyhow::Result<()> {
+    let state_dir = crate::server::state_dir()
+        .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
+    let snap = match &stamp {
+        Some(s) => crate::sessions::store::load_in(&state_dir, s)?,
+        None => crate::sessions::store::load_last_in(&state_dir)?,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&snap)?);
+        return Ok(());
+    }
+
+    println!(
+        "{}  {}  {}",
+        snap.header.captured_at,
+        if snap.header.clean {
+            "clean"
+        } else {
+            "no clean shutdown recorded"
+        },
+        snap.header.hostname
+    );
+    println!(
+        "  {} on {}, attaching to {}",
+        snap.header.companion_version,
+        snap.header.tmux_version,
+        snap.attach_target().unwrap_or("nothing")
+    );
+    for session in &snap.session {
+        println!("{}  {}", session.name, session.path);
+        for window in &session.window {
+            println!(
+                "  {}:{}{}{}",
+                window.index,
+                window.name,
+                if window.active { " *" } else { "" },
+                if window.zoomed { " zoomed" } else { "" }
+            );
+            for pane in &window.pane {
+                let what = if pane.command.is_empty() {
+                    "a shell".to_string()
+                } else {
+                    format!("{} ({:?})", pane.command, pane.confidence)
+                };
+                println!("    {}. {what}  {}", pane.index, pane.cwd);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `s` when there is more than one of something, for a sentence that counts.
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
 /// Ask tmux what a session looks like right now.
 async fn capture_session(
     session: &str,
@@ -1692,6 +2574,16 @@ async fn capture_session(
     ])
     .await?;
 
+    // A server with this set reports it as the start command of every pane
+    // nobody gave a command to, so the capture needs it to tell a wrapped shell
+    // from a command somebody typed. Reading it is best effort: an old tmux or
+    // a server that answers nothing leaves the capture on the shape of the
+    // start command, which is the case it had before this was read at all.
+    let default_command = tmux_capture(&["show-options", "-gv", "default-command"])
+        .await
+        .trim()
+        .to_string();
+
     let home = std::env::var("HOME").unwrap_or_default();
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let at = crate::tasks::format_unix(
@@ -1709,6 +2601,7 @@ async fn capture_session(
         project: path,
         project_real: &real,
         shell: &shell,
+        default_command: &default_command,
         home: &home,
         at: &at,
         with_commands,

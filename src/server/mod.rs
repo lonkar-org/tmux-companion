@@ -141,6 +141,21 @@ pub async fn run() -> anyhow::Result<()> {
         tokio::spawn(crate::tasks::autosave_loop(script, interval));
     }
 
+    // A snapshot of the whole server on the schedule the config asks for, and
+    // a marker saying this daemon is alive, so a restore can tell a crash from
+    // a clean stop. The marker is written whether or not the timer runs: it is
+    // about the daemon, not about the snapshots.
+    if let Some(dir) = state_dir() {
+        if let Err(e) = crate::sessions::timer::mark_running_in(&dir, std::process::id()) {
+            eprintln!("tmux-companion: could not record that this daemon is running: {e}");
+        }
+    }
+    if config.sessions.autosave != crate::config::SessionsAutosave::Off {
+        tokio::spawn(crate::sessions::timer::sessions_autosave_loop(
+            config.sessions.clone(),
+        ));
+    }
+
     if config.autoreload.enabled {
         tokio::spawn(crate::autoreload::autoreload_loop(
             config.autoreload.clone(),

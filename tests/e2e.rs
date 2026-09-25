@@ -71,7 +71,90 @@ impl Tmux {
             sandbox,
             binary,
         };
+        t.write_tmux_shim();
         Some(t)
+    }
+
+    /// A `tmux` on PATH that always talks to this test's own server.
+    ///
+    /// `env` points the tool at the right server with `$TMUX`, which works for
+    /// everything that reads it. `sessions shutdown` and `sessions restart`
+    /// refuse to run with `$TMUX` set, because stopping a server from inside it
+    /// takes the pane with it, so testing those means running with `$TMUX`
+    /// unset, and with it unset a bare `tmux` finds the developer's own server
+    /// and kills that instead. It has happened once in this repository's
+    /// history and the shim is what makes it impossible.
+    ///
+    /// `-L` is added only when the caller did not pass one, so [`Tmux::tmux`],
+    /// which passes its own, goes through unchanged.
+    fn write_tmux_shim(&self) {
+        let Ok(real) = Command::new("sh").args(["-c", "command -v tmux"]).output() else {
+            return;
+        };
+        let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+        if real.is_empty() {
+            return;
+        }
+        let shim = self.sandbox.join("bin/tmux");
+        let script = format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -L ] && exec {real} \"$@\"; done\nexec {real} -L {} \"$@\"\n",
+            self.socket
+        );
+        if std::fs::write(&shim, script).is_ok() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    /// The binary, as if run from a terminal that is not inside tmux.
+    ///
+    /// The shim keeps its tmux calls on this test's server even with `$TMUX`
+    /// unset, which is the only safe way to exercise the commands that stop a
+    /// server.
+    fn run_outside(&self, args: &[&str]) -> (String, String, bool) {
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(args);
+        self.env(&mut cmd);
+        cmd.env_remove("TMUX");
+        match cmd.output() {
+            Ok(o) => (
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+                o.status.success(),
+            ),
+            Err(e) => (String::new(), e.to_string(), false),
+        }
+    }
+
+    /// Every session on this test's server, sorted.
+    fn sessions(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .tmux(&["list-sessions", "-F", "#{session_name}"])
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Every pane on this test's server as `session:window.pane command`.
+    fn panes(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .tmux(&[
+                "list-panes",
+                "-a",
+                "-F",
+                "#{session_name}:#{window_index}.#{pane_index} #{pane_current_command}",
+            ])
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        out.sort();
+        out
     }
 
     /// The environment every command here runs in.
@@ -891,4 +974,315 @@ fn the_manual_names_every_configuration_section() {
         missing.is_empty(),
         "docs/tmux-companion.1 does not name these config sections: {missing:?}"
     );
+}
+
+// ── the sessions store ───────────────────────────────────────────────────────
+//
+// The unit tests under `src/sessions` assert values, and there are 126 of them.
+// None of them runs a restore. Every one of the three bugs found in this
+// feature was found by running it: a base-index read off a server that did not
+// exist yet, a window opened at its session's directory instead of its own, and
+// an import that filed no panes because the file lists them before the windows
+// they belong to. All three pass every unit test in the repository.
+
+/// Two sessions with something running in them, ready to be saved.
+///
+/// Windows are addressed by name throughout. The shipped example config sets
+/// no `base-index`, so this server numbers its first window 0 where the laptop
+/// this was written on numbers it 1, and every target written as `:1` or `:2`
+/// silently hit nothing.
+fn a_server_worth_saving(t: &Tmux, dir: &Path) {
+    t.session("alpha", dir);
+    t.tmux(&["rename-window", "-t", "=alpha:", "edit"]);
+    t.tmux(&["new-window", "-d", "-t", "=alpha:", "-n", "watch"]);
+    // `tail` is in the shipped restore table, and it stays running, so the
+    // pane's command is the same before and after.
+    send_when_ready(t, "=alpha:watch", "tail -f /dev/null");
+    t.session("beta", dir);
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("tail"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+}
+
+/// Type a command into a pane once its shell is there to receive it.
+///
+/// A shell that has not drawn its prompt drops the keys, and these sandboxes
+/// have no `shell-init` line, so there is no prompt mark to wait for. Sending
+/// again is cheaper than guessing how long a cold zsh takes on a loaded CI box.
+fn send_when_ready(t: &Tmux, target: &str, command: &str) {
+    let first = command.split_whitespace().next().unwrap_or(command);
+    for _ in 0..40 {
+        t.tmux(&["send-keys", "-t", target, command, "C-m"]);
+        if t.until(1, |t| {
+            t.tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                target,
+                "#{pane_current_command}",
+            ])
+            .contains(first)
+        }) {
+            return;
+        }
+    }
+}
+
+#[test]
+fn a_saved_server_comes_back_with_its_windows_and_what_they_were_running() {
+    let Some(t) = Tmux::start("sessrestore") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    let before = t.panes();
+    assert!(before.iter().any(|p| p.contains("tail")), "{before:?}");
+
+    let (out, err, ok) = t.run(&["sessions", "save"]);
+    assert!(ok, "save failed: {out} {err}");
+    assert!(out.contains("2 sessions"), "{out}");
+
+    // Take the server down the way a reboot would, leaving the snapshot.
+    t.tmux(&["kill-server"]);
+    assert!(t.sessions().is_empty());
+
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect"]);
+    assert!(ok, "restore failed: {out} {err}");
+    assert!(
+        t.until(10, |t| t.sessions() == vec!["alpha", "beta"]),
+        "sessions after restore: {:?} ({out})",
+        t.sessions()
+    );
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("tail"))),
+        "the command never came back: {:?}",
+        t.panes()
+    );
+    assert_eq!(
+        t.tmux(&["list-windows", "-t", "=alpha", "-F", "#{window_name}"]),
+        "edit\nwatch"
+    );
+}
+
+#[test]
+fn a_restore_refuses_a_server_that_is_already_busy_and_changes_nothing() {
+    let Some(t) = Tmux::start("sessrefuse") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+    let (_, _, ok) = t.run(&["sessions", "save"]);
+    assert!(ok);
+
+    let before = t.panes();
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect"]);
+    assert!(!ok, "a busy server should refuse: {out}");
+    assert!(err.contains("already running"), "{err}");
+    assert_eq!(t.panes(), before, "a refused restore changed the server");
+}
+
+#[test]
+fn a_merge_brings_back_only_what_is_missing() {
+    let Some(t) = Tmux::start("sessmerge") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+    let (_, _, ok) = t.run(&["sessions", "save"]);
+    assert!(ok);
+
+    let beta_created = t.tmux(&["display-message", "-p", "-t", "=beta", "#{session_created}"]);
+    t.tmux(&["kill-session", "-t", "=alpha"]);
+    assert_eq!(t.sessions(), vec!["beta"]);
+
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--merge"]);
+    assert!(ok, "merge failed: {out} {err}");
+    assert!(
+        t.until(10, |t| t.sessions() == vec!["alpha", "beta"]),
+        "{:?}",
+        t.sessions()
+    );
+    // The session that was already there is the same one, not a rebuilt copy.
+    assert_eq!(
+        t.tmux(&["display-message", "-p", "-t", "=beta", "#{session_created}"]),
+        beta_created
+    );
+}
+
+#[test]
+fn a_dry_run_prints_the_commands_and_touches_nothing() {
+    let Some(t) = Tmux::start("sessdry") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+    let (_, _, ok) = t.run(&["sessions", "save"]);
+    assert!(ok);
+
+    // Something to restore, so the listing has content, and something live, so
+    // there is state a dry run could damage.
+    t.tmux(&["kill-session", "-t", "=alpha"]);
+    let before = t.panes();
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--merge", "--dry-run"]);
+    assert!(ok, "{out} {err}");
+    assert!(out.contains("new-session -d -s alpha"), "{out}");
+    assert!(out.contains("tail -f /dev/null"), "{out}");
+    assert_eq!(t.sessions(), vec!["beta"], "a dry run built something");
+    assert_eq!(t.panes(), before);
+}
+
+#[test]
+fn shutdown_saves_before_it_stops_the_server() {
+    let Some(t) = Tmux::start("sessdown") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    let (out, err, ok) = t.run_outside(&["sessions", "shutdown"]);
+    assert!(ok, "shutdown failed: {out} {err}");
+    assert!(
+        t.until(10, |t| t.sessions().is_empty()),
+        "the server is still up"
+    );
+
+    // The save happened before the stop, so the snapshot holds what was there.
+    let (list, _, ok) = t.run(&["sessions", "list"]);
+    assert!(ok);
+    assert!(list.contains("2 sessions"), "{list}");
+}
+
+#[test]
+fn shutdown_refuses_from_inside_tmux_and_leaves_the_server_alone() {
+    let Some(t) = Tmux::start("sessinside") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    // `run` leaves $TMUX set, which is what a pane inside the server looks like.
+    let (out, err, ok) = t.run(&["sessions", "shutdown"]);
+    assert!(!ok, "should refuse from inside tmux: {out}");
+    assert!(err.contains("outside tmux"), "{err}");
+    assert_eq!(t.sessions(), vec!["alpha", "beta"]);
+}
+
+#[test]
+fn restart_puts_the_server_back_the_way_it_was() {
+    let Some(t) = Tmux::start("sessrestart") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    let (out, err, ok) = t.run_outside(&["sessions", "restart"]);
+    assert!(ok, "restart failed: {out} {err}");
+    assert!(
+        t.until(15, |t| t.sessions() == vec!["alpha", "beta"]),
+        "sessions after restart: {:?} ({out} {err})",
+        t.sessions()
+    );
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("tail"))),
+        "{:?}",
+        t.panes()
+    );
+}
+
+#[test]
+fn an_excluded_session_is_named_before_it_is_dropped() {
+    let Some(t) = Tmux::start("sessexcl") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    let (out, _, ok) = t.run(&["sessions", "shutdown", "--dry-run", "--exclude", "beta"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("not saving: beta"), "{out}");
+    assert!(out.contains("will not come back"), "{out}");
+}
+
+#[test]
+fn a_command_nothing_claims_opens_its_pane_and_is_not_run() {
+    let Some(t) = Tmux::start("sessdeny") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    t.session("gamma", &dir);
+    // Nothing in the shipped restore table claims this, so the restore must
+    // open the pane and leave it at a prompt rather than running it again.
+    let flag = t.sandbox.join("it-ran");
+    send_when_ready(
+        &t,
+        "=gamma:",
+        &format!("touch {} && sleep 300", flag.display()),
+    );
+    assert!(
+        t.until(10, |_| flag.exists()),
+        "the command never ran at all"
+    );
+
+    let (_, _, ok) = t.run(&["sessions", "save"]);
+    assert!(ok);
+    t.tmux(&["kill-server"]);
+    let _ = std::fs::remove_file(&flag);
+
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--yes"]);
+    assert!(ok, "{out} {err}");
+    assert!(t.until(10, |t| !t.sessions().is_empty()));
+    // Give it longer than the prompt wait, so a command that was going to run
+    // has had every chance to.
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        !flag.exists(),
+        "a command no restore.program row claims was run anyway"
+    );
+}
+
+#[test]
+fn the_daemon_leaves_a_marker_that_says_it_did_not_stop_cleanly() {
+    let Some(t) = Tmux::start("sessmark") else {
+        return;
+    };
+    let marker = t.sandbox.join("state/tmux-companion/sessions/running");
+
+    // Any client starts a daemon, and the daemon writes the marker.
+    let (_, _, ok) = t.run(&["noop"]);
+    assert!(ok);
+    assert!(t.until(10, |_| marker.exists()), "no marker after a start");
+
+    let (out, _, ok) = t.run(&["shutdown"]);
+    assert!(ok, "{out}");
+    assert!(
+        t.until(10, |_| !marker.exists()),
+        "a clean stop left the marker behind"
+    );
+}
+
+#[test]
+fn an_imported_resurrect_save_is_read_when_there_is_nothing_of_our_own() {
+    let Some(t) = Tmux::start("sessimport") else {
+        return;
+    };
+    let old = t.sandbox.join(".local/share/tmux/resurrect");
+    std::fs::create_dir_all(&old).unwrap();
+    let file = old.join("tmux_resurrect_20260925T102324.txt");
+    std::fs::write(
+        &file,
+        "pane\tdelta\t1\t1\t:*\t1\ttitle\t:/tmp\t1\tnvim\t:nvim\n\
+         window\tdelta\t1\t:edit\t1\t:*\tb644,80x24,0,0,1\toff\n\
+         state\tdelta\tdelta\n",
+    )
+    .unwrap();
+    let _ = std::os::unix::fs::symlink("tmux_resurrect_20260925T102324.txt", old.join("last"));
+
+    let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--dry-run"]);
+    assert!(ok, "{out} {err}");
+    assert!(out.contains("no snapshot of our own"), "{out}");
+    assert!(out.contains("new-session -d -s delta"), "{out}");
+    assert!(out.contains("send-keys -t =delta:1.1 nvim"), "{out}");
 }

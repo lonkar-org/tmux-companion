@@ -114,7 +114,7 @@ bind -N "custom: project toggle the tools in this session" -n M-a \
 # so the project comes back next time with the windows and panes it had. Add
 # --no-save to close without touching the saved layout.
 bind -N "custom: session close this project cleanly" X \
-  confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion close-project'"
+  confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion project close'"
 
 # Capture this session's windows and panes as the layout this project opens
 # with next time. A saved layout wins over [[layout]] in the config, and
@@ -164,6 +164,28 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 # and tmux's own `prefix z` does nothing there.
 bind -N "custom: pane zen, everything but this one goes" z \
   run-shell "tmux-companion zen --pane '#{pane_id}'"
+
+# ── Every session, kept in generations ──────────────────────────────────────
+#
+# A project layout answers what one project looks like. This answers what the
+# whole server was doing at 09:23, and the two are separate stores because a
+# session with no project to be keyed on, a scratch one you named yourself, only
+# exists in the second.
+#
+# The timer lives in the daemon and `[sessions] autosave` turns it on. These are
+# the keys for taking one by hand and for the cycle that picks up a new binary,
+# a freshly sourced config and a rebuilt daemon in one go.
+bind -N "custom: sessions save every session now" M-s \
+  run-shell "tmux-companion sessions save"
+
+# Not bound to a key, because it stops the server this binding would be typed
+# into and refuses to run from in here at all:
+#
+#   tmux-companion sessions shutdown     save everything, then stop the server
+#   tmux-companion sessions restart      the same, then bring it back
+#   tmux-companion sessions resurrect    bring back what was saved
+#
+# `restart` bounces the daemon by default, which is how config.toml is reread.
 
 # ── Landing somewhere, when you typed plain `tmux` ──────────────────────────
 #

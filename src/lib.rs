@@ -47,6 +47,8 @@ pub mod probe;
 pub mod project;
 /// The JSON request and response, and one args struct per command.
 pub mod proto;
+/// What a restore will run in each pane, decided before anything runs.
+pub mod restore;
 /// Running a command from history in a side pane.
 pub mod run;
 /// Per-project layouts captured from a live session.
@@ -55,6 +57,8 @@ pub mod saved;
 pub mod segments;
 /// The daemon.
 pub mod server;
+/// Snapshots of the whole server, in generations.
+pub mod sessions;
 /// The OSC 133 prompt marks and the shell code that emits them.
 pub mod shell;
 /// Timed work and small tmux commands.

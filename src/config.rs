@@ -53,6 +53,12 @@ pub struct Config {
     pub project: Project,
     /// Saving the session list on a timer.
     pub autosave: Autosave,
+    /// Snapshots of the whole server, in generations.
+    #[serde(default)]
+    pub sessions: Sessions,
+    /// What a restore is allowed to run, and how.
+    #[serde(default)]
+    pub restore: Restore,
     /// Running a command from history in a side pane.
     pub run: Run,
     /// Copying to the system clipboard.
@@ -599,6 +605,10 @@ pub enum HistorySource {
 #[serde(deny_unknown_fields, default)]
 pub struct Autosave {
     /// Whether the daemon saves at all.
+    ///
+    /// Deprecated in favour of `[sessions] autosave`, which keeps generations
+    /// of its own and knows what each pane was running, where this shells out
+    /// to a plugin's save script and keeps one file.
     pub enabled: bool,
     /// Seconds between saves.
     pub interval_secs: u64,
@@ -613,7 +623,10 @@ pub struct Autosave {
 impl Default for Autosave {
     fn default() -> Self {
         Self {
-            enabled: true,
+            // Off since `[sessions]` arrived, which does the same job and more.
+            // A config that still asks for this keeps it, and `config check`
+            // says what to move to.
+            enabled: false,
             interval_secs: 900,
             script: None,
         }
@@ -995,6 +1008,8 @@ impl Default for Config {
             window_names: WindowNames::default(),
             notify: Notify::default(),
             autosave: Autosave::default(),
+            sessions: Sessions::default(),
+            restore: Restore::default(),
             run: Run::default(),
             clipboard: Clipboard::default(),
             theme: Theme::default(),
@@ -1067,6 +1082,189 @@ impl JobStates {
             JobStates::Stopped => stopped,
             JobStates::Any => true,
         }
+    }
+}
+
+/// How often the daemon takes a snapshot of the whole server.
+///
+/// An earlier draft had a fourth mode that wrote on every change the daemon
+/// noticed. It is gone: somebody who wants a loss window of seconds can set
+/// `interval_secs = 10` and read what that costs, which is a better deal than
+/// a mode name hiding the same arithmetic behind a word.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionsAutosave {
+    /// Nothing on a timer. A snapshot is whatever somebody asked for.
+    #[default]
+    Off,
+    /// Every [`Sessions::interval_secs`].
+    Interval,
+    /// On the schedule in [`Sessions::cron`].
+    Cron,
+}
+
+/// The floor under [`Sessions::interval_secs`].
+///
+/// Ten seconds. Below that the writes start overlapping the capture on a busy
+/// machine, and there is nothing sensible for the daemon to do about that
+/// except refuse the setting at the point somebody wrote it.
+pub const MIN_SESSIONS_INTERVAL_SECS: u64 = 10;
+
+/// Snapshots of the whole tmux server, kept in generations.
+///
+/// This is the saving half of what a session-restore plugin does, on the
+/// daemon's own timer. Restoring stays a command somebody runs, because an
+/// automatic restore drops a stale layout over a session already being worked
+/// in, which is worse than losing a layout to a reboot.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Sessions {
+    /// Whether the daemon writes snapshots by itself, and on what cadence.
+    pub autosave: SessionsAutosave,
+    /// Seconds between snapshots under [`SessionsAutosave::Interval`].
+    ///
+    /// The default costs 0.015% of one core on a 14-pane server and holds five
+    /// hours in twenty generations. Ten seconds costs 1.3% and holds two
+    /// hundred once, which is the trade nobody expects from a limit counted in
+    /// files rather than in time.
+    pub interval_secs: u64,
+    /// The schedule under [`SessionsAutosave::Cron`].
+    pub cron: String,
+    /// How many generations to keep.
+    pub keep: usize,
+    /// Also keep anything younger than this many days, however many files that
+    /// turns out to be. Zero means the count decides on its own.
+    pub keep_days: u32,
+    /// Whether to capture what was on each pane's screen.
+    ///
+    /// This is the expensive half at 9.3 ms per pane, and it is the half that
+    /// makes a short interval costly. Turning it off leaves the metadata,
+    /// which is the half carrying what each pane was running and where.
+    pub pane_history: bool,
+    /// How many lines of each pane to capture.
+    pub pane_history_lines: u32,
+    /// Sessions never captured, by name.
+    ///
+    /// On a shutdown this means the session is not saved and does not come
+    /// back, since stopping the server takes every session with it either way.
+    pub exclude: Vec<String>,
+    /// How long the restore summary counts down before going ahead.
+    ///
+    /// It only opens when the restore does not know something, so this is the
+    /// pause on a restore worth reading rather than a confirmation on every
+    /// one. Zero goes ahead without drawing it at all, which is `--yes` made
+    /// permanent.
+    pub confirm_secs: u64,
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self {
+            autosave: SessionsAutosave::Off,
+            interval_secs: 900,
+            cron: "0 * * * *".to_string(),
+            keep: 20,
+            keep_days: 0,
+            pane_history: true,
+            pane_history_lines: 2000,
+            exclude: Vec::new(),
+            confirm_secs: 5,
+        }
+    }
+}
+
+impl Sessions {
+    /// Whether a session by this name is captured.
+    pub fn captures(&self, name: &str) -> bool {
+        !self.exclude.iter().any(|e| e == name)
+    }
+}
+
+/// What a restore is allowed to run in a pane it is rebuilding.
+///
+/// Default deny. A restore executes commands recorded from a machine's own
+/// history, and "re-run anything I saw" is one bad afternoon away from
+/// restoring a `curl | sh` that was in a pane six weeks ago. A command no row
+/// claims is captured, shown and left to the person.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Restore {
+    /// The rows, tried in the order written.
+    pub program: Vec<RestoreProgram>,
+}
+
+impl Default for Restore {
+    fn default() -> Self {
+        let row = |pattern: &str, command: &str| RestoreProgram {
+            match_: pattern.to_string(),
+            command: command.to_string(),
+            run: true,
+        };
+        Self {
+            program: vec![
+                // An agent keeps which conversation it is in inside its own
+                // arguments, and replaying them verbatim is what brings the
+                // conversation back. A bare `claude` stays bare.
+                row("^claude( |$)", "{command}"),
+                row(
+                    "^(codex|gemini|cursor-agent|aider|opencode)( |$)",
+                    "{command}",
+                ),
+                // An editor with a session plugin restores itself from the
+                // directory, and one without it opens empty. Either way the
+                // arguments are a file list from an hour ago and not worth
+                // reopening.
+                row("^n?vim( |$)", "nvim"),
+                row("^(lazygit|tig|gitui)( |$)", "{command}"),
+                row("^(htop|top|btop|watch)( |$)", "{command}"),
+                row("^(tail|less|journalctl)( |$)", "{command}"),
+                row("^ssh( |$)", "{command}"),
+            ],
+        }
+    }
+}
+
+/// One row of the restore table.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreProgram {
+    /// A regular expression matched against the whole saved command.
+    ///
+    /// Against the whole command, not the process name, because the process
+    /// name of an agent is its version string and everything worth matching on
+    /// is in the arguments.
+    #[serde(rename = "match")]
+    pub match_: String,
+    /// What to run instead. `{command}` is the saved command verbatim and
+    /// `{cwd}` the pane's directory.
+    pub command: String,
+    /// Whether to run it at all.
+    ///
+    /// A row with `run = false` is how somebody says "never bring this back"
+    /// without leaving it to fall through to the unknown pile and be asked
+    /// about every time.
+    #[serde(default = "yes")]
+    pub run: bool,
+}
+
+impl RestoreProgram {
+    /// Whether this row claims a saved command.
+    ///
+    /// An unparseable pattern matches nothing rather than panicking, the same
+    /// bargain [`JobEntry::matches`] makes: one bad row costs its own line and
+    /// not the restore.
+    pub fn matches(&self, command: &str) -> bool {
+        match regex::Regex::new(&self.match_) {
+            Ok(re) => re.is_match(command),
+            Err(_) => false,
+        }
+    }
+
+    /// The command to run, with the placeholders filled in.
+    pub fn render(&self, command: &str, cwd: &str) -> String {
+        self.command
+            .replace("{command}", command)
+            .replace("{cwd}", cwd)
     }
 }
 
@@ -1728,10 +1926,23 @@ fn unknown_field(message: &str) -> Option<String> {
 
 /// What a parsed config can still get wrong, which serde's types cannot say.
 ///
-/// Only one thing so far: `dirs_source` is a name out of a fixed list, and a
-/// typo in it would otherwise fall back to zoxide and look like the setting
-/// being ignored.
+/// `dirs_source` is a name out of a fixed list, and a typo in it would
+/// otherwise fall back to zoxide and look like the setting being ignored.
+/// `[sessions] interval_secs` has a floor, and a number under it would
+/// otherwise be accepted and then quietly clamped, which is the same failure
+/// wearing a different hat.
 fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigError> {
+    let secs = config.sessions.interval_secs;
+    if secs < MIN_SESSIONS_INTERVAL_SECS {
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message: format!(
+                "`[sessions] interval_secs` is {secs}, and the floor is {MIN_SESSIONS_INTERVAL_SECS}: below that the writes start overlapping the capture on a busy machine"
+            ),
+            did_you_mean: Some(MIN_SESSIONS_INTERVAL_SECS.to_string()),
+        });
+    }
+
     let name = &config.project.dirs_source;
     if crate::dirsource::DirsSource::from_name(name).is_none() {
         let known: Vec<String> = crate::dirsource::NAMES
@@ -1757,6 +1968,12 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
 /// it, and `config check` is where they are already looking.
 pub fn deprecations(config: &Config) -> Vec<String> {
     let mut out = Vec::new();
+    if config.autosave.enabled {
+        out.push(
+            "`[autosave]` is deprecated; `[sessions] autosave` keeps generations of its own and records what each pane was running"
+                .to_string(),
+        );
+    }
     if !config.project.zoxide {
         out.push(
             "`[project] zoxide = false` is deprecated; use `dirs_source = \"none\"`".to_string(),
@@ -2382,6 +2599,72 @@ name = "work"
             edit_distance("threshold", "threshold_bps"),
             edit_distance("threshold_bps", "threshold")
         );
+    }
+
+    #[test]
+    fn an_interval_under_the_floor_is_refused_with_both_numbers() {
+        let text = "[sessions]\nautosave = \"interval\"\ninterval_secs = 5\n";
+        let err = parse(text, std::path::Path::new("c.toml")).expect_err("under the floor");
+        let said = err.to_string();
+        assert!(said.contains("interval_secs"), "{said}");
+        assert!(said.contains('5'), "{said}");
+        assert!(
+            said.contains(&MIN_SESSIONS_INTERVAL_SECS.to_string()),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn the_floor_itself_is_allowed() {
+        let text = "[sessions]\nautosave = \"interval\"\ninterval_secs = 10\n";
+        let config = parse(text, std::path::Path::new("c.toml")).expect("at the floor");
+        assert_eq!(config.sessions.interval_secs, 10);
+        assert_eq!(config.sessions.autosave, SessionsAutosave::Interval);
+    }
+
+    #[test]
+    fn the_mode_that_was_cut_is_refused_by_name_and_the_three_are_listed() {
+        // `aggressive` was a real mode in the design document before the
+        // numbers were measured, so somebody who read that draft will write it.
+        let text = "[sessions]\nautosave = \"aggressive\"\n";
+        let err = parse(text, std::path::Path::new("c.toml")).expect_err("no such mode");
+        let said = err.to_string();
+        assert!(said.contains("aggressive"), "{said}");
+        for mode in ["off", "interval", "cron"] {
+            assert!(said.contains(mode), "{mode} missing from: {said}");
+        }
+    }
+
+    #[test]
+    fn a_misspelled_sessions_key_names_the_one_that_was_meant() {
+        let text = "[sessions]\nkeep_day = 3\n";
+        let err = parse(text, std::path::Path::new("c.toml")).expect_err("no such key");
+        assert_eq!(err.did_you_mean.as_deref(), Some("keep_days"));
+    }
+
+    #[test]
+    fn the_defaults_are_off_with_twenty_generations_and_history_on() {
+        let sessions = Sessions::default();
+        assert_eq!(sessions.autosave, SessionsAutosave::Off);
+        assert_eq!(sessions.interval_secs, 900);
+        assert_eq!(sessions.keep, 20);
+        assert_eq!(sessions.keep_days, 0);
+        assert!(sessions.pane_history);
+        assert_eq!(sessions.pane_history_lines, 2000);
+        assert!(sessions.exclude.is_empty());
+    }
+
+    #[test]
+    fn an_excluded_session_is_not_captured_and_the_rest_still_are() {
+        let sessions = Sessions {
+            exclude: vec!["y".to_string()],
+            ..Sessions::default()
+        };
+        assert!(!sessions.captures("y"));
+        assert!(sessions.captures("mysetup"));
+        // Not a prefix match: a session called `yogesh_lonkar_org` is a
+        // different session from `y` and stays captured.
+        assert!(sessions.captures("yogesh_lonkar_org"));
     }
 
     #[test]

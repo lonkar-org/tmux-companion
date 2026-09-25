@@ -34,6 +34,26 @@ Each row also carries its documentation row from the table in
 `comrades-port.md`, its config row, and its before and after numbers in
 `BENCHMARKS.md` where it replaces a script.
 
+## Taking on the session store
+
+The design is `docs/tmux-resurrect-port.md`. One row per step.
+
+| # | Item | Status |
+| --- | --- | --- |
+| 0 | `command_for` and the `default-command` wrapper | done — every pane on a macOS server was graded `Exact` while holding a command that opens a shell inside a shell |
+| 1 | the snapshot file and its generations | done — atomic write, a pointer that moves last, `prune` pure over stamps and times |
+| 2 | `[sessions]` config, with a floor of 10 under the interval | done — three modes, and the cost of a short one written down in the example config |
+| 3 | whole-server capture | done — three listings in, one snapshot out, tested against this laptop's own output |
+| 4 | `sessions save`, `list`, `show` | done — pane history is a directory per generation, no new dependency |
+| 5 | the restore table | done — matches the whole command, default deny, ten shipped rows |
+| 6 | restore, non-interactive | done — refuses a live server, `--merge` adds what is missing, `--dry-run` prints the real command list |
+| 7 | waiting for the prompt mark before sending keys | done — `capture-pane -F` marks a prompt line, 2s ceiling for a shell that never will |
+| 8 | the summary screen | done — opens on what the restore does not know, never on a pane count |
+| 9 | `shutdown` and `restart`, for the daemon and for the server | done — both refuse from inside tmux, and `sessions restart` bounces the daemon by default so config.toml is reread |
+| 10 | the autosave timer and the crash marker | done — the shared poll was dropped: measuring it after `aggressive` was cut left it saving a rounding error |
+| 11 | importing the old format | done — two passes, because the file writes every pane before every window |
+| 12 | `project close`, and the cutover | done — `close-project` hidden for one release, `[autosave]` deprecated and off by default |
+
 ## What is left
 
 The cutover, and it is not code.

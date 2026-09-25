@@ -203,6 +203,161 @@ Bound to
 .Ql prefix M-S .
 .It Ic project show
 Which layout this project gets, which file decided, and the windows it opens.
+.Pp
+.Ic close-project
+is the old name for
+.Ic project close
+and still works for one release.
+.It Ic sessions save Oo Fl -skip-pane-history Oc Op Fl -exclude Ar names
+Capture every session on the server as a new generation under the state
+directory.
+Where
+.Ic project save
+keeps one file per project, overwritten on demand and edited by hand, this
+keeps generations of the whole server and throws the oldest away: the first
+answers what a project looks like, the second what you were doing at the time.
+The save is all or nothing, like a project's: a line of tmux output this cannot
+read stops the write rather than shrinking the snapshot.
+.Fl -skip-pane-history
+records the sessions and leaves out what was on each pane's screen, which is the
+expensive half and the half holding whatever you printed.
+.Fl -exclude
+adds to
+.Ic [sessions] exclude
+rather than replacing it, and a session left out is one that does not come back.
+.It Ic sessions resurrect Oo Ar stamp Oc Oo Fl -only Ar names Oc Oo Fl -exclude Ar names Oc Oo Fl -merge Oc Oo Fl -dry-run Oc Oo Fl -yes Oc Op Fl -detach
+Rebuild a server from a generation, defaulting to the newest.
+With no generation of its own to read, it reads tmux-resurrect's newest save
+instead, so a machine with months of those loses none of them on the day it
+switches over.
+Refuses outright when the server already holds sessions, naming them, because a
+restore that half-landed on work somebody was doing is the failure worth being
+careful about.
+.Fl -merge
+adds the sessions that are missing and never touches one that is running.
+.Pp
+What each pane gets told to run comes from
+.Ic [[restore.program]] ,
+which is default deny: a command no row claims opens the pane and says so
+rather than running it.
+So does a command the capture had to guess at, since its arguments are already
+gone and running it would bring an agent back in the wrong conversation.
+.Fl -dry-run
+prints the exact tmux commands and exits, and they are the commands that would
+run rather than a description of them.
+It prints the waits too, as comments, because a restore is not only tmux calls.
+.Pp
+When the restore does not know what a pane should run, and somebody is watching,
+it shows what it is about to do and counts down before going ahead.
+It opens for a pane no row claims, one a row refused, and one whose command the
+capture read off a running process so the arguments are already gone.
+It never opens on a count of panes: a restore where everything is known goes
+straight through however many there are, because a confirmation on every restore
+is one people turn off.
+Any key stops the clock,
+.Ql tab
+runs one of the listed panes after all,
+.Ql a
+takes all of them and
+.Ql q
+cancels.
+.Ic [sessions] confirm_secs
+sets the countdown and zero never draws it.
+.Fl -yes
+runs everything the table claimed without asking; whatever is not run still
+opens its pane, in the right directory, at a prompt.
+.Pp
+Before a pane is told to run anything it has to have drawn a prompt, which tmux
+knows only when the shell tells it, which is what
+.Ic shell-init
+makes the shell do.
+A shell that emits the mark answers in milliseconds; one with no
+.Ic shell-init
+line in its rc file costs two seconds and is then typed into anyway, which is
+what a restore did before the marks existed.
+.Pp
+It attaches at the end when somebody is watching, which means stdin is a
+terminal and
+.Ev TMUX
+is unset, so the same command in a boot script leaves the server running.
+.Fl -detach
+says so explicitly.
+The exit codes are
+.Ql 0
+restored,
+.Ql 2
+bad arguments,
+.Ql 3
+refused because sessions are live,
+.Ql 4
+nothing to restore, and
+.Ql 1
+for anything else.
+.It Ic sessions shutdown Oo Fl -exclude Ar names Oc Oo Fl -daemon-too Oc Op Fl -dry-run
+Save every session, then stop the tmux server.
+.Fl -exclude
+is not "leave these alone": stopping the server takes every session with it
+either way, so a session left out here is one that does not come back, and the
+command says which before it acts.
+.Fl -daemon-too
+stops the tmux-companion daemon as well.
+.It Ic sessions restart Oo Fl -exclude Ar names Oc Oo Fl -keep-daemon Oc Op Fl -dry-run
+The same, and then bring the server back with what it had.
+It stops the daemon by default, which
+.Fl -keep-daemon
+turns off.
+The default is that way round because
+.Pa config.toml
+is read once when the daemon starts and held for its whole life, so a restart
+that left it running would hand back a new binary, a freshly sourced
+.Pa tmux.conf ,
+and yesterday's configuration.
+.Pp
+Both refuse to run from inside tmux, because stopping the server would take the
+pane they were typed into and nothing after that would run.
+There is no flag for it.
+.It Ic sessions autosave Oo Fl -once Oc Op Fl -status
+The snapshot timer the daemon runs, which
+.Ic [sessions] autosave
+turns on.
+.Fl -once
+takes one now and
+.Fl -status
+says when the last one happened, what the timer is set to, and whether the
+daemon before this one stopped cleanly.
+.Pp
+That last answer comes from a file the daemon writes when it starts and removes
+when it is asked to stop, so one left behind means the daemon before this never
+got to leave.
+A snapshot's own record of a clean shutdown cannot answer it: a capture taken on
+the timer says
+.Ql no clean shutdown recorded
+because the daemon does not know yet, and nothing goes back to correct the one
+that turned out to be the last before a crash.
+.It Ic sessions list Op Fl -json
+Every generation, newest first, with how much each holds and whether the daemon
+that wrote it went on to shut down cleanly.
+The newest carries a
+.Ql *  .
+A generation is stamped in UTC, so on a machine well away from it the stamp and
+the file's own modification time are hours apart and both are right.
+.It Ic sessions show Oo Ar stamp Oc Op Fl -json
+What one generation holds, down to each pane's directory and command, defaulting
+to the newest.
+The command is marked with how sure the capture was of it:
+.Ql Exact
+for what the pane was started with,
+.Ql Guessed
+for what it happened to be running, and a shell for a pane sitting at a prompt.
+.It Ic shutdown
+Stop the tmux-companion daemon.
+tmux is not touched, and the next client starts a new one.
+.It Ic restart
+Stop the daemon and start a fresh one, which is how a change to
+.Pa config.toml
+takes effect: the file is read once at startup and held for the daemon's whole
+life.
+tmux is not touched.
 .It Ic keys Oo Ar query Oc Op Fl -all , Fl -print
 Every binding tmux knows, searchable, with what it runs in the preview.
 Enter runs the binding.
@@ -243,7 +398,7 @@ Bound to
 Move to the next window in this session's layout, and back again.
 Bound to
 .Ql M-a .
-.It Ic close-project Oo Ar session Oc Op Fl -discard , Fl -no-save
+.It Ic project close Oo Ar session Oc Op Fl -discard , Fl -no-save
 Close a project by asking every window to exit, capturing the layout on the
 way out.
 .Fl -discard
@@ -420,8 +575,8 @@ Every setting with its default, annotated, is
 The sections are
 .Ic [general] , [dirs] , [git] , [network] , [battery] , [glyphs] ,
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
-.Ic [window_names] , [notify] , [project] , [autosave] , [run] ,
-.Ic [clipboard] , [theme] , [bar] , [picker]
+.Ic [window_names] , [notify] , [project] , [autosave] , [sessions] ,
+.Ic [[restore.program]] , [run] , [clipboard] , [theme] , [bar] , [picker]
 and
 .Ic [open] .
 .Bl -tag -width Ds
