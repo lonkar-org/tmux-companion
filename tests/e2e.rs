@@ -952,6 +952,142 @@ fn the_manual_documents_every_subcommand() {
     );
 }
 
+/// The skill names no command that has gone away.
+///
+/// `skills/tmux-companion/SKILL.md` tells an agent which commands exist, and an
+/// agent acts on it without checking. The version of that file this replaced
+/// offered `project autosave` and `sessions resurrect --attach NAME`, neither
+/// of which was ever built, so this reads every command and flag the file spells
+/// out and holds them against `--help`.
+///
+/// Only spans the file wrote as code are read. Prose is where a command gets
+/// mentioned in passing, and a test that failed on prose would be one people
+/// work around by writing worse documentation.
+#[test]
+fn the_skill_names_no_command_that_went_away() {
+    let skill = include_str!("../skills/tmux-companion/SKILL.md");
+    let Some(binary) = target_binary() else {
+        return;
+    };
+
+    let help_for = |path: &[&str]| -> String {
+        let out = Command::new(&binary)
+            .args(path)
+            .arg("--help")
+            .output()
+            .expect("--help runs");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    // The names clap prints under `Commands:`, for whichever level it was asked
+    // about. A command with no subcommands has no such block and answers empty,
+    // which is how the caller below knows not to grade a second word.
+    let subcommands = |help: &str| -> Vec<String> {
+        help.lines()
+            .skip_while(|l| !l.starts_with("Commands:"))
+            .skip(1)
+            .take_while(|l| !l.trim().is_empty())
+            .filter_map(|l| l.split_whitespace().next())
+            .filter(|n| *n != "help")
+            .map(str::to_string)
+            .collect()
+    };
+
+    let top = help_for(&[]);
+    let commands = subcommands(&top);
+    assert!(
+        commands.len() > 20,
+        "did not read the subcommand list: {commands:?}"
+    );
+
+    let mut problems: Vec<String> = Vec::new();
+    // A command name, not a flag and not a placeholder: `sessions resurrect`
+    // reads as one, `project --print` and `sessions show STAMP` do not.
+    let bare_word = |w: &str| {
+        w.starts_with(|c: char| c.is_ascii_lowercase())
+            && w.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+    };
+
+    for span in code_spans(skill) {
+        let mut words = span.split_whitespace().peekable();
+        if words.peek() == Some(&"tmux-companion") {
+            words.next();
+            match words.peek() {
+                // `tmux-companion <thing>` is a claim that <thing> is a command,
+                // so an unknown word here is the failure this test exists for.
+                Some(w) if bare_word(w) && !commands.iter().any(|c| c == *w) => {
+                    problems.push(format!("no such command: tmux-companion {w}"));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        let Some(first) = words.next() else { continue };
+        if !commands.iter().any(|c| c == first) {
+            continue;
+        }
+
+        let mut path = vec![first];
+        let deeper = subcommands(&help_for(&path));
+        if let Some(second) = words.peek() {
+            if bare_word(second) && !deeper.is_empty() {
+                if deeper.iter().any(|c| c == *second) {
+                    path.push(words.next().expect("peeked"));
+                } else {
+                    problems.push(format!("no such subcommand: {first} {second}"));
+                    continue;
+                }
+            }
+        }
+
+        let help = help_for(&path);
+        for word in words {
+            let flag = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+            if !flag.starts_with("--") || flag.len() < 4 {
+                continue;
+            }
+            if !help.contains(flag) {
+                problems.push(format!("no such flag: {} {flag}", path.join(" ")));
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "skills/tmux-companion/SKILL.md is stale:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// Every `backticked span` and every line inside a fence, from a Markdown file.
+///
+/// Fenced lines come through whole because a shell line is one command; inline
+/// spans come through whole for the same reason, and both are split by the
+/// caller.
+fn code_spans(markdown: &str) -> Vec<String> {
+    let mut spans = Vec::new();
+    let mut fenced = false;
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            // A comment after a command is prose again.
+            spans.push(line.split('#').next().unwrap_or(line).trim().to_string());
+            continue;
+        }
+        let mut rest = line;
+        while let Some(open) = rest.find('`') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('`') else { break };
+            spans.push(rest[..close].to_string());
+            rest = &rest[close + 1..];
+        }
+    }
+    spans
+}
+
 /// The manual's configuration section names every section of the config.
 #[test]
 fn the_manual_names_every_configuration_section() {

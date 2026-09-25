@@ -1,0 +1,21 @@
+{
+  "name": "tmux-companion",
+  "owner": {
+    "name": "Yogesh Lonkar",
+    "email": "yogesh@lonkar.org"
+  },
+  "metadata": {
+    "description": "The tmux-companion skill, from the repository that builds the binary.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "tmux-companion",
+      "source": "./",
+      "description": "Drive tmux through tmux-companion: project sessions and layouts, snapshots and resurrect, and running agent panes alongside a human in one tmux server.",
+      "version": "0.2.0",
+      "category": "productivity",
+      "keywords": ["tmux", "sessions", "resurrect", "layout", "agents"]
+    }
+  ]
+}

@@ -11,3 +11,8 @@
 # --remote. Nothing here belongs to the project.
 .wrangler/
 __pycache__/
+
+# Claude Code's per-machine state. The skill symlink beside them is committed.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/

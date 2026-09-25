@@ -168,6 +168,29 @@ puts it in `$PREFIX/share/man/man1`, the release workflow copies it into every
 archive, and the playground image installs it so `man tmux-companion` answers
 in the container.
 
+## The skill
+
+`skills/tmux-companion/SKILL.md` is the instruction sheet a coding agent loads
+before it touches this tmux server, and the repository ships it as a Claude Code
+plugin: `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` make
+the checkout its own marketplace, and `.claude/skills/tmux-companion` is a
+symlink so a session started here picks it up with no install.
+
+An agent acts on that file without checking it, so a command removed from the
+CLI has to leave the skill in the same commit.
+`the_skill_names_no_command_that_went_away` in `tests/e2e.rs` reads every
+backticked span and fenced line in the file and holds the commands, subcommands
+and long flags against `--help`, which is the same trick the manual tests use.
+
+The plugin has its own version and its own tag namespace,
+`tmux-companion--v0.3.0`, because SKILL.md changes on a different schedule from
+the binary and `release.yml` triggers on `v*`:
+
+```sh
+just plugin-check              # is the skill ahead of its last tag?
+just plugin-release 0.3.0      # bump both manifests, validate, commit, tag, push
+```
+
 ## Adding a new command
 
 A command is not a segment: it does something to tmux rather than returning

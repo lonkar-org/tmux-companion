@@ -198,6 +198,20 @@ playground-build:
 playground-smoke:
     ./scripts/playground.sh smoke
 
+# The skill and the binary are released separately, on separate tag namespaces,
+# because SKILL.md changes on its own schedule and a version that moved with
+# every cargo release would stop meaning anything. This is the check for the
+# case that actually goes wrong: the skill edited months ago and never tagged,
+# so nobody who installed the plugin has the edit.
+
+# Has the skill changed since its last tag?
+plugin-check:
+    ./scripts/release-plugin.sh check
+
+# Bump both manifests, validate, commit, tag and push the skill.
+plugin-release VERSION *ARGS:
+    ./scripts/release-plugin.sh {{VERSION}} {{ARGS}}
+
 # The hook installing cleanly says nothing about whether it works. zsh redraws
 # the prompt line after precmd and takes the mark with it, so this was broken
 # on the author's own shell for months while every byte was printed correctly.

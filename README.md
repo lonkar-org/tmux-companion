@@ -206,6 +206,7 @@ Every setting with its default is in
 | [docs/how-to/playground.md](docs/how-to/playground.md) | a container to try it in, and the tour inside it |
 | [docs/how-to/install.md](docs/how-to/install.md) | the three ways in, and how to remove it |
 | [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
+| [docs/how-to/agents.md](docs/how-to/agents.md) | the skill that teaches a coding agent to share your tmux server |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |
