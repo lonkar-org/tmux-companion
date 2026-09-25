@@ -96,6 +96,34 @@ if [ -n "${TMUX:-}" ] || tmux has-session -t playground 2>/dev/null; then
     bad "a project opens with the layout's windows" "got: ${windows:-nothing}"
   fi
   tmux kill-session -t lantern-docs 2>/dev/null
+
+  # The project with a layout of its own. The tour claims sparrow-cli opens an
+  # editor and a window for an agent where the other four open edit and git, and
+  # an override that stopped matching would leave that claim in the tour with
+  # nothing behind it.
+  tmux-companion project "$HOME/projects/sparrow-cli" >/dev/null 2>&1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    windows=$(tmux list-windows -t sparrow-cli -F '#{window_name}' 2>/dev/null)
+    printf '%s\n' "$windows" | grep -qx ai && break
+    sleep 0.5
+  done
+  if printf '%s\n' "$windows" | grep -qx editor && printf '%s\n' "$windows" | grep -qx ai; then
+    ok "sparrow-cli opens its own layout ($(printf '%s' "$windows" | tr '\n' ' '))"
+  else
+    bad "sparrow-cli opens its own layout" "got: ${windows:-nothing}"
+  fi
+  tmux kill-session -t sparrow-cli 2>/dev/null
+
+  printf '\n== the snapshot store\n'
+  if tmux-companion sessions save >/dev/null 2>&1; then
+    ok "sessions save"
+  else
+    bad "sessions save" "it exited nonzero"
+  fi
+  n=$(find "$XDG_STATE_HOME/tmux-companion/sessions" -name '*.toml' 2>/dev/null | wc -l | tr -d ' ')
+  [ "${n:-0}" -ge 1 ] && ok "$n generation on disk" || bad "a generation on disk" "found none"
+  check "sessions list" tmux-companion sessions list
+  check "sessions show" tmux-companion sessions show
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

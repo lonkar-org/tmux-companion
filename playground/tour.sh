@@ -29,7 +29,7 @@ hint()  { tmux set -g @playground-step "$*" 2>/dev/null || true; }
 
 # What the heading and the prompt call where you are. The main tour sets it
 # per step; the basics track sets its own, so `1.3` is visibly a detour rather
-# than a step of the sixteen.
+# than a step of the seventeen.
 LABEL=""
 
 begin() {              # begin <icon> <title>
@@ -701,6 +701,11 @@ Arrange sparrow-cli however you like: split a pane, open a window, move
 things around. Then save it, and it is what that project opens with from now
 on, config or no config.
 
+sparrow-cli is also the one project here with a layout of its own: it opens an
+${BOLD}editor${OFF} and an ${BOLD}ai${OFF} window where the other four open ${BOLD}edit${OFF} and ${BOLD}git${OFF}. That is one
+${DIM}[[project.override]]${OFF} table in the config, a path and the layout to use, and a
+saved layout wins over both.
+
     ${KEY}prefix  Shift-S${OFF}  save this session's windows and panes for this project
     ${KEY}prefix  Shift-X${OFF}  close the project, capturing the layout on the way out
     ${KEY}Alt-s${OFF}            open it again
@@ -723,6 +728,43 @@ wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/projects/*.toml' "nothing saved ye
 
 # ── 13 ─────────────────────────────────────────────────────────────────────
 step_13() {
+begin "📦" "Every session, kept in generations"
+cat <<EOF
+The last step saved one project's layout. This saves the whole server: every
+session, every window, every pane, where each one was and what was running in
+it, as one generation under a timestamp. It is the half of tmux-resurrect this
+tool took over, and the restore half is a command you run rather than something
+that happens to you at login.
+
+    ${KEY}prefix  Alt-s${OFF}   save every session now
+    ${DIM}tmux-companion sessions list${OFF}    generations, newest first
+    ${DIM}tmux-companion sessions show${OFF}    down to each pane's directory and command
+
+Run those two in the ${BOLD}playground${OFF} session, and look for ${BOLD}sparrow-cli${OFF} in the
+listing: its panes come back as an editor and a window for an agent, because
+that project has a layout of its own.
+
+${WARN}The other three are not bound to a key, on purpose.${OFF}
+
+    ${DIM}sessions resurrect${OFF}   rebuild a server from a generation
+    ${DIM}sessions shutdown${OFF}    save everything, then stop the server
+    ${DIM}sessions restart${OFF}     the same, then bring it back
+
+They all refuse to run from inside tmux, and the reason is worth knowing: two
+of them stop the server this pane is in, so nothing after that line would run.
+Try one anyway if you like, and read what it says.
+
+What a restore is allowed to execute is ${DIM}[[restore.program]]${OFF} in the config, and
+it is default deny. A command no row claims opens its pane in the right
+directory, at a prompt, and waits for you.
+EOF
+back_here
+hint "step 13: prefix Alt-s saves, then tmux-companion sessions list"
+wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/sessions/*.toml' "no snapshot yet: prefix Alt-s in the playground session"
+}
+
+# ── 14 ─────────────────────────────────────────────────────────────────────
+step_14() {
 begin "🔍" "Copy mode, and jumping by prompt"
 cat <<EOF
 tmux has had next-prompt and previous-prompt since 3.3 and they do nothing
@@ -742,12 +784,12 @@ Run two or three commands there first, then:
     ${KEY}v${OFF} then ${KEY}y${OFF}       select, and yank to the system clipboard
     ${KEY}q${OFF}              out
 EOF
-hint "step 13: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
+hint "step 14: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
 wait_for
 }
 
-# ── 14 ─────────────────────────────────────────────────────────────────────
-step_14() {
+# ── 15 ─────────────────────────────────────────────────────────────────────
+step_15() {
 begin "🔗" "Open what is under the cursor"
 cat <<EOF
 In the playground session:
@@ -772,12 +814,12 @@ The URL two lines below works the same way and cannot finish in here, for
 the reason 1.8 gave: no browser to hand it to.
 EOF
 keys "prefix  [      select the path      o"
-hint "step 14: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
+hint "step 15: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
 wait_for
 }
 
-# ── 15 ─────────────────────────────────────────────────────────────────────
-step_15() {
+# ── 16 ─────────────────────────────────────────────────────────────────────
+step_16() {
 begin "🌳" "Five repositories, five different bars"
 cat <<EOF
 Each project is in a different state on purpose. Walk through them in the
@@ -793,12 +835,12 @@ playground session and watch only the git segment:
 A git status costs about 51 ms cold. It is cached for five seconds, per
 directory, which is why walking through these is instant the second time.
 EOF
-hint "step 15: cd through the five projects, watch the git segment"
+hint "step 16: cd through the five projects, watch the git segment"
 wait_for
 }
 
-# ── 16 ─────────────────────────────────────────────────────────────────────
-step_16() {
+# ── 17 ─────────────────────────────────────────────────────────────────────
+step_17() {
 begin "🏁" "That is the tour"
 cat <<EOF
 ${OK}Done.${OFF}$( [ "$skipped" -gt 0 ] && printf ' %s(%d skipped)%s' "$DIM" "$skipped" "$OFF" )
@@ -831,7 +873,7 @@ exec zsh
 # A loop over the steps rather than a straight run, so `b` can hand back the
 # one before this. Each step is a function with no state of its own, so going
 # back into one redraws it from scratch.
-STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 step_10 step_11 step_12 step_13 step_14 step_15 step_16)
+STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 step_10 step_11 step_12 step_13 step_14 step_15 step_16 step_17)
 TOTAL=${#STEPS[@]}
 
 # Where to start. `tour.sh 12` resumes at step 12, which is how the playground

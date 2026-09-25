@@ -187,6 +187,29 @@ cat > "$XDG_CONFIG_HOME/tmux-companion/config.toml" <<'EOF'
 [project]
 layout = "default"
 
+# Every project opens with the layout below, except one. sparrow-cli matches
+# this override and opens `editor` and `ai` instead, so the tour has both
+# halves on screen: what a project gets by default, and what one asks for when
+# the default is not what that project is for.
+[[project.override]]
+match = "~/projects/sparrow-cli"
+use_layout = "agent"
+
+[[layout]]
+name = "agent"
+
+[[layout.window]]
+name = "editor"
+command = "nvim README.md"
+hold_name = true
+
+[[layout.window]]
+name = "ai"
+command = "echo \"run or continue with your favourite ai tool\""
+# Without this the window is renamed after whatever is running in it, and an
+# agent renames itself to its own version string within seconds of starting.
+hold_name = true
+
 [[layout]]
 name = "default"
 

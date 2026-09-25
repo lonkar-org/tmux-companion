@@ -1,7 +1,7 @@
 # tmux-companion playground
 
 A throwaway tmux with everything turned on: the binary, the full config, five
-fake git projects and a sixteen step tour that walks you through the bindings
+fake git projects and a seventeen step tour that walks you through the bindings
 one at a time.
 
 ```sh
@@ -51,6 +51,10 @@ in each one:
 | `sparrow-cli` | staged and modified at once, on a branch long enough to truncate |
 | `lantern-docs` | detached HEAD, one untracked file |
 | `anvil-infra` | two commits ahead of its upstream |
+
+`sparrow-cli` also carries a `[[project.override]]`, so it opens an `editor` and
+an `ai` window where the rest open `edit` and `git`. It's there to show that the
+layout is per project when you want it to be, and a default when you don't.
 
 `orchard-api/build.log` holds a compiler error with a path, a line and a column
 in it, for the copy-mode `o` binding to open.
