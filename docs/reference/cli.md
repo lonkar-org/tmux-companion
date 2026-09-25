@@ -151,7 +151,7 @@ a `0700` directory, since the history is the text that was on your screen.
 
 | Command | Does |
 | --- | --- |
-| `theme pick` | Choose a theme and apply it. `-r SESSION` remembers it for a session instead, `-t TARGET` applies it somewhere specific, `--print` lists and exits |
+| `theme pick` | Choose a theme and apply it to the session an attached client is on. `-r SESSION` remembers it for a session instead, `-t TARGET` applies it somewhere specific, `--print` lists and exits |
 | `theme apply SESSION` | Apply the theme that session should have, from the project map or the namespace rules. This is what the session-created hook calls |
 | `theme init` | Write six starter colours and the two files that apply them, into the themes directory this machine's tmux actually reads. Overwrites nothing |
 | `theme add --bg C` | Write a theme from one colour. `--fg` chooses the text colour instead of computing it, and a pair under AA is refused unless `--force` |
@@ -172,7 +172,7 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | Command | Does |
 | --- | --- |
 | `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `--cursor-x` picks whatever is under that column, which is how the copy-mode binding needs nothing selected; `--pane` says which pane it is for; `-s` scans the tmux selection, `-n` prints what it would open |
-| `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not |
+| `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not. Both the directory it starts on and the session the window lands in come from the attached client, not from tmux's current session, which inside a popup is whichever one the server touched last |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
 | `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform |

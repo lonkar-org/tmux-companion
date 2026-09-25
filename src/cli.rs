@@ -1682,8 +1682,15 @@ async fn run_new_window() -> anyhow::Result<()> {
     // Asking tmux rather than reading the process's own directory: a popup
     // inherits the pane's directory, but a binding run with -d somewhere else
     // does not, and the answer has to be the pane somebody is looking at.
+    //
+    // Targeted at the attached client's session, because "the pane somebody is
+    // looking at" is exactly what an untargeted question does not answer from
+    // inside a popup: it answers for the session the server touched last, so
+    // the query came up prefilled with a directory from the project you had
+    // just switched away from.
+    let client = client_target().await;
     let pane_dir = {
-        let d = tmux_display("#{pane_current_path}").await;
+        let d = tmux_display_at(client.as_deref(), "#{pane_current_path}").await;
         if std::path::Path::new(&d).is_dir() {
             d
         } else {
@@ -1758,11 +1765,9 @@ async fn run_new_window() -> anyhow::Result<()> {
             // "can't specify pane here", because for new-window the target is
             // the index to create at. A bare `session:` appends at the next
             // free index, which is what this did before it was targeted.
-            let session = tmux_display("#{session_name}").await;
-            if session.is_empty() {
-                tmux(&["new-window", "-c", &dir]).await;
-            } else {
-                tmux(&["new-window", "-t", &format!("{session}:"), "-c", &dir]).await;
+            match client.as_deref() {
+                Some(target) => tmux(&["new-window", "-t", target, "-c", &dir]).await,
+                None => tmux(&["new-window", "-c", &dir]).await,
             }
             Ok(())
         }
@@ -2822,6 +2827,7 @@ fn theme_pick(
         return Ok(());
     }
 
+    let target = target.or_else(attached_session_sync);
     source_theme(&row.path, target.as_deref());
     Ok(())
 }
@@ -3053,6 +3059,24 @@ fn theme_preview(row: &crate::theme::ThemeRow) -> String {
 /// happened to be current and every other window in the session keeps the
 /// global default. That is why copy-mode selection could be readable in one
 /// window and not the next.
+/// The attached client's session, for the synchronous callers.
+///
+/// `theme pick` draws in a popup like every other picker, and a popup is not a
+/// client, so a theme sourced with no target painted whichever session the
+/// server touched last. Switch project, press the key, watch the session you
+/// just left change colour.
+fn attached_session_sync() -> Option<String> {
+    let out = std::process::Command::new("tmux")
+        .args(["list-clients", "-F", "#{client_session}"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|s| format!("{s}:"))
+}
+
 fn source_theme(path: &std::path::Path, target: Option<&str>) {
     let path = path.display().to_string();
     let mut args: Vec<&str> = vec!["source-file"];
@@ -3220,6 +3244,17 @@ async fn attached_session() -> Option<String> {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
+}
+
+/// The attached client's session as a tmux target, `name:`.
+///
+/// Everything drawn in a `display-popup` needs this. A popup is not a client,
+/// so `#{session_name}`, `#{pane_current_path}` and an untargeted
+/// `new-window` are all answered for whichever session the server touched
+/// last, and the answer is right up until somebody switches project -- which
+/// is the one thing this tool is for.
+async fn client_target() -> Option<String> {
+    attached_session().await.map(|s| format!("{s}:"))
 }
 
 /// The width of the window a pane is in, or of whatever tmux calls current.

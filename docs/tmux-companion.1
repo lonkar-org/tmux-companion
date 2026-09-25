@@ -407,6 +407,11 @@ Bound to
 .It Ic theme pick Op Fl -themes Ar dir
 Every theme with its colour beside it, applied on the spot and remembered
 against the project.
+.Fl t
+applies it somewhere other than where you are; with nothing given it is the
+session an attached client is looking at, because the picker is a popup and a
+popup is not a client, so tmux's own idea of the current session is the one it
+touched last.
 Bound to
 .Ql prefix C-t .
 .El
