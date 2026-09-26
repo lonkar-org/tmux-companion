@@ -302,12 +302,12 @@ pub enum Cmd {
         out: Option<String>,
     },
 
-    /// Move to the next window in this session's layout
+    /// Move to the next window in this session, wrapping at the end
     Toggle {
         /// The session to act on, which the binding passes so the key acts on
         /// the pane it was pressed in
         session: Option<String>,
-        /// The current window name, passed for the same reason
+        /// Ignored; kept so bindings that pass `#{window_name}` still parse
         window: Option<String>,
     },
 
@@ -1458,7 +1458,7 @@ async fn open_project(
     if !exists {
         crate::project::record_visit(config, path).await;
 
-        let (windows, _) = crate::saved::resolve(config, crate::saved::load(path), path, home);
+        let (windows, _) = crate::saved::resolve(config, load_saved(path).await, path, home);
 
         let spec = crate::project::SessionSpec {
             name: &name,
@@ -2628,12 +2628,21 @@ async fn run_project_forget() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A project's saved layout with the server's `default-command` read as no
+/// command, which is how every caller that opens or describes it wants it.
+async fn load_saved(path: &str) -> Option<crate::saved::SavedLayout> {
+    let mut saved = crate::saved::load(path)?;
+    let default_command = tmux_capture(&["show-options", "-gv", "default-command"]).await;
+    crate::saved::forget_default_command(&mut saved, &default_command);
+    Some(saved)
+}
+
 /// `project show`: which layout this project gets, and which file decided.
 async fn run_project_show() -> anyhow::Result<()> {
     let (_, path) = current_project().await?;
     let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
-    let (windows, source) = crate::saved::resolve(&config, crate::saved::load(&path), &path, &home);
+    let (windows, source) = crate::saved::resolve(&config, load_saved(&path).await, &path, &home);
     print!(
         "{}",
         crate::saved::describe(&path, &windows, &source, &home)
@@ -2669,30 +2678,29 @@ async fn tmux(args: &[&str]) {
         .await;
 }
 
-/// `toggle`: move to the next window in this session's layout.
-async fn run_toggle(session: Option<String>, window: Option<String>) -> anyhow::Result<()> {
+/// `toggle`: move to the next window in this session.
+///
+/// The window argument is accepted and not used. The session's own active
+/// window is the one the key was pressed in, and it is an index where the
+/// binding could only pass a name, which two windows can share.
+async fn run_toggle(session: Option<String>, _window: Option<String>) -> anyhow::Result<()> {
     let session = match session {
         Some(s) => s,
         None => tmux_display("#{session_name}").await,
     };
-    let current = match window {
-        Some(w) => w,
-        None => tmux_display("#{window_name}").await,
-    };
-
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let path = tmux_display("#{session_path}").await;
-    let (layout, _) = crate::saved::resolve(&config, crate::saved::load(&path), &path, &home);
-    let windows: Vec<String> = layout.iter().map(|w| w.name.clone()).collect();
-
-    match crate::tasks::toggle_target(&current, &windows) {
-        Some(target) => {
-            tmux(&["select-window", "-t", &format!("={session}:{target}")]).await;
-        }
-        // Not a layout session. Keep the old two-window habit working rather
-        // than printing "can't find window" at somebody.
-        None => tmux(&["last-window"]).await,
+    let out = tokio::process::Command::new("tmux")
+        .args([
+            "list-windows",
+            "-t",
+            &format!("={session}"),
+            "-F",
+            "#{window_index} #{window_active}",
+        ])
+        .output()
+        .await?;
+    let list = String::from_utf8_lossy(&out.stdout);
+    if let Some(target) = crate::tasks::toggle_target(&list) {
+        tmux(&["select-window", "-t", &format!("={session}:{target}")]).await;
     }
     Ok(())
 }

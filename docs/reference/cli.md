@@ -102,7 +102,7 @@ no terminal.
 | Command | Does |
 | --- | --- |
 | `run [--pane ID]` | Pick a command from history and run it in a pane beside this one. Enter runs the pick, alt-enter runs exactly what you typed, `--print` lists and exits. `--pane` says which pane it belongs beside, for a caller that knows it. The binding passes nothing and the attached client's session decides, because the picker is a popup: a popup is not a client, an untargeted split lands in whichever session the server touched last, and tmux does not expand `#{pane_id}` in a `display-popup` command anyway |
-| `toggle [SESSION] [WINDOW]` | Move to the next window in this session's layout, falling back to tmux's last-window when the current window isn't in one |
+| `toggle [SESSION]` | Move to the next window in this session by index, wrapping at the end; a trailing `WINDOW` is accepted and ignored |
 | `autosave --once` | Save the session list now |
 | `autosave --status` | Say when the last save happened |
 | `sessions save` | Capture every session on the server as a new generation. All or nothing, like `project save`. `--skip-pane-history` leaves out what was on each pane's screen; `--exclude a,b` adds to `[sessions] exclude` |

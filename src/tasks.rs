@@ -105,18 +105,28 @@ pub async fn autosave_loop(script: std::path::PathBuf, interval: Duration) {
     }
 }
 
-/// Which window a toggle should move to.
+/// Which window a toggle should move to, as a `#{window_index}`.
 ///
-/// Cycles through the layout's window names, so a layout of three moves
-/// through three. `None` means the current window is not in the layout at all,
-/// and the caller falls back to tmux's own last-window rather than printing
-/// "can't find window" at somebody.
-pub fn toggle_target(current: &str, windows: &[String]) -> Option<String> {
+/// Takes the session's live windows as `#{window_index} #{window_active}`
+/// lines and cycles through them in index order, so three windows move through
+/// three. Windows are told apart by index, never by name: two windows called
+/// `zsh` or `editor` are two windows, and a name matched against a saved layout
+/// found the first one every time and went nowhere. `None` means there is
+/// nowhere to go, one window or no active one.
+pub fn toggle_target(list: &str) -> Option<u32> {
+    let mut windows: Vec<(u32, bool)> = list
+        .lines()
+        .filter_map(|l| {
+            let (index, active) = l.trim().split_once(' ')?;
+            Some((index.parse().ok()?, active == "1"))
+        })
+        .collect();
     if windows.len() < 2 {
         return None;
     }
-    let here = windows.iter().position(|w| w == current)?;
-    Some(windows[(here + 1) % windows.len()].clone())
+    windows.sort_by_key(|w| w.0);
+    let here = windows.iter().position(|w| w.1)?;
+    Some(windows[(here + 1) % windows.len()].0)
 }
 
 #[cfg(test)]
@@ -149,33 +159,34 @@ mod tests {
 
     #[test]
     fn toggling_moves_to_the_other_window() {
-        let windows = vec!["edit".to_string(), "ai".to_string()];
-        assert_eq!(toggle_target("edit", &windows).as_deref(), Some("ai"));
-        assert_eq!(toggle_target("ai", &windows).as_deref(), Some("edit"));
+        assert_eq!(toggle_target("1 1\n2 0\n"), Some(2));
+        assert_eq!(toggle_target("1 0\n2 1\n"), Some(1));
     }
 
     #[test]
-    fn a_layout_of_three_cycles_through_three() {
-        // The zsh version could only ever swap two, because the two were
-        // written into it.
-        let windows = vec!["edit".to_string(), "ai".to_string(), "logs".to_string()];
-        assert_eq!(toggle_target("edit", &windows).as_deref(), Some("ai"));
-        assert_eq!(toggle_target("ai", &windows).as_deref(), Some("logs"));
-        assert_eq!(toggle_target("logs", &windows).as_deref(), Some("edit"));
+    fn three_windows_cycle_through_three() {
+        let at = |active: u32| {
+            let list: String = (1..=3)
+                .map(|i| format!("{i} {}\n", u32::from(i == active)))
+                .collect();
+            toggle_target(&list)
+        };
+        assert_eq!(at(1), Some(2));
+        assert_eq!(at(2), Some(3));
+        assert_eq!(at(3), Some(1));
     }
 
     #[test]
-    fn a_window_outside_the_layout_falls_back() {
-        // A session that predates the layout, where the answer is tmux's own
-        // last-window rather than an error message.
-        let windows = vec!["edit".to_string(), "ai".to_string()];
-        assert_eq!(toggle_target("shell", &windows), None);
+    fn gaps_in_the_numbering_are_followed_in_order() {
+        // A closed window leaves a hole, and tmux lists in its own order.
+        assert_eq!(toggle_target("7 0\n0 1\n3 0\n"), Some(3));
+        assert_eq!(toggle_target("7 1\n0 0\n3 0\n"), Some(0));
     }
 
     #[test]
-    fn a_layout_with_one_window_has_nothing_to_toggle_to() {
-        assert_eq!(toggle_target("edit", &["edit".to_string()]), None);
-        assert_eq!(toggle_target("edit", &[]), None);
+    fn one_window_has_nothing_to_toggle_to() {
+        assert_eq!(toggle_target("1 1\n"), None);
+        assert_eq!(toggle_target(""), None);
     }
 
     #[tokio::test]

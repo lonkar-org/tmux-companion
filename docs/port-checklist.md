@@ -26,7 +26,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 1 | `theme gen` | done — report matches the python on all 76 themes |
 | 2 | `keys`, `cheatsheet` | done — both render what the zsh did, bar the two bindings tmux stopped reporting |
 | 3 | `project` | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows |
-| 4 | `autosave`, `toggle` | done — autosave is a daemon task, toggle cycles the layout |
+| 4 | `autosave`, `toggle` | done — autosave is a daemon task, toggle cycles the session's windows by index |
 | 5 | `theme`, `run` | done — run's history is byte-identical to `fc -ln` over 1127 commands |
 | 6 | `open`, `close-project`, the probes, the tmux.conf logic | done — plus `clipboard` and `zoom`, and docs/tmux.conf.full.example |
 

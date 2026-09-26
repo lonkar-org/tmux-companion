@@ -108,6 +108,33 @@ pub fn load_in(state_dir: &std::path::Path, project_path: &str) -> Option<SavedL
     (!saved.window.is_empty()).then_some(saved)
 }
 
+/// Blank every command in a saved layout that is only the server's
+/// `default-command`.
+///
+/// Builds before capture learned to compare against the setting wrote it into
+/// every window, quoted, as `"reattach-to-user-namespace -l /bin/zsh"`. Opening
+/// the project then typed that into the prompt, where the quotes make it one
+/// word and zsh answers "no such file or directory". Those files are still on
+/// disk and say nothing about which build wrote them, so they are read the way
+/// capture now writes them rather than trusted.
+pub fn forget_default_command(saved: &mut SavedLayout, default_command: &str) {
+    let default = unquote(default_command.trim());
+    if default.is_empty() {
+        return;
+    }
+    let is_default = |c: &str| unquote(c.trim()) == default;
+    for window in &mut saved.window {
+        if is_default(&window.command) {
+            window.command.clear();
+        }
+        for pane in &mut window.pane {
+            if is_default(&pane.command) {
+                pane.command.clear();
+            }
+        }
+    }
+}
+
 /// Write a project's layout, creating the directory the first time.
 pub fn store(saved: &SavedLayout) -> anyhow::Result<std::path::PathBuf> {
     write_layout(saved, render(saved))
@@ -742,6 +769,46 @@ mod tests {
             command_for(&p, "/bin/zsh", ""),
             (String::new(), Confidence::Shell)
         );
+    }
+
+    #[test]
+    fn a_saved_default_command_is_read_as_no_command() {
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let mut saved: SavedLayout = toml::from_str(
+            r#"
+path = "/p"
+
+[[window]]
+name = "edit"
+command = "\"reattach-to-user-namespace -l /bin/zsh\""
+
+[[window]]
+name = "ai"
+command = "claude"
+
+[[window]]
+name = "split"
+[[window.pane]]
+command = "reattach-to-user-namespace -l /bin/zsh"
+[[window.pane]]
+command = "nvim"
+"#,
+        )
+        .unwrap();
+        forget_default_command(&mut saved, dc);
+        assert_eq!(saved.window[0].command, "");
+        assert_eq!(saved.window[1].command, "claude");
+        assert_eq!(saved.window[2].pane[0].command, "");
+        assert_eq!(saved.window[2].pane[1].command, "nvim");
+    }
+
+    #[test]
+    fn with_no_default_command_nothing_is_forgotten() {
+        let mut saved: SavedLayout =
+            toml::from_str("path = \"/p\"\n[[window]]\nname = \"a\"\ncommand = \"\\\"x\\\"\"\n")
+                .unwrap();
+        forget_default_command(&mut saved, "");
+        assert_eq!(saved.window[0].command, "\"x\"");
     }
 
     #[test]

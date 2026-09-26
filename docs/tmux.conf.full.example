@@ -118,7 +118,7 @@ bind -N "custom: window run a command from history" e \
 bind -N "custom: config pick a colour theme" C-t \
   display-popup -E -w 70% -h 70% "tmux-companion theme pick"
 bind -N "custom: project toggle the tools in this session" -n M-a \
-  run-shell "tmux-companion toggle '#{session_name}' '#{window_name}'"
+  run-shell "tmux-companion toggle '#{session_name}'"
 # Closing captures the layout on the way out, before anything is asked to quit,
 # so the project comes back next time with the windows and panes it had. Add
 # --no-save to close without touching the saved layout.

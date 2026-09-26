@@ -417,8 +417,16 @@ Bound to
 .El
 .Sh SESSIONS AND WINDOWS
 .Bl -tag -width Ds
-.It Ic toggle Ar session Ar window
-Move to the next window in this session's layout, and back again.
+.It Ic toggle Ar session
+Move to the next window in this session, in index order, wrapping from the
+last to the first.
+Windows are told apart by index, so two windows with the same name are two
+stops.
+A
+.Ar window
+after the session is accepted and ignored, so older bindings that pass
+.Ql #{window_name}
+keep working.
 Bound to
 .Ql M-a .
 .It Ic project close Oo Ar session Oc Op Fl -discard , Fl -no-save
