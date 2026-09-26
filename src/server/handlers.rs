@@ -227,13 +227,15 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             Ok(args) => {
                 let at = crate::panes::now_secs();
                 let mut st = state.lock().await;
-                st.reports.insert(
-                    args.pane,
-                    crate::panes::Reported {
-                        state: args.state,
-                        at,
-                    },
-                );
+                match args.state {
+                    Some(said) => {
+                        st.reports
+                            .insert(args.pane, crate::panes::Reported { state: said, at });
+                    }
+                    None => {
+                        st.reports.remove(&args.pane);
+                    }
+                }
                 st.agents_cache = None;
                 Ok(String::new())
             }

@@ -42,6 +42,13 @@ pub enum AgentAction {
         #[arg(long, value_name = "ID")]
         pane: Option<String>,
     },
+    /// Forget what the pane last said, so the window's quiet time decides
+    /// again: for an agent restarted without its hooks
+    Clear {
+        /// The pane, defaulting to $TMUX_PANE
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+    },
     /// Print the hooks block for an agent's settings file, so it reports
     /// busy, asked and done as they happen
     Hooks {
@@ -96,12 +103,13 @@ pub fn hooks(program: &str) -> Option<String> {
 /// The programs [`hooks`] knows, for the error when it does not know one.
 pub const KNOWN: &[&str] = &["claude"];
 
-/// Tell the daemon what the agent in `pane` is doing.
+/// Tell the daemon what the agent in `pane` is doing, or with `None` that
+/// it no longer knows.
 ///
 /// Nothing is printed and the exit is 0 whatever happens: outside tmux there
 /// is no pane to speak of, and a daemon that cannot be reached will read the
 /// window's quiet time instead, which is what it did before hooks existed.
-pub async fn report(state: Report, pane: Option<String>) -> anyhow::Result<()> {
+pub async fn report(state: Option<Report>, pane: Option<String>) -> anyhow::Result<()> {
     let Some(pane) = pane
         .or_else(|| std::env::var("TMUX_PANE").ok())
         .filter(|p| !p.trim().is_empty())
@@ -116,9 +124,10 @@ pub async fn report(state: Report, pane: Option<String>) -> anyhow::Result<()> {
 /// `agent`: dispatch.
 pub async fn run(action: AgentAction) -> anyhow::Result<()> {
     match action {
-        AgentAction::Busy { pane } => report(Report::Busy, pane).await,
-        AgentAction::Asked { pane } => report(Report::Asked, pane).await,
-        AgentAction::Done { pane } => report(Report::Done, pane).await,
+        AgentAction::Busy { pane } => report(Some(Report::Busy), pane).await,
+        AgentAction::Asked { pane } => report(Some(Report::Asked), pane).await,
+        AgentAction::Done { pane } => report(Some(Report::Done), pane).await,
+        AgentAction::Clear { pane } => report(None, pane).await,
         AgentAction::Hooks { program } => match hooks(&program) {
             Some(text) => {
                 print!("{text}");

@@ -20,8 +20,10 @@ pub fn build_id() -> String {
 pub struct AgentArgs {
     /// `#{pane_id}`, from `$TMUX_PANE` in the hook's environment.
     pub pane: String,
-    /// Busy, asked or done.
-    pub state: crate::panes::Report,
+    /// Busy, asked or done; nothing forgets what the pane last said, so the
+    /// window's quiet time decides again.
+    #[serde(default)]
+    pub state: Option<crate::panes::Report>,
 }
 
 /// `quiet`: how long to be quiet for, zero for off, nothing to only ask.

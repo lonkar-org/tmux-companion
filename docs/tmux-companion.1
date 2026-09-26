@@ -608,6 +608,10 @@ inside the agent's own hook and an error there would land in its transcript;
 outside tmux it does nothing.
 .Fl -pane
 names another pane.
+.It Ic agent clear Op Fl -pane Ar id
+Forget what the pane last said, so the window's quiet time decides again:
+for an agent restarted without its hooks in a pane that still carries the
+old one's last word.
 .It Ic agent hooks Op Ar program
 Print the hooks block for an agent's settings file, the way
 .Ic shell-init

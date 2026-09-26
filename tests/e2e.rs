@@ -1340,6 +1340,17 @@ fn an_agent_that_reports_is_believed_over_its_silence() {
         "a done agent is not news: {out:?}"
     );
 
+    // Clear: silence decides again, and a second of quiet is `waiting` here.
+    let (_, _, ok) = t.run(&["agent", "clear", "--pane", &id]);
+    assert!(ok);
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["panes", "--agents", "--print"]);
+            out.contains("\tsleep\twaiting ")
+        }),
+        "the cleared agent never went back to its quiet time"
+    );
+
     // Outside tmux, or with no pane to speak of, it does nothing and says nothing.
     let (out, err, ok) = t.run(&["agent", "busy", "--pane", ""]);
     assert!(ok && out.is_empty() && err.is_empty(), "{out:?} {err:?}");

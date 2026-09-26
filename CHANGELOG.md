@@ -13,8 +13,9 @@ entry per phase of the comrades port.
   and in the brief. `agent hooks claude` prints the `settings.json` block
   that wires claude up: a prompt sent or a tool finished is busy, a
   permission prompt or an `AskUserQuestion` is asked, the end of a response is
-  done. Silence alone could not tell a two-minute build from a question, and
-  called every idle agent waiting.
+  done; `agent clear` forgets a pane's last word. Silence alone could not
+  tell a two-minute build from a question, and called every idle agent
+  waiting.
 
 - The terminal bell as a signal: an agent pane whose window rang the bell and
   has not been visited since reads as `asked`, which covers any agent with no
