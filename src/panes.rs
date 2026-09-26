@@ -118,8 +118,25 @@ pub fn parse(text: &str) -> Vec<Pane> {
 }
 
 /// Whether a command is one of the configured agents.
+///
+/// A command that is nothing but a version number counts too. claude sets
+/// its process title to its version, so tmux reports its pane as `2.1.283`
+/// and no name in `[agents] programs` ever matches it; on the laptop this
+/// was written on, that was the only agent running and the bar said none.
+/// Nothing else names a process that way.
 pub fn is_agent(command: &str, programs: &[String]) -> bool {
-    programs.iter().any(|p| p == command)
+    programs.iter().any(|p| p == command) || is_version_name(command)
+}
+
+/// `2.1.283`, `1.0`: digits and dots and nothing else, with at least one dot.
+pub fn is_version_name(command: &str) -> bool {
+    let c = command.trim();
+    !c.is_empty()
+        && c.contains('.')
+        && c.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        && !c.starts_with('.')
+        && !c.ends_with('.')
+        && !c.contains("..")
 }
 
 /// What a pane is doing, as far as a window's activity time can tell.
@@ -447,6 +464,20 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_process_named_by_its_version_is_an_agent() {
+        // claude's pane reports `2.1.283`; nothing in the list says that.
+        let programs = vec!["claude".to_string()];
+        assert!(is_agent("claude", &programs));
+        assert!(is_agent("2.1.283", &programs));
+        assert!(is_agent("1.0", &programs));
+        assert!(!is_agent("zsh", &programs));
+        assert!(!is_agent("3", &programs), "a bare number is not a version");
+        assert!(!is_agent("1..2", &programs));
+        assert!(!is_agent(".1", &programs));
+        assert!(!is_agent("v1.2", &programs));
+    }
 
     /// One line as tmux would print it.
     #[allow(clippy::too_many_arguments)]

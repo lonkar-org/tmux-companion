@@ -483,7 +483,10 @@ min_secs = 60
 [agents]
 # One list of what counts as a coding agent, read by everything that asks:
 # `tmux-companion panes --agents`, the `agents` segment on the bar, and the
-# restore headline that counts them. Matched against pane_current_command.
+# restore headline that counts them. Matched against pane_current_command,
+# and a command that is only a version number, `2.1.283`, counts as well:
+# that is what tmux reports for claude, which names its process after its
+# version, and nothing else names a process that way.
 programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
 # Seconds without output after which an agent counts as waiting for you. tmux
 # has no per-pane activity time, so this is measured on the window the agent is

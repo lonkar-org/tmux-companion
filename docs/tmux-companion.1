@@ -987,8 +987,12 @@ in
 not here.
 .Ic [agents] programs
 is the one list of what counts as a coding agent, matched against
-.Ql pane_current_command
-and read by
+.Ql pane_current_command ;
+a command that is only a version number,
+.Ql 2.1.283 ,
+counts as well, since that is what tmux reports for claude, which names its
+process after its version, and nothing else names a process that way.
+The list is read by
 .Ic panes Fl -agents ,
 the
 .Ic agents

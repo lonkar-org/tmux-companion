@@ -104,6 +104,11 @@ pub fn interesting(command: &str, shell: &str, ignore: &[String]) -> bool {
     if name == shell_name || name == shell {
         return false;
     }
+    // A process named only by a version is claude; see `panes::is_version_name`.
+    // The ignore list names `claude`, and this is the name tmux reports for it.
+    if crate::panes::is_version_name(name) {
+        return false;
+    }
     !ignore.iter().any(|i| i == name)
 }
 
@@ -283,6 +288,13 @@ mod tests {
             command: command.to_string(),
             visible,
         }]
+    }
+
+    #[test]
+    fn a_process_named_by_its_version_is_never_news() {
+        // The ignore list says `claude`; tmux says `2.1.283` for it.
+        assert!(!interesting("2.1.283", "/bin/zsh", &[]));
+        assert!(interesting("cargo", "/bin/zsh", &[]));
     }
 
     #[test]

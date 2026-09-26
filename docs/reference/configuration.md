@@ -425,7 +425,12 @@ One list, read by everything that asks whether a pane is an agent:
 `tmux-companion panes --agents`, the `agents` segment on the bar, and the
 headline `sessions resurrect` shows, which counts them. It used to be compiled
 into that headline, so an agent the code hadn't heard of was invisible to all
-three. `programs` is matched against `pane_current_command`.
+three. `programs` is matched against `pane_current_command`, and a command that is
+only a version number, `2.1.283`, counts as an agent too: that's what tmux
+reports for claude, which names its process after its version, and on the
+laptop this was written on it was the only agent running and the bar said
+none. The same rule keeps `[notify]` and the journal from treating a claude
+session ending as a command finishing.
 
 `waiting_secs` is how long an agent has to draw nothing before it counts as
 waiting on you, which is the number the bar colours and the picker sorts
