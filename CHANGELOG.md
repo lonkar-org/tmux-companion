@@ -3,6 +3,204 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+The work of 2026-09-25 and 26, most of it from a review of the whole tool for the places where it went quiet when it shouldn't have. The one that
+started it: the `[autosave]` timer had been failing every fifteen minutes for
+thirty hours, because a `~` in its script path was never expanded and the
+daemon's stderr went to `/dev/null`, so nothing on screen changed and I found
+it by accident while chasing an `M-a` bug.
+
+### Added
+
+- The daemon has a log, `daemon.log` in the state directory, one line per
+  start and one per failure. `[general] log` moves it. `doctor` prints the
+  log's last line, whether either autosave timer is on and when it last ran,
+  and whether the script it points at exists.
+
+- A health mark on the bar. `[[status.right.segments]] name = "health"` draws
+  one glyph and a word when a timer failed in the last hour, `config.toml` was
+  edited after the daemon started, or the binary on disk is newer than the one
+  running, and nothing at all otherwise. `doctor` has a `health` line that
+  names every reason in full, asked of the daemon itself.
+
+- `panes`, a picker over every pane on the server: `session:window.pane`, the
+  program with the pane's title beside it, `busy` or `waiting 3m` for an agent
+  and `active` or `idle 3m` for the rest, the directory, and the pane's last
+  lines as the preview. Enter jumps there. `--agents` keeps the coding agents,
+  `-t` one session, `--print` gives TSV. Bound to `prefix g` in the examples,
+  `prefix G` for the agent list. The skill file tells an agent to find the
+  others with it instead of a hand-matched `list-panes -a`.
+
+- `[agents]`: which programs are coding agents, how many seconds of silence
+  make one `waiting`, and how often the bar re-reads the list. The `agents`
+  segment draws `3 agents · 1 waiting` when listed under `[status.right]`,
+  from one `list-panes` every two seconds however many clients are attached,
+  and the restore summary counts agents from the same table.
+
+- `note`: a one-line note on a pane, as tmux's pane title. `panes` shows it
+  beside the program, the pane border draws it when `pane-border-status` is
+  on, no text prints the note that is there and `--clear` takes it off.
+
+- `sessions idle`: the sessions with no client and no activity for N days,
+  three by default, most idle first; Enter runs `project close` on the pick so
+  the layout is captured on the way out. The project picker shows `idle 5d` on
+  a detached session a day or more old.
+
+- `keys --unused`: the bindings you wrote that the usage log has no press for,
+  with a line saying how many of how many and how many presses the log holds.
+  The log carries no dates, so "unused" means "since the log began".
+
+- `[theme] default = "by-name"`: an unclaimed session gets one of the six
+  bundled themes chosen from its name, the same one every time and on every
+  machine (FNV-1a, not the standard hasher, whose output may change between
+  Rust releases). The project picker shows a directory in the colour its
+  session will get. A theme picked by hand still wins.
+
+- `config init` writes a fifteen-line starter and refuses to overwrite.
+  `config dump` stays for seeing what a key is called.
+
+- `toggle --last` flips to the previous window, tmux's `last-window`, bound
+  to `M-A` beside `M-a` in the examples. `project show` and `project forget`
+  take a directory, so a project can be inspected from outside its session.
+
+- `docs/tmux.conf.starter.example`: the bar, `status-style`, and eight
+  bindings, with the `-N "custom: <group> ..."` note convention that `keys`
+  and `cheatsheet` depend on written down for the first time. The other two
+  examples say what they are. `docs/tutorial/first-hour.md` walks install to
+  the first picker. `docs/how-to/things-tmux-already-does.md` is the page the
+  port notes planned: `pipe-pane`, `display-menu`, `customize-mode`,
+  `allow-passthrough`, `link-window`, `join-pane`, `respawn-pane`,
+  `select-pane -T` and the `%if` guards, each checked against `man tmux` 3.7c.
+
+- Saved layouts carry `format = 1` and the build that wrote them; snapshots
+  say "a newer tmux-companion wrote it" instead of "unknown field" when the
+  format is ahead of the build. The daemon writes `VERSION` to the state
+  directory on start. The build id carries the short commit and a `-dirty`
+  flag after the seconds.
+
+- `just install` builds, installs and restarts the daemon; `just test-unit`
+  and `just test-e2e` split the fast suite from the fifty-second one, and
+  `TC_SKIP_E2E=1` skips the tmux tests. CI runs an MSRV job and a check that
+  fails on any `@Yogesh(` marker left in the tree; the release workflow gains
+  a gate that runs fmt, clippy, the tests and the tag-matches-Cargo.toml
+  check before it builds anything.
+
+- Design notes under `docs/dev/`, for a `.tmux-companion.toml` in the
+  project root (names only, no commands, so nothing to trust) and a pocket
+  pane per session (park it in a hidden window with `break-pane`, bring it
+  back with `join-pane`). Nothing built yet; the notes say what would change
+  my mind.
+
+### Changed
+
+- Every path in `config.toml` expands a leading `~`, through one function.
+  Four places did it by hand and the autosave script path wasn't one of them.
+
+- `restart` exits 1 with the reason when the new daemon refuses its config.
+  It said "daemon restarted" over a dead daemon, which is the message that
+  sends you looking everywhere but the file you just edited.
+
+- Every command that reads the config says so on stderr, once, when the file
+  doesn't parse and the defaults are in use. `project show` reported the
+  defaults as if they were yours.
+
+- Segment commands exit 1 on a daemon error instead of 0 with the error on
+  stderr; the status bar ignores exit codes, so `tmux.conf` doesn't care.
+  `gst --style bogus` is refused with the list. `keys` and `cheatsheet` with no
+  `-N "custom: ..."` binding say what they need instead of showing an empty
+  picker.
+
+- A client older than the running daemon no longer kills it; only a newer
+  client replaces one, and a daemon too old to report a version counts as
+  older. Two builds in one tmux, `target/release` and `/usr/local/bin`, used
+  to kill each other's daemon on every call.
+
+- The shipped default layout is no layout, a plain shell. It was `nvim`
+  beside `claude`, which is what one laptop runs, and a machine without either
+  got two windows of "command not found" on its first `start`. The pair stays
+  in `config.example.toml` as the example to copy; `[project] preview_window`
+  defaults to empty to match.
+
+- `project show` names a saved-layout file that is there and not used, with
+  the reason: it doesn't parse, it has no windows, or an older build wrote
+  tmux's `default-command` where every pane's program should be. Three cases
+  collapsed into "the config decided" while the file sat there.
+
+- `project --print` with a directory is refused; it opened the session and
+  printed nothing. A directory before a subcommand is refused too; both were
+  dropped in silence.
+
+- `toggle` cycles the session's windows by index instead of matching names
+  against the saved layout, which failed with two windows called `zsh` and
+  with any window the layout didn't name. The `WINDOW` argument is ignored so
+  old bindings still parse.
+
+- `project close` names its own command in messages, quits the vi family and
+  `hx` in their own language and sends everything else `exit`, and refuses a
+  session that isn't there. emacs and nano were on the list for a while and
+  got `:qa!`, which they ignore.
+
+- `[[status.right.segments]]` knows `agents` and `health`. `--print` is the
+  print-and-exit flag on every picker; `--plain` still works as an alias.
+
+- The crash marker means a crash. It used to mean "a daemon is running", so
+  every restore thought it followed one; now a start moves a marker whose pid
+  is dead to `sessions/crashed`, and only that file counts. SIGTERM and SIGINT
+  clear the marker and unlink the socket, so `pkill` no longer reads as a
+  crash. Snapshots taken by the timer say `taken while running` instead of
+  `no clean shutdown recorded`.
+
+- `keys`, `cheatsheet` and `[autoreload]` find `~/.tmux.conf` when there is no
+  `~/.config/tmux/tmux.conf`. `keys-usage.tsv` compacts to counts past 5000
+  lines.
+
+- `rust-version` is 1.95, what the locked dependencies build on (`sysinfo`
+  0.39.3); the source itself needs 1.88 for let-chains. The MSRV job checks
+  with the lockfile in place instead of regenerating it.
+
+- `resurrect` and `run_theme` moved out of `cli.rs` into `sessions/cli.rs`
+  and `theme/cli.rs`; `cli.rs` is 850 lines shorter. `CLAUDE.md`'s module
+  table is regenerated from the tree and its build section names the recipes.
+
+- The reference docs match the tool: `configuration.md` has a section for
+  every table, including `[sessions]` and `[[restore.program]]`, which had
+  none, and no longer tells you to turn on the deprecated `[autosave]`. The
+  five port-planning documents and `coverage.md` moved to `docs/dev/` with a
+  banner.
+
+### Removed
+
+- `[git] branch_tail_len`. It was documented and never read; the tail the
+  ellipsis keeps is fixed in `segments/git.rs`. `[git] branch_max_len` is now
+  read when the `--branch-max-len` flag is absent, which it never was.
+
+### Deprecated
+
+- Top-level `autosave` says so in its help and reports status with no flags.
+  `[sessions] autosave` is the timer to use; `config check` has said so since
+  0.2.0.
+
+### Fixed
+
+- `[autosave] script = "~/..."` failed every run with "is missing" while
+  `ls` found the file. See the top of this entry.
+
+- Opening a project typed `"reattach-to-user-namespace -l /bin/zsh"` into the
+  new shell, where the quotes made it one word. Builds before 93d60a9 saved
+  tmux's `default-command` as every window's program; those files are now
+  read as no layout, so the project opens from its `[[layout]]` instead of as
+  bare shells.
+
+- `M-a` did nothing with two windows of the same name and cycled wrong with
+  three.
+
+- A first `project` open printed tmux's `can't find session` before
+  succeeding.
+
+- `doctor` says `run tmux-companion restart` on a version mismatch and when
+  `config.toml` is newer than the daemon.
+
 ## 0.2.0 - 2026-09-24
 
 ### Changed
