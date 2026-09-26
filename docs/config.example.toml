@@ -243,6 +243,17 @@ separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 # name = "agents"
 # separator_before = " "
 
+# One mark when the daemon knows something needs a look: a timer that failed
+# in the last hour, config.toml edited after the daemon started, or a newer
+# binary on disk than the one running. The glyph and the word for the first
+# reason, `+N` when there are more, and nothing at all when the daemon is
+# fine. `tmux-companion doctor` prints every reason in full on its health
+# line. Two stats every five seconds while this block is here.
+#
+# [[status.right.segments]]
+# name = "health"
+# separator_before = " "
+
 # Jobs stopped or running under a pane, drawn by `tmux-companion sh-jobs`.
 #
 # This was `vim-bg`, which asked one question with one answer baked in: is

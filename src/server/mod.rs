@@ -139,6 +139,10 @@ pub async fn run() -> anyhow::Result<()> {
         ),
     }
 
+    // The state comes first so the timers can note a failure on it; before
+    // the health mark existed a failed timer had only the log to go to.
+    let state = Arc::new(Mutex::new(ServerState::with_config(config.clone())));
+
     // Started before the accept loop, so it runs for as long as the daemon
     // does and stops when it stops. That is the whole of the lifetime
     // management the zsh version needed a PID lock file for.
@@ -146,7 +150,11 @@ pub async fn run() -> anyhow::Result<()> {
         let home = std::env::var("HOME").unwrap_or_default();
         let script = config.autosave.script_path(&home);
         let interval = std::time::Duration::from_secs(config.autosave.interval_secs.max(1));
-        tokio::spawn(crate::tasks::autosave_loop(script, interval));
+        tokio::spawn(crate::tasks::autosave_loop(
+            script,
+            interval,
+            Arc::clone(&state),
+        ));
     }
 
     // A snapshot of the whole server on the schedule the config asks for, and
@@ -171,6 +179,7 @@ pub async fn run() -> anyhow::Result<()> {
     if config.sessions.autosave != crate::config::SessionsAutosave::Off {
         tokio::spawn(crate::sessions::timer::sessions_autosave_loop(
             config.sessions.clone(),
+            Arc::clone(&state),
         ));
     }
 
@@ -194,7 +203,6 @@ pub async fn run() -> anyhow::Result<()> {
     }
 
     let autofetch = config.git.autofetch.clone();
-    let state = Arc::new(Mutex::new(ServerState::with_config(config)));
 
     // Off unless asked for: this is the only part of the tool that talks to a
     // network, and a daemon quietly reaching a remote is not a surprise

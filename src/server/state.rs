@@ -9,6 +9,7 @@ use crate::{
     config::{Config, GlyphMap},
     segments::agents::AgentsSample,
     segments::git::GitStatus,
+    segments::health::HealthSample,
     segments::network::NetSample,
 };
 
@@ -62,6 +63,13 @@ pub struct ServerState {
     /// The count rather than the render, because the render depends on the
     /// bar background and the count is the part that costs a tmux call.
     pub agents_cache: Option<(AgentsSample, Instant)>,
+    /// When this daemon came up, for telling a file edited since from one
+    /// edited before.
+    pub started_at: std::time::SystemTime,
+    /// The last timer or segment that failed, and when, for the health mark.
+    pub last_failure: Option<(String, Instant)>,
+    /// The last health check with the time it ran.
+    pub health_cache: Option<(HealthSample, Instant)>,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
@@ -110,6 +118,9 @@ impl ServerState {
             },
             battery_cache: None,
             agents_cache: None,
+            started_at: std::time::SystemTime::now(),
+            last_failure: None,
+            health_cache: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),
@@ -241,6 +252,44 @@ impl ServerState {
     /// Store a count with the time the list was read.
     pub fn agents_store(&mut self, sample: AgentsSample) {
         self.agents_cache = Some((sample, Instant::now()));
+    }
+
+    // ── health ───────────────────────────────────────────────────────────────
+
+    /// Remember that something failed, for the mark on the bar.
+    pub fn note_failure(&mut self, what: impl Into<String>) {
+        self.last_failure = Some((what.into(), Instant::now()));
+    }
+
+    /// The last failure, if it was within the health window.
+    pub fn recent_failure(&self) -> Option<String> {
+        self.last_failure
+            .as_ref()
+            .filter(|(_, t)| t.elapsed() < crate::segments::health::FAILURE_WINDOW)
+            .map(|(what, _)| what.clone())
+    }
+
+    /// Whether any configured segment is `health`.
+    pub fn health_wanted(&self) -> bool {
+        self.config
+            .status
+            .right
+            .segments
+            .iter()
+            .any(|s| s.name == crate::config::SegmentName::Health)
+    }
+
+    /// The last check, if it is still fresh.
+    pub fn health_cached(&self) -> Option<HealthSample> {
+        self.health_cache
+            .as_ref()
+            .filter(|(_, t)| t.elapsed() < crate::segments::health::INTERVAL)
+            .map(|(s, _)| s.clone())
+    }
+
+    /// Store a check with the time it ran.
+    pub fn health_store(&mut self, sample: HealthSample) {
+        self.health_cache = Some((sample, Instant::now()));
     }
 }
 

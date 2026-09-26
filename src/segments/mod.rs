@@ -7,6 +7,7 @@ pub mod battery;
 pub mod clients;
 /// Git status.
 pub mod git;
+pub mod health;
 /// Bandwidth rate.
 pub mod network;
 /// Jobs stopped or running under a pane.

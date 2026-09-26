@@ -96,6 +96,7 @@ description they had.
 | `src/segments/agents.rs` | how many coding agents are running, and how many are waiting on you |
 | `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |
 | `src/segments/clients.rs` | how many other clients are attached to this server, session and window |
+| `src/segments/health.rs` | one mark on the bar when the daemon knows something is wrong |
 | `src/segments/git.rs` | git status: running the command, parsing porcelain v2, and rendering it into a tmux segment |
 | `src/segments/network.rs` | network bandwidth: a counter read, the arithmetic that turns two reads into a rate, and the IEC formatting |
 | `src/segments/sh_jobs.rs` | jobs stopped under a pane: which ones, and what to draw for each |

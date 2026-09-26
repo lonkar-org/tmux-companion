@@ -27,6 +27,7 @@ pub async fn report() -> String {
     let _ = writeln!(out, "  daemon log    {}", log_state());
     let _ = writeln!(out, "  sessions      {}", sessions_state());
     let _ = writeln!(out, "  autosave      {}", autosave_state());
+    let _ = writeln!(out, "  health        {}", health_state().await);
     let _ = writeln!(out, "  tmux          {}", tmux_version());
     let _ = writeln!(out, "  platform      {}", platform());
     out
@@ -206,6 +207,29 @@ fn autosave_state() -> String {
         crate::tasks::last_save(),
         script.display()
     )
+}
+
+/// What the health mark would say, asked of the running daemon.
+///
+/// The daemon holds the two things a client cannot see: when it started and
+/// which timer last failed. A daemon that is not there has no health to
+/// report, and a daemon too old to answer `__health` says so.
+async fn health_state() -> String {
+    let sock = crate::client::sock_path();
+    let Ok(_) = tokio::net::UnixStream::connect(&sock).await else {
+        return "no daemon to ask".to_string();
+    };
+    match crate::client::send_once(&crate::proto::Request::raw(
+        "__health",
+        serde_json::Value::Null,
+    ))
+    .await
+    {
+        Ok(r) if r.error.is_some() => "the daemon predates the health check".to_string(),
+        Ok(r) if r.output.trim().is_empty() => "ok".to_string(),
+        Ok(r) => r.output.lines().collect::<Vec<_>>().join("; "),
+        Err(e) => format!("not answering: {e}"),
+    }
 }
 
 fn state_dir_state() -> String {

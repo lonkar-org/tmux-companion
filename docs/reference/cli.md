@@ -22,7 +22,7 @@ Each one prints tmux markup on stdout and exits.
 
 | Command | Arguments |
 | --- | --- |
-| `status-right [PATH]` | The whole right-hand side in one call: git, bandwidth and battery, computed concurrently. `--style` is `fill`, `outline` or `outline-bright` and anything else is refused with that list; `--branch-max-len N` middle-ellipsizes a branch name longer than N, and without the flag `[git] branch_max_len` decides, 20 out of the box; `--branch-icon`, `--force`, `--ttl SECS` |
+| `status-right [PATH]` | The whole right-hand side in one call: git, bandwidth and battery, computed concurrently, plus the `agents` count and the `health` mark when `[status.right]` lists them. `--style` is `fill`, `outline` or `outline-bright` and anything else is refused with that list; `--branch-max-len N` middle-ellipsizes a branch name longer than N, and without the flag `[git] branch_max_len` decides, 20 out of the box; `--branch-icon`, `--force`, `--ttl SECS` |
 | `gst [PATH] [PANE_PID]` | Git status on its own. Same flags, plus `--no-cap`, `--no-daemon` and `--no-tmux` |
 
 A daemon error exits the command 1 with the error on stderr. tmux ignores the

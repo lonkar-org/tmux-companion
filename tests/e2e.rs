@@ -1217,6 +1217,48 @@ fn panes_lists_what_runs_where_and_the_bar_counts_the_agents() {
     );
 }
 
+#[test]
+fn the_health_mark_appears_when_the_config_changes_under_a_running_daemon() {
+    // The [autosave] timer failed for a day with only the log to show for it.
+    // This drives the one case a test can make happen on purpose: the daemon
+    // starts, config.toml is written after it, and the bar says `config`.
+    let Some(t) = Tmux::start("health") else {
+        return;
+    };
+    let config = t.sandbox.join("config/tmux-companion/config.toml");
+    let text = "[[status.right.segments]]\nname = \"git\"\n\n\
+                [[status.right.segments]]\nname = \"health\"\nseparator_before = \" \"\n";
+    std::fs::write(&config, text).unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+
+    // A healthy daemon draws no mark at all.
+    let (out, err, ok) = t.run(&["status-right", &dir.display().to_string()]);
+    assert!(ok, "status-right failed:\n{err}");
+    assert!(!out.contains("config"), "nothing changed yet: {out:?}");
+
+    // mtime resolution is a second on some filesystems, so the edit lands a
+    // clear second after the daemon read the file.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(&config, format!("{text}\n# edited\n")).unwrap();
+
+    // The check is cached for five seconds; the mark shows on the read after.
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["status-right", &dir.display().to_string()]);
+            out.contains("config")
+        }),
+        "the bar never showed the config mark"
+    );
+
+    let (out, _, ok) = t.run(&["doctor"]);
+    assert!(ok);
+    let health = out
+        .lines()
+        .find(|l| l.trim_start().starts_with("health"))
+        .unwrap_or_else(|| panic!("no health line in {out:?}"));
+    assert!(health.contains("config.toml changed"), "{health:?}");
+}
+
 // ── the sessions store ───────────────────────────────────────────────────────
 //
 // The unit tests under `src/sessions` assert values, and there are 126 of them.

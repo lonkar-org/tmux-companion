@@ -96,11 +96,18 @@ pub fn last_save() -> String {
 /// No lock file, because there is one daemon and it owns this task. No liveness
 /// check either: the task cannot outlive the process it runs in, which is what
 /// the zsh loop's `tmux has-session` was for.
-pub async fn autosave_loop(script: std::path::PathBuf, interval: Duration) {
+pub async fn autosave_loop(
+    script: std::path::PathBuf,
+    interval: Duration,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+) {
     loop {
         tokio::time::sleep(interval).await;
         if let Err(e) = save_now(&script).await {
             eprintln!("tmux-companion: autosave failed: {e}");
+            // The log is where this went for a day unseen; the health mark
+            // on the bar is the reason anybody looks at the log.
+            state.lock().await.note_failure(format!("autosave: {e}"));
         }
     }
 }

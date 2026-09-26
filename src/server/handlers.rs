@@ -53,6 +53,7 @@ pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
         net,
         battery,
         "",
+        "",
     )
 }
 
@@ -73,6 +74,7 @@ pub fn assemble_right_with(
     net: &str,
     battery: &str,
     agents: &str,
+    health: &str,
 ) -> String {
     use crate::config::SegmentName;
 
@@ -83,6 +85,7 @@ pub fn assemble_right_with(
             SegmentName::Net => net,
             SegmentName::Battery => battery,
             SegmentName::Agents => agents,
+            SegmentName::Health => health,
         };
         if rendered.is_empty() {
             continue;
@@ -183,6 +186,9 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             Ok(String::new())
         }
         "__rusage" => rusage_line(),
+        // Every reason the health mark would show, one per line, empty when
+        // there is none; what `doctor` prints on its health line.
+        "__health" => Ok(health_check(&state).await.reasons.join("\n")),
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
 
@@ -278,12 +284,16 @@ async fn render_right(
     // All four run concurrently.  `net`'s expensive half is the counter read,
     // which touches no shared state; its arithmetic needs `&mut ServerState`
     // and is applied afterwards, so nothing here holds a lock across an await.
-    let (gst, battery, net_sample, agents) = tokio::join!(
+    let (gst, battery, net_sample, agents, health) = tokio::join!(
         segments::git::render(&opts, state),
         battery(state),
         segments::network::sample(),
         agents(state),
+        health(state),
     );
+    // What failed on this pass, remembered once the locks below are done
+    // with, so the health mark can say so.
+    let mut failed: Vec<String> = Vec::new();
 
     let net = match net_sample {
         Ok((rx, tx)) => {
@@ -307,6 +317,7 @@ async fn render_right(
         }
         Err(e) => {
             eprintln!("tmux-companion: net segment failed: {e}");
+            failed.push(format!("net segment: {e}"));
             String::new()
         }
     };
@@ -314,14 +325,64 @@ async fn render_right(
     // A failing segment must not blank the whole side, but it must not vanish
     // silently either — a permanently empty git segment is otherwise
     // indistinguishable from a directory that is not a repository.
-    let right = state.lock().await.config.status.right.clone();
+    let gst = segment_or_empty("gst", gst, &mut failed);
+    let battery = segment_or_empty("battery", battery, &mut failed);
+    let right = {
+        let mut st = state.lock().await;
+        for what in failed {
+            st.note_failure(what);
+        }
+        st.config.status.right.clone()
+    };
     Ok(assemble_right_with(
-        &right,
-        &segment_or_empty("gst", gst),
-        &net,
-        &segment_or_empty("battery", battery),
-        &agents,
+        &right, &gst, &net, &battery, &agents, &health,
     ))
+}
+
+/// The health mark, behind its five-second cache.
+///
+/// Same shape as `agents`: read under one lock, the two stats outside it,
+/// stored under another. Nothing is checked when no configured segment is
+/// `health`; `__health` asks the same question for `doctor` regardless.
+async fn health(state: &Arc<Mutex<ServerState>>) -> String {
+    let (wanted, cached, bar_bg) = {
+        let s = state.lock().await;
+        (
+            s.health_wanted(),
+            s.health_cached(),
+            s.config.bar.background.clone(),
+        )
+    };
+    if !wanted {
+        return String::new();
+    }
+    let sample = match cached {
+        Some(sample) => sample,
+        None => {
+            let fresh = health_check(state).await;
+            state.lock().await.health_store(fresh.clone());
+            fresh
+        }
+    };
+    segments::health::format_health(&sample, &bar_bg)
+}
+
+/// The three questions, answered now.
+async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::HealthSample {
+    let (started, failure) = {
+        let s = state.lock().await;
+        (s.started_at, s.recent_failure())
+    };
+    let config_changed = match crate::config::load() {
+        Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
+        _ => false,
+    };
+    let binary_newer = std::env::current_exe()
+        .map(|exe| segments::health::newer_than(&exe, started))
+        .unwrap_or(false);
+    segments::health::HealthSample {
+        reasons: segments::health::reasons(failure.as_deref(), config_changed, binary_newer),
+    }
 }
 
 /// The agent count, behind its `[agents] interval_secs` cache.
@@ -355,11 +416,16 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
     segments::agents::format_agents(sample.total, sample.waiting, &bar_bg)
 }
 
-fn segment_or_empty(name: &str, result: anyhow::Result<String>) -> String {
+fn segment_or_empty(
+    name: &str,
+    result: anyhow::Result<String>,
+    failed: &mut Vec<String>,
+) -> String {
     match result {
         Ok(s) => s,
         Err(e) => {
             eprintln!("tmux-companion: {name} segment failed: {e}");
+            failed.push(format!("{name} segment: {e}"));
             String::new()
         }
     }
@@ -595,7 +661,7 @@ mod tests {
         // so this is the test that keeps those two from drifting apart.
         let right = crate::config::StatusRight::default();
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B", ""),
+            assemble_right_with(&right, "G", "N", "B", "", ""),
             assemble_right("G", "N", "B")
         );
     }
@@ -610,7 +676,7 @@ mod tests {
             }],
             trailing_space: true,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "G ");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "G ");
     }
 
     #[test]
@@ -629,7 +695,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "BG");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "BG");
     }
 
     #[test]
@@ -648,7 +714,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "NB");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "NB");
     }
 
     #[test]
@@ -662,7 +728,7 @@ mod tests {
             trailing_space: false,
         };
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B", ""),
+            assemble_right_with(&right, "G", "N", "B", "", ""),
             format!("<{}>B", crate::tmux::icons::ARROW_RIGHT)
         );
     }
@@ -674,7 +740,7 @@ mod tests {
             ..Default::default()
         };
         let with = assemble_right("G", "N", "B");
-        let without = assemble_right_with(&right, "G", "N", "B", "");
+        let without = assemble_right_with(&right, "G", "N", "B", "", "");
         assert_eq!(with, format!("{without} "));
     }
 

@@ -103,9 +103,13 @@ in
 .Bl -tag -width Ds
 .It Ic status-right Oo Ar path Oc Op Fl -style Ar style , Fl -branch-max-len Ar n
 Git, bandwidth and battery in one call, computed concurrently, and the agent
-count when
+count and the health mark when
 .Ic [status.right]
-asks for it.
+asks for them.
+The health mark is one glyph and a word when a timer failed in the last hour,
+.Pa config.toml
+changed after the daemon started, or the binary on disk is newer than the
+daemon running; nothing when the daemon is fine.
 One
 .Ql #()
 rather than three.
@@ -966,7 +970,8 @@ need no entry.
 .It Ic doctor
 What a bug report needs: the version, the socket, what the config says, the
 last line of the daemon log, whether either autosave is running and when it
-last did, what tmux says, and what is missing.
+last did, every reason the health mark would show, what tmux says, and what is
+missing.
 A daemon from another build, one that does not answer, and a config file
 edited after the daemon started each end their line with
 .Ql run tmux-companion restart ,

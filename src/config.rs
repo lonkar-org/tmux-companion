@@ -1478,6 +1478,8 @@ pub enum SegmentName {
     /// it, but the daemon would still read the pane list every
     /// `[agents] interval_secs` for a segment nobody asked for.
     Agents,
+    /// One mark when the daemon knows something needs a look.
+    Health,
 }
 
 /// Expand `{NAME}` placeholders to the glyphs they name.

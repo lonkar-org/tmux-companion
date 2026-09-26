@@ -387,7 +387,10 @@ pub async fn take_snapshot(
 /// the interval, because a cron slot has to be noticed inside the minute it
 /// names and because a long sleep oversleeps by however long the machine was
 /// suspended.
-pub async fn sessions_autosave_loop(config: Sessions) {
+pub async fn sessions_autosave_loop(
+    config: Sessions,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+) {
     let mut last: Option<i64> = None;
     loop {
         tokio::time::sleep(TICK).await;
@@ -403,10 +406,16 @@ pub async fn sessions_autosave_loop(config: Sessions) {
         // crash is exactly the one nobody comes back to correct.
         match take_snapshot(&config, &[], false, false).await {
             Ok(_) => last = Some(now),
-            // A server that is not running, or one whose output could not be
-            // read, is not worth a line in a log nobody reads. The next tick
-            // tries again.
-            Err(_) => last = Some(now),
+            // A server that is not running is the usual case, and the bar is
+            // not drawn then either, so recording it costs nothing; a failure
+            // while tmux runs is the one the health mark is for.
+            Err(e) => {
+                state
+                    .lock()
+                    .await
+                    .note_failure(format!("sessions autosave: {e}"));
+                last = Some(now);
+            }
         }
     }
 }
