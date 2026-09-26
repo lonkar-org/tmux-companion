@@ -174,3 +174,6 @@ rm -rf ~/.config/tmux/themes            # only if `theme init` wrote them
 ```
 
 The socket under `/tmp` goes with the daemon. Nothing else is on disk.
+
+See also [things tmux already does](things-tmux-already-does.md), for the
+things people install a plugin for that tmux 3.x does on its own.

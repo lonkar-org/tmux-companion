@@ -214,6 +214,7 @@ Every setting with its default is in
 | [docs/how-to/install.md](docs/how-to/install.md) | the four ways in, and how to remove it |
 | [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
 | [docs/how-to/agents.md](docs/how-to/agents.md) | the skill that teaches a coding agent to share your tmux server |
+| [docs/how-to/things-tmux-already-does.md](docs/how-to/things-tmux-already-does.md) | logging, menus, moving panes, one config across versions: tmux does these without a plugin |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
 | [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
 | [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |
