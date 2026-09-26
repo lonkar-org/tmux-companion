@@ -804,17 +804,61 @@ pub fn theme_for_session(
     dir: &Path,
 ) -> Option<PathBuf> {
     let namespace = session.split('/').next().unwrap_or(session);
-    let candidates = [
-        map.get(session),
-        config.namespace.get(namespace),
-        Some(&config.default),
-    ];
+    let by_name;
+    let default = if config.default == BY_NAME {
+        by_name = theme_by_name(session, &by_name_candidates(dir));
+        by_name.as_ref()
+    } else {
+        Some(&config.default)
+    };
+    let candidates = [map.get(session), config.namespace.get(namespace), default];
     candidates
         .into_iter()
         .flatten()
         .filter(|name| !name.is_empty())
         .map(|name| dir.join(format!("{name}.tmux")))
         .find(|path| path.is_file())
+}
+
+/// The `[theme] default` that means "one of the bundled six, chosen from the
+/// session's name".
+///
+/// Every session then has a colour of its own from the moment it is created,
+/// with nothing picked and nothing written down, and the same session gets
+/// the same colour on every machine, because the choice is a function of the
+/// name and nothing else.
+pub const BY_NAME: &str = "by-name";
+
+/// The bundled themes that are on disk, in the fixed order of [`BASE_THEMES`].
+///
+/// Only the six, not their shades or anything somebody added: a pool that
+/// changed whenever a file appeared would move every session's colour, and
+/// the point of choosing by name is that the colour stays put.
+pub fn by_name_candidates(dir: &Path) -> Vec<&'static str> {
+    BASE_THEMES
+        .iter()
+        .map(|(stem, _, _)| *stem)
+        .filter(|stem| dir.join(format!("{stem}.tmux")).is_file())
+        .collect()
+}
+
+/// A theme for a name, the same one every time.
+///
+/// FNV-1a rather than the standard library's hasher, whose output is allowed
+/// to change between Rust releases; a session's colour changing on an
+/// upgrade is the one thing this must not do. `None` when there is nothing
+/// to choose from.
+pub fn theme_by_name(name: &str, candidates: &[&str]) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in name.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    let index = usize::try_from(hash % candidates.len() as u64).ok()?;
+    Some(candidates[index].to_string())
 }
 
 #[cfg(test)]
@@ -993,6 +1037,74 @@ mod picker_tests {
                 &std::collections::HashMap::new(),
                 &crate::config::Theme::default(),
                 Path::new("/nowhere"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn by_name_gives_every_session_a_colour_of_its_own_and_keeps_it() {
+        let dir = std::env::temp_dir().join(format!("tc-byname-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        for (stem, _, _) in BASE_THEMES {
+            std::fs::write(dir.join(format!("{stem}.tmux")), "set @theme-name X\n").expect("write");
+        }
+        let config = crate::config::Theme {
+            default: BY_NAME.to_string(),
+            namespace: std::collections::HashMap::new(),
+        };
+        let empty = std::collections::HashMap::new();
+
+        let api = theme_for_session("api", &empty, &config, &dir).expect("a theme");
+        assert_eq!(
+            api,
+            theme_for_session("api", &empty, &config, &dir).unwrap()
+        );
+        assert!(api.is_file());
+        // Six names, six colours: not a proof of spread, but a change to the
+        // hash or the pool that collapsed them would show up here.
+        let picks: std::collections::HashSet<_> = ["api", "web", "docs", "infra", "blog", "ops"]
+            .iter()
+            .map(|n| theme_for_session(n, &empty, &config, &dir).unwrap())
+            .collect();
+        assert!(picks.len() >= 4, "{picks:?}");
+
+        // The map still wins, so a picked colour is kept.
+        let map = std::collections::HashMap::from([("api".to_string(), "ink".to_string())]);
+        assert_eq!(
+            theme_for_session("api", &map, &config, &dir),
+            Some(dir.join("ink.tmux"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_by_name_pick_is_pinned_so_an_upgrade_cannot_move_a_colour() {
+        let six: Vec<&str> = BASE_THEMES.iter().map(|(s, _, _)| *s).collect();
+        // Values computed once and written down; a change here is a change
+        // to every session's colour on every machine.
+        assert_eq!(theme_by_name("api", &six).as_deref(), Some("plum"));
+        assert_eq!(
+            theme_by_name("tmux-companion", &six).as_deref(),
+            Some("ember")
+        );
+        assert_eq!(theme_by_name("", &six).as_deref(), Some("ink"));
+        assert_eq!(theme_by_name("api", &[]), None);
+        assert_eq!(theme_by_name("api", &["only"]).as_deref(), Some("only"));
+    }
+
+    #[test]
+    fn by_name_with_no_bundled_theme_on_disk_paints_nothing() {
+        let config = crate::config::Theme {
+            default: BY_NAME.to_string(),
+            namespace: std::collections::HashMap::new(),
+        };
+        assert_eq!(
+            theme_for_session(
+                "x",
+                &std::collections::HashMap::new(),
+                &config,
+                Path::new("/nowhere")
             ),
             None
         );

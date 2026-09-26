@@ -723,6 +723,12 @@ shell = ""
 # lighter and a darker sibling once `theme gen --shades` has run. Name one of
 # those, or one of your own.
 #
+# `by-name` is the other answer: every unclaimed session gets one of the six
+# chosen from its name, the same one every time and on every machine, so a
+# server full of sessions is told apart at a glance with nothing picked and
+# nothing written down. The project picker shows a directory in the colour its
+# session is about to get. A theme picked with `theme pick` still wins.
+#
 # Empty leaves unclaimed sessions unpainted, which is also what happens when
 # the theme named here is not on disk: there is nothing to source and nothing
 # is said about it, because this runs once per session created and a message

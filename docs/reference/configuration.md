@@ -775,7 +775,11 @@ line commented out, so with the hook in place this decides the colour of a
 session nothing else claims; a session a project map already claims keeps its
 own. `theme init` writes six, `ember`, `pine`, `slate`, `plum`, `sand` and
 `ink`, each with a lighter and a darker sibling once `theme gen --shades` has
-run, and you can name one of those or one of your own. Empty leaves unclaimed
+run, and you can name one of those or one of your own. `by-name` gives every
+unclaimed session one of the six chosen from its name, the same one every time
+and on every machine, so sessions are told apart at a glance with nothing
+picked; the project picker shows a directory in the colour its session will
+get, and a theme picked by hand still wins. Empty leaves unclaimed
 sessions unpainted, which is also what happens when the theme named here isn't
 on disk: nothing is sourced and nothing is said, because this runs once per
 session created and a message here would land on the terminal at the moment

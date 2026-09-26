@@ -147,7 +147,19 @@ pub fn directories_from(
     listing: &str,
     project_theme: &HashMap<String, String>,
     theme_colour: &HashMap<String, String>,
+    default_theme: &str,
 ) -> Vec<Row> {
+    // The same six the session-created hook would choose from, so a directory
+    // shows the colour its session is about to get.
+    let by_name: Vec<&str> = if default_theme == crate::theme::BY_NAME {
+        crate::theme::BASE_THEMES
+            .iter()
+            .map(|(stem, _, _)| *stem)
+            .filter(|stem| theme_colour.contains_key(*stem))
+            .collect()
+    } else {
+        Vec::new()
+    };
     listing
         .lines()
         .map(str::trim)
@@ -157,6 +169,10 @@ pub fn directories_from(
             let colour = project_theme
                 .get(&label)
                 .and_then(|theme| theme_colour.get(theme))
+                .or_else(|| {
+                    crate::theme::theme_by_name(&label, &by_name)
+                        .and_then(|stem| theme_colour.get(&stem))
+                })
                 .cloned();
             Row {
                 kind: Kind::Directory,
@@ -264,7 +280,10 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
         .unwrap_or_default();
     let colours = theme_colours(&read_theme_files(home));
     let listing = source.list(home).await.join("\n");
-    merge(sessions, directories_from(&listing, &map, &colours))
+    merge(
+        sessions,
+        directories_from(&listing, &map, &colours, &config.theme.default),
+    )
 }
 
 /// `tmux list-sessions`, with the fields the rows need.
@@ -621,6 +640,7 @@ mod tests {
             "/Users/y/git-repos/mysetup\n",
             &project_theme,
             &theme_colour,
+            "ink",
         );
         assert_eq!(rows[0].colour.as_deref(), Some("colour60"));
         assert_eq!(rows[0].label, "mysetup");
@@ -628,8 +648,34 @@ mod tests {
     }
 
     #[test]
+    fn a_by_name_default_colours_a_directory_the_way_its_session_will_be() {
+        // The hook picks from the bundled six by name; the picker row shows
+        // that colour before the session exists, and the map still wins.
+        let theme_colour: HashMap<String, String> = crate::theme::BASE_THEMES
+            .iter()
+            .map(|(stem, _, index)| (stem.to_string(), format!("colour{index}")))
+            .collect();
+        let rows = directories_from("/w/api\n", &HashMap::new(), &theme_colour, "by-name");
+        let expected =
+            crate::theme::theme_by_name("api", &["ember", "pine", "slate", "plum", "sand", "ink"])
+                .unwrap();
+        assert_eq!(
+            rows[0].colour.as_deref(),
+            theme_colour.get(&expected).map(String::as_str)
+        );
+
+        let mapped = HashMap::from([("api".to_string(), "ink".to_string())]);
+        let rows = directories_from("/w/api\n", &mapped, &theme_colour, "by-name");
+        assert_eq!(rows[0].colour.as_deref(), Some("colour104"));
+
+        // A plain default names nothing for an unmapped directory.
+        let rows = directories_from("/w/api\n", &HashMap::new(), &theme_colour, "ink");
+        assert_eq!(rows[0].colour, None);
+    }
+
+    #[test]
     fn a_directory_the_map_does_not_know_has_no_colour() {
-        let rows = directories_from("/tmp/unknown\n", &HashMap::new(), &HashMap::new());
+        let rows = directories_from("/tmp/unknown\n", &HashMap::new(), &HashMap::new(), "ink");
         assert_eq!(rows[0].colour, None);
     }
 
@@ -639,7 +685,7 @@ mod tests {
         // always give: session `y` sits at the home directory, and deriving a
         // name from that opened a new session called `yogesh` the first time.
         let sessions = sessions_from("100\ty\t/Users/yogesh\t\n", 0);
-        let dirs = directories_from("/Users/yogesh\n", &HashMap::new(), &HashMap::new());
+        let dirs = directories_from("/Users/yogesh\n", &HashMap::new(), &HashMap::new(), "ink");
         let merged = merge(sessions, dirs);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].kind, Kind::Session);
@@ -649,7 +695,7 @@ mod tests {
     #[test]
     fn directories_that_are_not_open_survive_the_merge() {
         let sessions = sessions_from("100\tone\t/one\t\n", 0);
-        let dirs = directories_from("/two\n/three\n", &HashMap::new(), &HashMap::new());
+        let dirs = directories_from("/two\n/three\n", &HashMap::new(), &HashMap::new(), "ink");
         assert_eq!(merge(sessions, dirs).len(), 3);
     }
 
