@@ -34,6 +34,10 @@ pub struct Row {
     pub path: String,
     /// The `colourNNN` this project is painted with, if it has one.
     pub colour: Option<String>,
+    /// Seconds since anything happened in the session, for a live session no
+    /// client is attached to. `None` for a directory and for a session
+    /// somebody is in, however quiet.
+    pub idle: Option<u64>,
 }
 
 /// A tmux session name cannot hold a dot or a colon.
@@ -77,12 +81,21 @@ pub fn short_path(path: &str, home: &str) -> String {
     format!("~/{}/{last}", abbrev.join("/"))
 }
 
+/// The `list-sessions -F` format [`sessions_from`] reads: last attached, name,
+/// path, theme colour, attached clients, and last activity in unix seconds.
+const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}";
+
 /// Parse `tmux list-sessions` output into rows, most recently attached first.
 ///
 /// tmux lists alphabetically and this wants recency, because a picker whose
 /// first row is the session you are in and whose second is the one you were in
 /// before makes "go back" a keypress rather than a search.
-pub fn sessions_from(listing: &str) -> Vec<Row> {
+///
+/// `now` is unix seconds and is what the idle age is measured against; it is
+/// an argument so the parse can be tested against a fixed clock. The two
+/// fields behind it are optional in the listing, so a row without them is a
+/// session whose idleness is simply unknown rather than a line dropped.
+pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
     let mut with_time: Vec<(i64, Row)> = listing
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -92,6 +105,14 @@ pub fn sessions_from(listing: &str) -> Vec<Row> {
             let label = f.next()?.to_string();
             let path = f.next()?.to_string();
             let colour = f.next().filter(|c| !c.is_empty()).map(str::to_string);
+            let attached: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
+            let activity: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
+            let idle = match (attached, activity) {
+                (Some(attached), Some(activity)) => {
+                    crate::sessions::idle::idle_for(attached, activity, now)
+                }
+                _ => None,
+            };
             Some((
                 last_attached,
                 Row {
@@ -99,12 +120,25 @@ pub fn sessions_from(listing: &str) -> Vec<Row> {
                     label,
                     path,
                     colour,
+                    idle,
                 },
             ))
         })
         .collect();
     with_time.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
     with_time.into_iter().map(|(_, r)| r).collect()
+}
+
+/// The `idle 5d` a picker row carries, or nothing.
+///
+/// Only from a day up. A session left ten minutes ago is one somebody is
+/// between, and a label on it would make every detached session look stale,
+/// which is the opposite of the point: the label is there so the handful
+/// worth closing stand out from the rest.
+pub fn idle_column(row: &Row) -> Option<String> {
+    row.idle
+        .filter(|secs| *secs >= crate::sessions::idle::DAY)
+        .map(|secs| format!("idle {}", crate::sessions::idle::age(secs)))
 }
 
 /// Turn a directory source's lines into rows, colouring each from the project
@@ -133,6 +167,7 @@ pub fn directories_from(
                     .to_string(),
                 path: path.to_string(),
                 colour,
+                idle: None,
             }
         })
         .collect()
@@ -219,7 +254,7 @@ pub fn resolve_typed(query: &str, cwd: &str, home: &str) -> Option<String> {
 
 /// Every row the picker should show: sessions first, then the directory source.
 pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
-    let sessions = sessions_from(&tmux_sessions().await);
+    let sessions = sessions_from(&tmux_sessions().await, crate::sessions::idle::now());
     let source = crate::dirsource::DirsSource::from_config(&config.project);
     if source == crate::dirsource::DirsSource::None {
         return sessions;
@@ -235,11 +270,7 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
 /// `tmux list-sessions`, with the fields the rows need.
 async fn tmux_sessions() -> String {
     let out = tokio::process::Command::new("tmux")
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}",
-        ])
+        .args(["list-sessions", "-F", SESSIONS_FORMAT])
         .output()
         .await;
     match out {
@@ -532,15 +563,54 @@ mod tests {
         // tmux lists alphabetically; the picker wants recency, so that up-arrow
         // from the first row is the session you were in before.
         let listing = "100\talpha\t/a\tcolour60\n300\tzulu\t/z\tcolour98\n200\tmike\t/m\t\n";
-        let rows = sessions_from(listing);
+        let rows = sessions_from(listing, 0);
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, vec!["zulu", "mike", "alpha"]);
     }
 
     #[test]
     fn a_session_with_no_theme_has_no_colour_rather_than_a_wrong_one() {
-        let rows = sessions_from("200\tmike\t/m\t\n");
+        let rows = sessions_from("200\tmike\t/m\t\n", 0);
         assert_eq!(rows[0].colour, None);
+    }
+
+    #[test]
+    fn a_detached_session_carries_its_age_and_an_attached_one_does_not() {
+        use crate::sessions::idle::DAY;
+        let now = 1_700_000_000;
+        let listing = format!(
+            "100\tstale\t/s\tcolour60\t0\t{}\n200\tbusy\t/b\t\t1\t{}\n300\told\t/o\t\t\n",
+            now - 5 * DAY,
+            now - 5 * DAY,
+        );
+        let rows = sessions_from(&listing, now);
+        let by_name = |n: &str| rows.iter().find(|r| r.label == n).unwrap();
+        assert_eq!(by_name("stale").idle, Some(5 * DAY));
+        // Somebody is in it, however long it has sat.
+        assert_eq!(by_name("busy").idle, None);
+        // A listing from before the two fields existed still parses.
+        assert_eq!(by_name("old").idle, None);
+    }
+
+    #[test]
+    fn the_idle_column_appears_from_a_day_up_and_not_before() {
+        use crate::sessions::idle::DAY;
+        let row = |idle: Option<u64>| Row {
+            kind: Kind::Session,
+            label: "x".into(),
+            path: "/x".into(),
+            colour: None,
+            idle,
+        };
+        // Ten minutes ago is a session somebody is between, not a stale one.
+        assert_eq!(idle_column(&row(Some(600))), None);
+        assert_eq!(idle_column(&row(Some(DAY - 1))), None);
+        assert_eq!(idle_column(&row(Some(DAY))).as_deref(), Some("idle 1d"));
+        assert_eq!(
+            idle_column(&row(Some(5 * DAY + 7))).as_deref(),
+            Some("idle 5d")
+        );
+        assert_eq!(idle_column(&row(None)), None);
     }
 
     #[test]
@@ -568,7 +638,7 @@ mod tests {
         // The session row knows the session's real name, which a path does not
         // always give: session `y` sits at the home directory, and deriving a
         // name from that opened a new session called `yogesh` the first time.
-        let sessions = sessions_from("100\ty\t/Users/yogesh\t\n");
+        let sessions = sessions_from("100\ty\t/Users/yogesh\t\n", 0);
         let dirs = directories_from("/Users/yogesh\n", &HashMap::new(), &HashMap::new());
         let merged = merge(sessions, dirs);
         assert_eq!(merged.len(), 1);
@@ -578,7 +648,7 @@ mod tests {
 
     #[test]
     fn directories_that_are_not_open_survive_the_merge() {
-        let sessions = sessions_from("100\tone\t/one\t\n");
+        let sessions = sessions_from("100\tone\t/one\t\n", 0);
         let dirs = directories_from("/two\n/three\n", &HashMap::new(), &HashMap::new());
         assert_eq!(merge(sessions, dirs).len(), 3);
     }

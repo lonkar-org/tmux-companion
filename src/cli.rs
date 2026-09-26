@@ -839,6 +839,14 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             }
             SessionsAction::List { json } => run_sessions_list(json)?,
             SessionsAction::Show { stamp, json } => run_sessions_show(stamp, json)?,
+            SessionsAction::Idle { days, print } => {
+                // The picker answers with a name and the close is the same
+                // `project close`, layout capture included, so a session shut
+                // from here comes back from the project picker as it was.
+                if let Some(name) = crate::sessions::idle::run(days, print).await? {
+                    run_close_project(Some(name), false, true).await?;
+                }
+            }
         },
         Cmd::Shutdown => run_daemon_shutdown().await?,
         Cmd::Restart => run_daemon_restart().await?,
@@ -1293,16 +1301,25 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
             Kind::Directory => "dir    ",
         };
         let where_it_is = crate::project::short_path(&r.path, &home);
+        // A detached session quiet for a day or more says so in a fourth
+        // column, so the stale ones show without leaving the list. The column
+        // is only pushed when there is something to say: an empty last cell
+        // would still pad the path out to the widest row.
+        let idle = crate::project::idle_column(r);
+        let mut columns = vec![mark.trim_end().to_string(), r.label.clone(), where_it_is];
+        let mut label = format!("{mark} {} {}", r.label, columns[2]);
+        if let Some(idle) = idle {
+            // In the label too, so typing `idle` filters down to them.
+            label.push(' ');
+            label.push_str(&idle);
+            columns.push(idle);
+        }
         items.push(
             crate::picker::Item::with_preview(
-                format!("{mark} {} {where_it_is}", r.label),
+                label,
                 project_preview(r, &config.project.preview_window).await,
             )
-            .in_columns(vec![
-                mark.trim_end().to_string(),
-                r.label.clone(),
-                where_it_is,
-            ])
+            .in_columns(columns)
             // The project's own theme colour as a block in front of the row.
             // Painting the whole line in it, which is what this did before,
             // makes a dark project colour unreadable on a dark popup.
@@ -1535,6 +1552,16 @@ pub enum SessionsAction {
         /// Print JSON rather than a listing
         #[arg(long)]
         json: bool,
+    },
+    /// Sessions nobody is attached to that have been quiet for days; picking
+    /// one runs `project close` on it
+    Idle {
+        /// Quiet for longer than this many days
+        #[arg(long, default_value_t = 3)]
+        days: u64,
+        /// Print the rows as TSV and exit, opening nothing
+        #[arg(long)]
+        print: bool,
     },
 }
 

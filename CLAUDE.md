@@ -105,6 +105,7 @@ description they had.
 | `src/sessions/mod.rs` | snapshots of the whole tmux server, and the generations they are kept in |
 | `src/sessions/capture.rs` | turning three tmux listings into one snapshot |
 | `src/sessions/cli.rs` | the client half of `sessions resurrect`: the confirm screen, the countdown and the crash acknowledgement, which run in the terminal and so cannot live in the daemon |
+| `src/sessions/idle.rs` | sessions nobody has looked at for days: which they are, and the picker that closes one |
 | `src/sessions/import.rs` | reading the tab-separated format tmux-resurrect writes |
 | `src/sessions/restore.rs` | rebuilding a server from a snapshot |
 | `src/sessions/store.rs` | where snapshots live, how many are kept, and which one is newest |

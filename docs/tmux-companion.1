@@ -214,6 +214,12 @@ and a directory it has never seen can still be typed in full.
 Picking a live session switches to it; picking a directory builds its session
 from
 .Ic [[layout]] .
+A live session nobody is attached to that has been quiet for a day or more
+carries an
+.Ql idle
+column with its age, so the stale ones stand out without leaving the list;
+.Ic sessions idle
+is the one that closes them.
 .Fl -print
 lists the rows and exits, and opens nothing; it cannot be combined with a
 directory.
@@ -403,6 +409,21 @@ The command is marked with how sure the capture was of it:
 for what the pane was started with,
 .Ql Guessed
 for what it happened to be running, and a shell for a pane sitting at a prompt.
+.It Ic sessions idle Oo Fl -days Ar n Oc Op Fl -print
+Every live session with no client attached and nothing happening in it for
+longer than
+.Ar n
+days, three by default, most idle first: the name, the directory, how long it
+has sat and how many windows it holds.
+Activity is what tmux counts, output in any window included, so a detached
+session with a job still printing is not idle.
+Picking one runs
+.Ic project close
+on it, layout capture and all, so a session shut from here opens again from the
+project picker as it was.
+.Fl -print
+lists the rows as tab-separated columns and exits.
+No such session is one line on stderr and exit 0, not an error.
 .It Ic shutdown
 Stop the tmux-companion daemon, and only that.
 tmux and its sessions are not touched, and the next client starts a new
