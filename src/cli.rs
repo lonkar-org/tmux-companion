@@ -2628,13 +2628,13 @@ async fn run_project_forget() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A project's saved layout with the server's `default-command` read as no
-/// command, which is how every caller that opens or describes it wants it.
+/// A project's saved layout, or `None` when it came from the capture that
+/// recorded `default-command` in place of every program, so the project opens
+/// from its `[[layout]]` instead of as bare shells.
 async fn load_saved(path: &str) -> Option<crate::saved::SavedLayout> {
-    let mut saved = crate::saved::load(path)?;
+    let saved = crate::saved::load(path)?;
     let default_command = tmux_capture(&["show-options", "-gv", "default-command"]).await;
-    crate::saved::forget_default_command(&mut saved, &default_command);
-    Some(saved)
+    (!crate::saved::carries_default_command(&saved, &default_command)).then_some(saved)
 }
 
 /// `project show`: which layout this project gets, and which file decided.
