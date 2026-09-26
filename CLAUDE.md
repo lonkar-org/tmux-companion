@@ -70,6 +70,7 @@ description they had.
 | `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings somebody wrote rather than the ones tmux ships |
 | `src/cli.rs` | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server |
 | `src/client.rs` | find the socket, start a server if nothing answers, send one JSON line and read one back |
+| `src/click.rs` | a mouse click on a segment of the bar |
 | `src/close.rs` | closing a project session by letting every window exit on its own |
 | `src/config.rs` | the configuration file: where it lives, how it is parsed, and what happens when it cannot be |
 | `src/dirsource.rs` | where the project picker's directory list comes from |

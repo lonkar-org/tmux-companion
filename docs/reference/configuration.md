@@ -415,9 +415,14 @@ nudge_command = []
 style = "words"
 ```
 
-`style = "glyphs"` draws the segment as the robot and the count, then a
-raised hand and the waiting count, for a bar already full of words; the two
-glyphs are `AGENT` and `WAITING` under `[glyphs.icons]`.
+`style = "glyphs"` draws the segment as the robot and the count, then an
+arrow, an hourglass and the waiting count, for a bar already full of words;
+the glyphs are `AGENT`, `AGENT_TO` and `WAITING` under `[glyphs.icons]`.
+
+A click on the segment opens the inbox, and one on `health` the brief, once
+tmux.conf has `bind -T root MouseDown1StatusRight run-shell "tmux-companion
+click '#{mouse_status_range}'"`; `on_click` on a `[[status.right.segments]]`
+row runs a tmux command of your own instead, with `{me}` for this binary.
 
 `inbox` keeps the agents that have stopped, with the last lines of each one's
 screen captured the moment it stopped, so `tmux-companion inbox` shows the

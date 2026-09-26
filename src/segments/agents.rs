@@ -16,7 +16,7 @@ use crate::config::AgentsStyle;
 use crate::panes::{self, Pane, WAITING_COLOUR};
 use crate::tmux::{
     format::colored_segment,
-    icons::{AGENT, WAITING},
+    icons::{AGENT, AGENT_TO, WAITING},
 };
 
 /// The colour of the count when nothing is waiting.
@@ -69,9 +69,12 @@ pub fn format_agents(total: usize, waiting: usize, bar_bg: &str, style: AgentsSt
                 format!(" \u{b7} {waiting} waiting"),
             )
         }
-        // `󰚩 2   1`: the count beside the robot, the waiting count beside a
-        // raised hand, and nothing spelled out.
-        AgentsStyle::Glyphs => (format!("{AGENT}{total}"), format!("  {WAITING}{waiting}")),
+        // `󰚩 2  1`: the count beside the robot, an arrow, the waiting
+        // count beside an hourglass, and nothing spelled out.
+        AgentsStyle::Glyphs => (
+            format!("{AGENT}{total}"),
+            format!(" {AGENT_TO}{WAITING}{waiting}"),
+        ),
     };
     let mut out = colored_segment(false, QUIET_COLOUR, bar_bg, &quiet);
     if waiting > 0 {
@@ -90,7 +93,7 @@ mod tests {
     fn the_glyph_style_is_the_robot_a_count_a_hand_and_a_count() {
         let drawn = format_agents(2, 1, BAR, AgentsStyle::Glyphs);
         let plain: String = strip(&drawn);
-        assert_eq!(plain, format!("{AGENT}2  {WAITING}1"));
+        assert_eq!(plain, format!("{AGENT}2 {AGENT_TO}{WAITING}1"));
         assert!(!strip(&format_agents(2, 0, BAR, AgentsStyle::Glyphs)).contains(WAITING));
         assert_eq!(format_agents(0, 0, BAR, AgentsStyle::Glyphs), "");
     }

@@ -402,6 +402,13 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// What a mouse click on a segment of the bar does: bound to
+    /// `MouseDown1StatusRight` with `#{mouse_status_range}`
+    Click {
+        /// The range name tmux hands the binding
+        range: String,
+    },
+
     /// What needs you, on one screen: the agents waiting and what they
     /// asked, the health reasons, the sessions idle for days, the numbers
     Brief {
@@ -941,6 +948,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        Cmd::Click { range } => crate::click::run(range).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
         Cmd::Inbox { print } => crate::inbox::run(print).await?,
         Cmd::Journal {

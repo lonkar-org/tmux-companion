@@ -242,6 +242,11 @@ separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 # [[status.right.segments]]
 # name = "agents"
 # separator_before = " "
+# # What a mouse click on it runs, as a tmux command, with `{me}` for this
+# # binary's path; empty is the segment's own default, the inbox here and the
+# # brief on `health`. Needs in tmux.conf:
+# #   bind -T root MouseDown1StatusRight run-shell "tmux-companion click '#{mouse_status_range}'"
+# on_click = ""
 
 # One mark when the daemon knows something needs a look: a timer that failed
 # in the last hour, config.toml edited after the daemon started, or a newer
@@ -509,9 +514,9 @@ nudge_after_secs = 0
 #   nudge_command = ["osascript", "-e", "display notification \"{question}\" with title \"{program} at {at} is waiting ({waited})\""]
 nudge_command = []
 # How the bar's segment reads. `words` is `2 agents · 1 waiting`; `glyphs` is
-# the robot and the count, then a raised hand and the waiting count, for a
-# bar that is already full of words. The glyphs are AGENT and WAITING under
-# [glyphs.icons] if the font disagrees.
+# the robot and the count, then an arrow, an hourglass and the waiting count,
+# for a bar that is already full of words. The glyphs are AGENT, AGENT_TO
+# and WAITING under [glyphs.icons] if the font disagrees.
 style = "words"
 
 [window_names]

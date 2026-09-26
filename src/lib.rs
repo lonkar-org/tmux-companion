@@ -19,9 +19,10 @@ pub mod cache;
 pub mod cheatsheet;
 /// The command-line surface and its dispatch.
 pub mod cli;
+/// Closing a project session politely.
+pub mod click;
 /// Talking to the server over the socket.
 pub mod client;
-/// Closing a project session politely.
 pub mod close;
 /// The configuration file.
 pub mod config;

@@ -91,7 +91,18 @@ pub fn assemble_right_with(
             continue;
         }
         out.push_str(&crate::config::expand_glyphs(&segment.separator_before));
-        out.push_str(rendered);
+        // A range mark is what makes a click on the segment reach the
+        // `MouseDown1StatusRight` binding with the segment's name; tmux
+        // draws its window list the same way. Only the segments that go
+        // somewhere carry one, so the pinned output of the default side
+        // is byte for byte what it was.
+        if segment.name.clickable() || !segment.on_click.trim().is_empty() {
+            out.push_str(&format!("#[range=user|{}]", segment.name.range_name()));
+            out.push_str(rendered);
+            out.push_str("#[norange]");
+        } else {
+            out.push_str(rendered);
+        }
     }
     if right.trailing_space {
         out.push(' ');
@@ -702,6 +713,7 @@ mod tests {
             segments: vec![RightSegment {
                 name: SegmentName::Git,
                 separator_before: String::new(),
+                on_click: String::new(),
             }],
             trailing_space: true,
         };
@@ -716,10 +728,12 @@ mod tests {
                 RightSegment {
                     name: SegmentName::Battery,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
                 RightSegment {
                     name: SegmentName::Git,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
             ],
             trailing_space: false,
@@ -735,10 +749,12 @@ mod tests {
                 RightSegment {
                     name: SegmentName::Net,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
                 RightSegment {
                     name: SegmentName::Battery,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
             ],
             trailing_space: false,
@@ -753,6 +769,7 @@ mod tests {
             segments: vec![RightSegment {
                 name: SegmentName::Battery,
                 separator_before: "<{ARROW_RIGHT}>".to_string(),
+                on_click: String::new(),
             }],
             trailing_space: false,
         };

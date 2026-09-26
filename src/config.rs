@@ -1449,10 +1449,12 @@ impl Default for StatusRight {
                 RightSegment {
                     name: SegmentName::Git,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
                 RightSegment {
                     name: SegmentName::Net,
                     separator_before: String::new(),
+                    on_click: String::new(),
                 },
                 RightSegment {
                     name: SegmentName::Battery,
@@ -1464,6 +1466,7 @@ impl Default for StatusRight {
                     // caught only by a diff against the real tmux.conf.
                     separator_before: "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
                         .to_string(),
+                    on_click: String::new(),
                 },
             ],
             trailing_space: true,
@@ -1486,6 +1489,12 @@ pub struct RightSegment {
     /// is a real preference and was not expressible before.
     #[serde(default)]
     pub separator_before: String,
+    /// The tmux command a mouse click on this segment runs, with `{me}` for
+    /// this binary's path. Empty means the segment's own default: the inbox
+    /// for `agents`, the brief for `health`, nothing for the rest. Needs a
+    /// `MouseDown1StatusRight` binding that calls `click`.
+    #[serde(default)]
+    pub on_click: String,
 }
 
 /// A segment the right-hand side can draw.
@@ -1506,6 +1515,26 @@ pub enum SegmentName {
     Agents,
     /// One mark when the daemon knows something needs a look.
     Health,
+}
+
+impl SegmentName {
+    /// The name a `range=user|X` mark carries for this segment, which is what
+    /// `#{mouse_status_range}` hands back on a click.
+    pub fn range_name(self) -> &'static str {
+        match self {
+            SegmentName::Git => "git",
+            SegmentName::Net => "net",
+            SegmentName::Battery => "battery",
+            SegmentName::Agents => "agents",
+            SegmentName::Health => "health",
+        }
+    }
+
+    /// Whether a click on this segment goes somewhere by default, which is
+    /// what earns it a range mark.
+    pub fn clickable(self) -> bool {
+        matches!(self, SegmentName::Agents | SegmentName::Health)
+    }
 }
 
 /// Expand `{NAME}` placeholders to the glyphs they name.

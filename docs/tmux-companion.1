@@ -94,6 +94,22 @@ so that plain
 lands in the same picker: it opens only when the session is one tmux named
 itself, all digits, with one window, one pane and a shell in it, and leaves
 any other session alone.
+.It Ic click Ar range
+What a mouse click on a segment of the right side does.
+The
+.Ic agents
+and
+.Ic health
+segments carry a
+.Ql range=user|NAME
+mark, the way tmux marks its own window list, so a
+.Ql MouseDown1StatusRight
+binding of
+.Ql run-shell "tmux-companion click '#{mouse_status_range}'"
+reaches this with the segment's name; it runs what
+.Ic [[status.right.segments]] on_click
+says for that segment, or the default: the inbox for the agent count, the
+brief for the health mark, nothing for the rest.
 .It Ic brief Op Fl -print , Fl -hook
 What needs you, on one screen: the agents waiting and what each one asked,
 the reasons the health mark is up, the sessions nobody has touched for three
@@ -138,8 +154,8 @@ and how many of those have drawn nothing for
 .Ic [agents] style
 set to
 .Ql glyphs
-draws the robot and the count, then a raised hand and the waiting count, with
-nothing spelled out.
+draws the robot and the count, then an arrow, an hourglass and the waiting
+count, with nothing spelled out.
 It draws nothing when no agent is running, and the pane list behind it is read
 at most once per
 .Ic [agents] interval_secs

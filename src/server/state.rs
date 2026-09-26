@@ -450,6 +450,7 @@ mod tests {
             .push(crate::config::RightSegment {
                 name: crate::config::SegmentName::Agents,
                 separator_before: String::new(),
+                on_click: String::new(),
             });
         assert!(st.agents_wanted());
     }
