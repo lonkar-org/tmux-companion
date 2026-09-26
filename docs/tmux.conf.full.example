@@ -138,6 +138,14 @@ bind -N "custom: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
 bind -N "custom: config pick a colour theme" C-t \
   display-popup -E -w 70% -h 70% "tmux-companion theme pick"
+# Every pane on the server, with what it runs, whether it has gone quiet and
+# the last lines of its screen; enter jumps there. `g` and `G` are free in
+# tmux's own prefix table. The second one keeps only the agents, which is the
+# list to reach for when the bar says one of them is waiting.
+bind -N "custom: window jump to any pane" g \
+  display-popup -E -w 80% -h 70% "tmux-companion panes"
+bind -N "custom: window jump to an agent" G \
+  display-popup -E -w 80% -h 70% "tmux-companion panes --agents"
 bind -N "custom: project toggle the tools in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
 # The flip between the two most recent windows, for a session with more than two.

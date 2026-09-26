@@ -388,6 +388,20 @@ pub enum Cmd {
     /// is left alone (`sessions restart` is the one that restarts tmux)
     Restart,
 
+    /// Every pane on the server, with what it runs and whether it has gone
+    /// quiet; enter jumps there
+    Panes {
+        /// Only the panes running one of `[agents] programs`
+        #[arg(long)]
+        agents: bool,
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+        /// Only this session's panes
+        #[arg(short = 't', long, value_name = "SESSION")]
+        target: Option<String>,
+    },
+
     /// A cheat sheet of the bindings you wrote, in four boxes
     Cheatsheet {
         /// Print and exit instead of waiting for a keypress
@@ -855,6 +869,14 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         },
         Cmd::Shutdown => run_daemon_shutdown().await?,
         Cmd::Restart => run_daemon_restart().await?,
+        // No `Request::build` and no args struct in proto.rs: this one reads
+        // tmux and draws in this terminal, and the daemon has neither the
+        // list nor the screen. See `panes::run`.
+        Cmd::Panes {
+            agents,
+            print,
+            target,
+        } => crate::panes::run(agents, print, target).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => crate::theme::cli::run(action)?,
@@ -2719,16 +2741,28 @@ async fn open_with_chosen(
 /// project switch is a session nobody is looking at. With more than one client
 /// attached this takes the first, which is the same guess tmux itself makes.
 async fn attached_session() -> Option<String> {
+    attached_client().await.map(|(_, session)| session)
+}
+
+/// The first attached client, as its name and the session it is looking at.
+///
+/// The name is what `switch-client -c` takes, and it is the client to move
+/// when the mover is a popup: `panes` needs it for the same reason
+/// `attached_session` exists.
+pub(crate) async fn attached_client() -> Option<(String, String)> {
     let out = tokio::process::Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
+        .args(["list-clients", "-F", "#{client_name}\t#{client_session}"])
         .output()
         .await
         .ok()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(str::to_string)
+        .filter(|l| !l.is_empty())
+        .find_map(|l| {
+            let (name, session) = l.split_once('\t')?;
+            Some((name.to_string(), session.to_string()))
+        })
 }
 
 /// The attached client's session as a tmux target, `name:`.

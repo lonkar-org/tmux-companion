@@ -49,6 +49,9 @@ pub struct Config {
     /// Announcing a long command that finished out of sight.
     #[serde(default)]
     pub notify: Notify,
+    /// Which programs are coding agents, and when one counts as waiting.
+    #[serde(default)]
+    pub agents: Agents,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -204,6 +207,9 @@ pub struct PickerLayout {
     /// `[picker.open]`, for the application chooser.
     #[serde(default)]
     pub open: PickerOverride,
+    /// `[picker.panes]`, for the list of every pane on the server.
+    #[serde(default)]
+    pub panes: PickerOverride,
 }
 
 /// One picker's departures from `[picker]`.
@@ -279,6 +285,8 @@ pub enum Picker {
     Run,
     /// The application chooser `open --choose` shows.
     Open,
+    /// Every pane on the server, or only the agents among them.
+    Panes,
 }
 
 /// What one picker looks like before anybody configures it.
@@ -314,6 +322,11 @@ fn builtin(
         Picker::Run => (P::None, 0, B::None, L::Hidden),
         // The command the chosen application would run.
         Picker::Open => (P::Bottom, 30, B::Edge, L::TopCenter),
+        // The last few lines of that pane's screen, which is the question
+        // "which of these is the one I want" answered without switching.
+        // Beside the list rather than under it: the rows are wide and the
+        // list is what is being searched.
+        Picker::Panes => (P::Right, 50, B::Edge, L::BottomCenter),
     }
 }
 
@@ -327,6 +340,7 @@ impl PickerLayout {
             Picker::Theme => &self.theme,
             Picker::Run => &self.run,
             Picker::Open => &self.open,
+            Picker::Panes => &self.panes,
         }
     }
 
@@ -713,6 +727,52 @@ impl Default for Notify {
     }
 }
 
+/// Which programs are coding agents, and when one of them is waiting on you.
+///
+/// One list, read by everything that asks "is this pane an agent": the
+/// `panes --agents` filter, the `agents` segment on the bar, and the restore
+/// headline that counts them. It used to be a `match` compiled into the
+/// headline, which meant a new agent on the machine was invisible to all three
+/// until somebody edited the source.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Agents {
+    /// Programs that are coding agents, matched against `pane_current_command`.
+    pub programs: Vec<String>,
+    /// Seconds without output after which an agent counts as waiting for you.
+    ///
+    /// tmux has no per-pane activity time, so this is measured on the window
+    /// the agent is in: a shell you are typing into beside the agent keeps it
+    /// reading as busy. Ten seconds is long enough that a model thinking
+    /// between two tool calls is not called idle, and short enough that a
+    /// question left on the screen is noticed before you wonder why nothing is
+    /// happening.
+    pub waiting_secs: u64,
+    /// Seconds between two reads of the pane list for the bar's `agents`
+    /// segment. One tmux call each, shared by every attached client.
+    pub interval_secs: u64,
+}
+
+impl Default for Agents {
+    fn default() -> Self {
+        Self {
+            programs: [
+                "claude",
+                "codex",
+                "gemini",
+                "cursor-agent",
+                "aider",
+                "opencode",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            waiting_secs: 10,
+            interval_secs: 2,
+        }
+    }
+}
+
 /// Naming windows after what is running in them, from the job table.
 ///
 /// Off by default: renaming somebody's windows is visible, and a window called
@@ -1027,6 +1087,7 @@ impl Default for Config {
             autoreload: Autoreload::default(),
             window_names: WindowNames::default(),
             notify: Notify::default(),
+            agents: Agents::default(),
             autosave: Autosave::default(),
             sessions: Sessions::default(),
             restore: Restore::default(),
@@ -1411,6 +1472,12 @@ pub enum SegmentName {
     Net,
     /// Battery.
     Battery,
+    /// How many coding agents are running, and how many are waiting on you.
+    ///
+    /// Not on the default side: a machine with no agents draws nothing for
+    /// it, but the daemon would still read the pane list every
+    /// `[agents] interval_secs` for a segment nobody asked for.
+    Agents,
 }
 
 /// Expand `{NAME}` placeholders to the glyphs they name.

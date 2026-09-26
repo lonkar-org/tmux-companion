@@ -83,6 +83,11 @@ bind -N "custom: window new one here, or at any directory" c \
 bind -N "custom: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
 
+# Every pane on the server, with what it runs and whether it has gone quiet;
+# enter jumps there. `--agents` narrows it to the coding agents.
+bind -N "custom: window jump to any pane" g \
+  display-popup -E -w 80% -h 70% "tmux-companion panes"
+
 # Everything but this pane goes: a zoom with other panes open, the status bar
 # with none.
 bind -N "custom: pane zen, everything but this one goes" z \

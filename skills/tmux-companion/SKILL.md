@@ -115,8 +115,13 @@ one window is one task inside it, and panes inside that window are the editor, t
 agent and a shell watching something.
 
 1. Find the project session first: `project --print`, or `list-panes -a` matched on
-   `#{pane_current_path}`. Work there. A second session for a repo that already has
-   one splits the human's attention and breaks `project show`.
+   `#{pane_current_path}`. `panes --print` lists every pane as
+   `session:window.pane`, program, state, directory and pane id, one per line,
+   and `panes --agents --print` only the panes running a program in
+   `[agents] programs`; that is how you find where the other agents are and
+   whether one is `busy` or `waiting 3m`. Work there. A second session for a
+   repo that already has one splits the human's attention and breaks
+   `project show`.
 2. One agent per repository unless the human asked for more. Two agents in one
    directory is the case where `claude --continue` picks the wrong conversation.
 3. A task that is genuinely separate gets its own window. Name it after the task,
@@ -131,9 +136,11 @@ agent and a shell watching something.
    announce itself, and remember `ignore` already holds `claude`, `codex`,
    `gemini`, the editors and the pagers, because finishing a two-hour agent is not
    news.
-6. `[project] preview_window` defaults to `ai`, so the project picker previews that
-   window's screen for a live session. A window called `ai` is how the human checks
-   on you without switching. Keep the agent there when the layout has one.
+6. `[project] preview_window` names the window the project picker previews for a
+   live session. It is empty by default, which previews whichever window the
+   session is on. A human running the editor-beside-an-agent layout sets it to
+   `ai`, and that window is how they check on you without switching, so keep
+   the agent in the window the layout gave it.
 7. An agent renames its own window to its version string, `2.1.278`, within
    seconds. `hold_name = true` on a `[[layout.window]]` pins the name. If the
    human's layout does not have it, say so rather than renaming the window on every

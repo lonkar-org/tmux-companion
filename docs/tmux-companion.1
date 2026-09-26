@@ -7,7 +7,7 @@
 .\"
 .\" Every subcommand here is checked against the binary by a test, so a
 .\" command added without a paragraph in this file fails the build.
-.Dd September 24, 2026
+.Dd September 26, 2026
 .Dt TMUX-COMPANION 1
 .Os
 .Sh NAME
@@ -102,10 +102,26 @@ in
 .Pa tmux.conf .
 .Bl -tag -width Ds
 .It Ic status-right Oo Ar path Oc Op Fl -style Ar style , Fl -branch-max-len Ar n
-Git, bandwidth and battery in one call, computed concurrently.
+Git, bandwidth and battery in one call, computed concurrently, and the agent
+count when
+.Ic [status.right]
+asks for it.
 One
 .Ql #()
 rather than three.
+The
+.Ic agents
+segment reads
+.Ql 4 agents \(bu 1 waiting :
+how many panes run one of
+.Ic [agents] programs ,
+and how many of those have drawn nothing for
+.Ic [agents] waiting_secs .
+It draws nothing when no agent is running, and the pane list behind it is read
+at most once per
+.Ic [agents] interval_secs
+however many clients are attached, and never when the segment is not
+configured.
 Takes a path and deliberately no pane pid: a pid makes the git segment
 enumerate every process on the machine, which cost 18.5 ms of its 26.0.
 .Fl -style
@@ -491,6 +507,45 @@ The same hint as
 when no binding carries the note.
 Bound to
 .Ql prefix C-c .
+.It Ic panes Op Fl -agents , Fl -print , Fl t Ar session
+Every pane on the server, one row each: where it is as
+.Ql session:window.pane ,
+what it runs, whether it has gone quiet, and its directory, with the last
+lines of its screen in the preview.
+Enter switches the attached client to that pane, whatever session it is in.
+The pane this runs in is left out, since jumping to where you are is nothing.
+The state column reads
+.Ql busy
+or
+.Ql waiting 3m
+for a pane running one of
+.Ic [agents] programs ,
+.Ql active
+or
+.Ql idle 3m
+for anything else, and
+.Ql reading
+for a pane in copy mode.
+Quiet is measured on the window rather than the pane, because tmux keeps no
+activity time per pane: an agent beside a shell you are typing in reads as
+busy.
+The program column carries the pane's title after a dash when a program set
+one, which is how two
+.Ql claude
+panes in one directory are told apart.
+.Fl -agents
+keeps only the agent rows,
+.Fl t
+only one session's, and
+.Fl -print
+writes the rows as tab-separated columns with the pane id last, and exits.
+With nothing to show it says so on standard error and exits 0.
+Bound to
+.Ql prefix g ,
+and
+.Ql prefix G
+with
+.Fl -agents .
 .It Ic new-window
 A window here, or at any directory.
 The rows are the pane's own directory and then the same source
@@ -764,8 +819,9 @@ Every setting with its default, annotated, is
 The sections are
 .Ic [general] , [dirs] , [git] , [network] , [battery] , [glyphs] ,
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
-.Ic [window_names] , [notify] , [project] , [autosave] , [sessions] ,
-.Ic [[restore.program]] , [run] , [clipboard] , [theme] , [bar] , [picker]
+.Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
+.Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
+.Ic [picker]
 and
 .Ic [open] .
 .Bl -tag -width Ds
@@ -814,9 +870,9 @@ The rest of that section is what a picker looks like rather than what it holds:
 and the preview's own label.
 Each of them can be written again under
 .Ic [picker.keys] , [picker.project] , [picker.window] , [picker.theme] ,
-.Ic [picker.run]
+.Ic [picker.run] , [picker.open]
 or
-.Ic [picker.open]
+.Ic [picker.panes]
 for the one picker that wants a different answer, together with the
 .Ic label , hint
 and
@@ -827,6 +883,18 @@ How big the popup itself is belongs to
 in
 .Pa tmux.conf ,
 not here.
+.Ic [agents] programs
+is the one list of what counts as a coding agent, matched against
+.Ql pane_current_command
+and read by
+.Ic panes Fl -agents ,
+the
+.Ic agents
+segment and the restore headline alike;
+.Ic waiting_secs
+is how long one has to be quiet before it counts as waiting on you, and
+.Ic interval_secs
+how often the bar's segment re-reads the pane list.
 .Ic [open] split
 is which side the editor opens on,
 .Ql right

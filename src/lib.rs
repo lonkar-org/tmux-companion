@@ -37,6 +37,8 @@ pub mod local;
 pub mod notify;
 /// Opening a URL or file found in text.
 pub mod open;
+/// Every pane on the server, as a list to jump from.
+pub mod panes;
 /// The fuzzy picker and its state machine.
 pub mod picker;
 /// Rendering samples of every style, for eyeballing.

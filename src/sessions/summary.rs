@@ -96,18 +96,17 @@ pub fn headline(
     )
 }
 
-/// How many panes in a plan are running something an agent row claimed.
+/// How many panes in a plan are running one of `programs`.
 ///
 /// Counted for the headline, because "6 agents" is the number somebody scans
-/// for when deciding whether this is the restore they meant.
-pub fn agents(plan: &[Planned]) -> usize {
+/// for when deciding whether this is the restore they meant. The list is
+/// `[agents] programs`, the same one the `panes --agents` filter and the bar
+/// segment read, so the three cannot disagree about what an agent is.
+pub fn agents(plan: &[Planned], programs: &[String]) -> usize {
     plan.iter()
         .filter(|p| {
             let first = p.saved.split_whitespace().next().unwrap_or_default();
-            matches!(
-                first,
-                "claude" | "codex" | "gemini" | "cursor-agent" | "aider" | "opencode"
-            )
+            programs.iter().any(|a| a == first)
         })
         .count()
 }
@@ -375,7 +374,19 @@ mod tests {
             ("nvim", Confidence::Exact),
             ("codex", Confidence::Exact),
         ]);
-        assert_eq!(agents(&plan), 2);
+        assert_eq!(agents(&plan, &crate::config::Agents::default().programs), 2);
+    }
+
+    #[test]
+    fn what_counts_as_an_agent_is_the_configured_list() {
+        // The list used to be compiled in, so an agent nobody here had heard
+        // of was never counted.
+        let plan = planned(&[
+            ("myagent --go", Confidence::Exact),
+            ("nvim", Confidence::Exact),
+        ]);
+        assert_eq!(agents(&plan, &[]), 0);
+        assert_eq!(agents(&plan, &["myagent".to_string()]), 1);
     }
 
     #[test]

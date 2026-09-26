@@ -232,6 +232,17 @@ separator_before = ""
 name = "battery"
 separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 
+# How many coding agents are running and how many have gone quiet, as
+# `4 agents · 1 waiting`, with the waiting count coloured. Which programs count
+# and how long quiet is are `[agents]` below. Draws nothing when no agent is
+# running, so the separator goes with it. Not on the side by default: the
+# daemon reads the pane list every `[agents] interval_secs` only while this
+# block is here, and a machine without agents should pay nothing for it.
+#
+# [[status.right.segments]]
+# name = "agents"
+# separator_before = " "
+
 # Jobs stopped or running under a pane, drawn by `tmux-companion sh-jobs`.
 #
 # This was `vim-bg`, which asked one question with one answer baked in: is
@@ -445,6 +456,19 @@ ignore = [
   "top", "htop", "btop", "watch", "ssh", "tmux",
   "claude", "codex", "gemini", "lazygit", "tig", "fzf",
 ]
+
+[agents]
+# One list of what counts as a coding agent, read by everything that asks:
+# `tmux-companion panes --agents`, the `agents` segment on the bar, and the
+# restore headline that counts them. Matched against pane_current_command.
+programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
+# Seconds without output after which an agent counts as waiting for you. tmux
+# has no per-pane activity time, so this is measured on the window the agent is
+# in: a shell you are typing into beside it keeps it reading as busy.
+waiting_secs = 10
+# How often the bar's agents segment re-reads the pane list, in seconds. One
+# tmux call each, shared by every attached client.
+interval_secs = 2
 
 [window_names]
 # Name a window after what is running in its active pane, using the same
@@ -789,8 +813,9 @@ current_window_background = "color236"
 #                           beside a narrow column of names
 #   run       none          the command is the row
 #   open      bottom, 30%   the command the application would run
+#   panes     right,  50%   the last lines of that pane's screen
 #
-# Setting it here overrides all six at once, which is almost never what you
+# Setting it here overrides all seven at once, which is almost never what you
 # want; set it under `[picker.<name>]` instead.
 # preview = "right"
 
@@ -910,7 +935,7 @@ current_window_background = "color236"
 # preview_label_offset = 2
 
 # One picker's answer where it differs from the rest. Every key above can be
-# written again under one of these five, and the preview is the one people
+# written again under one of these seven, and the preview is the one people
 # actually want to set per picker: a theme wants a tall pane beside a narrow
 # list, a key binding wants three lines under a wide one, and a shell history
 # wants no pane at all.
@@ -920,6 +945,8 @@ current_window_background = "color236"
 #   [picker.window]     the directory list a new window opens at
 #   [picker.theme]      the colour themes
 #   [picker.run]        the shell history
+#   [picker.open]       the application chooser
+#   [picker.panes]      every pane on the server, or the agents among them
 #
 # Three keys exist only in these tables, because they are the words one picker
 # says and not a shape every picker shares: `label` is what it calls itself on

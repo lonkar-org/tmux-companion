@@ -7,6 +7,7 @@ use std::{
 use crate::{
     cache::TtlMap,
     config::{Config, GlyphMap},
+    segments::agents::AgentsSample,
     segments::git::GitStatus,
     segments::network::NetSample,
 };
@@ -56,6 +57,11 @@ pub struct ServerState {
     pub dir_aliases: HashMap<PathBuf, String>,
     /// Cached battery render with the time it was computed.
     pub battery_cache: Option<(String, Instant)>,
+    /// The last agent count, with the time the pane list was read.
+    ///
+    /// The count rather than the render, because the render depends on the
+    /// bar background and the count is the part that costs a tmux call.
+    pub agents_cache: Option<(AgentsSample, Instant)>,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
@@ -103,6 +109,7 @@ impl ServerState {
                 config_aliases
             },
             battery_cache: None,
+            agents_cache: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),
@@ -201,6 +208,39 @@ impl ServerState {
     /// Store a battery render with the time it was computed.
     pub fn battery_store(&mut self, rendered: String) {
         self.battery_cache = Some((rendered, Instant::now()));
+    }
+
+    // ── agents ───────────────────────────────────────────────────────────────
+
+    /// Whether any configured segment is the agent count.
+    ///
+    /// When none is, the pane list is never read: the segment is off the
+    /// default side precisely so a machine without agents pays nothing for it.
+    pub fn agents_wanted(&self) -> bool {
+        self.config
+            .status
+            .right
+            .segments
+            .iter()
+            .any(|s| s.name == crate::config::SegmentName::Agents)
+    }
+
+    /// How long one read of the pane list is trusted.
+    pub fn agents_interval(&self) -> Duration {
+        Duration::from_secs(self.config.agents.interval_secs)
+    }
+
+    /// The last count, if it is still fresh.
+    pub fn agents_cached(&self) -> Option<AgentsSample> {
+        self.agents_cache
+            .as_ref()
+            .filter(|(_, t)| t.elapsed() < self.agents_interval())
+            .map(|(s, _)| *s)
+    }
+
+    /// Store a count with the time the list was read.
+    pub fn agents_store(&mut self, sample: AgentsSample) {
+        self.agents_cache = Some((sample, Instant::now()));
     }
 }
 
@@ -325,6 +365,30 @@ mod tests {
         assert!(st.battery_cached().is_none());
         st.battery_store("100%".into());
         assert_eq!(st.battery_cached(), Some("100%".to_string()));
+    }
+
+    #[test]
+    fn agents_cache_round_trips_and_is_off_the_default_side() {
+        let mut st = ServerState::new();
+        assert!(!st.agents_wanted(), "the default side does not read panes");
+        assert!(st.agents_cached().is_none());
+        let sample = AgentsSample {
+            total: 2,
+            waiting: 1,
+        };
+        st.agents_store(sample);
+        assert_eq!(st.agents_cached(), Some(sample));
+        assert_eq!(st.agents_interval(), Duration::from_secs(2));
+
+        st.config
+            .status
+            .right
+            .segments
+            .push(crate::config::RightSegment {
+                name: crate::config::SegmentName::Agents,
+                separator_before: String::new(),
+            });
+        assert!(st.agents_wanted());
     }
 
     #[test]

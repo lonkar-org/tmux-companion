@@ -68,6 +68,7 @@ one is explained on this page:
 | `[project]`, `[[project.override]]` | the directory source, the visit command, which layout | [Where the directory list comes from](#where-the-directory-list-comes-from) |
 | `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with | [What a new project session starts with](#what-a-new-project-session-starts-with) |
 | `[notify]` | announcing a long command that finished out of sight | [Saying a long command finished](#saying-a-long-command-finished) |
+| `[agents]` | which programs are coding agents, and when one counts as waiting | [Which programs are agents](#which-programs-are-agents) |
 | `[window_names]` | naming a window after what runs in it | [Naming windows after what is running](#naming-windows-after-what-is-running) |
 | `[autoreload]` | sourcing tmux's config when it changes | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
 | `[autosave]` | deprecated; the older, narrower `[sessions]` | [Saving every session](#saving-every-session) |
@@ -383,6 +384,42 @@ long any of it had already been going.
 
 The plugin this comes from is
 [rickstaa/tmux-notify](https://github.com/rickstaa/tmux-notify).
+
+### Which programs are agents
+
+```toml
+[agents]
+programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
+waiting_secs = 10
+interval_secs = 2
+```
+
+One list, read by everything that asks whether a pane is an agent:
+`tmux-companion panes --agents`, the `agents` segment on the bar, and the
+headline `sessions resurrect` shows, which counts them. It used to be compiled
+into that headline, so an agent the code hadn't heard of was invisible to all
+three. `programs` is matched against `pane_current_command`.
+
+`waiting_secs` is how long an agent has to draw nothing before it counts as
+waiting on you, which is the number the bar colours and the picker sorts
+first. tmux keeps no activity time per pane, only per window, so it's measured
+on the window the agent is in: a shell you're typing into beside it keeps it
+reading as busy. Ten seconds is long enough that a model thinking between two
+tool calls isn't called idle, and short enough that a question left on the
+screen is noticed before you wonder why nothing's happening.
+
+`interval_secs` is how often the daemon re-reads the pane list for the bar's
+segment. One `tmux list-panes` each, shared by every attached client, and none
+at all unless a `[[status.right.segments]]` block names `agents`:
+
+```toml
+[[status.right.segments]]
+name = "agents"
+separator_before = " "
+```
+
+That draws `4 agents · 1 waiting`, with the second half coloured, and nothing
+when no agent is running, so the separator goes with it.
 
 ### Naming windows after what is running
 
@@ -847,7 +884,7 @@ default, zero to split whatever it's given the way fzf does), `preview_border`,
 and what fzf or skim called it.
 
 `[picker.keys]`, `[picker.project]`, `[picker.window]`, `[picker.theme]`,
-`[picker.run]` and `[picker.open]` hold one picker's exceptions, and a key left out of one takes
+`[picker.run]`, `[picker.open]` and `[picker.panes]` hold one picker's exceptions, and a key left out of one takes
 whatever `[picker]` says. `label`, `hint` and `preview_label` exist only there,
 because they're the words one picker says rather than a shape they share:
 `label` is what it calls itself on its border, `hint` the line naming the

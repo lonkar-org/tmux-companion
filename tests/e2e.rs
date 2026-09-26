@@ -1155,6 +1155,68 @@ fn the_manual_names_every_configuration_section() {
     );
 }
 
+/// `panes --print` lists a pane with what it runs, and the bar counts it as an
+/// agent when `[agents] programs` says so.
+///
+/// `sleep` stands in for an agent because it is on every machine and stays
+/// put, which `claude` does neither of on a CI runner. The state is `busy` when
+/// the row is read a moment after the command started, and `waiting` if the
+/// runner took longer than `waiting_secs` to get here; both are the feature
+/// working, so either is accepted.
+#[test]
+fn panes_lists_what_runs_where_and_the_bar_counts_the_agents() {
+    let Some(t) = Tmux::start("panes") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[agents]\nprograms = [\"sleep\"]\n\n\
+         [[status.right.segments]]\nname = \"git\"\n\n\
+         [[status.right.segments]]\nname = \"agents\"\nseparator_before = \" \"\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    send_when_ready(&t, "=alpha:", "sleep 300");
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("sleep"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+
+    let (out, err, ok) = t.run(&["panes", "--print"]);
+    assert!(ok, "panes --print failed:\n{err}");
+    let row = out
+        .lines()
+        .find(|l| l.starts_with("alpha:"))
+        .unwrap_or_else(|| panic!("no row for alpha in {out:?}"));
+    let cols: Vec<&str> = row.split('\t').collect();
+    assert_eq!(cols.len(), 5, "at, program, state, cwd, id: {row:?}");
+    assert_eq!(cols[1], "sleep", "{row:?}");
+    assert!(
+        cols[2] == "busy" || cols[2].starts_with("waiting "),
+        "an agent is busy or waiting, never idle: {row:?}"
+    );
+    assert!(cols[4].starts_with('%'), "the id is last: {row:?}");
+
+    // The agent filter keeps it, and a session nobody has is nothing to show
+    // rather than an error.
+    let (out, _, ok) = t.run(&["panes", "--agents", "--print"]);
+    assert!(ok && out.contains("\tsleep\t"), "{out:?}");
+    let (out, err, ok) = t.run(&["panes", "-t", "nowhere", "--print"]);
+    assert!(ok, "{err}");
+    assert!(out.trim().is_empty(), "{out:?}");
+    assert!(err.contains("no panes to show"), "{err:?}");
+
+    // And the bar, through the daemon this test's config started.
+    let (out, err, ok) = t.run(&["status-right", &dir.display().to_string()]);
+    assert!(ok, "status-right failed:\n{err}");
+    assert!(
+        out.contains("1 agent"),
+        "the bar did not count the sleeping agent: {out:?}"
+    );
+}
+
 // ── the sessions store ───────────────────────────────────────────────────────
 //
 // The unit tests under `src/sessions` assert values, and there are 126 of them.

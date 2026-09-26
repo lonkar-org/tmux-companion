@@ -1,4 +1,6 @@
 //! One module per thing the status bar can draw.
+/// How many coding agents are running, and how many are waiting.
+pub mod agents;
 /// Battery percentage and icon.
 pub mod battery;
 /// How many other clients are attached.

@@ -10,6 +10,8 @@
 
 /// Added file, staged (md-file_plus).
 pub const ADDED: &str = "\u{f034c} ";
+/// A coding agent, drawn before the count in the `agents` segment (md-robot).
+pub const AGENT: &str = "\u{f06a9} ";
 /// Commits this branch has that its upstream does not (md-arrow_up).
 pub const AHEAD: &str = "\u{f40a} ";
 /// Solid right-pointing triangle, the powerline wedge between segments.
@@ -108,6 +110,7 @@ pub const WHITE_SPACE: &str = " ";
 pub fn by_name(name: &str) -> Option<&'static str> {
     match name {
         "ADDED" => Some(ADDED),
+        "AGENT" => Some(AGENT),
         "AHEAD" => Some(AHEAD),
         "ARROW_RIGHT" => Some(ARROW_RIGHT),
         "ARROW_LEFT" => Some(ARROW_LEFT),

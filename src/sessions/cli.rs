@@ -154,7 +154,7 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
         let headline = crate::sessions::summary::headline(
             built.sessions.len(),
             snapshot.pane_count(),
-            crate::sessions::summary::agents(&building),
+            crate::sessions::summary::agents(&building, &config.agents.programs),
             &snapshot.header.captured_at,
             snapshot.header.clean,
         );

@@ -47,7 +47,13 @@ pub fn right_separator() -> String {
 /// compare that against.
 #[cfg(test)]
 pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
-    assemble_right_with(&crate::config::StatusRight::default(), gst, net, battery)
+    assemble_right_with(
+        &crate::config::StatusRight::default(),
+        gst,
+        net,
+        battery,
+        "",
+    )
 }
 
 /// Assemble the right-hand side from a configured segment list.
@@ -66,6 +72,7 @@ pub fn assemble_right_with(
     gst: &str,
     net: &str,
     battery: &str,
+    agents: &str,
 ) -> String {
     use crate::config::SegmentName;
 
@@ -75,6 +82,7 @@ pub fn assemble_right_with(
             SegmentName::Git => gst,
             SegmentName::Net => net,
             SegmentName::Battery => battery,
+            SegmentName::Agents => agents,
         };
         if rendered.is_empty() {
             continue;
@@ -267,13 +275,14 @@ async fn render_right(
         bar_bg,
     };
 
-    // All three run concurrently.  `net`'s expensive half is the counter read,
+    // All four run concurrently.  `net`'s expensive half is the counter read,
     // which touches no shared state; its arithmetic needs `&mut ServerState`
     // and is applied afterwards, so nothing here holds a lock across an await.
-    let (gst, battery, net_sample) = tokio::join!(
+    let (gst, battery, net_sample, agents) = tokio::join!(
         segments::git::render(&opts, state),
         battery(state),
         segments::network::sample(),
+        agents(state),
     );
 
     let net = match net_sample {
@@ -311,7 +320,39 @@ async fn render_right(
         &segment_or_empty("gst", gst),
         &net,
         &segment_or_empty("battery", battery),
+        &agents,
     ))
+}
+
+/// The agent count, behind its `[agents] interval_secs` cache.
+///
+/// Read under one lock, refreshed outside it, stored under another: the read
+/// is a `tmux list-panes`, and holding the mutex across it would stall every
+/// other segment behind a process spawn. Nothing is read at all when no
+/// configured segment is `agents`.
+async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
+    let (wanted, cached, programs, waiting_secs, bar_bg) = {
+        let s = state.lock().await;
+        (
+            s.agents_wanted(),
+            s.agents_cached(),
+            s.config.agents.programs.clone(),
+            s.config.agents.waiting_secs,
+            s.config.bar.background.clone(),
+        )
+    };
+    if !wanted {
+        return String::new();
+    }
+    let sample = match cached {
+        Some(sample) => sample,
+        None => {
+            let fresh = segments::agents::sample(&programs, waiting_secs).await;
+            state.lock().await.agents_store(fresh);
+            fresh
+        }
+    };
+    segments::agents::format_agents(sample.total, sample.waiting, &bar_bg)
 }
 
 fn segment_or_empty(name: &str, result: anyhow::Result<String>) -> String {
@@ -554,7 +595,7 @@ mod tests {
         // so this is the test that keeps those two from drifting apart.
         let right = crate::config::StatusRight::default();
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B"),
+            assemble_right_with(&right, "G", "N", "B", ""),
             assemble_right("G", "N", "B")
         );
     }
@@ -569,7 +610,7 @@ mod tests {
             }],
             trailing_space: true,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "G ");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "G ");
     }
 
     #[test]
@@ -588,7 +629,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "BG");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "BG");
     }
 
     #[test]
@@ -607,7 +648,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B"), "NB");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", ""), "NB");
     }
 
     #[test]
@@ -621,7 +662,7 @@ mod tests {
             trailing_space: false,
         };
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B"),
+            assemble_right_with(&right, "G", "N", "B", ""),
             format!("<{}>B", crate::tmux::icons::ARROW_RIGHT)
         );
     }
@@ -633,7 +674,7 @@ mod tests {
             ..Default::default()
         };
         let with = assemble_right("G", "N", "B");
-        let without = assemble_right_with(&right, "G", "N", "B");
+        let without = assemble_right_with(&right, "G", "N", "B", "");
         assert_eq!(with, format!("{without} "));
     }
 

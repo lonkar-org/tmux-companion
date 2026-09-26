@@ -6,6 +6,7 @@
 # the same character is a status bar with less information than a blank one.
 
 ADDED = "+"
+AGENT = "ai "
 AHEAD = "^"
 BEHIND = "v"
 BRANCH = ""

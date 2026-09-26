@@ -13,7 +13,7 @@
 //! Nothing here talks to tmux. Capture fills these types in from what tmux
 //! reported and restore reads them back, so everything in this module is
 //! arithmetic over data somebody else fetched, which is what lets it be tested
-//! without a server. The one exception is [`idle`], which is a listing rather
+//! without a server. The one exception is `idle`, which is a listing rather
 //! than a snapshot and asks tmux itself, with the parse kept pure.
 
 pub mod capture;

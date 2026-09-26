@@ -79,6 +79,7 @@ description they had.
 | `src/main.rs` | the binary: parses arguments, picks a runtime, hands over to the library |
 | `src/notify.rs` | telling you a long command finished in a pane you were not looking at |
 | `src/open.rs` | open a URL or a file reference found in text |
+| `src/panes.rs` | every pane on the server, as a list to jump from, and the agents among them |
 | `src/picker/mod.rs` | the picker: a fuzzy-matched list in a terminal, shared by every chooser in the tool |
 | `src/picker/ansi.rs` | enough ANSI to draw a preview |
 | `src/picker/screen.rs` | the picker's own screen: the state behind it, the matching, and the drawing |
@@ -92,6 +93,7 @@ description they had.
 | `src/run.rs` | run a command from history in a pane beside the one you are in |
 | `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |
 | `src/segments/mod.rs` | one module per thing the status bar can draw |
+| `src/segments/agents.rs` | how many coding agents are running, and how many are waiting on you |
 | `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |
 | `src/segments/clients.rs` | how many other clients are attached to this server, session and window |
 | `src/segments/git.rs` | git status: running the command, parsing porcelain v2, and rendering it into a tmux segment |

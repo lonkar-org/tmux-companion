@@ -31,6 +31,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 4 | `autosave`, `toggle` | done — autosave is a daemon task, toggle cycles the session's windows by index |
 | 5 | `theme`, `run` | done — run's history is byte-identical to `fc -ln` over 1127 commands |
 | 6 | `open`, `close-project`, the probes, the tmux.conf logic | done — plus `clipboard` and `zoom`, and docs/tmux.conf.full.example |
+| 7 | `panes`, and the `agents` segment | done — one `list-panes -a` shared by the picker and the bar, `[agents]` is the one list of what an agent is, and the restore headline reads it too |
 
 Each row also carries its documentation row from the table in
 `comrades-port.md`, its config row, and its before and after numbers in
