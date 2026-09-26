@@ -17,7 +17,9 @@
 //! temporary directory silently falls back to the live daemon.
 //!
 //! They skip rather than fail when tmux is not installed, so `cargo test` still
-//! works on a machine without it.
+//! works on a machine without it, and `TC_SKIP_E2E=1` skips them on a machine
+//! that has one. Neither holds when `CI` is set: there a skip is a failure,
+//! because a suite that passes by not running is the thing CI exists to notice.
 
 use std::{
     path::{Path, PathBuf},
@@ -48,16 +50,24 @@ impl Tmux {
     /// The shipped example rather than a minimal one on purpose: it is the
     /// file people copy, and nothing else in the repository ever ran it.
     fn start(name: &str) -> Option<Self> {
-        if Command::new("tmux").arg("-V").output().is_err() {
-            eprintln!("skipping {name}: no tmux on this machine");
+        if std::env::var_os("TC_SKIP_E2E").is_some_and(|v| v == "1") {
+            skipping(name, "TC_SKIP_E2E=1");
             return None;
         }
-        let binary = target_binary()?;
+        if Command::new("tmux").arg("-V").output().is_err() {
+            skipping(name, "no tmux on this machine");
+            return None;
+        }
+        let binary = target_binary();
         let sandbox = std::env::temp_dir().join(format!("tce2e-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&sandbox);
-        std::fs::create_dir_all(sandbox.join("bin")).ok()?;
-        std::fs::create_dir_all(sandbox.join("state")).ok()?;
-        std::fs::create_dir_all(sandbox.join("config/tmux-companion")).ok()?;
+        // A sandbox that cannot be made is a failure, not a reason to skip:
+        // `.ok()?` here used to turn a full /tmp into a green test.
+        for dir in ["bin", "state", "config/tmux-companion"] {
+            let path = sandbox.join(dir);
+            std::fs::create_dir_all(&path)
+                .unwrap_or_else(|e| panic!("cannot create {}: {e}", path.display()));
+        }
         // On PATH under its own name, because the example config calls
         // `tmux-companion` and that is the thing under test.
         let _ = std::os::unix::fs::symlink(&binary, sandbox.join("bin/tmux-companion"));
@@ -291,12 +301,33 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn target_binary() -> Option<PathBuf> {
-    // The test binary lives in target/<profile>/deps, so the binary under test
-    // is two directories up.
-    let exe = std::env::current_exe().ok()?;
-    let candidate = exe.parent()?.parent()?.join("tmux-companion");
-    candidate.exists().then_some(candidate)
+/// The binary under test.
+///
+/// Cargo builds it for every integration test run and hands the path over in
+/// `CARGO_BIN_EXE_<name>`, so there is nothing to look for. This used to guess
+/// from `current_exe`, two directories up, and a guess that missed came back
+/// as `None`, which every caller read as "skip": the same silence the
+/// missing-tmux case had, with no line printed to say so.
+fn target_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_tmux-companion"))
+}
+
+/// A test is about to skip. Say so once, or refuse if this is CI.
+///
+/// Every tmux test in this file skips by returning early from
+/// [`Tmux::start`], and a skipped test is a passed test as far as cargo can
+/// tell. On a laptop that is the right trade: no tmux, no e2e, the rest of
+/// the suite still runs. On a runner it is the wrong one, and the comment in
+/// ci.yml that said so enforced nothing. `CI` is set on every GitHub runner,
+/// so with it set a skip panics and the job goes red instead of quiet.
+fn skipping(name: &str, why: &str) {
+    assert!(
+        std::env::var_os("CI").is_none(),
+        "{name} would skip ({why}), and CI is set, so it fails instead. \
+         Install tmux on the runner, or unset TC_SKIP_E2E."
+    );
+    static ANNOUNCED: std::sync::Once = std::sync::Once::new();
+    ANNOUNCED.call_once(|| eprintln!("skipping the tmux tests in tests/e2e.rs: {why}"));
 }
 
 /// A git repository with something for the bar to draw.
@@ -404,7 +435,11 @@ fn both_example_configs_set_the_background_the_segments_draw_against() {
     let Some(t) = Tmux::start("style") else {
         return;
     };
-    for name in ["docs/tmux.conf.example", "docs/tmux.conf.full.example"] {
+    for name in [
+        "docs/tmux.conf.starter.example",
+        "docs/tmux.conf.example",
+        "docs/tmux.conf.full.example",
+    ] {
         let conf = repo_root().join(name);
         t.tmux(&[
             "-f",
@@ -432,34 +467,45 @@ fn every_binding_in_the_example_names_a_subcommand_that_exists() {
     let Some(t) = Tmux::start("binds") else {
         return;
     };
-    let conf = std::fs::read_to_string(repo_root().join("docs/tmux.conf.full.example")).unwrap();
-
-    let mut checked = 0;
-    // Comments mention the binary in prose, and prose is not a call.
-    let code: String = conf
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for word in code.split_whitespace().collect::<Vec<_>>().windows(2) {
-        if !word[0].ends_with("tmux-companion") {
-            continue;
+    for name in [
+        "docs/tmux.conf.starter.example",
+        "docs/tmux.conf.example",
+        "docs/tmux.conf.full.example",
+    ] {
+        let conf = std::fs::read_to_string(repo_root().join(name)).unwrap();
+        let mut checked = 0;
+        // Comments mention the binary in prose, and prose is not a call.
+        let code: String = conf
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for word in code.split_whitespace().collect::<Vec<_>>().windows(2) {
+            if !word[0].ends_with("tmux-companion") {
+                continue;
+            }
+            let sub = word[1].trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+            if sub.is_empty() || sub.starts_with('-') {
+                continue;
+            }
+            let (_, err, ok) = t.run(&[sub, "--help"]);
+            assert!(
+                ok,
+                "{name} calls `tmux-companion {sub}`, which is not a subcommand:\n{err}"
+            );
+            checked += 1;
         }
-        let sub = word[1].trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
-        if sub.is_empty() || sub.starts_with('-') {
-            continue;
-        }
-        let (_, err, ok) = t.run(&[sub, "--help"]);
+        // The bar alone makes one call; the other two make several.
+        let floor = if name == "docs/tmux.conf.example" {
+            1
+        } else {
+            8
+        };
         assert!(
-            ok,
-            "the example config calls `tmux-companion {sub}`, which is not a subcommand:\n{err}"
+            checked >= floor,
+            "only {checked} calls found in {name}, the parser is wrong"
         );
-        checked += 1;
     }
-    assert!(
-        checked >= 8,
-        "only {checked} calls found, the parser is wrong"
-    );
 }
 
 #[test]
@@ -915,9 +961,7 @@ fn start_last_picks_the_session_used_most_recently() {
 #[test]
 fn the_manual_documents_every_subcommand() {
     let manual = include_str!("../docs/tmux-companion.1");
-    let Some(binary) = target_binary() else {
-        return;
-    };
+    let binary = target_binary();
 
     let help = Command::new(&binary)
         .arg("--help")
@@ -966,9 +1010,7 @@ fn the_manual_documents_every_subcommand() {
 #[test]
 fn the_skill_names_no_command_that_went_away() {
     let skill = include_str!("../skills/tmux-companion/SKILL.md");
-    let Some(binary) = target_binary() else {
-        return;
-    };
+    let binary = target_binary();
 
     let help_for = |path: &[&str]| -> String {
         let out = Command::new(&binary)
@@ -1029,14 +1071,15 @@ fn the_skill_names_no_command_that_went_away() {
 
         let mut path = vec![first];
         let deeper = subcommands(&help_for(&path));
-        if let Some(second) = words.peek() {
-            if bare_word(second) && !deeper.is_empty() {
-                if deeper.iter().any(|c| c == *second) {
-                    path.push(words.next().expect("peeked"));
-                } else {
-                    problems.push(format!("no such subcommand: {first} {second}"));
-                    continue;
-                }
+        if let Some(second) = words.peek()
+            && bare_word(second)
+            && !deeper.is_empty()
+        {
+            if deeper.iter().any(|c| c == *second) {
+                path.push(words.next().expect("peeked"));
+            } else {
+                problems.push(format!("no such subcommand: {first} {second}"));
+                continue;
             }
         }
 

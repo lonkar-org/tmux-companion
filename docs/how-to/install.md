@@ -74,13 +74,14 @@ set -g @plugin 'lonkar-org/tmux-companion'
 
 `prefix + I` clones it and installs the binary the same way the script does,
 falling back to building from source when no release matches your machine,
-which needs Rust 1.85. The build runs detached, so tmux doesn't sit there
+which needs Rust 1.95. The build runs detached, so tmux doesn't sit there
 looking hung while a compiler works.
 
 The plugin binds no keys and sets no options. What goes on your status bar and
 which key opens which picker is yours, and a plugin that decided for you would
-be the thing this tool exists to avoid. Copy what you want from
-[docs/tmux.conf.example](../tmux.conf.example).
+be the thing this tool exists to avoid. Copy
+[docs/tmux.conf.starter.example](../tmux.conf.starter.example) to start with;
+it is the bar and eight bindings, and says where the rest are.
 
 Two options, both set before the plugin line:
 
@@ -98,7 +99,7 @@ cargo build --release
 sudo install -m 755 target/release/tmux-companion /usr/local/bin/
 ```
 
-Rust 1.85 or newer, no system libraries. `./scripts/install.sh --build` does the same
+Rust 1.95 or newer, no system libraries. `./scripts/install.sh --build` does the same
 thing and puts the binary wherever `--prefix` says.
 
 ## Then
@@ -110,11 +111,16 @@ tmux-companion doctor
 That prints what a bug report needs, and on a fresh install it's also the
 quickest way to find out whether the binary can see tmux.
 
-One line in `tmux.conf` gets you the bar:
+Two lines in `tmux.conf` get you the bar; the second is the background the
+segments draw against, and without it tmux's default green shows through:
 
 ```tmux
+set -g status-style bg=colour233,fg=colour251
 set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
+
+[docs/tmux.conf.starter.example](../tmux.conf.starter.example) is those plus
+the bindings.
 
 ## Starting it
 
@@ -150,16 +156,21 @@ asked for by name, or one with anything already running, is left alone.
 
 ## Upgrading
 
-Run the install script again. It compares what's on PATH against the latest
-release and does nothing when they match. Through tpm, `prefix + U` updates the
-checkout and the next tmux start picks up the new binary.
+Run the install script again, then `tmux-companion restart`. The script
+compares what's on PATH against the latest release and does nothing when they
+match. Through tpm, `prefix + U` updates the checkout and installs the new
+binary; the restart is still yours to run, because the daemon is one long-lived
+process and a new binary on disk changes nothing until the old one exits.
+`tmux-companion doctor` says which build is running and which is on disk.
 
 ## Removing it
 
 ```sh
+tmux-companion shutdown                  # the daemon does not die with the binary
 rm "$(command -v tmux-companion)"
-rm -rf ~/.local/state/tmux-companion    # saved layouts and the usage log
+rm -rf ~/.local/state/tmux-companion    # saved layouts, snapshots, the usage log, daemon.log
 rm -f ~/.config/tmux-companion/config.toml
+rm -rf ~/.config/tmux/themes            # only if `theme init` wrote them
 ```
 
-The daemon dies with the socket. There's nothing else on disk.
+The socket under `/tmp` goes with the daemon. Nothing else is on disk.

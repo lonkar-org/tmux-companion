@@ -8,8 +8,13 @@ list, and `tmux-companion <command> --help` the flags.
 | Command | Does |
 | --- | --- |
 | `server` | Bind the socket and serve until killed. Started automatically by any client that finds nothing listening, so you rarely type it. |
-| `shutdown` | Stop the daemon. tmux is not touched; the next client starts a new one |
-| `restart` | Stop the daemon and start a fresh one. This is how a change to `config.toml` takes effect, since the file is read once at startup and held for the daemon's whole life |
+| `shutdown` | Stop the daemon, and only that. tmux and its sessions are not touched; the next client starts a new daemon. `sessions shutdown` is the one that stops tmux |
+| `restart` | Stop the daemon and start a fresh one. This is how a change to `config.toml` takes effect, since the file is read once at startup and held for the daemon's whole life. tmux is not touched; `sessions restart` is the one that restarts it |
+
+A client that finds a daemon from an older build replaces it and says so; one
+that finds a newer build leaves it alone and says so once. A development build
+run beside the installed one wants its own socket, in `TMUX_COMPANION_SOCK`,
+rather than the two taking turns replacing each other's daemon.
 
 ## Status segments
 
@@ -17,8 +22,12 @@ Each one prints tmux markup on stdout and exits.
 
 | Command | Arguments |
 | --- | --- |
-| `status-right [PATH]` | The whole right-hand side in one call: git, bandwidth and battery, computed concurrently. `--style`, `--branch-max-len`, `--branch-icon`, `--force`, `--ttl` |
+| `status-right [PATH]` | The whole right-hand side in one call: git, bandwidth and battery, computed concurrently. `--style` is `fill`, `outline` or `outline-bright` and anything else is refused with that list; `--branch-max-len N` middle-ellipsizes a branch name longer than N, and without the flag `[git] branch_max_len` decides, 20 out of the box; `--branch-icon`, `--force`, `--ttl SECS` |
 | `gst [PATH] [PANE_PID]` | Git status on its own. Same flags, plus `--no-cap`, `--no-daemon` and `--no-tmux` |
+
+A daemon error exits the command 1 with the error on stderr. tmux ignores the
+exit status of a `#()`, so the bar sees nothing different; a prompt or a script
+can tell a failed segment from an empty one.
 | `battery` | Percentage and icon |
 | `net` | Bandwidth since the previous call. `--no-daemon`, `--no-tmux` |
 | `clients SESSION_ATTACHED WINDOW_ACTIVE_CLIENTS` | How many other clients are attached |
@@ -65,23 +74,30 @@ on a machine where you would rather not have a resident process.
 | `config path` | Print which config file is being read |
 | `config check [PATH]` | Parse it, report what's wrong, exit nonzero if it is |
 | `config dump` | Print every setting with its default, as a config file |
+| `config init` | Write a short starter config where `config path` would read it, creating the directory, and print the path. It sets the glyph preset, the directory source and the snapshot timer, and carries the editor-beside-an-agent layout as a comment to uncomment. A file already there is refused unless `--force` |
+
+Every other client-side command reads the config too, and one that does not
+parse is used as the defaults with one line on stderr saying so, once per
+process, pointing at `config check`. The daemon is stricter and refuses to
+start on it.
 
 ## Pickers
 
 | Command | Does |
 | --- | --- |
-| `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels |
-| `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--plain` prints and exits |
-| `start [DIR]` | The way in from a shell that is not in tmux yet: the project picker, then attach. `--last` goes back to the session used most recently without asking; `DIR` skips the picker. Inside tmux it switches rather than attaching, so it is the same thing as `project` |
-| `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then the directories `[project] dirs_source` knows — zoxide by default, or `z`, `cdr`, `ghq`, a `dirs_command`, or none at all; `--print` lists and exits |
+| `keys` | Searchable key bindings. Enter runs the binding, ctrl-a widens past the opening query to tmux's own, esc cancels. `--all` opens with no query, `--query TEXT` sets a different one from the default `custom: `, `--refresh` rebuilds from tmux rather than using what the daemon holds, and `--print` lists the rows instead of opening the picker |
+| `cheatsheet` | The bindings you wrote, in four boxes, most-used first. Any key closes it, and `--print` prints and exits (`--plain` is the old spelling and still works) |
+| `start [DIR]` | The way in from a shell that is not in tmux yet: the project picker, then attach. `--last` goes back to the session used most recently without asking; `DIR` skips the picker. Inside tmux it switches rather than attaching, so it is the same thing as `project`. `--hook` is for the `client-attached` hook in tmux.conf: it opens the picker only when the session is one tmux named itself, all digits with one window, one pane and a shell in it |
+| `project [DIR]` | Switch to a project, or build its session from `[[layout]]`. With no argument it lists live sessions newest first, then the directories `[project] dirs_source` knows — zoxide by default, or `z`, `cdr`, `ghq`, a `dirs_command`, or none at all; `--print` lists and exits, opens nothing, and cannot be combined with a directory |
 | `project save` | Capture this session's windows and panes as this project's layout. All or nothing: a line tmux cannot answer for leaves the saved layout untouched. `--no-commands` keeps the shape and leaves every pane a shell |
-| `project forget` | Delete this project's saved layout, so the config decides again |
-| `project show` | Which layout this project gets, which file decided, and the windows it opens |
-| `project close` | Close this project by letting every window exit, capturing the layout on the way out. `--discard` quits editors with `:qa!`, `--no-save` leaves the saved layout alone. `close-project` is the old name and works for one release |
+| `project forget [DIR]` | Delete this project's saved layout, so the config decides again. The project is the session this runs in, or `DIR` |
+| `project show [DIR]` | Which layout this project gets, which file decided, and the windows it opens. A saved file that is there and not used is named with the reason |
+| `project close [SESSION]` | Close this project by letting every window exit, capturing the layout on the way out. An editor (nvim, vim, vi, hx) is asked to quit first and the close stops with it on screen when it will not; `--discard` quits editors with `:qa!`, `--no-save` leaves the saved layout alone. A session that is not there is an error. `close-project` is the old name and works for one release |
 
-`--all` opens with no query, `--query` sets a different one, `--refresh`
-rebuilds from tmux rather than using what the daemon holds, and `--print` lists
-the rows instead of opening the picker.
+`keys` and `cheatsheet` list the bindings whose `-N` note starts with
+`custom: `, which is what the shipped configs write. When no binding carries
+the note, both print one hint on stderr pointing at
+`docs/tmux.conf.starter.example` and exit 0 rather than drawing nothing.
 
 A saved layout wins over `[[layout]]`, because somebody pressed a key to make
 it and the config is what they had before they did. `project show` is the way to
@@ -102,16 +118,14 @@ no terminal.
 | Command | Does |
 | --- | --- |
 | `run [--pane ID]` | Pick a command from history and run it in a pane beside this one. Enter runs the pick, alt-enter runs exactly what you typed, `--print` lists and exits. `--pane` says which pane it belongs beside, for a caller that knows it. The binding passes nothing and the attached client's session decides, because the picker is a popup: a popup is not a client, an untargeted split lands in whichever session the server touched last, and tmux does not expand `#{pane_id}` in a `display-popup` command anyway |
-| `toggle [SESSION]` | Move to the next window in this session by index, wrapping at the end; a trailing `WINDOW` is accepted and ignored |
-| `autosave --once` | Save the session list now |
-| `autosave --status` | Say when the last save happened |
+| `toggle [SESSION]` | Move to the next window in this session by index, wrapping at the end. `--last` flips to the window the session was on before instead, tmux's own `last-window`, which is what a toggle means once there are more than two; a trailing `WINDOW` is accepted and ignored |
+| `autosave` | Deprecated: the `[autosave]` script timer, which `[sessions] autosave` replaces. `--once` runs the script now, `--status` says when it last ran, and with no flag it reports like `--status` |
 | `sessions save` | Capture every session on the server as a new generation. All or nothing, like `project save`. `--skip-pane-history` leaves out what was on each pane's screen; `--exclude a,b` adds to `[sessions] exclude` |
-| `sessions resurrect [STAMP]` | Rebuild a server from a generation, newest by default, falling back to tmux-resurrect's own newest save when there is no generation of ours. Refuses a server that already holds sessions; `--merge` adds only what is missing. `--dry-run` prints the exact tmux commands, `--only`/`--exclude` pick, `--yes` runs everything the table claimed without asking, `--detach` leaves the server running. Exit codes 0/2/3/4/1 |
-| `sessions autosave --once` | Take a snapshot now, the same one the daemon's timer takes |
-| `sessions autosave --status` | When the last snapshot was, what the timer is set to, and whether the last daemon stopped cleanly |
-| `sessions shutdown` | Save every session, then stop the tmux server. `--exclude a,b` is not "leave these alone" — the server takes every session with it either way, so an excluded one does not come back, and the command says which before it acts. `--daemon-too` stops the daemon as well. `--dry-run` says what it would do |
-| `sessions restart` | The same, then bring the server back with what it had. Stops the daemon by default so `config.toml` is reread; `--keep-daemon` turns that off |
-| `sessions list` | Every generation, newest first, with what each holds and whether a clean shutdown was recorded. `--json` for a script |
+| `sessions resurrect [STAMP]` | Rebuild a server from a generation, newest by default, falling back to tmux-resurrect's own newest save when there is no generation of ours. Refuses a server that already holds sessions; `--merge` adds only what is missing. `--dry-run` prints the exact tmux commands, `--only`/`--exclude` pick, `--yes` runs everything the table claimed without asking, `--detach` leaves the server running. A snapshot from a newer build is read with one stderr line saying the restore may miss what that build knew. Exit codes 0/2/3/4/1 |
+| `sessions autosave` | The snapshot timer the daemon runs. `--once` takes one now, the same one the timer takes; `--status`, or no flag at all, says when the last snapshot was, what the timer is set to, and whether the last daemon stopped cleanly |
+| `sessions shutdown` | Save every session, then stop the tmux server. `--exclude a,b` is not "leave these alone" — the server takes every session with it either way, so an excluded one does not come back, and the command says which before it acts. The daemon keeps running unless `--daemon-too`. `--dry-run` says what it would do |
+| `sessions restart` | The same, then bring the server back with what it had. Stops the daemon by default so `config.toml` is reread; `--keep-daemon` turns that off. With no server running it says to use `sessions resurrect` |
+| `sessions list` | Every generation, newest first, with what each holds and whether it was taken at shutdown or while running. `--json` for a script |
 | `sessions show [STAMP]` | What one generation holds, down to each pane's directory and command, defaulting to the newest. `--json` prints the snapshot itself |
 
 The autosave loop itself runs in the daemon, so there's nothing to start and
@@ -119,8 +133,8 @@ nothing to keep from starting twice.
 
 `sessions shutdown` and `sessions restart` refuse to run from inside tmux, and
 there is no flag for it: stopping the server would take the pane they were typed
-into, and nothing after that would run. `~/git-repos/mysetup/scripts/tmux-restart.sh`
-is the shell version of the same sequence and can go once these work.
+into, and nothing after that would run. Refusals, and "no tmux server running",
+go to stderr; stdout carries only what the command did.
 
 `project` and `sessions` answer different questions and neither replaces the
 other. A project's layout is a catalogue entry: one file, overwritten when you
@@ -151,18 +165,20 @@ a `0700` directory, since the history is the text that was on your screen.
 
 | Command | Does |
 | --- | --- |
-| `theme pick` | Choose a theme and apply it to the session an attached client is on. `-r SESSION` remembers it for a session instead, `-t TARGET` applies it somewhere specific, `--print` lists and exits |
-| `theme apply SESSION` | Apply the theme that session should have, from the project map or the namespace rules. This is what the session-created hook calls |
+| `theme pick` | Choose a theme and apply it to the session an attached client is on. `-r SESSION` remembers it for a session by name instead, one that need not exist yet; `-t TARGET` applies it somewhere specific, `--print` lists and exits |
+| `theme apply SESSION` | Apply the theme that session should have, from the project map or the namespace rules. This is what the session-created hook calls. `-t TARGET` applies it somewhere other than the session |
+| `theme apply --all` | Repaint every session with its own theme, which is what a `tmux.conf` reload needs: sourcing the file resets the global options a theme sets |
 | `theme init` | Write six starter colours and the two files that apply them, into the themes directory this machine's tmux actually reads. Overwrites nothing |
-| `theme add --bg C` | Write a theme from one colour. `--fg` chooses the text colour instead of computing it, and a pair under AA is refused unless `--force` |
-| `theme list-colours` | Every colour tmux takes, painted, with its hex and the contrast its text colour clears |
+| `theme add --bg C` | Write a theme from one colour. `--fg` chooses the text colour instead of computing it, `--name` names the file instead of the colour naming it, and a pair under AA is refused unless `--force` |
+| `theme list-colours` | Every colour tmux takes, painted, with its hex and the contrast its text colour clears. `--print` is one name per line with no swatch, for piping (`--plain` is the old spelling and still works) |
 | `theme gen` | Report which themes need a different text colour or a more visible border |
 | `theme gen --apply` | Write `@theme-color-on-main` and `@theme-color-border` into each theme file |
 | `theme gen --shades [LEVEL]` | Also write a theme for every cube colour whose text clears a contrast floor, named after the bundled one each sits nearest to. `aa` 216, `aaa` 151 (the default), `a4` 105, `a5` 75, `a6` the bundled six and their siblings, 18 |
 
 `--themes DIR` says where the files are, and `--background '#rrggbb'` gives the
-terminal background to measure borders against. Without it, ghostty is asked
-and the xterm default stands in when ghostty isn't there.
+terminal background to measure borders against. Without it, `ghostty
++show-config` is asked and the xterm default of colour232 stands in when ghostty
+isn't there.
 
 Reporting is the default and writing takes a flag, because a command that
 rewrites 76 files on a bare invocation is one people run once by accident.
@@ -171,20 +187,21 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 
 | Command | Does |
 | --- | --- |
-| `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `--cursor-x` picks whatever is under that column, which is how the copy-mode binding needs nothing selected; `--pane` says which pane it is for; `-s` scans the tmux selection, `-n` prints what it would open |
+| `open [TEXT…]` | Open a URL or a `file:line:col` found in text. `--cursor-x` picks whatever is under that column, which is how the copy-mode binding needs nothing selected; `--pane` says which pane it is for; `-s` scans the tmux selection, `-d DIR` resolves a relative path against DIR rather than the pane's directory, `-i` (`--choose`) asks which `[[open.application]]` opens it, `-n` (`--dry-run`) prints what it would open |
 | `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not. Both the directory it starts on and the session the window lands in come from the attached client, not from tmux's current session, which inside a popup is whichever one the server touched last |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
-| `close-project [SESSION]` | Capture the layout, then let every window exit on its own rather than killing the session. `--discard` quits editors with `:qa!`, `--no-save` closes without capturing |
-| `clipboard` | Copy to the system clipboard, picking the command for the platform |
+| `clipboard` | Copy to the system clipboard, picking the command for the platform. `--stdin` reads standard input rather than the tmux buffer |
 | `zen [--pane ID]` | Clear everything but this pane: a zoom when there are other panes, the status bar when there are not. `--pane` says which, and the binding passes it. `zoom` is the old name, kept one release |
-| `probe keys` | Show what the terminal sends for a key |
-| `probe cells` | Ask how many cells the terminal advances for a string |
 
 ## Diagnostics
 
 | Command | Does |
 | --- | --- |
-| `doctor` | The binary and its build, the daemon and its build, the socket with its mode and owner, the config in use, the glyph preset, the state directory, the tmux version and the platform |
+| `doctor` | The binary and its build, the daemon and its build, the socket with its mode and owner, the config in use, the glyph preset, the state directory, the daemon log's last line, both autosave timers, the tmux version and the platform |
+| `probe keys` | Show what the terminal sends for a key. `-n COUNT` stops after that many |
+| `probe cells [STRING…]` | Ask how many cells the terminal advances for a string, or for a built-in set |
 
 Ask for `doctor` output on any bug report. It reads without starting or
-replacing anything.
+replacing anything. A daemon from another build, one that does not answer, and
+a config file edited after the daemon started each end their line with `run
+tmux-companion restart`, because that is the answer to all three.

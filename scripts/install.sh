@@ -7,11 +7,19 @@
 #          --version   a release tag; default is the latest release
 #          --prefix    install root, binary goes in <prefix>/bin
 #                      default: /usr/local if writable, else ~/.local
-#          --build     skip the download and build from source
-#          --force     reinstall even when the wanted version is already there
+#          --build     skip the download and build from source; always installs
+#                      what it built, because a fresh build is by definition not
+#                      the binary already on PATH (its build stamp differs)
+#          --force     reinstall a release even when the wanted version is
+#                      already there; a no-op with --build, see above
 #
-# Reads REPO to point at a fork. Honours the usual CI-friendly variables:
-# nothing here is interactive and nothing calls sudo.
+# Reads REPO to point at a fork and JOBS for the source build's job count,
+# default 4. Honours the usual CI-friendly variables: nothing here is
+# interactive and nothing calls sudo.
+#
+# The source build runs under `nice -n 15` with that job count, the same as
+# the justfile's build recipe, because a bare `cargo build --release` on a
+# machine somebody is using takes every core for a minute.
 #
 # Every download is checked against checksums.txt from the same release before
 # anything is moved onto PATH. A mismatch stops the script; it does not warn
@@ -32,7 +40,7 @@ while [ $# -gt 0 ]; do
     --prefix)  PREFIX=${2:?--prefix needs a directory}; shift 2 ;;
     --build)   BUILD_ONLY=1; shift ;;
     --force)   FORCE=1; shift ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -75,13 +83,13 @@ sha256_of() {
 build_from_source() {
   command -v cargo >/dev/null 2>&1 ||
     die "no released binary for this machine and no cargo to build one.
-  Install Rust 1.85 or newer from https://rustup.rs and run this again."
+  Install Rust 1.95 or newer from https://rustup.rs and run this again."
   local here
   here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
   [ -f "$here/Cargo.toml" ] ||
     die "run this from a checkout, or install a released binary instead"
   say "building from source in $here"
-  ( cd "$here" && cargo build --release )
+  ( cd "$here" && nice -n 15 cargo build --release -j "${JOBS:-4}" )
   mkdir -p "$DEST"
   install -m 755 "$here/target/release/$BIN" "$DEST/$BIN"
   say "installed $DEST/$BIN"

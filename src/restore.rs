@@ -7,7 +7,7 @@
 //! guessing at it.
 //!
 //! Default deny. A command no row in `[[restore.program]]` claims comes back as
-//! [`Decision::Unknown`], which the summary shows and the restore leaves alone.
+//! `Decision::Unknown`, which the summary shows and the restore leaves alone.
 
 use crate::config::Restore;
 use crate::saved::Confidence;

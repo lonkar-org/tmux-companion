@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/lonkar-org/tmux-companion?logo=github&logoColor=white&color=success)](https://github.com/lonkar-org/tmux-companion/releases/latest)
 [![Homebrew](https://img.shields.io/badge/brew-lonkar--org%2Ftap-fbb040?logo=homebrew&logoColor=white)](https://github.com/lonkar-org/homebrew-tap)
 [![Playground](https://img.shields.io/docker/image-size/lonkarorg/tmux-companion/playground?logo=docker&logoColor=white&label=playground)](https://hub.docker.com/r/lonkarorg/tmux-companion)
-[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
 [![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
 [![Demo](https://img.shields.io/badge/demo-asciinema-d40000?logo=asciinema&logoColor=white)](https://asciinema.org/a/1266213)
@@ -154,9 +154,13 @@ One line in `tmux.conf` gets you the bar:
 set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
 ```
 
-The annotated version, with the reasoning for every line and what each feature
-costs, is [docs/tmux.conf.full.example](docs/tmux.conf.full.example). The
-smaller one I actually run is [docs/tmux.conf.example](docs/tmux.conf.example).
+That plus `set -g status-style bg=colour233,fg=colour251`, which the segments
+draw against. The file to copy first is
+[docs/tmux.conf.starter.example](docs/tmux.conf.starter.example): the bar and
+the eight bindings worth having on day one. The bar alone, as I run it, with the
+measurements behind each line, is [docs/tmux.conf.example](docs/tmux.conf.example),
+and every feature on, with what each costs, is
+[docs/tmux.conf.full.example](docs/tmux.conf.full.example).
 
 ## Configuration
 
@@ -164,9 +168,12 @@ There's no config file till you write one, and the defaults are what the binary
 did before the file existed.
 
 ```sh
-tmux-companion config dump > ~/.config/tmux-companion/config.toml
+tmux-companion config init      # a fifteen-line starter, refuses to overwrite
 tmux-companion config check
 ```
+
+`config dump` prints every setting with its default instead, all 260 lines of
+it, for when you want to see what a key is called.
 
 If your bar's a row of boxes you don't have a Nerd Font, and this is the line:
 
@@ -204,7 +211,7 @@ Every setting with its default is in
 | [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
 | [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
 | [docs/how-to/playground.md](docs/how-to/playground.md) | a container to try it in, and the tour inside it |
-| [docs/how-to/install.md](docs/how-to/install.md) | the three ways in, and how to remove it |
+| [docs/how-to/install.md](docs/how-to/install.md) | the four ways in, and how to remove it |
 | [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
 | [docs/how-to/agents.md](docs/how-to/agents.md) | the skill that teaches a coding agent to share your tmux server |
 | [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
@@ -215,7 +222,7 @@ Every setting with its default is in
 
 ## Building
 
-Rust 1.85 or newer, which is the first release with edition 2024. No system
+Rust 1.95 or newer, which is what the locked dependencies build on. No system
 libraries.
 
 ```sh

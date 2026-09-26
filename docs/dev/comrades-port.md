@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # Porting comrades into tmux-companion
 
 `~/.config/tmux/comrades` is 1,495 lines of zsh across 13 scripts, plus 294
@@ -6,7 +8,7 @@ what moves in here, so the companion stops being a status-bar renderer and
 becomes the one binary the config talks to.
 
 Anything that is not in `comrades` today is out of scope for this document.
-`docs/after-the-port.md` is where the survey of what could come afterwards
+`docs/dev/after-the-port.md` is where the survey of what could come afterwards
 lives, so that the scope of this one stays what the title says.
 
 The port is phase 1. Phase 0 is the crate it lands on, because a foundation
@@ -655,7 +657,6 @@ and it's about 38ms.
 | --- | --- | --- | --- |
 | `keys` | `keys.zsh` | 120 | matcher, TUI, `list-keys` parse, usage log |
 
-<!-- @Yogesh(decide): tmux.conf:169-170 bind C-s and C-r with -N, then tmux-resurrect re-binds both without -N and the notes are gone. Move those two binds after the plugin runs, or re-apply the notes afterwards? -->
 | `cheatsheet` | `cheatsheet.zsh` | 99 | box layout, usage counts |
 | `project` | `project-session.zsh`, `project-preview.zsh`, `zoxide-window.zsh`, `short-path.zsh` | 272 | matcher, TUI, zoxide read, theme map |
 | `theme` | `choose-tmux-theme.zsh`, `preview-tmux-theme.zsh` | 300 | matcher, colour parse, swatch render |
@@ -805,7 +806,7 @@ forgotten:
 - its documentation row, in the same branch rather than a follow-up
 - its config keys in `docs/config.example.toml`, which CI checks anyway
 - its before and after numbers in `BENCHMARKS.md`, for a ported command
-- no `@Yogesh(` or `@claude(` marker left in anything it touched
+- no review marker left in anything it touched
 
 A commit inside a branch is a working state, so `cargo test` passes at every
 one of them. That matters more here than usual, because a bisect over the port

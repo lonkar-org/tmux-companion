@@ -6,7 +6,7 @@
 //! test: `Config::default()` has to render byte for byte what the pinned tests
 //! expect.
 //!
-//! TOML rather than YAML, for reasons written down in `docs/comrades-port.md`.
+//! TOML rather than YAML, for reasons written down in `docs/dev/comrades-port.md`.
 //! The short version: `serde_yaml` was archived by its author in March 2024 and
 //! both forks have sat still since, YAML 1.1 turns `no` and `off` into booleans
 //! which is a problem for a file full of one-word glyph values, and anybody
@@ -634,11 +634,33 @@ impl Default for Autosave {
 }
 
 impl Autosave {
-    /// The save script, resolved against `home` when the config leaves it out.
+    /// The save script, resolved against `home` when the config leaves it out,
+    /// and with a leading `~` expanded when it does not.
     pub fn script_path(&self, home: &str) -> PathBuf {
-        self.script.clone().unwrap_or_else(|| {
-            PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh")
-        })
+        match &self.script {
+            Some(p) => expand_home(p, home),
+            None => PathBuf::from(home).join(".config/tmux/plugins/tmux-resurrect/scripts/save.sh"),
+        }
+    }
+}
+
+/// A path from the config with a leading `~` or `~/` replaced by `home`.
+///
+/// Every path a person writes into `config.toml` goes through this before it
+/// is opened. TOML does not expand a tilde and neither does `File::open`, and
+/// the one path that skipped this step failed every fifteen minutes for a day
+/// with "is missing" while `ls` found the file, because the daemon's stderr
+/// went nowhere. A path without a tilde comes back as it was.
+pub fn expand_home(path: &std::path::Path, home: &str) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if text == "~" {
+        return PathBuf::from(home);
+    }
+    match text.strip_prefix("~/") {
+        Some(rest) => PathBuf::from(home).join(rest),
+        None => path.to_path_buf(),
     }
 }
 
@@ -799,7 +821,7 @@ impl Default for Project {
             visit_command: Vec::new(),
             layout: "default".to_string(),
             override_: Vec::new(),
-            preview_window: "ai".to_string(),
+            preview_window: String::new(),
         }
     }
 }
@@ -967,6 +989,22 @@ pub struct Usage {
     pub path: Option<PathBuf>,
 }
 
+impl Usage {
+    /// Where the usage log lives: the configured path with `~` expanded, or
+    /// `keys-usage.tsv` under `state_dir`.
+    pub fn log_path(&self, home: &str, state_dir: Option<PathBuf>) -> PathBuf {
+        match &self.path {
+            Some(p) => expand_home(p, home),
+            None => state_dir
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("keys-usage.tsv"),
+        }
+    }
+}
+
+// Written out rather than derived so the two fields whose default changed
+// keep the reason beside them.
+#[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -979,30 +1017,12 @@ impl Default for Config {
             status: Status::default(),
             sh_jobs: ShJobs::default(),
             usage: Usage::default(),
-            // Two windows, an editor and an agent, which is what
-            // project-session.zsh hardcoded. Somebody who wants one window, or
-            // five, or neither of these tools, changes this table.
-            layout: vec![Layout {
-                name: "default".to_string(),
-                window: vec![
-                    LayoutWindow {
-                        name: "edit".to_string(),
-                        command: "nvim".to_string(),
-                        hold_name: true,
-                        layout: None,
-                        main_size: None,
-                        pane: Vec::new(),
-                    },
-                    LayoutWindow {
-                        name: "ai".to_string(),
-                        command: "claude".to_string(),
-                        hold_name: true,
-                        layout: None,
-                        main_size: None,
-                        pane: Vec::new(),
-                    },
-                ],
-            }],
+            // No windows, which is a plain shell: the layout this used to
+            // ship, an editor beside an agent, was what one laptop runs, and
+            // a machine without either got two windows of "command not
+            // found" on its first `start`. config.example.toml keeps that
+            // pair as the example to copy.
+            layout: Vec::new(),
             project: Project::default(),
             autoreload: Autoreload::default(),
             window_names: WindowNames::default(),
@@ -1467,12 +1487,25 @@ impl Preset {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct General {
-    /// A file the daemon appends diagnostics to. Empty means no log.
+    /// The file the daemon's stderr goes to. Empty means `daemon.log` in the
+    /// state directory.
     ///
-    /// A picker inside `display-popup -E` sends its stderr wherever the popup
-    /// went, which is nowhere, so a path here is the only way to see what a
-    /// misbehaving command said.
+    /// A daemon a client starts has no terminal, so this file is where "the
+    /// autosave failed" and "the config does not parse" end up. Before it
+    /// existed they went to `/dev/null`, and an autosave that failed every
+    /// fifteen minutes for a day was found by chance.
     pub log: Option<PathBuf>,
+}
+
+impl General {
+    /// Where the daemon's stderr goes: the configured file with `~` expanded,
+    /// or `daemon.log` under `state_dir`.
+    pub fn log_path(&self, home: &str, state_dir: Option<PathBuf>) -> Option<PathBuf> {
+        match &self.log {
+            Some(p) => Some(expand_home(p, home)),
+            None => state_dir.map(|d| d.join("daemon.log")),
+        }
+    }
 }
 
 /// Directory aliases and per-directory icons for the window segment.
@@ -1578,9 +1611,11 @@ pub struct Git {
     /// restarts.
     pub repo_check_ttl_secs: f64,
     /// Middle-ellipsize a branch name longer than this many characters.
+    ///
+    /// The tail the ellipsis keeps is fixed in `segments/git.rs`; a
+    /// `branch_tail_len` key was documented for a while and never read, and
+    /// is gone rather than wired.
     pub branch_max_len: usize,
-    /// How many characters of the branch name's tail survive the ellipsis.
-    pub branch_tail_len: usize,
     /// What the segment draws, and in what order.
     ///
     /// A part left out of this list is not rendered. Somebody working in a
@@ -1646,7 +1681,6 @@ impl Default for Git {
             ttl_secs: 5.0,
             repo_check_ttl_secs: 300.0,
             branch_max_len: 20,
-            branch_tail_len: 10,
             parts: GitPart::all(),
             branch_types: default_branch_types(),
             autofetch: Autofetch::default(),
@@ -2054,9 +2088,141 @@ pub fn dump_defaults() -> String {
     toml::to_string_pretty(&Config::default()).expect("defaults serialise")
 }
 
+/// What `config init` writes.
+///
+/// Short on purpose. `config dump` prints every setting and
+/// `docs/config.example.toml` explains every one, and neither is a file
+/// anybody wants to start editing; this is the four decisions a new install
+/// actually has to make, with the rest left to the defaults. The layout pair
+/// is commented out because a project that opens as one plain shell is the
+/// shipped default and the pair is one laptop's habit, not a recommendation.
+pub const STARTER: &str = r#"# tmux-companion configuration. `tmux-companion config check` says whether it
+# parses, `config dump` prints every setting with its default, and
+# docs/config.example.toml explains each one.
+
+[glyphs]
+# "nerd-font-v3" needs a patched font; "ascii" draws with plain characters.
+preset = "nerd-font-v3"
+
+[project]
+# Where the project picker gets its directories: zoxide, z, cdr, ghq or none.
+dirs_source = "zoxide"
+
+[sessions]
+# Snapshot every session on a timer: "interval", "cron" or "off".
+autosave = "interval"
+interval_secs = 900
+
+# Uncomment the pair below to open every project as an editor beside an agent.
+#
+# [[layout]]
+# name = "default"
+#
+# [[layout.window]]
+# name = "edit"
+# command = "nvim"
+#
+# [[layout.window]]
+# name = "ai"
+# command = "claude"
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_starter_parses_and_names_only_real_keys() {
+        // `parse` goes through `deny_unknown_fields` on every table, so a key
+        // this file sets that the struct does not have fails here rather than
+        // on somebody's first `config check`.
+        let path = std::path::Path::new("/tmp/starter.toml");
+        let c = parse(STARTER, path).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.glyphs.preset, Preset::NerdFontV3);
+        assert_eq!(c.sessions.autosave, SessionsAutosave::Interval);
+        assert_eq!(c.sessions.interval_secs, 900);
+        // The layout pair is a comment, so the starter opens a plain shell.
+        assert!(c.layout.is_empty());
+    }
+
+    #[test]
+    fn the_starter_layout_pair_parses_once_uncommented() {
+        // The commented lines are meant to be uncommented, so they had better
+        // be valid TOML for the struct once they are.
+        let uncommented: String = STARTER
+            .lines()
+            .map(|l| {
+                l.strip_prefix("# ")
+                    .filter(|r| r.starts_with('[') || r.contains(" = "))
+                    .unwrap_or(l)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let c = parse(&uncommented, std::path::Path::new("/tmp/starter.toml"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.layout.len(), 1);
+        assert_eq!(c.layout[0].window.len(), 2);
+        assert_eq!(c.layout[0].window[1].command, "claude");
+    }
+
+    #[test]
+    fn a_tilde_path_expands_against_home_and_a_bare_one_does_not() {
+        use std::path::Path;
+        assert_eq!(
+            expand_home(Path::new("~/x/y.sh"), "/home/me"),
+            PathBuf::from("/home/me/x/y.sh")
+        );
+        assert_eq!(
+            expand_home(Path::new("~"), "/home/me"),
+            PathBuf::from("/home/me")
+        );
+        assert_eq!(
+            expand_home(Path::new("/abs/y.sh"), "/home/me"),
+            PathBuf::from("/abs/y.sh")
+        );
+        // `~user` is the shell's business, not this tool's.
+        assert_eq!(
+            expand_home(Path::new("~bob/y"), "/home/me"),
+            PathBuf::from("~bob/y")
+        );
+    }
+
+    #[test]
+    fn the_autosave_script_written_with_a_tilde_resolves() {
+        // The bug: `script = "~/.config/.../save.sh"` was opened literally and
+        // reported missing while the file was there.
+        let a = Autosave {
+            script: Some(PathBuf::from(
+                "~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh",
+            )),
+            ..Autosave::default()
+        };
+        assert_eq!(
+            a.script_path("/home/me"),
+            PathBuf::from("/home/me/.config/tmux/plugins/tmux-resurrect/scripts/save.sh")
+        );
+        assert_eq!(
+            Autosave::default().script_path("/home/me"),
+            PathBuf::from("/home/me/.config/tmux/plugins/tmux-resurrect/scripts/save.sh")
+        );
+    }
+
+    #[test]
+    fn the_daemon_log_defaults_to_the_state_dir_and_honours_a_tilde() {
+        let state = Some(PathBuf::from("/state"));
+        assert_eq!(
+            General::default().log_path("/home/me", state.clone()),
+            Some(PathBuf::from("/state/daemon.log"))
+        );
+        let g = General {
+            log: Some(PathBuf::from("~/d.log")),
+        };
+        assert_eq!(
+            g.log_path("/home/me", state),
+            Some(PathBuf::from("/home/me/d.log"))
+        );
+        assert_eq!(General::default().log_path("/home/me", None), None);
+    }
 
     #[test]
     fn the_applications_open_offers_are_read_as_a_list() {
@@ -2164,7 +2330,6 @@ border = "none"
         assert_eq!(c.git.ttl_secs, 5.0);
         assert_eq!(c.git.repo_check_ttl_secs, 300.0);
         assert_eq!(c.git.branch_max_len, 20);
-        assert_eq!(c.git.branch_tail_len, 10);
         assert_eq!(c.network.threshold_bps, 20_480);
         assert_eq!(c.battery.ttl_secs, 30.0);
         assert!(c.dirs.aliases.is_empty());
@@ -2479,20 +2644,21 @@ border = "none"
     // ── layouts ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn the_default_layout_is_the_two_windows_the_script_hardcoded() {
+    fn with_no_config_a_project_opens_as_a_plain_shell() {
+        // The editor-and-agent pair that used to ship here was what one laptop
+        // runs; a machine without nvim or claude got two windows of "command
+        // not found" on its first `start`.
         let c = Config::default();
-        let l = c
-            .layout_for("/anywhere", "/home/me")
-            .expect("a default layout");
-        let names: Vec<&str> = l.window.iter().map(|w| w.name.as_str()).collect();
-        assert_eq!(names, vec!["edit", "ai"]);
-        assert_eq!(l.window[0].command, "nvim");
-        assert!(l.window[0].hold_name, "an editor window must keep its name");
+        assert!(c.layout_for("/anywhere", "/home/me").is_none());
+        assert_eq!(
+            c.project.layout, "default",
+            "the name a config's layout gets by writing one"
+        );
     }
 
     #[test]
-    fn the_previewed_window_defaults_to_the_agent_and_can_be_turned_off() {
-        assert_eq!(Project::default().preview_window, "ai");
+    fn the_previewed_window_defaults_to_the_current_one_and_can_be_named() {
+        assert_eq!(Project::default().preview_window, "");
         let c = parse(
             "[project]\npreview_window = \"\"\n",
             std::path::Path::new("t.toml"),

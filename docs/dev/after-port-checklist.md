@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # After-port checklist
 
 Status for the work in `after-the-port.md`. One line per item, updated in the

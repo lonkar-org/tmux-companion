@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # After the port
 
 The port replaces `~/.config/tmux/comrades` and stops. Nothing in this file
@@ -493,7 +495,7 @@ with their versions, per the rule above.
 
 ## If I only pick five
 
-Built, all five, and `docs/after-port-checklist.md` carries the state of each
+Built, all five, and `docs/dev/after-port-checklist.md` carries the state of each
 one. Every one of them is off until a config line turns it on, which was not
 the plan when this section was written and became the plan as each one landed:
 a daemon that starts fetching from a remote, renaming windows or sourcing a

@@ -9,10 +9,10 @@ and [how-to/install.md](../how-to/install.md) has the download.
 
 | | |
 | --- | --- |
-| Minimum | 1.85, the first release with edition 2024 |
+| Minimum | 1.95, what the locked dependencies build on; the source itself needs 1.88 |
 | Developed and tested against | 1.98.0, pinned in `rust-toolchain.toml` |
 
-`Cargo.toml` carries `rust-version = "1.85"`, so cargo says which toolchain it wants
+`Cargo.toml` carries `rust-version = "1.95"`, so cargo says which toolchain it wants
 rather than reporting a type error from inside the edition.
 
 ## tmux

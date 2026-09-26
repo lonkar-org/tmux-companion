@@ -6,8 +6,12 @@ name: Release
 #
 #   git tag -a v0.1.0 -m "0.1.0" && git push origin v0.1.0
 #
-# or run it by hand from the Actions tab with a tag name. The build runs
-# straight away; publishing waits on the `release` environment, so an admin
+# or run it by hand from the Actions tab with a tag name. A gate runs first:
+# the tag has to match the version in Cargo.toml, the tree has to hold no
+# review marker, and rustfmt, clippy and the whole test suite have to pass on
+# the locked tree, the same checks ci.yml runs on every push. The four builds
+# wait on it, so a tag pushed on a red tree produces no binaries rather than
+# four of them. Publishing then waits on the `release` environment, so an admin
 # approves before anything reaches the Releases page. Configure that once under
 # Settings, Environments, release, Required reviewers. Without the environment
 # the publish job runs unapproved, which is worth knowing before the first tag.
@@ -50,8 +54,64 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    name: Tag, tests and lints
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      # First, because it fails in a second and is the one a release most
+      # often gets wrong. `cargo pkgid` prints
+      #   path+file:///home/runner/work/tmux-companion/tmux-companion#0.2.0
+      # when the directory is named for the package, which a runner's checkout
+      # is, and
+      #   path+file:///somewhere/agent-a6cf#tmux-companion@0.2.0
+      # when it is not, which a worktree is. The sed drops everything up to
+      # the `#` and then a `name@` if one is there, and gives 0.2.0 for both.
+      - name: The tag names the version in Cargo.toml
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(cargo pkgid | sed -E 's/.*#(.*@)?//')
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::the tag is $TAG but Cargo.toml says $version; bump one of them and tag again"
+            exit 1
+          fi
+          echo "Cargo.toml says $version and the tag is $TAG"
+
+      - run: ./scripts/check-review-marks.sh
+
+      # tests/e2e.rs drives a real tmux and, with CI set, fails rather than
+      # skips when there is none.
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: gate-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: gate-cargo-
+
+      # --locked, as the builds below are: the tree under test is the tree
+      # that ships. --no-fail-fast so every test binary runs and the log names
+      # each one that went red rather than only the first.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --no-fail-fast --all-targets --locked
+
   build:
     name: ${{ matrix.target }}
+    needs: gate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

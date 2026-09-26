@@ -2,7 +2,11 @@
 name = "tmux-companion"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+# The floor the locked tree builds on, not the floor the source needs: the
+# code itself wants 1.88 (let chains), and sysinfo 0.39.3 in Cargo.lock wants
+# 1.95. A number the lockfile contradicts is a promise nobody can keep, so the
+# lock decides and the msrv job in ci.yml checks it with the lock in place.
+rust-version = "1.95"
 description = "A singleton tmux status server: one process answers every status segment, so the bar costs one process spawn per refresh instead of five."
 license = "MIT"
 repository = "https://github.com/lonkar-org/tmux-companion"

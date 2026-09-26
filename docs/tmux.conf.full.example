@@ -1,12 +1,14 @@
 # tmux-companion with everything turned on.
 #
-# docs/tmux.conf.example is the bar I actually run: one `#()` call, 18.43 ms/s
-# of CPU, which is 1.8% of one core. This file is the other end of the range,
-# and every block carries what it costs, so you're choosing with the number in
-# front of you rather than after your fans come on.
+# docs/tmux.conf.example is the bar I actually run: one `#()` call, 29.71 ms/s
+# of CPU, which is 3.0% of one core, spawn, tmux server and daemon added up.
+# This file is the other end of the range, and every block carries what it
+# costs, so you're choosing with the number in front of you rather than after
+# your fans come on.
 #
-# Measurements are from BENCHMARKS.md, taken on one machine. Yours won't match
-# the absolute numbers and will match the shape.
+# Measurements are from BENCHMARKS.md, and the five-call figure from
+# BENCHMARKS-before-port.md, both taken on one machine. Yours won't match the
+# absolute numbers and will match the shape.
 #
 #   each extra #() on the bar        14.6 ms of CPU per second per client
 #   sh-jobs on the bar               16.25 ms of server CPU per call
@@ -14,6 +16,25 @@
 #   sh-jobs' process-table scan      18.5 ms when the git segment does it
 #   window in window-status-format   one process spawn per window per redraw
 #   all of it, five #() calls        153.77 ms/s, 15.4% of one core
+#
+# ── What this file takes over ───────────────────────────────────────────────
+#
+# Three of tmux's own prefix keys are rebound here, and one in copy mode:
+#
+#   prefix c         new-window       -> the new-window picker
+#   prefix z         zoom this pane   -> zen
+#   prefix ?         list-keys        -> the keys picker
+#   copy-mode-vi o   other-end        -> open what is under the cursor
+#
+# Three keys sit in the root table (`-n`), so they fire without the prefix and
+# take Alt-s, Alt-a and Alt-A away from every program in the pane, including
+# an editor or an agent that wanted them:
+#
+#   M-s   the project picker
+#   M-a   the next window in this session
+#   M-A   the previous window, tmux's last-window, so two windows flip
+#
+# Drop the `-n` on any of them to put it behind the prefix instead.
 
 set -g status-interval 1
 
@@ -119,6 +140,9 @@ bind -N "custom: config pick a colour theme" C-t \
   display-popup -E -w 70% -h 70% "tmux-companion theme pick"
 bind -N "custom: project toggle the tools in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
+# The flip between the two most recent windows, for a session with more than two.
+bind -N "custom: project flip to the last window" -n M-A \
+  run-shell "tmux-companion toggle --last '#{session_name}'"
 # Closing captures the layout on the way out, before anything is asked to quit,
 # so the project comes back next time with the windows and panes it had. Add
 # --no-save to close without touching the saved layout.

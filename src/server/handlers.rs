@@ -102,6 +102,10 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                     opts.parts = s.config.git.parts.clone();
                     opts.branch_types = s.config.git.branch_types.clone();
                     opts.bar_bg = s.config.bar.background.clone();
+                    // The flag wins when it was given; otherwise `[git]
+                    // branch_max_len` decides, which until this line was a
+                    // setting the file documented and nothing read.
+                    opts.branch_max_len = args.branch_max_len.or(Some(s.config.git.branch_max_len));
                 }
                 segments::git::render(&opts, &state).await
             }
@@ -236,19 +240,21 @@ async fn render_right(
     // `state.lock().await` calls inside one expression deadlock: the first
     // guard is a temporary that lives until the end of the statement, so the
     // second waits on a mutex this same task is still holding.
-    let (parts, branch_types, bar_bg) = {
+    let (parts, branch_types, bar_bg, branch_max_len) = {
         let s = state.lock().await;
         (
             s.config.git.parts.clone(),
             s.config.git.branch_types.clone(),
             s.config.bar.background.clone(),
+            s.config.git.branch_max_len,
         )
     };
     let opts = GstOptions {
         path: args.path.clone(),
         force: args.force,
         style: args.style,
-        branch_max_len: args.branch_max_len,
+        // The flag, or `[git] branch_max_len` without it, as in `gst`.
+        branch_max_len: args.branch_max_len.or(Some(branch_max_len)),
         branch_icon: args.branch_icon,
         ttl: duration_from_secs(args.ttl_secs),
         // The git segment opens the right-hand side, so it never draws an end

@@ -639,7 +639,7 @@ mod tests {
 #[cfg(test)]
 mod session_building {
     use super::*;
-    use crate::config::{Config, LayoutPane, LayoutWindow};
+    use crate::config::{LayoutPane, LayoutWindow};
 
     fn win(name: &str, command: &str) -> LayoutWindow {
         LayoutWindow {
@@ -680,8 +680,16 @@ mod session_building {
         // replaced, including the window-level `send-keys` target. The one
         // addition is the `@tmux-companion-project` option, which is what lets
         // `project save` find the right file from a renamed session.
-        let c = Config::default();
-        let l = c.layout_for("/w/proj", "/home/me").expect("default layout");
+        // The editor-and-agent pair that was the shipped default when this
+        // was pinned, written out now that the default is a plain shell.
+        let c = crate::config::parse(
+            "[[layout]]\nname = \"default\"\n\n[[layout.window]]\nname = \"edit\"\ncommand = \"nvim\"\nhold_name = true\n\n[[layout.window]]\nname = \"ai\"\ncommand = \"claude\"\nhold_name = true\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        let l = c
+            .layout_for("/w/proj", "/home/me")
+            .expect("the layout just written");
         assert_eq!(
             joined(&build(&l.window, 0)),
             vec![

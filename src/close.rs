@@ -30,11 +30,27 @@ pub fn parse_panes(listing: &str) -> Vec<Pane> {
         .collect()
 }
 
+/// The programs that will not leave on `exit` or ctrl-D and have to be asked
+/// to quit in their own language first.
+///
+/// Matched on the whole command name, because `pane_current_command` is the
+/// bare program name and a prefix match would take `vim-bg` or `nanoc` for
+/// an editor. The vi family only: emacs and nano were on the list for a
+/// while and got `:qa!`, which they ignore, so the close timed out on them.
+/// An editor this does not know gets `exit` like everything else.
+pub const EDITORS: &[&str] = &["nvim", "vim", "vi", "hx"];
+
+/// Whether a pane's command is one of [`EDITORS`].
+pub fn is_editor(command: &str) -> bool {
+    EDITORS.contains(&command)
+}
+
 /// The panes running an editor, which have to be asked to quit first.
 ///
-/// Only nvim, because it is the one that leaves state behind.
+/// Editors rather than only nvim, which is what this matched before: a vim
+/// pane got ctrl-D, which vim ignores, and the close timed out on it.
 pub fn editors(panes: &[Pane]) -> Vec<&Pane> {
-    panes.iter().filter(|p| p.command == "nvim").collect()
+    panes.iter().filter(|p| is_editor(&p.command)).collect()
 }
 
 /// What to send to a pane that is not an editor.
@@ -57,7 +73,7 @@ pub enum Farewell {
 pub fn farewell(command: &str) -> Farewell {
     match command {
         "zsh" | "bash" | "sh" | "fish" => Farewell::ShellExit,
-        "nvim" => Farewell::Skip,
+        c if is_editor(c) => Farewell::Skip,
         _ => Farewell::EndOfFile,
     }
 }
@@ -103,10 +119,23 @@ mod tests {
     }
 
     #[test]
+    fn every_editor_on_the_list_is_one_and_a_lookalike_is_not() {
+        for e in EDITORS {
+            assert!(is_editor(e), "{e}");
+        }
+        // The whole name, not a prefix: these are not editors.
+        assert!(!is_editor("vim-bg"));
+        assert!(!is_editor("nanoc"));
+        assert!(!is_editor(""));
+    }
+
+    #[test]
     fn a_shell_is_asked_to_exit_and_everything_else_gets_ctrl_d() {
         assert_eq!(farewell("zsh"), Farewell::ShellExit);
         assert_eq!(farewell("bash"), Farewell::ShellExit);
         assert_eq!(farewell("nvim"), Farewell::Skip);
+        assert_eq!(farewell("vim"), Farewell::Skip);
+        assert_eq!(farewell("hx"), Farewell::Skip);
         // claude renames itself to its version string, which is why this
         // matches on what a pane is not.
         assert_eq!(farewell("2.1.278"), Farewell::EndOfFile);

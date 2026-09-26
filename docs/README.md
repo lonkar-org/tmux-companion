@@ -6,15 +6,15 @@ up doing neither of them, which is roughly what the README here had become.
 
 | Directory | Answers |
 | --- | --- |
-| `tutorial/` | I've never run this. Take me from a clone to a status bar I can see. |
+| `tutorial/` | I've never run this. Take me from an install to a status bar I can see. |
 | `how-to/` | I know what I want. How do I do it? |
 | `reference/` | What're the flags, the options, the wire format, the requirements? |
 | `explanation/` | Why's it built this way, and what did that cost? |
 
-The tree fills up one row per phase as the comrades port lands, which is what
-`docs/comrades-port.md` plans and `docs/port-checklist.md` tracks, and it works
-that way because documentation written at the end is written from memory and
-reads like it.
+`dev/` is a fifth kind and isn't for users: the planning records from the port,
+kept because they say why something was built the way it was. Each one opens
+with a line saying so, and where one disagrees with a reference page the
+reference page is current.
 
 Two files haven't moved yet and are still in the repository root: `DESIGN.md`,
 which is explanation with reference inside it, and `BENCHMARKS.md`, which is

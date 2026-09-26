@@ -228,18 +228,54 @@ pub fn config_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
 }
 
 /// The tmux config this daemon watches.
+///
+/// `TMUX_COMPANION_TMUX_CONF` when it is set, and otherwise the file tmux
+/// itself would read, found the way [`tmux_conf_in`] finds it.
 pub fn tmux_conf_path() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("TMUX_COMPANION_TMUX_CONF") {
         return std::path::PathBuf::from(p);
     }
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    match home {
-        Some(h) => h.join(".config/tmux/tmux.conf"),
-        None => std::path::PathBuf::from("tmux.conf"),
-    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let xdg = std::env::var("XDG_CONFIG_HOME").ok();
+    tmux_conf_in(&home, xdg.as_deref())
 }
 
-/// Append a pick to the usage log.
+/// The tmux config on this machine, in the order tmux looks for it.
+///
+/// tmux reads `$XDG_CONFIG_HOME/tmux/tmux.conf` before `~/.tmux.conf`, so
+/// the first of those that exists is the one being edited. Until this
+/// looked, somebody on the classic dotfile had the daemon watching a path
+/// that was never written: the key rows never went stale and `[autoreload]`
+/// watched nothing. With neither file present the XDG path is returned, so a
+/// config written later is picked up where tmux would look first.
+pub fn tmux_conf_in(home: &str, xdg_config: Option<&str>) -> std::path::PathBuf {
+    let xdg = match xdg_config {
+        Some(x) if !x.is_empty() => std::path::PathBuf::from(x),
+        _ => std::path::PathBuf::from(home).join(".config"),
+    };
+    let under_xdg = xdg.join("tmux/tmux.conf");
+    if under_xdg.is_file() {
+        return under_xdg;
+    }
+    let classic = std::path::PathBuf::from(home).join(".tmux.conf");
+    if classic.is_file() {
+        return classic;
+    }
+    under_xdg
+}
+
+/// Lines past which the usage log is rewritten as one line per binding.
+///
+/// Every pick appends a line and nothing removed one, so a log grew for as
+/// long as the machine lasted. Five thousand is months of picks, read in
+/// under a millisecond, and a rewrite that often costs nothing anybody sees.
+pub const COMPACT_AFTER: usize = 5000;
+
+/// The first line of a compacted log, which is how a reader knows the third
+/// column is a count.
+pub const COMPACT_HEADER: &str = "#v1";
+
+/// Append a pick to the usage log, rewriting it compactly once it is long.
 ///
 /// The cheat sheet orders each box by this, so the keys somebody actually
 /// reaches for float to the top of their group. Failure is ignored on purpose:
@@ -258,15 +294,56 @@ pub fn record_use(path: &std::path::Path, table: &str, key: &str) {
     {
         let _ = writeln!(f, "{table}\t{key}");
     }
+    // Read back after the append, because the append is what may have taken
+    // it over the line.
+    if let Ok(text) = std::fs::read_to_string(path)
+        && text.lines().count() > COMPACT_AFTER
+    {
+        let _ = crate::saved::write_atomically(path, &compact(&text));
+    }
+}
+
+/// The log rewritten as one `table\tkey\tcount` line per binding, under
+/// [`COMPACT_HEADER`].
+///
+/// Sorted, so two compactions of the same picks write the same bytes and a
+/// diff of the file says something.
+pub fn compact(log: &str) -> String {
+    let mut rows: Vec<((String, String), usize)> = usage_counts(log).into_iter().collect();
+    rows.sort();
+    let mut out = format!("{COMPACT_HEADER}\n");
+    for ((table, key), count) in rows {
+        out.push_str(&format!("{table}\t{key}\t{count}\n"));
+    }
+    out
 }
 
 /// How many times each binding has been picked.
+///
+/// Reads both shapes of the file: the raw log, one `table\tkey` line per
+/// pick, and the compacted one, where a third column carries the count.
+/// Picks appended after a compaction have no third column and count as one,
+/// which is what lets [`record_use`] keep appending to a compacted file.
 pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
+    let compacted = log.lines().next() == Some(COMPACT_HEADER);
     let mut out: HashMap<(String, String), usize> = HashMap::new();
     for line in log.lines() {
-        if let Some((table, key)) = line.split_once('\t') {
-            *out.entry((table.to_string(), key.to_string())).or_default() += 1;
+        if line.starts_with('#') {
+            continue;
         }
+        let Some((table, rest)) = line.split_once('\t') else {
+            continue;
+        };
+        // Only a compacted file has counts, and only a last column that reads
+        // as a number is one; anything else is part of the key.
+        let (key, count) = match rest.rsplit_once('\t') {
+            Some((key, n)) if compacted => match n.parse::<usize>() {
+                Ok(n) => (key, n),
+                Err(_) => (rest, 1),
+            },
+            _ => (rest, 1),
+        };
+        *out.entry((table.to_string(), key.to_string())).or_default() += count;
     }
     out
 }
@@ -458,6 +535,113 @@ bind-key    -T prefix M-x     display-popup -E something
         let counts = usage_counts(&text);
         assert_eq!(counts.get(&("prefix".into(), "?".into())), Some(&2));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_compacted_log_counts_the_same_as_the_raw_one_it_replaced() {
+        let raw = "prefix\t?\nprefix\t?\nroot\tM-s\nprefix\tSpace\n";
+        let text = compact(raw);
+        assert!(text.starts_with("#v1\n"), "{text}");
+        assert_eq!(text.lines().count(), 4, "{text}");
+        assert!(text.contains("prefix\t?\t2\n"), "{text}");
+        assert_eq!(usage_counts(&text), usage_counts(raw));
+        // Compacting a compacted log changes nothing.
+        assert_eq!(compact(&text), text);
+    }
+
+    #[test]
+    fn picks_appended_after_a_compaction_still_count() {
+        // `record_use` keeps appending two-column lines to a compacted file,
+        // so a reader has to take a count where there is one and a one where
+        // there is not.
+        let text = "#v1\nprefix\t?\t7\nroot\tM-s\t1\nprefix\t?\nroot\tM-x\n";
+        let counts = usage_counts(text);
+        assert_eq!(counts.get(&("prefix".into(), "?".into())), Some(&8));
+        assert_eq!(counts.get(&("root".into(), "M-s".into())), Some(&1));
+        assert_eq!(counts.get(&("root".into(), "M-x".into())), Some(&1));
+    }
+
+    #[test]
+    fn a_raw_log_never_reads_its_last_column_as_a_count() {
+        // Without the header a third column is part of the key, however
+        // numeric it looks.
+        let counts = usage_counts("prefix\t9\t9\n");
+        assert_eq!(counts.get(&("prefix".into(), "9\t9".into())), Some(&1));
+    }
+
+    #[test]
+    fn a_log_past_the_limit_is_rewritten_with_its_counts_kept() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("keys-usage.tsv");
+        let mut long = String::new();
+        for _ in 0..COMPACT_AFTER {
+            long.push_str("prefix\t?\n");
+        }
+        std::fs::write(&path, &long).expect("seed");
+
+        record_use(&path, "root", "M-s");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            text.starts_with("#v1\n"),
+            "{}",
+            text.lines().next().unwrap_or("")
+        );
+        assert_eq!(text.lines().count(), 3, "{text}");
+        let counts = usage_counts(&text);
+        assert_eq!(
+            counts.get(&("prefix".into(), "?".into())),
+            Some(&COMPACT_AFTER)
+        );
+        assert_eq!(counts.get(&("root".into(), "M-s".into())), Some(&1));
+
+        // And the next pick appends to the compacted file rather than
+        // compacting again.
+        record_use(&path, "root", "M-s");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(text.lines().count(), 4, "{text}");
+        assert_eq!(
+            usage_counts(&text).get(&("root".into(), "M-s".into())),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn the_tmux_config_is_found_where_tmux_looks_for_it() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = t.path().display().to_string();
+
+        // Neither file: the XDG path, where a config written later will be.
+        assert_eq!(
+            tmux_conf_in(&home, None),
+            t.path().join(".config/tmux/tmux.conf")
+        );
+
+        // Only the classic dotfile: that one. This was the case that watched
+        // a path nothing ever wrote to.
+        std::fs::write(t.path().join(".tmux.conf"), "").expect("write");
+        assert_eq!(tmux_conf_in(&home, None), t.path().join(".tmux.conf"));
+
+        // Both: XDG wins, as it does in tmux.
+        std::fs::create_dir_all(t.path().join(".config/tmux")).expect("dir");
+        std::fs::write(t.path().join(".config/tmux/tmux.conf"), "").expect("write");
+        assert_eq!(
+            tmux_conf_in(&home, None),
+            t.path().join(".config/tmux/tmux.conf")
+        );
+
+        // An XDG_CONFIG_HOME somewhere else is looked in first.
+        let elsewhere = t.path().join("cfg");
+        std::fs::create_dir_all(elsewhere.join("tmux")).expect("dir");
+        std::fs::write(elsewhere.join("tmux/tmux.conf"), "").expect("write");
+        assert_eq!(
+            tmux_conf_in(&home, Some(&elsewhere.display().to_string())),
+            elsewhere.join("tmux/tmux.conf")
+        );
+        // An empty one is the same as none.
+        assert_eq!(
+            tmux_conf_in(&home, Some("")),
+            t.path().join(".config/tmux/tmux.conf")
+        );
     }
 
     #[test]

@@ -1,6 +1,9 @@
 # Pinned so a contributor's formatting and lints match CI rather than whichever
-# rustc they happen to have. 1.85 is the floor for edition 2024; this pins the
-# exact toolchain the repository is developed and tested against.
+# rustc they happen to have. 1.85 is the floor for edition 2024, 1.88 is what
+# the source needs (let chains, ratatui 0.30) and 1.95 is what the locked
+# dependencies need, which is the number `rust-version` in Cargo.toml carries;
+# this pins the exact toolchain the repository is developed and tested against,
+# and ci.yml's msrv job is what checks the floor still holds.
 [toolchain]
 channel = "1.98.0"
 components = ["rustfmt", "clippy"]

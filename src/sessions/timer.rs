@@ -1,9 +1,35 @@
-//! The daemon's half: a snapshot on a timer, and a marker saying it is alive.
+//! The daemon's half: a snapshot on a timer, and two markers that between
+//! them say whether the last daemon stopped cleanly.
 //!
-//! The marker is what tells a restore whether the last run ended badly. A
+//! The markers are what tell a restore whether the last run ended badly. A
 //! snapshot's own `clean` flag cannot answer that: a timer's capture writes
 //! `false` because the daemon does not know yet, and nothing goes back to
 //! correct the one that turned out to be the last before a crash.
+//!
+//! Both live beside the snapshots under `<state>/sessions/`:
+//!
+//! - `running` holds the pid of the daemon that wrote it. It is written at
+//!   start and removed by a clean stop, which is `sessions shutdown`, a
+//!   client replacing an old build, or SIGTERM and SIGINT.
+//! - `crashed` is a `running` file nobody removed. The next daemon to start
+//!   finds `running` naming a pid that is no longer alive and moves the file
+//!   aside under this name, contents and all, before writing its own.
+//!
+//! So the four cases come out as:
+//!
+//! - A clean stop removes `running`; the next start finds nothing and writes
+//!   nothing under `crashed`.
+//! - SIGKILL, a power cut or a reboot leaves `running` behind with a dead
+//!   pid; the next start moves it to `crashed`.
+//! - SIGTERM is a clean stop, since the daemon handles it.
+//! - A daemon running right now holds a live pid in `running`, which says
+//!   nothing about the daemon before it. [`crashed_in`] looks only at
+//!   `crashed`, so a live daemon never reads as a crash.
+//!
+//! `crashed` stays until a restore has acted on it, through
+//! [`acknowledge_crash_in`], or until a later crash replaces it. A clean stop
+//! does not remove it: a reboot followed by an upgrade that politely replaced
+//! the daemon is still a reboot the person has not restored from.
 //!
 //! The scheduling arithmetic is pure and takes its clock, so a cron expression
 //! can be tested at four in the morning on a Sunday without waiting for one.
@@ -21,11 +47,30 @@ pub fn marker_path_in(state_dir: &Path) -> PathBuf {
     super::store::dir_in(state_dir).join("running")
 }
 
+/// The `running` file of a daemon that never removed it, moved aside by the
+/// daemon that started after it.
+pub fn crash_path_in(state_dir: &Path) -> PathBuf {
+    super::store::dir_in(state_dir).join("crashed")
+}
+
 /// Record that a daemon is running, so a crash can be told from a clean stop.
+///
+/// A `running` file already there names either a daemon that is still alive,
+/// which is overwritten because the last daemon to start is the one clients
+/// reach, or one that died without removing it, which is moved to `crashed`
+/// with the pid it held so whoever reads it can see which daemon went.
 pub fn mark_running_in(state_dir: &Path, pid: u32) -> std::io::Result<()> {
     let dir = super::store::dir_in(state_dir);
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(marker_path_in(state_dir), format!("{pid}\n"))
+    let marker = marker_path_in(state_dir);
+    if let Ok(text) = std::fs::read_to_string(&marker)
+        && !pid_alive(parse_pid(&text))
+    {
+        // A rename rather than a copy: the old file is the evidence, and an
+        // earlier crash nobody restored from is replaced by the newer one.
+        let _ = std::fs::rename(&marker, crash_path_in(state_dir));
+    }
+    std::fs::write(marker, format!("{pid}\n"))
 }
 
 /// Remove the marker, which is what makes the next start a clean one.
@@ -33,13 +78,53 @@ pub fn clear_marker_in(state_dir: &Path) {
     let _ = std::fs::remove_file(marker_path_in(state_dir));
 }
 
-/// Whether a marker was left behind by a daemon that never removed it.
+/// Whether the daemon before the one running now stopped without removing
+/// its marker.
 ///
-/// Its own pid is ignored on purpose. A daemon that is running right now left
-/// this file, and asking "did the last one crash" while one is alive is a
-/// question about a file, not about a process.
+/// Answered from `crashed` alone. The `running` file says a daemon started,
+/// and one that is alive right now would make "did the last one crash" true
+/// for the whole of its life.
 pub fn crashed_in(state_dir: &Path) -> bool {
-    marker_path_in(state_dir).exists()
+    crash_path_in(state_dir).exists()
+}
+
+/// Forget the crash, because a restore has been offered it.
+///
+/// Without this the summary would open on every restore until the next crash
+/// replaced the file, long after the person had already dealt with this one.
+pub fn acknowledge_crash_in(state_dir: &Path) {
+    let _ = std::fs::remove_file(crash_path_in(state_dir));
+}
+
+/// [`acknowledge_crash_in`] under the real state directory.
+pub fn acknowledge_crash() {
+    if let Some(dir) = crate::server::state_dir() {
+        acknowledge_crash_in(&dir);
+    }
+}
+
+/// The pid a marker holds, or nothing for a file that does not hold one.
+///
+/// A marker that cannot be read as a pid is treated as a dead one by the
+/// caller, which is the direction to fail in: a file nobody can name the
+/// owner of is a file nobody is going to remove.
+fn parse_pid(text: &str) -> Option<i32> {
+    text.trim().parse().ok().filter(|pid| *pid > 0)
+}
+
+/// Whether a process with this pid exists.
+///
+/// Signal zero: no signal is sent, only the check is made. A process this
+/// user cannot signal still exists, so `EPERM` counts as alive. `None`, or a
+/// pid of zero or below, is not a process, and asking `kill` about zero would
+/// address the whole process group.
+fn pid_alive(pid: Option<i32>) -> bool {
+    let Some(pid) = pid else { return false };
+    match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None) {
+        Ok(()) => true,
+        Err(nix::errno::Errno::EPERM) => true,
+        Err(_) => false,
+    }
 }
 
 /// A moment, in the fields a cron expression is matched against.
@@ -113,7 +198,7 @@ pub fn field_matches(field: &str, value: u32) -> bool {
         // A step counts from the start of the range, and from zero when the
         // range is the whole field, which is what `*/15` means.
         let base = if range == "*" { 0 } else { from };
-        (value - base) % step == 0
+        (value - base).is_multiple_of(step)
     })
 }
 
@@ -340,19 +425,95 @@ mod tests {
         }
     }
 
+    /// A pid no process on this machine has: past every pid_max in use.
+    const DEAD: u32 = i32::MAX as u32;
+
     #[test]
-    fn a_marker_outlives_the_daemon_that_could_not_remove_it() {
+    fn a_clean_stop_leaves_nothing_for_the_next_start_to_find() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(!crashed_in(dir.path()));
 
-        mark_running_in(dir.path(), 4242).expect("mark");
-        // A daemon killed with -9 removes nothing, so the file is still here.
-        assert!(crashed_in(dir.path()));
-
+        mark_running_in(dir.path(), DEAD).expect("mark");
         clear_marker_in(dir.path());
+        assert!(!marker_path_in(dir.path()).exists());
+
+        // The next daemon starts and finds nothing to move aside.
+        mark_running_in(dir.path(), std::process::id()).expect("mark again");
         assert!(!crashed_in(dir.path()));
         // Clearing a marker that is not there is not an error.
         clear_marker_in(dir.path());
+        clear_marker_in(dir.path());
+    }
+
+    #[test]
+    fn a_marker_with_a_dead_pid_becomes_the_crash_the_next_start_reports() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A daemon killed with -9 removes nothing, so its file is still here
+        // when the next one starts.
+        mark_running_in(dir.path(), DEAD).expect("mark");
+        assert!(!crashed_in(dir.path()), "a marker alone is not a crash");
+
+        mark_running_in(dir.path(), std::process::id()).expect("next start");
+        assert!(crashed_in(dir.path()));
+        // Moved, not copied: the pid the dead daemon had is what the file
+        // says, and the new daemon's own marker names the new daemon.
+        let crashed = std::fs::read_to_string(crash_path_in(dir.path())).expect("read");
+        assert_eq!(crashed.trim(), DEAD.to_string());
+        let running = std::fs::read_to_string(marker_path_in(dir.path())).expect("read");
+        assert_eq!(running.trim(), std::process::id().to_string());
+    }
+
+    #[test]
+    fn a_daemon_that_is_alive_right_now_is_not_a_crash() {
+        // The whole reason for the second file. The version that answered
+        // "does `running` exist" was true for the whole life of every daemon,
+        // so every restore thought it followed a crash.
+        let dir = tempfile::tempdir().expect("tempdir");
+        mark_running_in(dir.path(), std::process::id()).expect("mark");
+        assert!(!crashed_in(dir.path()));
+
+        // A second start beside a live daemon overwrites the marker and
+        // reports no crash, because nothing died.
+        mark_running_in(dir.path(), std::process::id()).expect("mark again");
+        assert!(!crashed_in(dir.path()));
+        assert!(!crash_path_in(dir.path()).exists());
+    }
+
+    #[test]
+    fn a_crash_is_remembered_until_a_restore_has_seen_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        mark_running_in(dir.path(), DEAD).expect("mark");
+        mark_running_in(dir.path(), std::process::id()).expect("next start");
+        assert!(crashed_in(dir.path()));
+
+        // A clean stop of the daemon that found the crash does not forget it:
+        // the person has not restored from it yet.
+        clear_marker_in(dir.path());
+        assert!(crashed_in(dir.path()));
+
+        acknowledge_crash_in(dir.path());
+        assert!(!crashed_in(dir.path()));
+        // Acknowledging twice is not an error.
+        acknowledge_crash_in(dir.path());
+    }
+
+    #[test]
+    fn a_later_crash_replaces_an_earlier_one_nobody_restored_from() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        mark_running_in(dir.path(), DEAD).expect("first");
+        mark_running_in(dir.path(), DEAD - 1).expect("second, after a crash");
+        mark_running_in(dir.path(), std::process::id()).expect("third, after another");
+        let crashed = std::fs::read_to_string(crash_path_in(dir.path())).expect("read");
+        assert_eq!(crashed.trim(), (DEAD - 1).to_string());
+    }
+
+    #[test]
+    fn a_marker_nobody_can_read_a_pid_out_of_counts_as_dead() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(super::super::store::dir_in(dir.path())).expect("dir");
+        std::fs::write(marker_path_in(dir.path()), "not a pid\n").expect("write");
+        mark_running_in(dir.path(), std::process::id()).expect("start");
+        assert!(crashed_in(dir.path()));
     }
 
     #[test]
@@ -361,6 +522,19 @@ mod tests {
         mark_running_in(dir.path(), 4242).expect("mark");
         let text = std::fs::read_to_string(marker_path_in(dir.path())).expect("read");
         assert_eq!(text.trim(), "4242");
+    }
+
+    #[test]
+    fn this_process_is_alive_and_a_pid_past_the_maximum_is_not() {
+        assert!(pid_alive(Some(std::process::id() as i32)));
+        assert!(!pid_alive(Some(i32::MAX)));
+        assert!(!pid_alive(None));
+        // Zero would address the process group and a negative number a
+        // group by id; neither is a daemon.
+        assert_eq!(parse_pid("0\n"), None);
+        assert_eq!(parse_pid("-1"), None);
+        assert_eq!(parse_pid(" 4242 \n"), Some(4242));
+        assert_eq!(parse_pid("garbage"), None);
     }
 
     #[test]

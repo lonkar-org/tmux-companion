@@ -1,0 +1,108 @@
+# tmux-companion: a tmux.conf to start from
+#
+# Three example files ship, and this is the one to copy first:
+#
+#   tmux.conf.starter.example   this: the bar and the eight bindings worth
+#                               having on day one, nothing else
+#   tmux.conf.example           the bar alone, as one laptop runs it, with the
+#                               measurements behind each line
+#   tmux.conf.full.example      every feature on, with what each one costs
+#
+# Every line here is optional and every key is yours to move. The binary binds
+# nothing on its own.
+#
+# ── Install order ───────────────────────────────────────────────────────────
+#
+# Binary first, then this file. The bar calls `tmux-companion status-right`,
+# and against a binary without it the right-hand side is blank.
+#
+#   ./scripts/install.sh          # or: cargo build --release && sudo install ...
+#   tmux-companion doctor         # can it see tmux, which config, which font
+#   tmux source-file ~/.config/tmux/tmux.conf
+#
+# After an upgrade: `tmux-companion restart`. The daemon is one long-lived
+# process, and a new binary on disk changes nothing until it is restarted.
+
+# ── The bar ─────────────────────────────────────────────────────────────────
+#
+# status-style is not optional: the segments draw against colour233 and
+# tmux's default green shows through everywhere they do not reach without it.
+set -g  status-interval 1
+set -g  status-style bg=colour233,fg=colour251
+set -g  status-left  "#[fg=colour251,bg=colour236] #S #[fg=colour240,bg=colour233] %H:%M:%S "
+set -g  status-left-length 80
+set -g  status-right-length 150
+
+# One `#()` for the whole right side: git status, bandwidth and battery,
+# computed together in the daemon. Do not split it into three; tmux spawns a
+# process per `#()` per second per attached client, and that spawn is the
+# whole cost of the bar.
+set -g  status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+
+set -g window-status-format          "#I:#W#{?window_flags,#{window_flags}, }"
+set -g window-status-current-format  "#I:#W#{?window_flags,#{window_flags}, }"
+set -g window-status-separator       " "
+
+# ── Bindings ────────────────────────────────────────────────────────────────
+#
+# The `-N "custom: <group> ..."` note on each one is not decoration. `keys`
+# (the searchable key list) and `cheatsheet` show the bindings that carry it
+# and nothing else, and the word after `custom:` picks the cheat sheet box:
+# pane, window, session, project, go, copy, open, search, config, help.
+# A binding without the note works as a key and is invisible to both.
+#
+# Two of these sit in the root table (`-n`), so they fire without the prefix
+# and take Alt-s and Alt-a away from every program in the pane. Drop the `-n`
+# to put them behind the prefix instead.
+
+# Which project. Live sessions first, then the directories zoxide (or
+# `[project] dirs_source`) knows. Picking a directory builds its session from
+# `[[layout]]` in config.toml, or a plain shell when there is none.
+bind -N "custom: project pick a project" -n M-s \
+  display-popup -E -w 80% -h 70% "tmux-companion project"
+
+# The next window in this session, wrapping at the end.
+bind -N "custom: project toggle the windows in this session" -n M-a \
+  run-shell "tmux-companion toggle '#{session_name}'"
+# The flip between the two most recent windows, for a session with more than two.
+bind -N "custom: project flip to the last window" -n M-A \
+  run-shell "tmux-companion toggle --last '#{session_name}'"
+
+# Every binding, searchable, and the same list as a cheat sheet.
+bind -N "custom: help search every key binding" ? \
+  display-popup -E -w 80% -h 60% "tmux-companion keys"
+bind -N "custom: help cheat sheet of my bindings" C-c \
+  display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
+
+# tmux's own prefix+c, with a say in the directory: the query starts on this
+# pane's directory, so Enter is what prefix+c always did.
+bind -N "custom: window new one here, or at any directory" c \
+  display-popup -E -w 65% -h 65% "tmux-companion new-window"
+
+# A command from shell history, run in a pane beside this one.
+bind -N "custom: window run a command from history" e \
+  display-popup -E -w 70% -h 60% "tmux-companion run"
+
+# Everything but this pane goes: a zoom with other panes open, the status bar
+# with none.
+bind -N "custom: pane zen, everything but this one goes" z \
+  run-shell "tmux-companion zen --pane '#{pane_id}'"
+
+# Close this project cleanly, capturing its layout on the way out so it opens
+# with the same windows next time.
+bind -N "custom: session close this project cleanly" X \
+  confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion project close'"
+
+# ── Later ───────────────────────────────────────────────────────────────────
+#
+# `tmux-companion theme init` writes the colour themes, `prefix C-t` picks one
+# per project, and this hook paints a new session in its project's colour.
+# With no themes on disk it does nothing and says nothing.
+#
+#   bind -N "custom: config pick a colour theme" C-t \
+#     display-popup -E -w 70% -h 70% "tmux-companion theme pick"
+#   set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'"
+#
+# `[sessions] autosave` in config.toml snapshots every session on a timer, and
+# `tmux-companion sessions resurrect` brings them back after a reboot.
+# tmux.conf.full.example has the keys for that and everything else.

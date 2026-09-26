@@ -2,31 +2,39 @@
 
 ## Build & test
 
-```sh
-cargo build --release          # binary → target/release/tmux-companion
-cargo test                     # unit and integration tests, no external deps
-```
-
-On a machine someone is using, keep the job count down and the priority low --
-a full build otherwise saturates every core:
+The justfile is the list of commands, and `just` alone prints it. Every recipe
+that compiles already runs under `nice -n 15` with four jobs, because a bare
+`cargo build --release` on a machine someone is using saturates every core.
 
 ```sh
-nice -n 15 cargo build --release -j 4
-nice -n 15 cargo test -j 4
+just build       # release binary → target/release/tmux-companion
+just test-unit   # the fast half: --lib --bins, no tmux, no daemon, no socket
+just test-e2e    # the three integration suites; e2e drives a real tmux
+just test        # both, --no-fail-fast, with the daemon reaper on the way out
+just lint        # clippy --all-targets -D warnings, the way ci.yml runs it
+just ci          # review-marks, rustfmt, clippy, tests and rustdoc, native
+just install     # build, install to PREFIX, move the daemon onto the new binary
 ```
 
-No lint step is configured yet; `cargo clippy` is fine to run but not required.
+`just lint` is the lint step, and CI fails on a warning, so run it before
+pushing. `TC_SKIP_E2E=1 cargo test` skips the tmux tests with one printed line;
+with `CI` set they fail instead of skipping, which is on purpose (see the note
+on `test-e2e` in the justfile).
 
 ## Running manually
 
-Kill any stale daemon before testing so you pick up the new binary:
+Move the daemon onto the new binary before testing, or the client keeps
+talking to the old one:
 
 ```sh
-pkill -f tmux-companion; sleep 0.1
-./target/release/tmux-companion server &
-sleep 0.3
+./target/release/tmux-companion restart
 ./target/release/tmux-companion gst /path/to/repo
 ```
+
+Not `pkill -f tmux-companion`: the daemon handles SIGTERM now, so that works,
+but `restart` is the clean path. It waits for the old daemon to go, starts the
+new one, and exits 1 with the reason when the new binary refuses its config,
+which a pkill-and-respawn reports as nothing at all.
 
 Or let the client auto-start the server:
 
@@ -48,39 +56,68 @@ intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
 
 ## Module responsibilities
 
+One row per file under `src/`, in the order `ls src src/*/` gives. The "owns"
+column is the first sentence of the file's `//!` doc, so the file is the
+source and this is the index; four files have no module doc yet and keep the
+description they had.
+
 | Path | Owns |
 |------|------|
-| `src/main.rs` | argument parsing and the runtime choice, nothing else |
-| `src/lib.rs` | the library every module hangs off, so `tests/` can link it |
-| `src/cli.rs` | CLI (`Cmd` enum via clap), dispatch to client or server |
-| `src/client.rs` | connect-with-retry, spawn server, `send` and send/print |
-| `src/server/mod.rs` | UnixListener accept loop |
-| `src/server/handlers.rs` | `req.cmd` → segment fn; `assemble_right`, the `__rusage` probe |
-| `src/server/state.rs` | `ServerState` + caches + TTL constants + dir-aliases loader |
-| `src/cache.rs` | `TtlMap` — timestamped map, reader-supplied TTL, sweep on insert |
-| `src/segments/git.rs` | git status parse, format; `GstOptions`, `render(opts, state)`, cached is-inside-work-tree |
-| `src/segments/battery.rs` | ioreg plist parse, `format_battery_output` |
-| `src/segments/network.rs` | `sample` (counter read), `rate`/`advance` (pure arithmetic), IEC format |
-| `src/segments/clients.rs` | tmux list-clients, `format_client_output` |
-| `src/segments/sh_jobs.rs` | jobs under a pane, the config job table, `format_jobs` |
-| `src/segments/vim_bg.rs` | deprecated shim over `sh_jobs`, kept one release |
-| `src/segments/window.rs` | path abbreviation, index icons, `render` |
-| `src/tmux/format.rs` | `Segment`, `colored_segment`, `powerline_segment`, color consts |
-| `src/tmux/icons.rs` | Nerd Font codepoints |
-| `src/proto.rs` | `Request` / `Response` serde types, and one args struct per command |
-| `src/config.rs` | the TOML config: search order, parse, did-you-mean errors, `dump` |
-| `src/doctor.rs` | the report to ask an issue reporter for |
-| `src/theme.rs` | WCAG contrast, the xterm cube, theme file rewrite |
-| `src/keys.rs` | `list-keys` parse, the row cache, the usage log |
-| `src/picker.rs` | fuzzy match state machine and the ratatui screen |
-| `src/cheatsheet.rs` | the four boxes, their ordering and the grid |
-| `src/project.rs` | session and directory rows, short paths, session names |
-| `src/dirsource.rs` | where the directory list comes from: named sources, their parsers, visits |
-| `src/tasks.rs` | the autosave timer, the calendar, the toggle target |
-| `src/run.rs` | shell history parsing, the pane slide, the exit dialog |
-| `src/open.rs` | URL and `file:line:col` extraction from text |
-| `src/close.rs` | which pane gets which farewell |
-| `src/probe.rs` | key bytes and DSR cell measurement |
+| `src/autofetch.rs` | fetching in the background, so ahead and behind mean something |
+| `src/autoreload.rs` | sourcing tmux's config when it changes |
+| `src/cache.rs` | in-memory TTL maps for the server's segment caches |
+| `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings somebody wrote rather than the ones tmux ships |
+| `src/cli.rs` | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server |
+| `src/client.rs` | find the socket, start a server if nothing answers, send one JSON line and read one back |
+| `src/close.rs` | closing a project session by letting every window exit on its own |
+| `src/config.rs` | the configuration file: where it lives, how it is parsed, and what happens when it cannot be |
+| `src/dirsource.rs` | where the project picker's directory list comes from |
+| `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
+| `src/keys.rs` | key bindings, parsed out of `tmux list-keys` into rows a picker can search |
+| `src/lib.rs` | one binary in two modes; the library `tests/` links against |
+| `src/local.rs` | running a segment in this process, with no daemon and no socket |
+| `src/main.rs` | the binary: parses arguments, picks a runtime, hands over to the library |
+| `src/notify.rs` | telling you a long command finished in a pane you were not looking at |
+| `src/open.rs` | open a URL or a file reference found in text |
+| `src/picker/mod.rs` | the picker: a fuzzy-matched list in a terminal, shared by every chooser in the tool |
+| `src/picker/ansi.rs` | enough ANSI to draw a preview |
+| `src/picker/screen.rs` | the picker's own screen: the state behind it, the matching, and the drawing |
+| `src/picker/style.rs` | what a picker looks like, as settings rather than as a shape compiled into the drawing |
+| `src/presets/ascii.toml` | the 7-bit fallback: one value per Nerd Font glyph name, for a machine whose font nobody controls |
+| `src/preview.rs` | renders the git segment for a spread of repo states in every color style |
+| `src/probe.rs` | probes: ask the terminal what it does, rather than assuming |
+| `src/project.rs` | projects: one tmux session each, with the windows a layout asks for |
+| `src/proto.rs` | `Request` / `Response` serde types, one args struct per command, and the build id (no module doc) |
+| `src/restore.rs` | what a restore will run in each pane, decided before anything runs |
+| `src/run.rs` | run a command from history in a pane beside the one you are in |
+| `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |
+| `src/segments/mod.rs` | one module per thing the status bar can draw |
+| `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |
+| `src/segments/clients.rs` | how many other clients are attached to this server, session and window |
+| `src/segments/git.rs` | git status: running the command, parsing porcelain v2, and rendering it into a tmux segment |
+| `src/segments/network.rs` | network bandwidth: a counter read, the arithmetic that turns two reads into a rate, and the IEC formatting |
+| `src/segments/sh_jobs.rs` | jobs stopped under a pane: which ones, and what to draw for each |
+| `src/segments/vim_bg.rs` | the old name for `sh_jobs`, kept one release |
+| `src/segments/window.rs` | path abbreviation, index icons, `render` (no module doc) |
+| `src/server/mod.rs` | bind the socket, accept forever, hand each line to a handler |
+| `src/server/handlers.rs` | `req.cmd` → segment fn; `assemble_right`, the `__rusage` probe (no module doc) |
+| `src/server/state.rs` | `ServerState` + caches + TTL constants + dir-aliases loader (no module doc) |
+| `src/sessions/mod.rs` | snapshots of the whole tmux server, and the generations they are kept in |
+| `src/sessions/capture.rs` | turning three tmux listings into one snapshot |
+| `src/sessions/cli.rs` | the client half of `sessions resurrect`: the confirm screen, the countdown and the crash acknowledgement, which run in the terminal and so cannot live in the daemon |
+| `src/sessions/import.rs` | reading the tab-separated format tmux-resurrect writes |
+| `src/sessions/restore.rs` | rebuilding a server from a snapshot |
+| `src/sessions/store.rs` | where snapshots live, how many are kept, and which one is newest |
+| `src/sessions/summary.rs` | the screen a restore shows when it does not know something |
+| `src/sessions/timer.rs` | the daemon's half: a snapshot on a timer, and a marker saying it is alive |
+| `src/shell.rs` | the OSC 133 prompt marks, and the shell code that emits them |
+| `src/tasks.rs` | background work the daemon does on a timer, and the small tmux commands that do not need one |
+| `src/theme/mod.rs` | theme arithmetic: the readable text colour for a theme, a visible border colour, and the lighter and darker siblings of a cube colour |
+| `src/theme/cli.rs` | the client half of `theme`: the subcommands that read a themes directory, run the picker and source a file into tmux, which talk to the terminal and so run in the client rather than the daemon |
+| `src/tmux/mod.rs` | everything that knows about tmux's own formatting language |
+| `src/tmux/format.rs` | colours, styles and the string builder every segment renders through |
+| `src/tmux/icons.rs` | Nerd Font codepoints the status bar draws with |
+| `src/window_names.rs` | naming windows after what is running in them, from the job table |
 
 ## Key invariants
 
@@ -168,6 +205,10 @@ puts it in `$PREFIX/share/man/man1`, the release workflow copies it into every
 archive, and the playground image installs it so `man tmux-companion` answers
 in the container.
 
+`docs/tmux.conf.starter.example` exists alongside `docs/tmux.conf.example` and
+`docs/tmux.conf.full.example`, and the e2e checks in `tests/e2e.rs` run over
+all three.
+
 ## The skill
 
 `skills/tmux-companion/SKILL.md` is the instruction sheet a coding agent loads
@@ -210,7 +251,7 @@ bytes for the bar.  The steps are the same shape, with one extra.
 6. If the command talks to the terminal (a picker, a dialog), it runs in the
    **client** process, not the daemon.  The daemon has no terminal; it answers
    with rows and the client draws them.
-7. Add a row to `docs/reference/cli.md` and a line to `docs/port-checklist.md`.
+7. Add a row to `docs/reference/cli.md` and a line to `docs/dev/port-checklist.md`.
 
 ## Changing icon codepoints
 
@@ -222,8 +263,8 @@ After changing a codepoint that appears in tmux output, rebuild and do a
 side-by-side visual check with the previous tool:
 
 ```sh
-cargo build --release
-pkill -f tmux-companion
+just build
+./target/release/tmux-companion restart   # not pkill; see "Running manually"
 ./target/release/tmux-companion gst /some/repo
 yrl gst /some/repo   # or the previous shell script
 ```

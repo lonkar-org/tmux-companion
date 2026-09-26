@@ -96,9 +96,12 @@ act-refresh:
 build:
     nice -n 15 cargo build --release -j 4
 
+# review-marks first: it takes a second, and a tree with a question still in
+# it is not one worth compiling.
+
 # Everything ci.yml runs, native.
-ci: fmt-check lint test doc
-    @echo "rustfmt, clippy, tests and rustdoc all passed"
+ci: review-marks fmt-check lint test doc
+    @echo "review marks, rustfmt, clippy, tests and rustdoc all passed"
 
 # Throw away the build output.
 clean:
@@ -163,6 +166,15 @@ demo-record REEL="usage":
 repro-ci RUNS="12":
     RUNS={{RUNS}} ./scripts/repro-ci.sh
 
+# A marker is a question left in a file for the owner, in the comment syntax
+# of that file, and a tree that still holds one has a hole in it. This lists
+# every one and fails. `ci` runs it first and release.yml's gate runs it too,
+# so a question cannot ship by being forgotten.
+
+# Fail on any review marker still in the tree.
+review-marks:
+    ./scripts/check-review-marks.sh
+
 # rustdoc is a CI job of its own and fails on a broken intra-doc link, which is
 # what a rename leaves behind. Neither clippy nor the tests cover it.
 
@@ -177,6 +189,18 @@ fmt:
 # Fail if anything is unformatted, the way the format job does.
 fmt-check:
     cargo fmt --all --check
+
+# The script builds under the same nice level and job count as `build`, and
+# takes JOBS to change the count. No --force: a source build always installs,
+# because a fresh build is never the binary already on PATH. The restart is
+# the half people forget: a client talks to whatever daemon is listening, and
+# until told to go that daemon is the old binary, so `gst` keeps answering
+# from the build before this one. `tmux-companion restart` also fails loudly
+# on a config the new binary refuses, which pkill would have hidden.
+
+# Build, install to PREFIX, and move the daemon onto the new binary.
+install:
+    ./scripts/install.sh --build && tmux-companion restart
 
 # Clippy with -D warnings, the way the check job does.
 lint:
@@ -208,8 +232,18 @@ playground-smoke:
 plugin-check:
     ./scripts/release-plugin.sh check
 
+# Needs `gh`, authenticated, and makes about thirty API calls. Non-zero on a
+# plugin that is archived or gone, which is what makes it a gate: the docs
+# credit these plugins and tell people to install them, and a dead one has to
+# be said to be dead before the skill that names it ships again. Staleness
+# alone is reported and does not fail.
+
+# Are the third-party plugins the docs credit still alive?
+plugin-links:
+    ./scripts/check-plugin-links.sh --quiet
+
 # Bump both manifests, validate, commit, tag and push the skill.
-plugin-release VERSION *ARGS:
+plugin-release VERSION *ARGS: plugin-links
     ./scripts/release-plugin.sh {{VERSION}} {{ARGS}}
 
 # The hook installing cleanly says nothing about whether it works. zsh redraws
@@ -247,6 +281,30 @@ test:
     # after the cargo line would be the one line those runs never reach.
     trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
     nice -n 15 cargo test -j 4 --all-targets --no-fail-fast
+
+# The slow half of `test`: the three integration binaries. Each starts daemons
+# of its own and e2e drives a real tmux, so the reap trap comes with it.
+#
+# TC_SKIP_E2E=1 makes tests/e2e.rs skip its tmux-driving tests, announced on
+# one line, for a `cargo test` on a machine with no tmux or no three seconds
+# to spare (two of those tests sleep that long on purpose). A whole-file
+# switch rather than #[ignore] on the two, because one thing to remember is
+# what gets remembered. CI ignores the switch: with CI set, a test that would
+# skip fails instead, which is the only way the suite going quiet gets seen.
+
+# The three integration suites: e2e, socket_round_trip, config_file.
+test-e2e:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
+    nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file
+
+# The fast half: no tmux, no daemon, no socket, so nothing to reap. This is
+# the loop to sit in while editing; `test` is the one to run before pushing.
+
+# Unit tests only: the library and the binary.
+test-unit:
+    nice -n 15 cargo test -j 4 --no-fail-fast --lib --bins
 
 # A green run is not a quiet one. Four actions sat on Node 20 for weeks with
 # every run reporting success, because the warning lives in the annotations

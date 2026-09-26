@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-/// This build, as `<version>+<build stamp>`.
+/// This build, as `<version>+<seconds>.<commit>`, with `-dirty` on the end
+/// when the tree had uncommitted changes, or `<version>+<seconds>` when git
+/// was not there to ask.
 ///
 /// The stamp comes from `build.rs` and changes with every compile, because
 /// during development every build carries the same version number and the
 /// question a client actually needs answered is "is the daemon running the
-/// binary I just installed".
+/// binary I just installed". The seconds sit right after the `+` as a plain
+/// run of digits, which is the part that gets compared; the commit is for a
+/// person reading it.
 pub fn build_id() -> String {
     BUILD_ID.to_string()
 }
@@ -236,6 +240,19 @@ mod tests {
             BUILD_ID.starts_with(env!("CARGO_PKG_VERSION")),
             "{BUILD_ID}"
         );
+    }
+
+    #[test]
+    fn the_stamp_starts_with_a_run_of_digits_whatever_follows() {
+        // The seconds are what a snapshot header compares numerically, so
+        // the commit that build.rs appends must come after them, never
+        // before or instead.
+        let (_, stamp) = BUILD_ID.split_once('+').expect("a stamp");
+        let digits: String = stamp.chars().take_while(char::is_ascii_digit).collect();
+        assert!(!digits.is_empty(), "{BUILD_ID}");
+        assert!(digits.parse::<u64>().is_ok(), "{BUILD_ID}");
+        let rest = &stamp[digits.len()..];
+        assert!(rest.is_empty() || rest.starts_with('.'), "{BUILD_ID}");
     }
 
     #[test]

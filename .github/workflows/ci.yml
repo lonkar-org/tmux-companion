@@ -5,11 +5,17 @@ name: CI
 # rust-toolchain.toml, which is what keeps the formatting identical to a
 # maintainer's machine.
 
-# Markdown is excluded because nothing in it is shipped or tested. The docs
-# that *are* tested are not markdown: `the_manual_documents_every_subcommand`
-# reads docs/tmux-companion.1 and the config tests read
-# docs/config.example.toml, so both of those still start a run. A README or a
-# CHANGELOG edit does not.
+# Markdown is excluded because nothing in it is shipped or tested, with one
+# exception. skills/tmux-companion/SKILL.md is `include_str!`ed by
+# `the_skill_names_no_command_that_went_away` in tests/e2e.rs, so an edit to it
+# is an edit to a test's input and has to run the suite. The other docs that
+# *are* tested are not markdown: `the_manual_documents_every_subcommand` reads
+# docs/tmux-companion.1 and the config tests read docs/config.example.toml, so
+# both of those still start a run. A README or a CHANGELOG edit does not.
+#
+# It is `paths` with a negation rather than `paths-ignore`, because GitHub
+# allows one or the other and only `paths` can carve an exception back out;
+# later patterns win, so the file is re-included after the markdown is dropped.
 #
 # If a required status check is ever turned on for this repository, take this
 # out: GitHub leaves the check pending rather than passing it on a pull request
@@ -18,9 +24,15 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ['**/*.md']
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'skills/tmux-companion/SKILL.md'
   pull_request:
-    paths-ignore: ['**/*.md']
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'skills/tmux-companion/SKILL.md'
   workflow_dispatch:
 
 # The actions are on their current majors because the older ones ran on Node
@@ -99,7 +111,68 @@ jobs:
           restore-keys: ${{ matrix.os }}-cargo-
 
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all-targets
+      # --no-fail-fast, the same as `just test`: cargo stops at the first test
+      # binary that fails, and two red unit tests once hid the whole e2e suite
+      # and the whole socket suite behind them. Every binary runs, and the log
+      # says which ones went red rather than only the first.
+      - run: cargo test --no-fail-fast --all-targets
+
+  # A question left in a file for the owner, in that file's comment syntax, is
+  # a hole in the tree; this fails on one so it cannot ship by being forgotten.
+  # The script falls back to grep where rg is missing, which it is on a fresh
+  # runner, so there is nothing to install; its header says why rg needs
+  # --hidden when it is there.
+  marks:
+    name: review markers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/check-review-marks.sh
+
+  # Every other job runs the pinned toolchain, so `rust-version` in Cargo.toml
+  # was a claim nothing tested: it said 1.85 while the source used let chains,
+  # which are 1.88. This builds on the toolchain Cargo.toml names, so the floor
+  # it promises is one it keeps.
+  msrv:
+    name: builds on rust-version
+    runs-on: ubuntu-latest
+    env:
+      # A compile check and not a lint pass. An older rustc warns about
+      # different things, and with -D warnings this job would fail on lints the
+      # pinned toolchain never sees.
+      RUSTFLAGS: ''
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          [ -n "$msrv" ] || { echo "::error::Cargo.toml has no rust-version"; exit 1; }
+          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+          rustup toolchain install "$msrv" --profile minimal --no-self-update
+        id: msrv
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: msrv-${{ steps.msrv.outputs.version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: msrv-${{ steps.msrv.outputs.version }}-cargo-
+
+      # `+<version>` overrides rust-toolchain.toml, which would otherwise win
+      # and make this a second run of the pinned toolchain. The lockfile is
+      # used as shipped: rust-version is the floor the locked tree builds on,
+      # so a dependency that wants a newer rustc fails here, which is the
+      # point, rather than being resolved away.
+      - run: cargo +${{ steps.msrv.outputs.version }} check --all-targets --locked
 
   docs:
     name: rustdoc

@@ -66,7 +66,7 @@ removes the socket file on its way out, so a path with no socket file means no
 daemon rather than a daemon that has stopped answering.
 .Sh GETTING IN
 .Bl -tag -width Ds
-.It Ic start Oo Ar directory Oc Op Fl -last
+.It Ic start Oo Ar directory Oc Op Fl -last , Fl -hook
 The way in, from a shell that is not in tmux yet.
 Opens the project picker, live sessions first and every directory the
 configured source knows underneath, and attaches to what is chosen.
@@ -84,6 +84,16 @@ Inside tmux it switches rather than attaching.
 on its own leaves you in a session called
 .Ql 0
 holding one bare shell, which is what this replaces.
+.Fl -hook
+is for the
+.Ic client-attached
+hook in
+.Pa tmux.conf ,
+so that plain
+.Ql tmux
+lands in the same picker: it opens only when the session is one tmux named
+itself, all digits, with one window, one pane and a shell in it, and leaves
+any other session alone.
 .El
 .Sh STATUS LINE COMMANDS
 These print tmux format strings on standard output and are meant for
@@ -91,16 +101,37 @@ These print tmux format strings on standard output and are meant for
 in
 .Pa tmux.conf .
 .Bl -tag -width Ds
-.It Ic status-right Oo Ar path Oc Op Fl -branch-max-len Ar n
+.It Ic status-right Oo Ar path Oc Op Fl -style Ar style , Fl -branch-max-len Ar n
 Git, bandwidth and battery in one call, computed concurrently.
 One
 .Ql #()
 rather than three.
 Takes a path and deliberately no pane pid: a pid makes the git segment
 enumerate every process on the machine, which cost 18.5 ms of its 26.0.
+.Fl -style
+is one of
+.Ql fill ,
+.Ql outline
+or
+.Ql outline-bright ,
+and anything else is refused with that list.
+.Fl -branch-max-len
+middle-ellipsizes a branch name longer than
+.Ar n ;
+without the flag
+.Ic [git] branch_max_len
+decides, 20 out of the box.
 .It Ic gst Oo Ar path Oc Oo Ar pid Oc Op Fl -no-daemon Fl -no-tmux
-The git segment on its own: branch, what is dirty, ahead and behind.
+The git segment on its own: branch, what is dirty, ahead and behind, with the
+same
+.Fl -style
+and
+.Fl -branch-max-len .
 With a pid it also marks a suspended editor.
+A daemon that answers with an error exits this command non-zero, which tmux
+ignores in a
+.Ql #()
+and a prompt or a script can read.
 .It Ic battery
 Charge, as an icon and a percentage.
 Reads the platform's battery and prints nothing on a machine without one.
@@ -183,6 +214,9 @@ and a directory it has never seen can still be typed in full.
 Picking a live session switches to it; picking a directory builds its session
 from
 .Ic [[layout]] .
+.Fl -print
+lists the rows and exits, and opens nothing; it cannot be combined with a
+directory.
 Bound to
 .Ql M-s .
 .It Ic project save Op Fl -no-commands
@@ -197,12 +231,16 @@ save interrupted halfway leaves the previous layout rather than half of a new
 one.
 Bound to
 .Ql prefix S .
-.It Ic project forget
+.It Ic project forget Op Ar directory
 Delete the saved layout, so the config decides again.
+The project is the session this runs in, or the directory given.
 Bound to
 .Ql prefix M-S .
-.It Ic project show
+.It Ic project show Op Ar directory
 Which layout this project gets, which file decided, and the windows it opens.
+A saved file that is there and not used is named with the reason, whether it
+does not parse or an older build wrote it wrong.
+The project is the session this runs in, or the directory given.
 .Pp
 .Ic close-project
 is the old name for
@@ -230,6 +268,8 @@ Rebuild a server from a generation, defaulting to the newest.
 With no generation of its own to read, it reads tmux-resurrect's newest save
 instead, so a machine with months of those loses none of them on the day it
 switches over.
+A snapshot written by a newer build than this one is read anyway, with one line
+on standard error saying the restore may miss what that build knew.
 Refuses outright when the server already holds sessions, naming them, because a
 restore that half-landed on work somebody was doing is the failure worth being
 careful about.
@@ -251,6 +291,8 @@ When the restore does not know what a pane should run, and somebody is watching,
 it shows what it is about to do and counts down before going ahead.
 It opens for a pane no row claims, one a row refused, and one whose command the
 capture read off a running process so the arguments are already gone.
+It opens too when the daemon before this one crashed, once: a restore that goes
+ahead clears the crash, and a dry run or a cancel leaves it for the next.
 It never opens on a count of panes: a restore where everything is known goes
 straight through however many there are, because a confirmation on every restore
 is one people turn off.
@@ -316,6 +358,12 @@ and yesterday's configuration.
 Both refuse to run from inside tmux, because stopping the server would take the
 pane they were typed into and nothing after that would run.
 There is no flag for it.
+Both say so on standard error, as they do when no tmux server is running,
+and a
+.Ic sessions restart
+with no server to restart points at
+.Ic sessions resurrect
+instead.
 .It Ic sessions autosave Oo Fl -once Oc Op Fl -status
 The snapshot timer the daemon runs, which
 .Ic [sessions] autosave
@@ -325,13 +373,19 @@ takes one now and
 .Fl -status
 says when the last one happened, what the timer is set to, and whether the
 daemon before this one stopped cleanly.
+With neither flag it reports, the same as
+.Fl -status .
 .Pp
 That last answer comes from a file the daemon writes when it starts and removes
-when it is asked to stop, so one left behind means the daemon before this never
-got to leave.
-A snapshot's own record of a clean shutdown cannot answer it: a capture taken on
-the timer says
-.Ql no clean shutdown recorded
+when it stops cleanly; the next daemon to start finds one naming a pid that is
+no longer alive and sets it aside as
+.Pa crashed ,
+which is what the answer reads, so a daemon that is alive right now never
+counts as a crash.
+The marker stays until a restore has gone ahead on it, or a later crash
+replaces it.
+A snapshot's own record cannot answer it: a capture taken on the timer says
+.Ql taken while running
 because the daemon does not know yet, and nothing goes back to correct the one
 that turned out to be the last before a crash.
 .It Ic sessions list Op Fl -json
@@ -350,25 +404,53 @@ for what the pane was started with,
 .Ql Guessed
 for what it happened to be running, and a shell for a pane sitting at a prompt.
 .It Ic shutdown
-Stop the tmux-companion daemon.
-tmux is not touched, and the next client starts a new one.
+Stop the tmux-companion daemon, and only that.
+tmux and its sessions are not touched, and the next client starts a new
+daemon.
+.Ic sessions shutdown
+is the one that stops tmux.
 .It Ic restart
 Stop the daemon and start a fresh one, which is how a change to
 .Pa config.toml
 takes effect: the file is read once at startup and held for the daemon's whole
 life.
-tmux is not touched.
-.It Ic keys Oo Ar query Oc Op Fl -all , Fl -print
+tmux is not touched;
+.Ic sessions restart
+is the one that restarts it.
+Exits non-zero when the new daemon does not answer, which is what a config it
+refuses looks like; the reason is in the daemon log.
+.It Ic keys Op Fl -all , Fl -query Ar text , Fl -refresh , Fl -print
 Every binding tmux knows, searchable, with what it runs in the preview.
 Enter runs the binding.
+It opens on the bindings whose note starts with
+.Ql "custom: " ,
+which is what the shipped configs write with
+.Fl N ;
+.Fl -all
+opens on everything,
+.Fl -query
+opens on something else,
+.Fl -refresh
+rebuilds the list from tmux rather than using what the daemon holds, and
+.Fl -print
+lists the rows and exits.
+When no binding carries the note there is nothing to show, and it says so on
+standard error and exits 0 rather than drawing an empty picker.
 Bound to
 .Ql prefix ? .
-.It Ic cheatsheet Op Fl -plain
+.It Ic cheatsheet Op Fl -print
 The bindings written in
 .Pa tmux.conf ,
 in four boxes, most-used first.
 A box with fewer than three of its own is filled out from tmux's own noted
 bindings.
+.Fl -print
+prints the sheet and exits instead of waiting for a key;
+.Fl -plain
+is the old spelling and still works.
+The same hint as
+.Ic keys
+when no binding carries the note.
 Bound to
 .Ql prefix C-c .
 .It Ic new-window
@@ -417,25 +499,44 @@ Bound to
 .El
 .Sh SESSIONS AND WINDOWS
 .Bl -tag -width Ds
-.It Ic toggle Ar session
+.It Ic toggle Oo Ar session Oc Op Fl -last
 Move to the next window in this session, in index order, wrapping from the
 last to the first.
 Windows are told apart by index, so two windows with the same name are two
 stops.
+.Fl -last
+flips to the window the session was on before instead, which is tmux's own
+.Ic last-window :
+with two windows the two are the same key, and with four the flip is what a
+toggle means and the cycle is a tour.
 A
 .Ar window
 after the session is accepted and ignored, so older bindings that pass
 .Ql #{window_name}
 keep working.
 Bound to
-.Ql M-a .
+.Ql M-a ,
+and
+.Fl -last
+to
+.Ql M-A .
 .It Ic project close Oo Ar session Oc Op Fl -discard , Fl -no-save
 Close a project by asking every window to exit, capturing the layout on the
 way out.
+An editor is asked to quit first, in its own language, and the close stops
+with the editor on screen when it will not; the editors it knows are
+.Ic nvim , vim , vi
+and
+.Ic hx .
+Everything else, an editor it does not know included, gets
+.Ql exit
+or ctrl-D.
 .Fl -discard
 quits editors with
 .Ql :qa!
 and throws away unsaved work.
+A session that is not there is an error rather than a session that closed at
+once.
 Bound to
 .Ql prefix X .
 .It Ic zen Op Fl -pane Ar id
@@ -453,7 +554,16 @@ is the old name and works for one more release.
 Bound to
 .Ql prefix z .
 .It Ic autosave Op Fl -once , Fl -status
-The session-list autosave the daemon runs.
+Deprecated: the
+.Ic [autosave]
+script timer, which
+.Ic [sessions] autosave
+replaces.
+.Fl -once
+runs the script now,
+.Fl -status
+says when it last ran, and with no flag it reports, the same as
+.Fl -status .
 .El
 .Sh COPY MODE AND OPENING
 .Bl -tag -width Ds
@@ -585,8 +695,12 @@ repaints every session instead of one, which is what a reload needs: sourcing
 .Pa tmux.conf
 resets the global options a theme sets, so without it every session is left
 wearing whatever the file says rather than its own colour.
-.It Ic theme list-colours
+.It Ic theme list-colours Op Fl -print
 Every colour tmux takes, painted, with its hex and the contrast on it.
+.Fl -print
+is one name per line with no swatch, for piping somewhere;
+.Fl -plain
+is the old spelling and still works.
 .El
 .Sh CONFIGURATION
 TOML, read from the first of:
@@ -619,6 +733,17 @@ misspelled key or an unrecognised value.
 It also names any setting that still works but is deprecated.
 .It Ic config dump
 Every setting with its default, as a config file.
+.It Ic config init Op Fl -force
+Write a short starter config where
+.Ic config path
+would read it, creating the directory, and print the path.
+The file sets the glyph preset, the directory source and the snapshot timer,
+and carries the editor-beside-an-agent layout as a comment to uncomment; the
+rest is left to the defaults, which
+.Ic config dump
+prints in full.
+A file already there is refused unless
+.Fl -force .
 .El
 .Pp
 Two settings are worth knowing before the rest.
@@ -727,8 +852,13 @@ need no entry.
 .Sh DIAGNOSTICS
 .Bl -tag -width Ds
 .It Ic doctor
-What a bug report needs: the version, the socket, what the config says, what
-tmux says, and what is missing.
+What a bug report needs: the version, the socket, what the config says, the
+last line of the daemon log, whether either autosave is running and when it
+last did, what tmux says, and what is missing.
+A daemon from another build, one that does not answer, and a config file
+edited after the daemon started each end their line with
+.Ql run tmux-companion restart ,
+because that is the answer to all three.
 .It Ic probe
 What the terminal answers about itself.
 .El
@@ -740,6 +870,30 @@ the configuration
 themes, and the two files that apply them
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/
 saved per-project layouts
+.It Pa $XDG_STATE_HOME/tmux-companion/keys-usage.tsv
+which bindings the key picker ran, one line per pick until it passes five
+thousand lines, then one line per binding with a count under a
+.Ql #v1
+header
+.It Pa $XDG_STATE_HOME/tmux-companion/VERSION
+the build that last started a daemon here, rewritten on every start
+.It Pa $XDG_STATE_HOME/tmux-companion/sessions/running
+the pid of the running daemon, written at start and removed by a clean stop,
+which includes
+.Dv SIGTERM
+and
+.Dv SIGINT
+.It Pa $XDG_STATE_HOME/tmux-companion/sessions/crashed
+the
+.Pa running
+file of a daemon that never removed it, moved here by the next daemon to
+start once it has found that pid dead; its presence is what makes
+.Ic sessions resurrect
+treat the last snapshot as taken before a crash
+.It Pa $XDG_STATE_HOME/tmux-companion/daemon.log
+the daemon's stderr: one line per start, one per failure, unless
+.Ic [general] log
+points elsewhere
 .It Pa /tmp/tmux-companion-$UID.sock
 the daemon's socket
 .It Pa /tmp/tmux-companion-$UID.sock.lock
@@ -757,11 +911,23 @@ is
 .Ql cdr
 .El
 .Sh ENVIRONMENT
-.Bl -tag -width TMUX_COMPANION_CONFIG -compact
+.Bl -tag -width TMUX_COMPANION_TMUX_CONF -compact
 .It Ev TMUX_COMPANION_CONFIG
 a configuration file, before the search order
 .It Ev TMUX_COMPANION_SOCK
-the daemon socket, before the default
+the daemon socket, before the default.
+A client replaces a daemon from an older build and leaves a newer one alone,
+saying so once, so a development build run beside the installed one wants a
+socket of its own here rather than the two taking turns replacing each other's
+daemon
+.It Ev TMUX_COMPANION_TMUX_CONF
+the tmux configuration the daemon watches for key bindings and
+.Ic [autoreload] ,
+before the first of
+.Pa $XDG_CONFIG_HOME/tmux/tmux.conf
+and
+.Pa ~/.tmux.conf
+that exists
 .It Ev XDG_CONFIG_HOME , XDG_STATE_HOME
 where configuration and state live
 .It Ev _Z_DATA

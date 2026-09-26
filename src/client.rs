@@ -63,22 +63,87 @@ pub fn sock_path() -> PathBuf {
 pub async fn send(req: Request) -> anyhow::Result<Response> {
     let resp = send_once(&req).await?;
 
-    // A daemon from an older build answers with an older build's behaviour,
-    // and after the port it may not know the command at all. Replace it once
-    // and retry; the retry is bounded because the new daemon reports the build
-    // that just started it.
-    if !resp.version.is_empty() && resp.version != crate::proto::build_id() {
-        eprintln!(
-            "tmux-companion: replacing daemon from build {} with {}",
-            resp.version,
-            crate::proto::build_id()
-        );
-        let _ = send_once(&Request::raw("__shutdown", serde_json::Value::Null)).await;
-        wait_for_socket_to_go().await;
-        return send_once(&req).await;
+    match compare_builds(&resp.version, &crate::proto::build_id()) {
+        // A daemon from an older build answers with an older build's
+        // behaviour, and after the port it may not know the command at all.
+        // Replace it once and retry; the retry is bounded because the new
+        // daemon reports the build that just started it.
+        Staleness::DaemonOlder => {
+            eprintln!(
+                "tmux-companion: replacing daemon from build {} with {}",
+                resp.version,
+                crate::proto::build_id()
+            );
+            let _ = send_once(&Request::raw("__shutdown", serde_json::Value::Null)).await;
+            wait_for_socket_to_go().await;
+            send_once(&req).await
+        }
+        // A newer daemon is left alone. This used to replace on any
+        // difference, so a `target/release` client and a `/usr/local/bin`
+        // daemon sharing one tmux took turns killing each other's daemon on
+        // every status refresh. Said once per process, because the status bar
+        // calls this once a second and stderr is not the place for a metronome.
+        Staleness::DaemonNewer => {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| {
+                eprintln!(
+                    "tmux-companion: the daemon is a newer build ({}) than this client ({}); \
+                     not replacing it",
+                    resp.version,
+                    crate::proto::build_id()
+                );
+            });
+            Ok(resp)
+        }
+        Staleness::Same => Ok(resp),
     }
+}
 
-    Ok(resp)
+/// How the daemon that answered compares with this binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Staleness {
+    /// The same build, or two builds nothing here can tell apart.
+    Same,
+    /// The daemon is older and this client should replace it.
+    DaemonOlder,
+    /// The daemon is newer and this client should leave it be.
+    DaemonNewer,
+}
+
+/// The build stamp in a build id, as a number.
+///
+/// The id is `<version>+<unix seconds>` and may grow a `.<git sha>` after the
+/// seconds, so this reads the run of digits after the `+` and stops at the
+/// first thing that is not one. Anything it cannot read -- an empty version
+/// from a daemon too old to report one, a stamp in some other shape -- is 0,
+/// which is older than any real build, so a daemon that cannot say what it is
+/// gets replaced rather than trusted.
+pub fn build_stamp(id: &str) -> u64 {
+    let Some((_, after)) = id.split_once('+') else {
+        return 0;
+    };
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().unwrap_or(0)
+}
+
+/// Whether `daemon` is older than, newer than, or the same build as `client`.
+///
+/// Identical ids are the same build without looking further. Otherwise the
+/// stamps decide, and two ids with the same stamp that differ elsewhere are
+/// treated as the same build: replacing on that would be the old behaviour of
+/// replacing on any difference, with its two daemons taking turns.
+pub fn compare_builds(daemon: &str, client: &str) -> Staleness {
+    if daemon == client {
+        return Staleness::Same;
+    }
+    let (theirs, ours) = (build_stamp(daemon), build_stamp(client));
+    if ours > theirs {
+        Staleness::DaemonOlder
+    } else if theirs > ours {
+        Staleness::DaemonNewer
+    } else {
+        Staleness::Same
+    }
 }
 
 /// Wait for a shutting-down daemon to release the socket, briefly.
@@ -138,14 +203,19 @@ fn died(e: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// Send one request and print the output field, or the error to stderr.
+/// Send one request and print the output field, or fail with the error.
+///
+/// A daemon error is this process's error, so the exit status says so: a
+/// script checking `$?` used to see 0 with the complaint on stderr and nothing
+/// on stdout, which is the shape of success with nothing to say. The status
+/// bar is unaffected, because tmux ignores the exit status of a `#()` and
+/// draws whatever was printed, which for an error is still nothing.
 pub async fn send_and_print(req: Request) -> anyhow::Result<()> {
     let resp = send(req).await?;
     if let Some(err) = resp.error {
-        eprintln!("tmux-companion error: {err}");
-    } else {
-        print!("{}", resp.output);
+        anyhow::bail!("{err}");
     }
+    print!("{}", resp.output);
     Ok(())
 }
 
@@ -220,9 +290,33 @@ fn spawn_server() -> anyhow::Result<()> {
         .arg("server")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(daemon_stderr())
         .spawn()?;
     Ok(())
+}
+
+/// Where the daemon's stderr goes: the log file, appended to, or nowhere when
+/// there is no state directory or the file cannot be opened.
+///
+/// Null was the only option once, and it hid a day of "autosave failed" lines.
+/// The daemon writes on failure and once at start, so the file grows slowly and
+/// is rotated when it does not.
+fn daemon_stderr() -> std::process::Stdio {
+    let Some(path) = crate::server::daemon_log_path() else {
+        return std::process::Stdio::null();
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    crate::server::rotate_log(&path);
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(f) => std::process::Stdio::from(f),
+        Err(_) => std::process::Stdio::null(),
+    }
 }
 
 #[cfg(test)]
@@ -260,6 +354,47 @@ mod tests {
         let e = resolve_sock_path(Some(OsStr::new(&p)), 501).unwrap_err();
         assert!(e.contains("104 bytes"), "{e}");
         assert!(!e.contains("/tmp/tmux-companion-501.sock"), "{e}");
+    }
+
+    #[test]
+    fn the_stamp_is_the_digits_after_the_plus_and_nothing_else() {
+        assert_eq!(build_stamp("0.2.0+1758800000"), 1_758_800_000);
+        // A git sha appended after the seconds, which another build may add.
+        assert_eq!(build_stamp("0.2.0+1758800000.abc1234"), 1_758_800_000);
+        // Nothing readable counts as older than everything.
+        assert_eq!(build_stamp(""), 0);
+        assert_eq!(build_stamp("0.2.0"), 0);
+        assert_eq!(build_stamp("0.2.0+abc"), 0);
+    }
+
+    #[test]
+    fn an_older_daemon_is_replaced_and_a_newer_one_is_left_alone() {
+        assert_eq!(
+            compare_builds("0.2.0+100", "0.2.0+200"),
+            Staleness::DaemonOlder
+        );
+        assert_eq!(
+            compare_builds("0.2.0+200", "0.2.0+100"),
+            Staleness::DaemonNewer
+        );
+        assert_eq!(compare_builds("0.2.0+100", "0.2.0+100"), Staleness::Same);
+    }
+
+    #[test]
+    fn a_daemon_too_old_to_report_a_build_counts_as_older() {
+        // The old rule skipped an empty version, so a daemon from before the
+        // handshake was never replaced by anything.
+        assert_eq!(compare_builds("", "0.2.0+100"), Staleness::DaemonOlder);
+    }
+
+    #[test]
+    fn the_same_stamp_with_a_different_suffix_is_not_a_reason_to_replace() {
+        // Replacing here would bring back the two-daemons-taking-turns bug
+        // for a client and a daemon built from one source at one moment.
+        assert_eq!(
+            compare_builds("0.2.0+100.abc1234", "0.2.0+100"),
+            Staleness::Same
+        );
     }
 
     #[test]

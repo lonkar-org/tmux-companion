@@ -24,6 +24,9 @@ pub async fn report() -> String {
     let _ = writeln!(out, "  config        {}", config_state());
     let _ = writeln!(out, "  glyphs        {}", glyph_state());
     let _ = writeln!(out, "  state dir     {}", state_dir_state());
+    let _ = writeln!(out, "  daemon log    {}", log_state());
+    let _ = writeln!(out, "  sessions      {}", sessions_state());
+    let _ = writeln!(out, "  autosave      {}", autosave_state());
     let _ = writeln!(out, "  tmux          {}", tmux_version());
     let _ = writeln!(out, "  platform      {}", platform());
     out
@@ -55,11 +58,11 @@ async fn daemon_state() -> String {
             format!("running, {} (this one)", r.version)
         }
         Ok(r) => format!(
-            "running, {} (this binary is {})",
+            "running, {} (this binary is {}); run tmux-companion restart",
             r.version,
             crate::proto::build_id()
         ),
-        Err(e) => format!("running but not answering: {e}"),
+        Err(e) => format!("running but not answering: {e}; run tmux-companion restart"),
     }
 }
 
@@ -85,8 +88,50 @@ fn socket_state() -> String {
 
 fn config_state() -> String {
     match crate::config::load() {
-        Ok((_, source)) => format!("{source}"),
+        Ok((_, source)) => {
+            let note = match &source {
+                crate::config::Source::File(path) if edited_after_daemon_started(path) => {
+                    " (changed after the daemon started; run tmux-companion restart)"
+                }
+                _ => "",
+            };
+            format!("{source}{note}")
+        }
         Err(e) => format!("{} — BROKEN: {}", e.path.display(), e.message),
+    }
+}
+
+/// Whether the config file was written after the running daemon read it.
+///
+/// The daemon reads config.toml once at startup and holds it, so a file that
+/// parses and has been edited since is the one state where `config check`
+/// says ok and the bar still draws yesterday's settings. The daemon's start
+/// is the mtime of the marker the sessions timer writes when it comes up;
+/// no marker means no daemon to be behind.
+fn edited_after_daemon_started(config: &std::path::Path) -> bool {
+    let Some(dir) = crate::server::state_dir() else {
+        return false;
+    };
+    let marker = crate::sessions::timer::marker_path_in(&dir);
+    newer_than(mtime(config), mtime(&marker))
+}
+
+/// A file's modification time, or nothing when it cannot be read.
+fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// `file` was written after `daemon_start`, when both are known.
+///
+/// Missing on either side is "no", because the answer is a nudge to restart
+/// and a nudge on a machine with no daemon running is noise.
+fn newer_than(
+    file: Option<std::time::SystemTime>,
+    daemon_start: Option<std::time::SystemTime>,
+) -> bool {
+    match (file, daemon_start) {
+        (Some(f), Some(d)) => f > d,
+        _ => false,
     }
 }
 
@@ -104,6 +149,63 @@ fn glyph_state() -> String {
     } else {
         format!("{preset}, {} substitutions", config.glyphs.icons.len())
     }
+}
+
+/// The daemon log and its last line, which is the failure somebody is here
+/// about more often than not.
+fn log_state() -> String {
+    let Some(path) = crate::server::daemon_log_path() else {
+        return "nowhere, no state directory".to_string();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match text.lines().rev().find(|l| !l.trim().is_empty()) {
+            Some(last) => format!("{} (last: {})", path.display(), last.trim()),
+            None => format!("{} (empty)", path.display()),
+        },
+        Err(_) => format!("{} (not written yet)", path.display()),
+    }
+}
+
+/// Whether `[sessions]` snapshots on a timer, and when the last one was.
+fn sessions_state() -> String {
+    let Ok((config, _)) = crate::config::load() else {
+        return "unknown, the config does not parse".to_string();
+    };
+    use crate::config::SessionsAutosave as A;
+    let timer = match config.sessions.autosave {
+        A::Off => "autosave off".to_string(),
+        A::Interval => format!("autosave every {}s", config.sessions.interval_secs),
+        A::Cron => format!("autosave on cron {}", config.sessions.cron),
+    };
+    let last = crate::server::state_dir()
+        .and_then(|d| crate::sessions::store::last_stamp_in(&d))
+        .map(|s| format!("last snapshot {s}"))
+        .unwrap_or_else(|| "no snapshot yet".to_string());
+    format!("{timer}, {last}")
+}
+
+/// The deprecated `[autosave]` timer, named here because it is the one whose
+/// failures went unseen for a day.
+fn autosave_state() -> String {
+    let Ok((config, _)) = crate::config::load() else {
+        return "unknown, the config does not parse".to_string();
+    };
+    if !config.autosave.enabled {
+        return "[autosave] off".to_string();
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let script = config.autosave.script_path(&home);
+    let script_state = if script.exists() {
+        "present"
+    } else {
+        "MISSING"
+    };
+    format!(
+        "[autosave] on (deprecated) every {}s, {}; script {} ({script_state})",
+        config.autosave.interval_secs,
+        crate::tasks::last_save(),
+        script.display()
+    )
 }
 
 fn state_dir_state() -> String {
@@ -152,6 +254,19 @@ mod tests {
         ] {
             assert!(r.contains(line), "`{line}` missing from:\n{r}");
         }
+    }
+
+    #[test]
+    fn a_config_edited_after_the_daemon_started_is_newer_and_nothing_else_is() {
+        use std::time::{Duration, SystemTime};
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let later = start + Duration::from_secs(60);
+        assert!(newer_than(Some(later), Some(start)));
+        assert!(!newer_than(Some(start), Some(later)));
+        assert!(!newer_than(Some(start), Some(start)));
+        // No daemon, or no file: nothing to nudge about.
+        assert!(!newer_than(Some(later), None));
+        assert!(!newer_than(None, Some(start)));
     }
 
     #[test]

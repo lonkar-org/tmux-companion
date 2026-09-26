@@ -9,21 +9,23 @@
 #
 # See BENCHMARKS.md for the measurements behind every claim here.
 #
+# This is the bar as one laptop runs it, with the measurements behind each
+# line. It binds no keys. tmux.conf.starter.example is the one to copy first:
+# the same bar plus the eight bindings worth having on day one.
+#
 # ── INSTALL ORDER ───────────────────────────────────────────────────────────
 #
 # Install the binary FIRST, then apply this config.  The config references the
 # `status-right` subcommand, which older binaries do not have; applying it
 # against an old binary leaves the right-hand side blank until you upgrade.
 #
-#   cd /path/to/tmux-companion
-#   cargo build --release
-#   sudo install -m 755 target/release/tmux-companion /usr/local/bin/tmux-companion
-#   pkill -f 'tmux-companion server'      # the next client call restarts it
+#   ./scripts/install.sh --build         # or the release binary, see docs/how-to/install.md
+#   tmux-companion restart               # the daemon is one long-lived process
 #   tmux source-file ~/.config/tmux/tmux.conf
 #
-# Killing the server is what picks up the new binary: it is a singleton that
-# runs until killed, so an upgraded binary on disk changes nothing until the old
-# process exits.
+# Restarting the daemon is what picks up the new binary: it is a singleton that
+# runs until told to stop, so an upgraded binary on disk changes nothing until
+# the old process exits.
 
 
 # ── status-interval ─────────────────────────────────────────────────────────
@@ -47,6 +49,14 @@ set -g  status-interval 1
 # here and have been removed from the bar: between them they cost two process
 # spawns and a whole-process-table scan every second.  Both subcommands still
 # exist and can be run by hand.
+#
+# The session name's colours are `@theme-session-name-fg` and `-bg`, which a
+# theme file sets when `tmux-companion theme apply` sources it.  This file sets
+# no `session-created` hook to run that, and nothing here runs `theme init`, so
+# on their own these two options are unset.  tmux.conf.full.example has the
+# hook, tmux.conf.starter.example ships it commented out, and the starter's
+# plain `#[fg=colour251,bg=colour236] #S ` is the line to use instead if you'd
+# rather not depend on a theme at all.
 set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
 if-shell '[ -n "$SSH_CONNECTION" ]' \
   'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
@@ -93,14 +103,3 @@ set -g window-status-separator       " "
 set -g window-status-style           default
 set -g window-status-current-style   default
 
-
-# ── Removed: the `speak` keybinding ─────────────────────────────────────────
-#
-# The `speak` subcommand has been deleted, so this binding must be removed --
-# it would now fail with a clap "unrecognized subcommand" error:
-#
-#   bind -Tmy-keys u send-keys -X copy-selection-no-clear \; \
-#     run-shell -b "tmux show-buffer | tmux-companion speak"
-#
-# It targeted a vachan-server WebSocket route (`GET /synthesize`) that no longer
-# exists; the server answers 405.

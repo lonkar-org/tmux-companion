@@ -11,6 +11,8 @@
 //! which is what makes the WCAG arithmetic testable against known values rather
 //! than against a screenshot.
 
+pub mod cli;
+
 use std::path::{Path, PathBuf};
 
 /// The six levels each channel takes in the xterm 6x6x6 colour cube.

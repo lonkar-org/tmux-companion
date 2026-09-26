@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # Porting tmux-resurrect into tmux-companion
 
 A pane running an AI agent doesn't come back after a reboot, and the reason is

@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # What it covers, and what it does not
 
 Checked on 2026-09-22 against `~/.config/tmux/tmux.conf` and the 14 scripts in
@@ -22,7 +24,7 @@ trusting a tick.
 | `choose-tmux-theme.zsh` | `theme pick`, `theme apply` | done |
 | `preview-tmux-theme.zsh` | the theme picker's swatches | deliberately smaller |
 | `reapply-themes.zsh` | `theme apply` | partial, see below |
-| `close-project.zsh` | `close-project` | done |
+| `close-project.zsh` | `project close` | done |
 | `toggle-tool.zsh` | `toggle` | done |
 | `session-autosave.zsh` | `autosave` | done, as a daemon task |
 | `short-path.zsh` | `project::short_path` | done, as a library |
@@ -31,13 +33,13 @@ trusting a tick.
 
 - **`open -l`**, scanning the copy-mode cursor line rather than the word under
   the cursor or the selection. Two of the bindings use it.
-- **`open -i`**, which asks which application should open the thing instead of
-  deciding. Two of the bindings use it.
-- **Repainting every live session.** `theme apply` takes one session, and
-  `reapply-themes.zsh` walks all of them, which is what `prefix + r` needs:
-  sourcing `tmux.conf` cannot repaint a session that already exists, because
-  the colours are handed out by the `session-created` hook and that does not
-  fire again.
+- **`open -i`** was on this list, and has since shipped as `open -i`, or
+  `--choose`, which asks which `[[open.application]]` row opens the thing
+  instead of deciding.
+- **Repainting every live session** was on this list too. `theme apply --all`
+  now walks every session, which is what `prefix + r` needs: sourcing
+  `tmux.conf` cannot repaint a session that already exists, because the colours
+  are handed out by the `session-created` hook and that does not fire again.
 
 ## Deliberately smaller
 
@@ -49,7 +51,7 @@ trusting a tick.
 
 ## What it does that no script did
 
-`doctor`, `config`, `shell-init`, `clipboard`, `zoom`, the combined
+`doctor`, `config`, `shell-init`, `clipboard`, `zen`, the combined
 `status-right`, and the four background tasks. None of these replace anything;
 they exist because a resident process can do them cheaply.
 

@@ -8,12 +8,13 @@
 # picker is yours to decide, and a plugin that decided for you would be the
 # thing this tool exists to avoid.
 #
-# docs/tmux.conf.example is the bar, docs/tmux.conf.full.example is every
-# feature with what each costs.
+# docs/tmux.conf.starter.example is the file to copy first: the bar and the
+# bindings worth having on day one. docs/tmux.conf.example is the bar alone,
+# docs/tmux.conf.full.example is every feature with what each costs.
 #
 # On first load it downloads the release binary for this machine, checks it
 # against the published checksums, and installs it. With no matching release
-# it builds from the checkout tpm already made, which needs Rust 1.85.
+# it builds from the checkout tpm already made, which needs Rust 1.95.
 #
 # @tmux-companion-install-prefix sets where the binary goes; the default is
 # /usr/local when writable and ~/.local otherwise. Set it before the plugin

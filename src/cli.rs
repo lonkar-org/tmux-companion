@@ -38,6 +38,13 @@ pub struct Cli {
 }
 
 /// Every subcommand. `server` is the daemon; the rest are clients.
+///
+/// Three short flags mean different things on different commands and stay
+/// that way, because renaming one breaks a binding somebody wrote for no
+/// request: `-s` is `--style` on gst and status-right, the selection on open
+/// and the start path on window; `-n` is `--dry-run` on open, the name on
+/// window and the count on probe keys; `-i` is the index on window and
+/// `--choose` on open.
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "kebab-case")]
 pub enum Cmd {
@@ -53,14 +60,15 @@ pub enum Cmd {
         /// Bypass the cache and force a fresh git status fetch
         #[arg(short = 'f', long, action = clap::ArgAction::SetTrue)]
         force: bool,
-        /// Color style: fill (solid background), outline, outline-bright
+        /// Colour style
         #[arg(short = 's', long, default_value = "outline-bright")]
-        style: String,
+        style: StyleArg,
         /// Omit the trailing end-cap glyph (for use at the start of status-right)
         #[arg(long, action = clap::ArgAction::SetTrue)]
         no_cap: bool,
-        /// Middle-ellipsize the branch name when longer than this (default 20)
-        #[arg(long)]
+        /// Middle-ellipsize the branch name when longer than this. Without the
+        /// flag, `[git] branch_max_len` in config.toml decides, 20 out of the box
+        #[arg(long, value_name = "N")]
         branch_max_len: Option<usize>,
         /// Show the git glyph before the branch name (off by default)
         #[arg(long, action = clap::ArgAction::SetTrue)]
@@ -82,11 +90,12 @@ pub enum Cmd {
     StatusRight {
         /// Path to the current pane's directory (defaults to current directory)
         path: Option<PathBuf>,
-        /// Color style: fill (solid background), outline, outline-bright
+        /// Colour style
         #[arg(short = 's', long, default_value = "outline-bright")]
-        style: String,
-        /// Middle-ellipsize the branch name when longer than this (default 20)
-        #[arg(long)]
+        style: StyleArg,
+        /// Middle-ellipsize the branch name when longer than this. Without the
+        /// flag, `[git] branch_max_len` in config.toml decides, 20 out of the box
+        #[arg(long, value_name = "N")]
         branch_max_len: Option<usize>,
         /// Show the git glyph before the branch name (off by default)
         #[arg(long, action = clap::ArgAction::SetTrue)]
@@ -243,11 +252,12 @@ pub enum Cmd {
         no_save: bool,
     },
 
-    /// Open a new window, here or at any directory
+    /// Open a new window, here or at any directory, from the directory picker
     ///
-    /// The query starts on the pane's own directory, so pressing the key and
-    /// then enter is "another window here" and nothing has to be typed for the
-    /// common case. A directory the source has never seen can be typed in full.
+    /// The picker lists the same directories `project` does. The query starts
+    /// on the pane's own directory, so pressing the key and then enter is
+    /// "another window here" and nothing has to be typed for the common case.
+    /// A directory the source has never seen can be typed in full.
     NewWindow,
 
     /// Print the shell code that emits the OSC 133 prompt marks
@@ -308,12 +318,18 @@ pub enum Cmd {
         /// the pane it was pressed in
         session: Option<String>,
         /// Ignored; kept so bindings that pass `#{window_name}` still parse
+        #[arg(hide = true)]
         window: Option<String>,
+        /// Flip to the window this session was on before, tmux's own
+        /// last-window, instead of the next one by index
+        #[arg(long)]
+        last: bool,
     },
 
-    /// The session-list autosave the daemon runs
+    /// Deprecated: the `[autosave]` script timer, which `[sessions] autosave`
+    /// replaces. With no flag it reports the last save, like --status
     Autosave {
-        /// Save now and exit
+        /// Run the save script now and exit
         #[arg(long)]
         once: bool,
         /// Print when the last save happened
@@ -334,21 +350,22 @@ pub enum Cmd {
         /// Attach to the session used most recently, without asking
         #[arg(long, short)]
         last: bool,
-        /// For the `client-attached` hook: open the picker only when this is a
-        /// session tmux named itself with nothing happening in it
-        #[arg(long, hide = true)]
+        /// For the `client-attached` hook in tmux.conf: open the picker only
+        /// when this is a session tmux named itself with nothing happening in it
+        #[arg(long)]
         hook: bool,
     },
 
     /// Switch to a project, or start one
+    #[command(args_conflicts_with_subcommands = true)]
     Project {
         /// Save, forget or explain this project's layout
         #[command(subcommand)]
         action: Option<ProjectAction>,
         /// Go straight to this directory instead of opening the picker
         dir: Option<String>,
-        /// Print the rows and exit
-        #[arg(long)]
+        /// Print the rows and exit, opening nothing
+        #[arg(long, conflicts_with = "dir")]
         print: bool,
     },
 
@@ -359,17 +376,19 @@ pub enum Cmd {
         action: SessionsAction,
     },
 
-    /// Stop the tmux-companion daemon, leaving tmux alone
+    /// Stop the tmux-companion daemon only; tmux and its sessions are left
+    /// alone (`sessions shutdown` is the one that stops tmux)
     Shutdown,
 
-    /// Restart the daemon, so it rereads its config
+    /// Restart the tmux-companion daemon only, so it rereads config.toml; tmux
+    /// is left alone (`sessions restart` is the one that restarts tmux)
     Restart,
 
     /// A cheat sheet of the bindings you wrote, in four boxes
     Cheatsheet {
         /// Print and exit instead of waiting for a keypress
-        #[arg(long)]
-        plain: bool,
+        #[arg(long, alias = "plain")]
+        print: bool,
     },
 
     /// Theme tools
@@ -413,8 +432,9 @@ pub enum ThemeAction {
         /// Apply to this target rather than whatever is current
         #[arg(short = 't')]
         target: Option<String>,
-        /// Remember the pick for this session instead of applying it
-        #[arg(short = 'r')]
+        /// Remember the pick for a session by name instead of applying it,
+        /// for a session that does not exist yet
+        #[arg(short = 'r', value_name = "SESSION")]
         register: Option<String>,
         /// Where the theme files are
         #[arg(long)]
@@ -477,8 +497,8 @@ pub enum ThemeAction {
     #[command(alias = "list-colors", alias = "list-all-colors")]
     ListColours {
         /// One per line with no swatch, for piping somewhere
-        #[arg(long)]
-        plain: bool,
+        #[arg(long, alias = "plain")]
+        print: bool,
     },
 
     /// Compute each theme's readable text colour and a visible border
@@ -495,7 +515,8 @@ pub enum ThemeAction {
         #[arg(long)]
         themes: Option<String>,
         /// The terminal background to measure borders against, as #rrggbb.
-        /// Read from ghostty when not given
+        /// Without it, `ghostty +show-config` is asked, and when ghostty is not
+        /// installed the xterm default of colour232 stands in
         #[arg(long)]
         background: Option<String>,
     },
@@ -514,6 +535,42 @@ pub enum ConfigAction {
     },
     /// Print every setting with its default, as a config file
     Dump,
+    /// Write a short starter config where `config path` would read it
+    Init {
+        /// Overwrite a file that is already there
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+/// `--style`, as clap checks it.
+///
+/// A value enum rather than a string, so a typo is refused with the list of
+/// values rather than quietly drawn in the default style, which is what
+/// `Style::parse(..).unwrap_or_default()` did and what made `--style bogus`
+/// look like a working flag. The wire type stays `Style` in `tmux::format`;
+/// this is the same three names with clap's derive on them.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[value(rename_all = "kebab-case")]
+pub enum StyleArg {
+    /// Solid state-coloured background
+    Fill,
+    /// State colour in the foreground, the bar colour behind
+    Outline,
+    /// Outline with the icon colours lightened for a dark bar
+    #[value(alias = "bright")]
+    OutlineBright,
+}
+
+impl From<StyleArg> for crate::tmux::format::Style {
+    fn from(s: StyleArg) -> Self {
+        use crate::tmux::format::Style;
+        match s {
+            StyleArg::Fill => Style::Fill,
+            StyleArg::Outline => Style::Outline,
+            StyleArg::OutlineBright => Style::OutlineBright,
+        }
+    }
 }
 
 /// Run one subcommand: start the server, or send one request and print it.
@@ -540,9 +597,11 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                     path,
                     pane_pid,
                     force,
-                    style: parse_style(&style),
+                    style: style.into(),
                     no_cap,
-                    branch_max_len,
+                    // The flag wins, and the config decides without it, the
+                    // same rule the daemon applies in `handlers::gst`.
+                    branch_max_len: branch_max_len.or(Some(config.git.branch_max_len)),
                     branch_icon,
                     ttl: std::time::Duration::ZERO,
                     parts: config.git.parts.clone(),
@@ -556,7 +615,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 path,
                 pane_pid,
                 force,
-                style: parse_style(&style),
+                style: style.into(),
                 no_cap,
                 branch_max_len,
                 branch_icon,
@@ -574,7 +633,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         } => {
             let args = StatusRightArgs {
                 path,
-                style: parse_style(&style),
+                style: style.into(),
                 branch_max_len,
                 branch_icon,
                 force,
@@ -693,13 +752,17 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             Some(code) => run_dialog(code, out)?,
             None => run_command(print, pane, exec).await?,
         },
-        Cmd::Toggle { session, window } => run_toggle(session, window).await?,
+        Cmd::Toggle {
+            session,
+            window,
+            last,
+        } => run_toggle(session, window, last).await?,
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
         Cmd::Project { action, dir, print } => match action {
             Some(ProjectAction::Save { no_commands }) => run_project_save(!no_commands).await?,
-            Some(ProjectAction::Forget) => run_project_forget().await?,
-            Some(ProjectAction::Show) => run_project_show().await?,
+            Some(ProjectAction::Forget { dir }) => run_project_forget(dir).await?,
+            Some(ProjectAction::Show { dir }) => run_project_show(dir).await?,
             Some(ProjectAction::Close {
                 session,
                 discard,
@@ -779,20 +842,14 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         },
         Cmd::Shutdown => run_daemon_shutdown().await?,
         Cmd::Restart => run_daemon_restart().await?,
-        Cmd::Cheatsheet { plain } => run_cheatsheet(plain).await?,
+        Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
-        Cmd::Theme { action } => run_theme(action)?,
+        Cmd::Theme { action } => crate::theme::cli::run(action)?,
     }
 
     Ok(())
 }
 
-/// Map the `--style` string clap collected onto the enum the wire carries.
-///
-/// An unrecognised value falls back to the default, which is what
-/// `Style::parse` did on the server before the style crossed the wire as a
-/// string. The difference now is that the fallback happens once, in the
-/// process that saw the flag.
 /// The config for a `--no-daemon` run.
 ///
 /// A broken config is a warning on stderr and the defaults, not a failure: the
@@ -805,6 +862,34 @@ fn local_config() -> crate::config::Config {
         Ok((c, _)) => c,
         Err(e) => {
             eprintln!("tmux-companion: {e}");
+            crate::config::Config::default()
+        }
+    }
+}
+
+/// The config for every other client-side command, or the defaults, said once.
+///
+/// This replaces a bare `unwrap_or_default()` at every site that reads the
+/// config on the client side, because that was silent: a misspelled key in
+/// config.toml put every picker back on its defaults and nothing said so, and
+/// the person went looking in the daemon, which had refused the file and said
+/// so in its own log. One line on stderr is enough to send them to
+/// `config check`; once per process, because a command reads the config more
+/// than once and a keypress that prints the same warning three times reads
+/// as three problems. Still the defaults rather than a failure, for the same
+/// reason as [`local_config`]: a key somebody already pressed should do
+/// something.
+pub(crate) fn config_or_default() -> crate::config::Config {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    match crate::config::load() {
+        Ok((c, _)) => c,
+        Err(_) => {
+            SAID.call_once(|| {
+                eprintln!(
+                    "tmux-companion: config.toml does not parse, using defaults; \
+                     run tmux-companion config check"
+                );
+            });
             crate::config::Config::default()
         }
     }
@@ -823,20 +908,20 @@ fn print_segment(rendered: String, no_tmux: bool) {
 }
 
 /// Ask the daemon and print what comes back, through the same translation.
+///
+/// A daemon error is returned rather than printed, so the process exits 1 and
+/// a prompt or a script can tell a failed segment from an empty one. tmux
+/// ignores the exit status of a `#()`, so a status bar sees no difference.
 async fn send_segment(req: crate::proto::Request, no_tmux: bool) -> anyhow::Result<()> {
     if !no_tmux {
         return crate::client::send_and_print(req).await;
     }
     let resp = crate::client::send(req).await?;
-    match resp.error {
-        Some(err) => eprintln!("tmux-companion error: {err}"),
-        None => print_segment(resp.output, true),
+    if let Some(err) = resp.error {
+        anyhow::bail!("{err}");
     }
+    print_segment(resp.output, true);
     Ok(())
-}
-
-fn parse_style(s: &str) -> crate::tmux::format::Style {
-    crate::tmux::format::Style::parse(s).unwrap_or_default()
 }
 
 /// `config path`, `config check` and `config dump`.
@@ -871,228 +956,25 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
             }
         }
         ConfigAction::Dump => print!("{}", config::dump_defaults()),
-    }
-    Ok(())
-}
-
-/// `theme gen`.
-fn run_theme(action: ThemeAction) -> anyhow::Result<()> {
-    let (apply, shades, themes, background): (bool, Option<String>, _, _) = match action {
-        ThemeAction::Gen {
-            apply,
-            shades,
-            themes,
-            background,
-        } => (apply, shades, themes, background),
-        ThemeAction::Pick {
-            target,
-            register,
-            themes,
-            print,
-        } => return theme_pick(target, register, &themes_dir_or(themes), print),
-        ThemeAction::Apply {
-            session,
-            target,
-            themes,
-            all,
-        } => {
-            let dir = themes_dir_or(themes);
-            if all {
-                // Sourcing tmux.conf resets the global options a theme sets,
-                // so a reload leaves every session painted with whatever the
-                // file says rather than with its own colour. One pass over
-                // the session list puts them all back.
-                let listed = std::process::Command::new("tmux")
-                    .args(["list-sessions", "-F", "#{session_name}"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                    .unwrap_or_default();
-                for name in listed.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                    theme_apply(name, Some(name.to_string()), &dir)?;
-                }
-                return Ok(());
-            }
-            let Some(session) = session else {
-                anyhow::bail!("theme apply needs a session, or --all");
+        ConfigAction::Init { force } => {
+            // The first path in the search order, which is what `config path`
+            // reports once the file exists: `TMUX_COMPANION_CONFIG` when set,
+            // else the XDG one. A file already there is somebody's settings,
+            // and a starter written over them is a worse start than a refusal.
+            let Some(path) = config::search_paths().into_iter().next() else {
+                anyhow::bail!("nowhere to write: neither XDG_CONFIG_HOME nor HOME is set");
             };
-            return theme_apply(&session, target, &dir);
-        }
-        ThemeAction::Init { themes } => return theme_init(&themes_dir_or(themes)),
-        ThemeAction::Add {
-            bg,
-            fg,
-            name,
-            force,
-            themes,
-        } => return theme_add(&bg, fg, name, force, &themes_dir_or(themes)),
-        ThemeAction::ListColours { plain } => return theme_list_colours(plain),
-    };
-    // Named rather than numbered, and resolved once: an unknown rung is an
-    // error here rather than a silent fall back to the default, because a
-    // typo that quietly generates 148 themes instead of 18 is a directory
-    // somebody has to clean up by hand.
-    let level_name = shades.clone().unwrap_or_default();
-    let level = match &shades {
-        None => None,
-        Some(name) => match crate::theme::ShadeLevel::from_name(name) {
-            Some(level) => Some(level),
-            None => anyhow::bail!(
-                "unknown --shades level `{name}`, expected one of {}",
-                crate::theme::SHADE_LEVELS.join(", ")
-            ),
-        },
-    };
-
-    let dir = themes_dir_or(themes);
-    let (bg, source) = match background.as_deref().map(crate::theme::parse_hex) {
-        Some(Some(c)) => (c, "--background".to_string()),
-        Some(None) => anyhow::bail!("--background wants #rrggbb"),
-        None => crate::theme::terminal_background(),
-    };
-
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "tmux"))
-        .filter(|p| {
-            !p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
-        })
-        .collect();
-    files.sort();
-
-    let mut themes_parsed = Vec::new();
-    for path in &files {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if let Some(t) = crate::theme::parse_theme(path, &text) {
-            themes_parsed.push(t);
-        }
-    }
-
-    println!("{} themes", themes_parsed.len());
-    println!("background {:?} from {}", bg, source);
-
-    let mut changed = 0usize;
-    let mut needs_light = Vec::new();
-    let mut lifted = Vec::new();
-    for theme in &themes_parsed {
-        let (fg, ratio) = crate::theme::readable_on(theme.index);
-        let (border, bratio) = crate::theme::border_for(theme.index, bg);
-        let stem = theme
-            .path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if fg == crate::theme::TEXT_LIGHT {
-            needs_light.push((stem.clone(), theme.index, ratio));
-        }
-        if border != theme.index {
-            lifted.push((stem, theme.index, border, bratio));
-        }
-        if let Some(text) = crate::theme::with_computed_colours(theme, bg) {
-            changed += 1;
-            if apply {
-                std::fs::write(&theme.path, text)?;
+            if path.exists() && !force {
+                anyhow::bail!("{} is already there; --force overwrites it", path.display());
             }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&path, config::STARTER)?;
+            println!("{}", path.display());
         }
     }
-
-    // Sorted by stem rather than left in directory order: `blue` reads before
-    // `blue-dark` in a report and after it in a directory listing, and the
-    // report is the thing a person reads.
-    needs_light.sort_by(|a, b| a.0.cmp(&b.0));
-    lifted.sort_by(|a, b| a.0.cmp(&b.0));
-
-    println!(
-        "\n-- text colour: {} of {} themes need {}, and were painting dark text on a dark block",
-        needs_light.len(),
-        themes_parsed.len(),
-        crate::theme::TEXT_LIGHT
-    );
-    for (stem, index, ratio) in &needs_light {
-        println!("   {stem:<22} colour{index:<4} light contrast {ratio:.1}");
-    }
-
-    println!(
-        "\n-- borders: {} of {} themes need a lighter active pane border to clear {:.1}:1 on {:?}",
-        lifted.len(),
-        themes_parsed.len(),
-        crate::theme::BORDER_MIN,
-        bg
-    );
-    for (stem, index, border, ratio) in &lifted {
-        println!("   {stem:<22} colour{index:<4} -> colour{border:<4} {ratio:.1}");
-    }
-
-    println!(
-        "\n{} @theme-color-on-main and @theme-color-border into {changed} files",
-        if apply { "wrote" } else { "would write" }
-    );
-
-    if let Some(level) = level {
-        // Every cube colour that can carry readable text, not two siblings of
-        // whatever happened to be in the directory. The old behaviour answered
-        // "vary what I have"; the question people ask a theme generator is
-        // "show me what there is", and the answer should not depend on which
-        // files are already there.
-        let taken: std::collections::HashSet<u8> = themes_parsed.iter().map(|t| t.index).collect();
-        let mut made = Vec::new();
-        for (stem, index) in crate::theme::themes_for(level) {
-            if taken.contains(&index) {
-                continue;
-            }
-            let target = dir.join(format!("{stem}.tmux"));
-            if apply && !target.exists() {
-                std::fs::write(
-                    &target,
-                    crate::theme::cube_theme_file(&stem, index, bg, &dir.display().to_string()),
-                )?;
-            }
-            made.push((stem, index));
-        }
-        println!(
-            "\n-- shades ({}): {} {} themes{}",
-            level_name,
-            if apply { "wrote" } else { "would write" },
-            made.len(),
-            match level.min_contrast() {
-                Some(min) => format!(", every cube colour whose text clears {min}:1"),
-                None => ", the bundled six and their lighter and darker siblings".to_string(),
-            }
-        );
-        for (stem, index) in &made {
-            println!("   {stem:<22} colour{index}");
-        }
-    }
-
     Ok(())
-}
-
-/// `~` to the home directory, because a default path in `--help` reads better
-/// with a tilde in it than with somebody's username.
-/// The themes directory a `--themes` flag asked for, or the one this machine
-/// actually uses.
-///
-/// Resolved rather than defaulted in clap, because the answer depends on
-/// whether this machine keeps its tmux config under XDG or at `~/.tmux.conf`,
-/// and a default string printed in `--help` would be a lie on half of them.
-fn themes_dir_or(flag: Option<String>) -> std::path::PathBuf {
-    match flag {
-        Some(p) => expand_tilde(&p),
-        None => crate::theme::default_themes_dir(),
-    }
-}
-
-fn expand_tilde(path: &str) -> std::path::PathBuf {
-    match path.strip_prefix("~/") {
-        Some(rest) => match std::env::var_os("HOME") {
-            Some(home) => std::path::PathBuf::from(home).join(rest),
-            None => std::path::PathBuf::from(path),
-        },
-        None => std::path::PathBuf::from(path),
-    }
 }
 
 /// `keys`: fetch the rows, pick one, run it.
@@ -1132,6 +1014,12 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
 
     let opening = if all { String::new() } else { query };
 
+    // `--all` shows tmux's own bindings too, so there is something to draw
+    // even when none of them carries the note.
+    if !all && nothing_noted(&rows) {
+        return Ok(());
+    }
+
     if print {
         for row in crate::keys::filter(&rows, &opening) {
             println!(
@@ -1156,7 +1044,7 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
         })
         .collect();
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
         footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
@@ -1176,7 +1064,7 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
     // terminal and never come back to us.
     // A broken config should not swallow a keypress somebody already made, so
     // the defaults stand in here rather than the pick being dropped.
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     if config.usage.enabled {
         crate::keys::record_use(&usage_path(&config), &row.table, &row.key);
     }
@@ -1188,17 +1076,33 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
     Ok(())
 }
 
+/// Say so when no binding carries the note the pickers key on, and return
+/// whether that was the case.
+///
+/// `keys` opens on `custom: ` and `cheatsheet` shows only rows with that
+/// prefix, so a tmux.conf whose bindings have no `-N "custom: ..."` note gets
+/// an empty picker or four empty boxes, and both look like the tool is broken
+/// rather than like the config is missing a word. One hint on stderr and exit
+/// 0: nothing failed, there is just nothing to show yet.
+fn nothing_noted(rows: &[crate::keys::KeyRow]) -> bool {
+    if !crate::keys::filter(rows, "custom: ").is_empty() {
+        return false;
+    }
+    eprintln!(
+        "no bindings carry a -N \"custom: ...\" note; keys and cheatsheet list only those. \
+         See docs/tmux.conf.starter.example"
+    );
+    true
+}
+
 /// Where the usage log lives.
 fn usage_path(config: &crate::config::Config) -> std::path::PathBuf {
-    config.usage.path.clone().unwrap_or_else(|| {
-        crate::server::state_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("keys-usage.tsv")
-    })
+    let home = std::env::var("HOME").unwrap_or_default();
+    config.usage.log_path(&home, crate::server::state_dir())
 }
 
 /// `cheatsheet`: the same rows the picker uses, laid out in four boxes.
-async fn run_cheatsheet(plain: bool) -> anyhow::Result<()> {
+async fn run_cheatsheet(print: bool) -> anyhow::Result<()> {
     let resp =
         crate::client::send(Request::build("keys", &crate::proto::KeysArgs::default())).await?;
     if let Some(e) = resp.error {
@@ -1220,7 +1124,11 @@ async fn run_cheatsheet(plain: bool) -> anyhow::Result<()> {
         })
         .collect();
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    if nothing_noted(&rows) {
+        return Ok(());
+    }
+
+    let config = config_or_default();
     let usage = std::fs::read_to_string(usage_path(&config))
         .map(|t| crate::keys::usage_counts(&t))
         .unwrap_or_default();
@@ -1231,7 +1139,7 @@ async fn run_cheatsheet(plain: bool) -> anyhow::Result<()> {
         crate::cheatsheet::render(&crate::cheatsheet::boxes(&rows, &usage), cols, lines)
     );
 
-    if !plain {
+    if !print {
         use std::io::Write;
         print!("\n  any key to close ");
         let _ = std::io::stdout().flush();
@@ -1346,7 +1254,7 @@ async fn run_start_hook() -> anyhow::Result<()> {
 async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     use crate::project::Kind;
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
 
     // Straight to a directory, which is what the shell alias does.
@@ -1448,17 +1356,14 @@ async fn open_project(
 ) -> anyhow::Result<()> {
     let name = crate::project::session_name(path);
 
-    let exists = tokio::process::Command::new("tmux")
-        .args(["has-session", "-t", &format!("={name}")])
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !exists {
+    // Through `session_exists`, which sends tmux's stderr nowhere: asked
+    // bare, a first open printed `can't find session: x` before going on to
+    // create exactly that session, so every success opened with a complaint.
+    if !session_exists(&format!("={name}")).await {
         crate::project::record_visit(config, path).await;
 
-        let (windows, _) = crate::saved::resolve(config, load_saved(path).await, path, home);
+        let (windows, _) =
+            crate::saved::resolve(config, load_saved(path).await.layout(), path, home);
 
         let spec = crate::project::SessionSpec {
             name: &name,
@@ -1508,9 +1413,15 @@ pub enum ProjectAction {
         no_commands: bool,
     },
     /// Delete this project's saved layout and fall back to the config
-    Forget,
+    Forget {
+        /// The project directory, instead of the session this runs in
+        dir: Option<String>,
+    },
     /// Which layout this project gets, and which file decided
-    Show,
+    Show {
+        /// The project directory, instead of the session this runs in
+        dir: Option<String>,
+    },
     /// Close this project by letting every window exit
     Close {
         /// The session, defaulting to the current one
@@ -1569,7 +1480,8 @@ pub enum SessionsAction {
         #[arg(long)]
         detach: bool,
     },
-    /// Save every session, then stop the tmux server
+    /// Save every session, then stop the tmux server (the daemon stays up
+    /// unless --daemon-too; plain `shutdown` is the one that stops the daemon)
     Shutdown {
         /// Sessions not to save, comma separated
         ///
@@ -1577,26 +1489,31 @@ pub enum SessionsAction {
         /// out here is one that does not come back.
         #[arg(long, value_delimiter = ',')]
         exclude: Vec<String>,
-        /// Stop the tmux-companion daemon as well
+        /// Stop the tmux-companion daemon as well. Off by default: the daemon
+        /// keeps running
         #[arg(long)]
         daemon_too: bool,
         /// Print what this would do, and exit
         #[arg(long)]
         dry_run: bool,
     },
-    /// Save, stop the server, and bring it back with what it had
+    /// Save, stop the tmux server, and bring it back with what it had (the
+    /// daemon is restarted too unless --keep-daemon; plain `restart` is the one
+    /// that restarts only the daemon)
     Restart {
         /// Sessions not to save, comma separated
         #[arg(long, value_delimiter = ',')]
         exclude: Vec<String>,
-        /// Leave the daemon running, so it keeps the config it started with
+        /// Leave the daemon running with the config it started with. Off by
+        /// default: the daemon is restarted so it rereads config.toml
         #[arg(long)]
         keep_daemon: bool,
         /// Print what this would do, and exit
         #[arg(long)]
         dry_run: bool,
     },
-    /// The snapshot timer the daemon runs
+    /// The snapshot timer the daemon runs. With no flag it reports, like
+    /// --status
     Autosave {
         /// Take one now
         #[arg(long)]
@@ -1700,7 +1617,7 @@ async fn run_new_window() -> anyhow::Result<()> {
         }
     };
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let paths: Vec<String> = crate::project::source_dirs(&config, &home).await;
 
     let prefill = crate::project::short_path(&pane_dir, &home);
@@ -1855,10 +1772,27 @@ async fn project_of(session: &str) -> String {
 async fn current_project() -> anyhow::Result<(String, String)> {
     let session = tmux_display("#{session_name}").await;
     if session.is_empty() {
-        anyhow::bail!("not inside tmux");
+        anyhow::bail!(
+            "not inside tmux: run this from a pane in the project's session, \
+             or name the project directory"
+        );
     }
     let path = project_of(&session).await;
     Ok((session, path))
+}
+
+/// The project a `show` or `forget` is about: the directory given, or the
+/// session this runs in.
+async fn project_named_or_current(dir: Option<String>) -> anyhow::Result<String> {
+    let Some(dir) = dir else {
+        return Ok(current_project().await?.1);
+    };
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    crate::project::resolve_typed(&dir, &cwd, &home)
+        .ok_or_else(|| anyhow::anyhow!("no such directory: {dir}"))
 }
 
 /// `project save`: capture this session and write it for this project.
@@ -1894,7 +1828,7 @@ async fn run_sessions_save(
     extra_exclude: &[String],
     clean: bool,
 ) -> anyhow::Result<()> {
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let taken = crate::sessions::timer::take_snapshot(
         &config.sessions,
         extra_exclude,
@@ -1963,222 +1897,13 @@ pub struct ResurrectOptions {
 /// arguments, `3` refused because sessions are live, `4` nothing to restore,
 /// `1` for everything else.
 async fn run_sessions_resurrect(opts: ResurrectOptions) -> i32 {
-    match resurrect(opts).await {
+    match crate::sessions::cli::resurrect(opts).await {
         Ok(code) => code,
         Err(e) => {
             eprintln!("tmux-companion: {e}");
             1
         }
     }
-}
-
-/// The body of [`run_sessions_resurrect`], so the error path has one home.
-async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    let state_dir = crate::server::state_dir()
-        .ok_or_else(|| anyhow::anyhow!("no state directory: neither XDG_STATE_HOME nor HOME"))?;
-
-    let snapshot = match &opts.stamp {
-        Some(s) => crate::sessions::store::load_in(&state_dir, s)?,
-        None => match crate::sessions::store::load_last_in(&state_dir) {
-            Ok(snap) => snap,
-            // Nothing of our own, so read what tmux-resurrect left. Somebody
-            // switching over has months of saves and no reason to lose them on
-            // the day they try this.
-            Err(mine) => {
-                let home = std::env::var("HOME").unwrap_or_default();
-                match crate::sessions::import::newest_in(&home) {
-                    Some(snap) => {
-                        println!(
-                            "no snapshot of our own, reading {}",
-                            snap.header.imported_from
-                        );
-                        snap
-                    }
-                    None => return Err(mine),
-                }
-            }
-        },
-    };
-
-    // What is already here. A server that is not running answers nothing,
-    // which is the empty list and the case a restore is for.
-    let live: Vec<String> = tmux_capture(&["list-sessions", "-F", "#{session_name}"])
-        .await
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-
-    // Start the server before asking it anything. `show-option -gv base-index`
-    // against a server that is not running answers nothing, which parsed as
-    // zero and made the first restore move a window that was never there.
-    let _ = tokio::process::Command::new("tmux")
-        .arg("start-server")
-        .status()
-        .await;
-
-    let plan = crate::restore::plan(&config.restore, &snapshot);
-    let missing = crate::sessions::restore::missing_directories(&snapshot, |d| {
-        std::path::Path::new(d).is_dir()
-    });
-    let home = std::env::var("HOME").unwrap_or_default();
-
-    let spec = crate::sessions::restore::RestoreSpec {
-        snapshot: &snapshot,
-        plan: &plan,
-        live: &live,
-        only: &opts.only,
-        exclude: &opts.exclude,
-        merge: opts.merge,
-        home: &home,
-        base_index: tmux_number("base-index").await.unwrap_or(0),
-        pane_base: tmux_number("pane-base-index").await.unwrap_or(0),
-        missing: &missing,
-    };
-
-    let built = match crate::sessions::restore::rebuild(&spec) {
-        Ok(b) => b,
-        Err(refusal) => {
-            eprintln!("{refusal}");
-            return Ok(refusal.code());
-        }
-    };
-
-    // Only the sessions this restore would actually build get a say in whether
-    // it stops to ask. A pane in a session that is already live, or one
-    // `--only` left out, is nobody's decision here.
-    let building: Vec<crate::restore::Planned> = plan
-        .iter()
-        .filter(|p| built.sessions.contains(&p.session))
-        .cloned()
-        .collect();
-    let unsettled: Vec<&crate::restore::Planned> =
-        building.iter().filter(|p| !p.settled()).collect();
-
-    println!(
-        "{} {} session{}, {} pane{}  from {}, {}",
-        if opts.dry_run {
-            "would restore"
-        } else {
-            "restoring"
-        },
-        built.sessions.len(),
-        plural(built.sessions.len()),
-        building.len(),
-        plural(building.len()),
-        snapshot.header.captured_at,
-        if snapshot.header.clean {
-            "clean shutdown"
-        } else {
-            "no clean shutdown recorded"
-        }
-    );
-    if !missing.is_empty() {
-        println!(
-            "  {} director{} not on this machine, opening at {home}:",
-            missing.len(),
-            if missing.len() == 1 { "y" } else { "ies" }
-        );
-        for dir in &missing {
-            println!("    {dir}");
-        }
-    }
-    for line in &built.skipped {
-        println!("  {line}");
-    }
-    if !unsettled.is_empty() {
-        println!(
-            "  {} pane{} nobody has said to run, left at a prompt:",
-            unsettled.len(),
-            plural(unsettled.len())
-        );
-        for p in &unsettled {
-            println!("    {}:{}.{}  {}", p.session, p.window, p.pane, p.saved);
-        }
-        if !opts.yes && !opts.dry_run {
-            println!("  --yes runs everything the table claimed and opens the rest at a prompt");
-        }
-    }
-
-    // Ask, when the restore does not know something and somebody is watching.
-    // Never on a count of panes: a count would stop every ordinary restore here
-    // and stay quiet on the small one holding something unrecognised.
-    let watched = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let mut approved: Vec<usize> = Vec::new();
-    if opts.yes {
-        approved = crate::restore::unsettled_rows(&building);
-    } else if !opts.dry_run && watched && crate::restore::needs_a_look(&building, after_a_crash()) {
-        let rows = crate::sessions::summary::rows(&building);
-        let headline = crate::sessions::summary::headline(
-            built.sessions.len(),
-            snapshot.pane_count(),
-            crate::sessions::summary::agents(&building),
-            &snapshot.header.captured_at,
-            snapshot.header.clean,
-        );
-        let countdown = std::time::Duration::from_secs(config.sessions.confirm_secs);
-        match crate::sessions::summary::confirm(&headline, rows, countdown)? {
-            crate::sessions::summary::Outcome::Go(rows) => approved = rows,
-            crate::sessions::summary::Outcome::Cancelled => {
-                println!("cancelled, nothing restored");
-                return Ok(0);
-            }
-        }
-    }
-
-    // Rebuild against the plan somebody actually agreed to. Without this an
-    // unsettled row would still run, because its decision is already `Run` for
-    // a command the table claims but the capture had to guess at.
-    let agreed =
-        crate::restore::withhold_unapproved(&plan, &approved_in_plan(&plan, &building, &approved));
-    let spec = crate::sessions::restore::RestoreSpec {
-        plan: &agreed,
-        ..spec
-    };
-    let built = crate::sessions::restore::rebuild(&spec).unwrap_or(built);
-
-    use crate::sessions::restore::Step;
-    if opts.dry_run {
-        for step in &built.commands {
-            match step {
-                Step::Tmux(cmd) => println!("tmux {}", cmd.join(" ")),
-                Step::WaitForPrompt(at) => println!("# wait for a prompt in {at}"),
-            }
-        }
-        return Ok(0);
-    }
-
-    for step in &built.commands {
-        match step {
-            Step::Tmux(cmd) => {
-                let borrowed: Vec<&str> = cmd.iter().map(String::as_str).collect();
-                tmux(&borrowed).await;
-            }
-            Step::WaitForPrompt(at) => wait_for_prompt(at).await,
-        }
-    }
-
-    // Attach when somebody is watching and is not already inside tmux. A boot
-    // script has no terminal and wants the server left running.
-    let inside = std::env::var_os("TMUX").is_some();
-    let watched = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    if opts.detach || inside || !watched {
-        println!("  restored, detached. `tmux attach` when you want it");
-        return Ok(0);
-    }
-    let target = snapshot
-        .attach_target()
-        .filter(|t| built.sessions.iter().any(|s| s == t))
-        .or_else(|| built.sessions.first().map(String::as_str));
-    if let Some(target) = target {
-        let _ = tokio::process::Command::new("tmux")
-            .args(["attach", "-t", &format!("={target}")])
-            .status()
-            .await;
-    }
-    Ok(0)
 }
 
 /// `shutdown`: stop the daemon and leave tmux alone.
@@ -2203,7 +1928,15 @@ async fn run_daemon_restart() -> anyhow::Result<()> {
         stop_the_daemon().await;
     }
     // Any client starts one, and `noop` is the cheapest that does no work.
-    let _ = crate::client::send(crate::proto::Request::raw("noop", serde_json::Value::Null)).await;
+    // The answer is the point: a daemon that refuses its config dies before
+    // it answers, and "restarted" over a dead daemon is the message that
+    // sends somebody looking everywhere but the config.
+    let resp = crate::client::send(crate::proto::Request::raw("noop", serde_json::Value::Null))
+        .await
+        .map_err(|e| anyhow::anyhow!("the daemon did not come back: {e}"))?;
+    if let Some(why) = resp.error {
+        anyhow::bail!("the daemon came back but refused: {why}");
+    }
     println!(
         "daemon {}, now {}",
         if was { "restarted" } else { "started" },
@@ -2280,8 +2013,14 @@ async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
         .filter(|l| !l.is_empty())
         .map(str::to_string)
         .collect();
+    // A refusal, so it goes to stderr like the one above: stdout is for what
+    // the command did, and a script reading it should get nothing here.
     if live.is_empty() {
-        println!("no tmux server running, nothing to stop");
+        if opts.restart {
+            eprintln!("no tmux server running; use sessions resurrect");
+        } else {
+            eprintln!("no tmux server running, nothing to stop");
+        }
         return Ok(4);
     }
 
@@ -2325,7 +2064,7 @@ async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
         return Ok(0);
     }
 
-    resurrect(ResurrectOptions {
+    crate::sessions::cli::resurrect(ResurrectOptions {
         stamp: None,
         only: Vec::new(),
         exclude: Vec::new(),
@@ -2337,78 +2076,14 @@ async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
     .await
 }
 
-/// Whether the last run of the daemon ended badly.
-///
-/// A file the daemon writes at startup and removes on the way out, so one left
-/// behind means the daemon before this never got to leave. A snapshot's own
-/// `clean` flag cannot answer this: a timer's capture writes `false` because
-/// the daemon does not know yet, so believing it would open the summary on
-/// every restore from an automatic save.
-fn after_a_crash() -> bool {
-    crate::server::state_dir().is_some_and(|d| crate::sessions::timer::crashed_in(&d))
-}
-
-/// Translate approvals given against the buildable rows back into positions in
-/// the whole plan.
-///
-/// The screen only ever shows what this restore would build, so its indices are
-/// into that shorter list. Applying them to the full plan without translating
-/// would approve whichever pane happened to sit at the same position, which is
-/// the sort of off-by-one that runs the wrong command in somebody's repository.
-fn approved_in_plan(
-    plan: &[crate::restore::Planned],
-    building: &[crate::restore::Planned],
-    approved: &[usize],
-) -> Vec<usize> {
-    approved
-        .iter()
-        .filter_map(|i| building.get(*i))
-        .filter_map(|wanted| {
-            plan.iter().position(|p| {
-                p.session == wanted.session && p.window == wanted.window && p.pane == wanted.pane
-            })
-        })
-        .collect()
-}
-
-/// Wait until a pane has drawn a prompt, or until the ceiling.
-///
-/// tmux marks a prompt line when the shell says where one begins, which is what
-/// `tmux-companion shell-init` makes it do. A shell that emits the mark answers
-/// in milliseconds; one that does not costs the full wait once per pane and
-/// then gets typed into anyway, which is what every version of this did before
-/// the mark existed.
-///
-/// The alternative is a fixed sleep, which is too short on a slow morning and
-/// wasted every other time.
-async fn wait_for_prompt(at: &str) {
-    use crate::sessions::restore::{PROMPT_POLL, PROMPT_WAIT, has_drawn_a_prompt};
-    let until = std::time::Instant::now() + PROMPT_WAIT;
-    loop {
-        let seen = tmux_capture(&["capture-pane", "-p", "-F", "-S", "-5", "-t", at]).await;
-        if has_drawn_a_prompt(&seen) {
-            return;
-        }
-        if std::time::Instant::now() >= until {
-            return;
-        }
-        tokio::time::sleep(PROMPT_POLL).await;
-    }
-}
-
-/// A numeric server option, or nothing when tmux did not answer with one.
-async fn tmux_number(option: &str) -> Option<u32> {
-    tmux_capture(&["show-option", "-gv", option])
-        .await
-        .trim()
-        .parse()
-        .ok()
-}
-
 /// `sessions autosave`: run the daemon's snapshot once, or say when it last ran.
+///
+/// With neither flag it reports, the same as `--status`: the timer lives in
+/// the daemon and there is no third thing for the bare command to do, and a
+/// sentence saying so was one more thing to read before typing the flag.
 async fn run_sessions_autosave(once: bool, status: bool) -> anyhow::Result<()> {
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    if status {
+    let config = config_or_default();
+    if status || !once {
         let state_dir =
             crate::server::state_dir().ok_or_else(|| anyhow::anyhow!("no state directory"))?;
         match crate::sessions::store::generations_in(&state_dir).first() {
@@ -2424,21 +2099,20 @@ async fn run_sessions_autosave(once: bool, status: bool) -> anyhow::Result<()> {
                 crate::config::SessionsAutosave::Cron => format!("cron {}", config.sessions.cron),
             }
         );
+        // The `crashed` marker, which a live daemon never sets and a restore
+        // removes once it has gone ahead, so this is about the daemon before
+        // the current one and only until somebody has restored from it.
         println!(
-            "daemon: {}",
-            if after_a_crash() {
-                "running, or the last one did not stop cleanly"
+            "last daemon: {}",
+            if crate::sessions::cli::after_a_crash() {
+                "did not stop cleanly, and no restore has acted on it yet"
             } else {
-                "not running, and the last one stopped cleanly"
+                "stopped cleanly, or a restore has already acted on the crash"
             }
         );
         return Ok(());
     }
-    if once {
-        return run_sessions_save(false, &[], false).await;
-    }
-    println!("the timer runs in the daemon; --once takes one now, --status says what it has done");
-    Ok(())
+    run_sessions_save(false, &[], false).await
 }
 
 /// `sessions list`: every generation, newest first.
@@ -2488,9 +2162,9 @@ fn run_sessions_list(json: bool) -> anyhow::Result<()> {
                 snap.pane_count(),
                 plural(snap.pane_count()),
                 if snap.header.clean {
-                    "clean"
+                    "taken at shutdown"
                 } else {
-                    "no clean shutdown recorded"
+                    "taken while running"
                 },
                 snap.header.captured_at
             ),
@@ -2518,9 +2192,9 @@ fn run_sessions_show(stamp: Option<String>, json: bool) -> anyhow::Result<()> {
         "{}  {}  {}",
         snap.header.captured_at,
         if snap.header.clean {
-            "clean"
+            "taken at shutdown"
         } else {
-            "no clean shutdown recorded"
+            "taken while running"
         },
         snap.header.hostname
     );
@@ -2554,7 +2228,7 @@ fn run_sessions_show(stamp: Option<String>, json: bool) -> anyhow::Result<()> {
 }
 
 /// `s` when there is more than one of something, for a sentence that counts.
-fn plural(n: usize) -> &'static str {
+pub(crate) fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
@@ -2618,8 +2292,8 @@ async fn capture_session(
 }
 
 /// `project forget`: drop this project's saved layout.
-async fn run_project_forget() -> anyhow::Result<()> {
-    let (_, path) = current_project().await?;
+async fn run_project_forget(dir: Option<String>) -> anyhow::Result<()> {
+    let path = project_named_or_current(dir).await?;
     if crate::saved::forget(&path)? {
         println!("forgot the saved layout for {path}");
     } else {
@@ -2628,24 +2302,32 @@ async fn run_project_forget() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A project's saved layout, or `None` when it came from the capture that
-/// recorded `default-command` in place of every program, so the project opens
-/// from its `[[layout]]` instead of as bare shells.
-async fn load_saved(path: &str) -> Option<crate::saved::SavedLayout> {
-    let saved = crate::saved::load(path)?;
+/// A project's saved layout, with the file that is there but not used kept
+/// apart from no file at all, so `project show` can say which.
+async fn load_saved(path: &str) -> crate::saved::SavedFile {
     let default_command = tmux_capture(&["show-options", "-gv", "default-command"]).await;
-    (!crate::saved::carries_default_command(&saved, &default_command)).then_some(saved)
+    crate::saved::load_checked(path, &default_command)
 }
 
 /// `project show`: which layout this project gets, and which file decided.
-async fn run_project_show() -> anyhow::Result<()> {
-    let (_, path) = current_project().await?;
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+async fn run_project_show(dir: Option<String>) -> anyhow::Result<()> {
+    let path = project_named_or_current(dir).await?;
+    let config = config_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
-    let (windows, source) = crate::saved::resolve(&config, load_saved(&path).await, &path, &home);
+    let file = load_saved(&path).await;
+    let ignored = file
+        .ignored()
+        .map(|(f, w)| (f.to_path_buf(), w.to_string()));
+    let (windows, source) = crate::saved::resolve(&config, file.layout(), &path, &home);
     print!(
         "{}",
-        crate::saved::describe(&path, &windows, &source, &home)
+        crate::saved::describe(
+            &path,
+            &windows,
+            &source,
+            &home,
+            ignored.as_ref().map(|(f, w)| (f.as_path(), w.as_str()))
+        )
     );
     Ok(())
 }
@@ -2671,7 +2353,7 @@ fn pane_target() -> Option<String> {
     }
 }
 
-async fn tmux(args: &[&str]) {
+pub(crate) async fn tmux(args: &[&str]) {
     let _ = tokio::process::Command::new("tmux")
         .args(args)
         .status()
@@ -2683,11 +2365,23 @@ async fn tmux(args: &[&str]) {
 /// The window argument is accepted and not used. The session's own active
 /// window is the one the key was pressed in, and it is an index where the
 /// binding could only pass a name, which two windows can share.
-async fn run_toggle(session: Option<String>, _window: Option<String>) -> anyhow::Result<()> {
+///
+/// `--last` is tmux's own `last-window`: the flip between the two most recent
+/// windows, which is what a toggle means once a session has four windows and
+/// cycling through all of them stops being a toggle at all.
+async fn run_toggle(
+    session: Option<String>,
+    _window: Option<String>,
+    last: bool,
+) -> anyhow::Result<()> {
     let session = match session {
         Some(s) => s,
         None => tmux_display("#{session_name}").await,
     };
+    if last {
+        tmux(&["last-window", "-t", &format!("={session}")]).await;
+        return Ok(());
+    }
     let out = tokio::process::Command::new("tmux")
         .args([
             "list-windows",
@@ -2706,20 +2400,20 @@ async fn run_toggle(session: Option<String>, _window: Option<String>) -> anyhow:
 }
 
 /// `autosave`: the timer lives in the daemon, so this is the manual half.
+///
+/// Neither flag reports, like `--status`. The bare command used to print a
+/// sentence saying where the loop lives, which was there to stop anybody
+/// starting a second one, but a sentence about flags is not what somebody
+/// who typed the command wanted to know, and the answer to "when did it last
+/// save" is.
 async fn run_autosave(once: bool, status: bool) -> anyhow::Result<()> {
-    if status {
+    if status || !once {
         println!("{}", crate::tasks::last_save());
         return Ok(());
     }
-    if once {
-        let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-        let home = std::env::var("HOME").unwrap_or_default();
-        return crate::tasks::save_now(&config.autosave.script_path(&home)).await;
-    }
-    // Neither flag: say where the loop actually lives rather than starting a
-    // second one, which is what the zsh version needed a lock file to prevent.
-    println!("the daemon runs the autosave loop; --once saves now, --status says when it last did");
-    Ok(())
+    let config = config_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    crate::tasks::save_now(&config.autosave.script_path(&home)).await
 }
 
 /// One `tmux display-message -p`, empty when tmux is not there.
@@ -2763,346 +2457,13 @@ async fn display_message(args: &[&str]) -> String {
     }
 }
 
-/// `theme pick`: choose one, then apply it or remember it.
-fn theme_pick(
-    target: Option<String>,
-    register: Option<String>,
-    dir: &std::path::Path,
-    print: bool,
-) -> anyhow::Result<()> {
-    let rows = crate::theme::rows(dir);
-    if rows.is_empty() {
-        anyhow::bail!("no themes in {}", dir.display());
-    }
-
-    if print {
-        for row in &rows {
-            println!(
-                "{}\t{}\t{}",
-                row.path.file_name().unwrap_or_default().to_string_lossy(),
-                row.name,
-                row.colour
-            );
-        }
-        return Ok(());
-    }
-
-    let items: Vec<crate::picker::Item> = rows
-        .iter()
-        .map(|r| {
-            crate::picker::Item::with_preview(r.search_text(), theme_preview(r))
-                // The colour as a block, not as a tint on the text: a theme
-                // list where every row is painted its own colour is a list
-                // where half the rows cannot be read.
-                .with_swatch(Some(r.colour.clone()))
-                .in_columns(r.columns())
-        })
-        .collect();
-
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    let chrome = crate::picker::Chrome {
-        title: match &register {
-            Some(s) => format!("[ Theme for {s} ]"),
-            None => "[ Theme ]".to_string(),
-        },
-        footer: "enter applies it   esc cancels".into(),
-        preview_title: "[ Colours ]".into(),
-        ..Default::default()
-    }
-    .configured(&config.picker, crate::config::Picker::Theme);
-
-    let Some(index) = crate::picker::run(items, "", &chrome)? else {
-        return Ok(());
-    };
-    let row = &rows[index];
-
-    if let Some(session) = register {
-        // Remembered and not applied: the session does not exist yet, so
-        // applying here would paint whichever session happens to be current.
-        let stem = row
-            .path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let map = dir.join("_project-map.tsv");
-        use std::io::Write;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(map)?;
-        writeln!(f, "{session}\t{stem}")?;
-        println!("{}", row.path.display());
-        return Ok(());
-    }
-
-    let target = target.or_else(attached_session_sync);
-    source_theme(&row.path, target.as_deref());
-    Ok(())
-}
-
-/// `theme init`: write the starter themes and the machinery that applies them.
-///
-/// Refuses to overwrite. Somebody running this twice, or running it beside
-/// themes they already wrote, should get the files they are missing and keep
-/// everything they have; the alternative is a command that can quietly undo an
-/// afternoon's work.
-fn theme_init(dir: &std::path::Path) -> anyhow::Result<()> {
-    use crate::theme::{BASE_THEMES, apply_file, base_theme_file, readable_on, reset_file};
-
-    std::fs::create_dir_all(dir)?;
-
-    let mut written = Vec::new();
-    let mut kept = Vec::new();
-    let mut write = |name: String, body: String| -> anyhow::Result<()> {
-        let path = dir.join(&name);
-        if path.exists() {
-            kept.push(name);
-            return Ok(());
-        }
-        std::fs::write(&path, body)?;
-        written.push(name);
-        Ok(())
-    };
-
-    write("_reset.tmux".to_string(), reset_file())?;
-    write("_apply.tmux".to_string(), apply_file())?;
-    for (stem, label, index) in BASE_THEMES {
-        write(
-            format!("{stem}.tmux"),
-            base_theme_file(stem, label, index, &dir.display().to_string()),
-        )?;
-    }
-
-    println!("{}", dir.display());
-    for name in &written {
-        let index = BASE_THEMES
-            .iter()
-            .find(|(s, _, _)| format!("{s}.tmux") == *name)
-            .map(|(_, _, i)| *i);
-        match index {
-            Some(i) => {
-                let (fg, ratio) = readable_on(i);
-                println!("  wrote  {name:<16} colour{i} with {fg} at {ratio:.1}:1");
-            }
-            None => println!("  wrote  {name}"),
-        }
-    }
-    for name in &kept {
-        println!("  kept   {name:<16} already there, left alone");
-    }
-    if written.is_empty() {
-        println!("\nNothing to do: every file was already there.");
-        return Ok(());
-    }
-    println!(
-        "\nNext: tmux-companion theme gen --apply --shades\n\
-         That mints a lighter and a darker sibling of each colour and measures\n\
-         every border against this terminal's background."
-    );
-    Ok(())
-}
-
-/// `theme add`: write a theme from one colour, or two.
-fn theme_add(
-    bg: &str,
-    fg: Option<String>,
-    name: Option<String>,
-    force: bool,
-    dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    use crate::theme::{
-        TEXT_MIN_AA, added_theme_file, contrast, readable_on_rgb, resolve_colour, stem_for, swatch,
-    };
-
-    let Some(bg_rgb) = resolve_colour(bg) else {
-        anyhow::bail!(
-            "{bg} is not a colour tmux takes.\n\
-             Try a name, colour0 to colour255, or #rrggbb; \
-             `tmux-companion theme list-colours` prints every one."
-        );
-    };
-
-    // One colour is enough, and the second is the interesting decision: pick it
-    // yourself and the contrast is yours to answer for, leave it out and the
-    // better of black and white is chosen for you.
-    let (fg_value, ratio) = match &fg {
-        Some(chosen) => {
-            let Some(fg_rgb) = resolve_colour(chosen) else {
-                anyhow::bail!("{chosen} is not a colour tmux takes");
-            };
-            (chosen.clone(), contrast(bg_rgb, fg_rgb))
-        }
-        None => {
-            let (computed, r) = readable_on_rgb(bg_rgb);
-            (computed.to_string(), r)
-        }
-    };
-
-    if ratio < TEXT_MIN_AA && !force {
-        anyhow::bail!(
-            "{} on {} is {ratio:.2}:1, under WCAG AA at {TEXT_MIN_AA}:1.\n\
-             Leave --fg out to have it chosen, pick a different pair, or pass \
-             --force to write it anyway.",
-            fg_value,
-            bg
-        );
-    }
-
-    let label = name.unwrap_or_else(|| bg.to_string());
-    let stem = stem_for(&label);
-    if stem.is_empty() {
-        anyhow::bail!("{label} leaves nothing to name a file after");
-    }
-    let path = dir.join(format!("{stem}.tmux"));
-    if path.exists() {
-        anyhow::bail!(
-            "{} is already there; delete it or pick another name",
-            path.display()
-        );
-    }
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(
-        &path,
-        added_theme_file(&label, bg, &fg_value, &dir.display().to_string()),
-    )?;
-
-    println!(
-        "{} {label}  {fg_value} on {bg} at {ratio:.1}:1{}",
-        swatch(bg),
-        if ratio < TEXT_MIN_AA {
-            "  (under AA)"
-        } else {
-            ""
-        }
-    );
-    println!("  {}", path.display());
-    println!("\nNext: tmux-companion theme gen --apply    adds the border");
-    Ok(())
-}
-
-/// `theme list-colours`: every value tmux takes, painted.
-fn theme_list_colours(plain: bool) -> anyhow::Result<()> {
-    use crate::theme::{all_colours, readable_on_rgb};
-
-    for (value, name, (r, g, b)) in all_colours() {
-        if plain {
-            println!("{value}");
-            continue;
-        }
-        let (fg, ratio) = readable_on_rgb((r, g, b));
-        // The block is painted in the colour and the label written on it, so
-        // the row shows both what it looks like and what reads on top.
-        let on = if fg == "colour16" { "30" } else { "97" };
-        println!(
-            "\x1b[48;2;{r};{g};{b}m\x1b[{on}m {value:<12} \x1b[0m  #{r:02x}{g:02x}{b:02x}               {fg} at {ratio:.1}:1{}",
-            if name.is_empty() {
-                String::new()
-            } else {
-                format!("   ({name})")
-            }
-        );
-    }
-    Ok(())
-}
-
-/// `theme apply`: the session-created hook's half, with no picker.
-///
-/// Silent when there is no theme to apply. This runs once per session created,
-/// so anything it prints lands on somebody's terminal at the moment they open a
-/// session, and "no theme yet" is the state every install starts in.
-fn theme_apply(session: &str, target: Option<String>, dir: &std::path::Path) -> anyhow::Result<()> {
-    let map = std::fs::read_to_string(dir.join("_project-map.tsv"))
-        .map(|t| crate::project::parse_project_map(&t))
-        .unwrap_or_default();
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
-    // An empty target is what `#{session_id}` expands to under tmux 3.5, which
-    // does not resolve it inside a `run-shell` the way 3.7 does. Without this
-    // the theme was sourced with no target at all, so it landed on whichever
-    // session happened to be current -- which, at `session-created` time, is
-    // not the session being created.
-    let target = target
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| session.to_string());
-    if let Some(path) = crate::theme::theme_for_session(session, &map, &config.theme, dir) {
-        source_theme(&path, Some(&target));
-    }
-    Ok(())
-}
-
-/// What a theme looks like, and then what it is made of.
-///
-/// The card first, because a list of `@theme-color-*` values answers none of
-/// the question anybody opens a theme preview to ask: whether the text on that
-/// background can be read, what a message looks like, what a copy-mode
-/// selection looks like. The settings follow it for the person who is editing
-/// the file rather than choosing from it.
-fn theme_preview(row: &crate::theme::ThemeRow) -> String {
-    let text = std::fs::read_to_string(&row.path).unwrap_or_default();
-    let settings = crate::theme::parse_settings(&text);
-
-    // Wider than any preview pane, so the sample bars reach its edge whatever
-    // that turns out to be and the pane clips the rest. The card is built
-    // before the pane exists, so this cannot be a measurement; 60 was a guess
-    // and on a pane narrower than that the overhang wrapped onto the next
-    // line as a stray block of colour.
-    let card = crate::theme::preview_card(&settings, 400);
-
-    let mut keys: Vec<&String> = settings.keys().collect();
-    keys.sort();
-    let listed = keys
-        .iter()
-        .map(|k| {
-            let v = &settings[*k];
-            format!("  {} {:<26} {v}", crate::theme::swatch(v), k)
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-    format!("{card}\n{listed}\n")
-}
-
-/// `tmux source-file`, honouring a target.
-///
-/// The target matters: `_apply.tmux` sets window options, and a window option
-/// lands on one window, so without a target the theme paints whichever window
-/// happened to be current and every other window in the session keeps the
-/// global default. That is why copy-mode selection could be readable in one
-/// window and not the next.
-/// The attached client's session, for the synchronous callers.
-///
-/// `theme pick` draws in a popup like every other picker, and a popup is not a
-/// client, so a theme sourced with no target painted whichever session the
-/// server touched last. Switch project, press the key, watch the session you
-/// just left change colour.
-fn attached_session_sync() -> Option<String> {
-    let out = std::process::Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_session}"])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(|s| format!("{s}:"))
-}
-
-fn source_theme(path: &std::path::Path, target: Option<&str>) {
-    let path = path.display().to_string();
-    let mut args: Vec<&str> = vec!["source-file"];
-    if let Some(t) = target {
-        args.push("-t");
-        args.push(t);
-    }
-    args.push(&path);
-    let _ = std::process::Command::new("tmux").args(args).status();
-}
-
 /// `run`: pick a command from history and run it in a pane beside this one.
 async fn run_command(
     print: bool,
     pane: Option<String>,
     exec: Option<String>,
 ) -> anyhow::Result<()> {
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
 
     // The pane half: this process *is* the new pane, so it runs the command
@@ -3686,7 +3047,7 @@ async fn run_open(
         return Ok(());
     }
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
 
     // `-i` in the script this replaces, which read "interactive" and meant
     // "let me say which of my browsers or editors this goes to". With no
@@ -3740,19 +3101,29 @@ async fn run_open(
     Ok(())
 }
 
-/// `close-project`: ask every window to go, rather than killing the session.
+/// `project close`: ask every window to go, rather than killing the session.
 async fn run_close_project(
     session: Option<String>,
     discard: bool,
     save: bool,
 ) -> anyhow::Result<()> {
-    use crate::close::{Farewell, farewell, parse_panes, quit_command};
+    use crate::close::{Farewell, farewell, is_editor, parse_panes, quit_command};
 
     let session = match session {
         Some(s) => s,
         None => tmux_display("#{session_name}").await,
     };
+    // A session that is not there is an error, not a session that closed at
+    // once: with no name the target was `=`, which matches nothing, so the
+    // wait loop below saw "gone" on its first look and exited 0 having done
+    // nothing, and the same for a name typed wrong.
+    if session.is_empty() {
+        anyhow::bail!("no such session: none named, and not inside tmux");
+    }
     let target = format!("={session}");
+    if !session_exists(&target).await {
+        anyhow::bail!("no such session: {session}");
+    }
 
     // Before anything is asked to quit, and not after. Once the editors have
     // gone every pane reports the shell, so a capture taken at the end of this
@@ -3761,10 +3132,8 @@ async fn run_close_project(
     // A capture that fails is reported and does not stop the close: somebody
     // pressed this key to close a project, and losing the layout is a smaller
     // failure than a session that refuses to shut.
-    if save {
-        if let Err(e) = save_before_close(&session).await {
-            eprintln!("close-project: the layout was not saved: {e}");
-        }
+    if save && let Err(e) = save_before_close(&session).await {
+        eprintln!("project close: the layout was not saved: {e}");
     }
 
     let listing = tmux_capture(&[
@@ -3796,19 +3165,23 @@ async fn run_close_project(
             if !session_exists(&target).await {
                 break;
             }
-            if pane_command(id).await != "nvim" {
+            if !is_editor(&pane_command(id).await) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        if pane_command(id).await == "nvim" {
+        let still = pane_command(id).await;
+        if is_editor(&still) {
             tmux(&["select-pane", "-t", id]).await;
             tmux(&[
                 "display-message",
-                "close-project: nvim would not quit, so nothing was closed. Read what it is asking.",
+                &format!(
+                    "project close: {still} would not quit, so nothing was closed. \
+                     Read what it is asking."
+                ),
             ])
             .await;
-            anyhow::bail!("nvim would not quit");
+            anyhow::bail!("{still} would not quit");
         }
     }
 
@@ -3847,7 +3220,7 @@ async fn run_close_project(
     if session_exists(&target).await {
         tmux(&[
             "display-message",
-            &format!("close-project: {session} is still open; something did not take Ctrl-D."),
+            &format!("project close: {session} is still open; something did not take Ctrl-D."),
         ])
         .await;
         anyhow::bail!("{session} is still open");
@@ -3908,7 +3281,7 @@ async fn tmux_capture_checked(args: &[&str]) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-async fn tmux_capture(args: &[&str]) -> String {
+pub(crate) async fn tmux_capture(args: &[&str]) -> String {
     let out = tokio::process::Command::new("tmux")
         .args(args)
         .output()
@@ -4013,7 +3386,7 @@ async fn run_clipboard(stdin: bool) -> anyhow::Result<()> {
         tmux_capture(&["show-buffer"]).await
     };
 
-    let config = crate::config::load().map(|(c, _)| c).unwrap_or_default();
+    let config = config_or_default();
     let (program, args) = config.clipboard.command();
 
     let mut child = tokio::process::Command::new(program)

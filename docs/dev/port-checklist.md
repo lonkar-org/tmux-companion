@@ -1,3 +1,5 @@
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
+
 # Port checklist
 
 Status for every row in `comrades-port.md`. One line per item, updated in the
@@ -36,7 +38,7 @@ Each row also carries its documentation row from the table in
 
 ## Taking on the session store
 
-The design is `docs/tmux-resurrect-port.md`. One row per step.
+The design is `docs/dev/tmux-resurrect-port.md`. One row per step.
 
 | # | Item | Status |
 | --- | --- | --- |

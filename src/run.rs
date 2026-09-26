@@ -57,10 +57,8 @@ pub fn parse_zsh(text: &str) -> Vec<String> {
                 // here would make one history entry look like several rows.
                 acc.push_str("\\n");
                 acc.push_str(body);
-                if !continues {
-                    if let Some(done) = pending.take() {
-                        out.push(done);
-                    }
+                if !continues && let Some(done) = pending.take() {
+                    out.push(done);
                 }
             }
             None => {
@@ -144,11 +142,11 @@ pub fn dedupe(commands: Vec<String>) -> Vec<String> {
 /// reel recorded a picker that closed onto an empty prompt.
 pub fn split_args(pane: Option<&str>, opening: u16, command: &str) -> Vec<String> {
     let mut args: Vec<String> = vec!["split-window".into(), "-fh".into()];
-    if let Some(p) = pane {
-        if !p.is_empty() {
-            args.push("-t".into());
-            args.push(p.to_string());
-        }
+    if let Some(p) = pane
+        && !p.is_empty()
+    {
+        args.push("-t".into());
+        args.push(p.to_string());
     }
     args.push("-l".into());
     args.push(opening.to_string());
@@ -244,14 +242,17 @@ pub async fn history(config: &crate::config::Run, home: &str) -> Vec<String> {
             }
         }
         _ => {
-            let path = config.history_file.clone().unwrap_or_else(|| {
-                let name = match source {
-                    S::Bash => ".bash_history",
-                    S::Fish => ".local/share/fish/fish_history",
-                    _ => ".zsh_history",
-                };
-                std::path::PathBuf::from(home).join(name)
-            });
+            let path = config.history_file.as_deref().map_or_else(
+                || {
+                    let name = match source {
+                        S::Bash => ".bash_history",
+                        S::Fish => ".local/share/fish/fish_history",
+                        _ => ".zsh_history",
+                    };
+                    std::path::PathBuf::from(home).join(name)
+                },
+                |p| crate::config::expand_home(p, home),
+            );
             // Histories carry whatever bytes a command carried, so this reads
             // lossily rather than refusing a file with one stray byte in it.
             std::fs::read(&path)

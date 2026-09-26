@@ -16,6 +16,7 @@
 //! without a server.
 
 pub mod capture;
+pub mod cli;
 pub mod import;
 pub mod restore;
 pub mod store;
@@ -193,6 +194,17 @@ impl Snapshot {
             .map(|s| s.name.as_str());
         named.or_else(|| self.session.first().map(|s| s.name.as_str()))
     }
+
+    /// The build that wrote this, when it is newer than the one reading it.
+    ///
+    /// The format number says whether the file can be read at all; this says
+    /// whether the build that wrote it knew something this one does not, which
+    /// is a warning rather than a refusal. `None` when the writer is this
+    /// build, an older one, or one whose version carries no stamp.
+    pub fn written_by_newer_build(&self) -> Option<&str> {
+        let theirs = self.header.companion_version.as_str();
+        built_after(theirs, &crate::proto::build_id()).then_some(theirs)
+    }
 }
 
 /// Render a snapshot as the TOML that goes on disk.
@@ -207,12 +219,40 @@ pub fn render(snap: &Snapshot) -> String {
     )
 }
 
+/// The one field a format check needs, read before anything else is.
+///
+/// Without `deny_unknown_fields`, on purpose: a file from a build that added a
+/// key is exactly the file this has to be able to read the number out of.
+/// Strict parsing first would refuse it as "unknown field `whatever`", which
+/// names the symptom and hides the cause.
+#[derive(Deserialize)]
+struct Probe {
+    #[serde(default)]
+    header: ProbeHeader,
+}
+
+/// The header half of [`Probe`].
+#[derive(Deserialize, Default)]
+struct ProbeHeader {
+    #[serde(default)]
+    format: u32,
+}
+
 /// Parse a snapshot, refusing a format this build does not know.
 ///
 /// The refusal names both numbers, because the person reading it has a
 /// directory full of files and needs to know which ones this binary can still
-/// read.
+/// read. A newer number gets told which way round the mismatch is, since the
+/// fix is to upgrade rather than to delete the file.
 pub fn parse(text: &str) -> anyhow::Result<Snapshot> {
+    let probe: Probe = toml::from_str(text)?;
+    if probe.header.format > FORMAT {
+        anyhow::bail!(
+            "snapshot format {}, this build reads {}; a newer tmux-companion wrote it",
+            probe.header.format,
+            FORMAT
+        );
+    }
     let snap: Snapshot = toml::from_str(text)?;
     if snap.header.format != FORMAT {
         anyhow::bail!(
@@ -222,6 +262,29 @@ pub fn parse(text: &str) -> anyhow::Result<Snapshot> {
         );
     }
     Ok(snap)
+}
+
+/// The digits after `+` in a build id, which is when the build was made.
+///
+/// Stops at the first character that is not a digit, so a build id that goes
+/// on to name a commit (`0.2.0+1790400979.abc1234`) still reads as the
+/// seconds, and one with no stamp at all reads as nothing.
+pub fn build_stamp(build_id: &str) -> Option<u64> {
+    let (_, rest) = build_id.split_once('+')?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Whether `theirs` was built after `mine`, by stamp.
+///
+/// Numerically rather than by string, so `+999` does not sort above
+/// `+1790400979`, and false when either side has no stamp to compare: a
+/// version nobody can place is not evidence of anything.
+pub fn built_after(theirs: &str, mine: &str) -> bool {
+    match (build_stamp(theirs), build_stamp(mine)) {
+        (Some(t), Some(m)) => t > m,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -397,6 +460,62 @@ mod tests {
     fn a_key_the_reader_does_not_know_is_an_error_not_a_shrug() {
         let text = "[header]\nformat = 1\nwhat_is_this = true\n";
         assert!(parse(text).is_err());
+    }
+
+    #[test]
+    fn a_newer_format_is_named_as_newer_even_when_it_carries_keys_this_build_lacks() {
+        // The whole point of probing the number first: a format-2 file has
+        // keys this build does not know, and refusing it as "unknown field"
+        // would hide that the fix is to upgrade.
+        let text = "[header]\nformat = 2\nsomething_new = true\n";
+        let said = parse(text).expect_err("should refuse").to_string();
+        assert!(said.contains("snapshot format 2"), "{said}");
+        assert!(said.contains("newer tmux-companion"), "{said}");
+        assert!(!said.contains("unknown field"), "{said}");
+    }
+
+    #[test]
+    fn the_stamp_is_the_digits_after_the_plus_and_nothing_after_them() {
+        assert_eq!(build_stamp("0.2.0+1790400979"), Some(1_790_400_979));
+        assert_eq!(build_stamp("0.2.0+1790400979.abc1234"), Some(1_790_400_979));
+        assert_eq!(
+            build_stamp("0.2.0+1790400979.abc1234-dirty"),
+            Some(1_790_400_979)
+        );
+        assert_eq!(build_stamp("0.2.0"), None);
+        assert_eq!(build_stamp("0.2.0+"), None);
+        assert_eq!(build_stamp("0.2.0+abc"), None);
+    }
+
+    #[test]
+    fn newer_is_decided_by_number_and_never_by_string() {
+        assert!(built_after("0.2.0+1790400979", "0.2.0+1790261531"));
+        assert!(!built_after("0.2.0+1790261531", "0.2.0+1790400979"));
+        assert!(!built_after("0.2.0+1790400979", "0.2.0+1790400979"));
+        // `+999` would sort above `+1790400979` as text.
+        assert!(!built_after("0.2.0+999", "0.2.0+1790400979"));
+        // Nothing to compare is not evidence of anything.
+        assert!(!built_after("0.2.0", "0.2.0+1790400979"));
+        assert!(!built_after("0.2.0+1790400979", "0.2.0"));
+    }
+
+    #[test]
+    fn a_snapshot_says_when_a_newer_build_wrote_it() {
+        let mut snap = laptop();
+        // This build's stamp, plus a day.
+        let mine = build_stamp(&crate::proto::build_id()).expect("this build has a stamp");
+        snap.header.companion_version = format!("0.9.0+{}", mine + 86_400);
+        assert_eq!(
+            snap.written_by_newer_build(),
+            Some(snap.header.companion_version.as_str())
+        );
+
+        snap.header.companion_version = format!("0.1.0+{}", mine.saturating_sub(1));
+        assert_eq!(snap.written_by_newer_build(), None);
+        snap.header.companion_version = crate::proto::build_id();
+        assert_eq!(snap.written_by_newer_build(), None);
+        snap.header.companion_version = String::new();
+        assert_eq!(snap.written_by_newer_build(), None);
     }
 
     #[test]

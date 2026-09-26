@@ -19,6 +19,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, LayoutPane, LayoutWindow};
 
+/// The format this crate writes into every layout it saves.
+///
+/// A file with no number is one an older build wrote, and the only way to
+/// know what that build got wrong is to look at the contents. The number is
+/// what lets a reader stop sniffing: a build that writes `format = 1` is one
+/// that records a pane's program rather than the server's `default-command`.
+pub const FORMAT: u32 = 1;
+
 /// A layout captured from a live session.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +34,13 @@ pub struct SavedLayout {
     /// The project directory this belongs to, which is the authority when the
     /// file name and the contents disagree.
     pub path: String,
+    /// [`FORMAT`] as it was when this was written; 0 for a file from before
+    /// the number existed.
+    #[serde(default)]
+    pub format: u32,
+    /// The build that wrote it, as `doctor` reports it.
+    #[serde(default)]
+    pub companion_version: String,
     /// When it was captured, for the person reading the file a year later.
     #[serde(default)]
     pub captured_at: String,
@@ -97,15 +112,109 @@ pub fn load(project_path: &str) -> Option<SavedLayout> {
 /// process, so an environment variable is shared mutable state between them,
 /// which is a race waiting for a slow machine.
 pub fn load_in(state_dir: &std::path::Path, project_path: &str) -> Option<SavedLayout> {
+    load_checked_in(state_dir, project_path, "").layout()
+}
+
+/// What reading a project's saved-layout file found.
+///
+/// Three things used to collapse into `None`: no file, a file that would not
+/// parse, and a file an older build wrote wrong. `project show` then said
+/// `[[layout]]` decided while the file sat there, and the person who had just
+/// saved it had no way to learn why it was not being used.
+#[derive(Debug)]
+pub enum SavedFile {
+    /// A layout to open with.
+    Layout(SavedLayout),
+    /// A file that is there and not used, with the reason in words.
+    Ignored {
+        /// The file, so the message can name it.
+        file: std::path::PathBuf,
+        /// Why, as the tail of "the file ...".
+        why: String,
+    },
+    /// No file.
+    Absent,
+}
+
+impl SavedFile {
+    /// The layout, when there is one to open with.
+    pub fn layout(self) -> Option<SavedLayout> {
+        match self {
+            Self::Layout(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    /// The ignored file and why, for `describe`.
+    pub fn ignored(&self) -> Option<(&std::path::Path, &str)> {
+        match self {
+            Self::Ignored { file, why } => Some((file, why)),
+            _ => None,
+        }
+    }
+}
+
+/// [`load_in`] with the reasons kept.
+///
+/// `default_command` is tmux's `show-options -gv default-command`, which is
+/// what the old capture wrote in place of every pane's program; empty when
+/// the caller has no tmux to ask.
+pub fn load_checked_in(
+    state_dir: &std::path::Path,
+    project_path: &str,
+    default_command: &str,
+) -> SavedFile {
     let file = path_in(state_dir, project_path);
-    let text = std::fs::read_to_string(file).ok()?;
-    let saved: SavedLayout = toml::from_str(&text).ok()?;
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return SavedFile::Absent;
+    };
+    let saved: SavedLayout = match toml::from_str(&text) {
+        Ok(s) => s,
+        Err(e) => {
+            let first = e
+                .to_string()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            return SavedFile::Ignored {
+                file,
+                why: format!("does not parse: {first}"),
+            };
+        }
+    };
     // A layout with no windows is not an answer, it is a file an older build
-    // wrote after a capture that read nothing. Treating it as absent sends the
-    // project back to its `[[layout]]`, which is what it had before the empty
-    // file appeared. New ones cannot be written -- `write_layout` refuses --
-    // so this is only ever about a file that is already there.
-    (!saved.window.is_empty()).then_some(saved)
+    // wrote after a capture that read nothing. New ones cannot be written --
+    // `write_layout` refuses -- so this is only ever about a file that is
+    // already there.
+    if saved.window.is_empty() {
+        return SavedFile::Ignored {
+            file,
+            why: "has no windows; an older build wrote it after a capture that read nothing"
+                .to_string(),
+        };
+    }
+    // Only a file from before the format number can carry that mistake, and
+    // sniffing a newer one would refuse a layout whose pane really does run
+    // the shell the server starts panes with.
+    if saved.format == 0 && carries_default_command(&saved, default_command) {
+        return SavedFile::Ignored {
+            file,
+            why: "records tmux's default-command where a pane's program should be, \
+                  which an older build did for every pane; the programs were never saved"
+                .to_string(),
+        };
+    }
+    SavedFile::Layout(saved)
+}
+
+/// [`load_checked_in`] under the real state directory.
+pub fn load_checked(project_path: &str, default_command: &str) -> SavedFile {
+    match crate::server::state_dir() {
+        Some(d) => load_checked_in(&d, project_path, default_command),
+        None => SavedFile::Absent,
+    }
 }
 
 /// Whether a saved layout came from the capture that recorded the server's
@@ -126,9 +235,10 @@ pub fn carries_default_command(saved: &SavedLayout, default_command: &str) -> bo
         return false;
     }
     let is_default = |c: &str| unquote(c.trim()) == default;
-    saved.window.iter().any(|w| {
-        is_default(&w.command) || w.pane.iter().any(|p| is_default(&p.command))
-    })
+    saved
+        .window
+        .iter()
+        .any(|w| is_default(&w.command) || w.pane.iter().any(|p| is_default(&p.command)))
 }
 
 /// Write a project's layout, creating the directory the first time.
@@ -200,7 +310,7 @@ fn write_layout_in(
 /// The temporary file carries the process id, so two saves racing each other
 /// cannot write to one scratch path. The loser of that race still leaves a
 /// whole file behind, which is the property worth having.
-fn write_atomically(file: &std::path::Path, contents: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomically(file: &std::path::Path, contents: &str) -> std::io::Result<()> {
     let tmp = file.with_extension(format!("toml.{}.tmp", std::process::id()));
     match std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, file)) {
         Ok(()) => Ok(()),
@@ -468,6 +578,8 @@ pub fn capture(c: &Capture) -> Captured {
     let (panes, mut skipped) = parse_panes_reporting(c.panes);
     let mut layout = SavedLayout {
         path: c.project.to_string(),
+        format: FORMAT,
+        companion_version: crate::proto::build_id(),
         captured_at: c.at.to_string(),
         ..Default::default()
     };
@@ -571,6 +683,13 @@ pub fn render_with(saved: &SavedLayout, guessed: &[(usize, usize)]) -> String {
     out.push_str("# file until you press the save or the close binding again, and\n");
     out.push_str("# `tmux-companion project forget` deletes it.\n");
     out.push_str(&format!("path = {}\n", quote(&saved.path)));
+    // The writer's own numbers, not the struct's: a layout read from an old
+    // file and written back is written by this build.
+    out.push_str(&format!("format = {FORMAT}\n"));
+    out.push_str(&format!(
+        "companion_version = {}\n",
+        quote(&crate::proto::build_id())
+    ));
     if !saved.captured_at.is_empty() {
         out.push_str(&format!("captured_at = {}\n", quote(&saved.captured_at)));
     }
@@ -630,6 +749,7 @@ pub fn describe(
     windows: &[LayoutWindow],
     source: &Source,
     home: &str,
+    ignored: Option<(&std::path::Path, &str)>,
 ) -> String {
     let panes: usize = windows.iter().map(|w| w.pane_count()).sum();
     let mut out = format!("{}\n", crate::project::short_path(project_path, home));
@@ -643,6 +763,12 @@ pub fn describe(
         Source::Nothing => {
             out.push_str("  layout: none, so a plain shell\n");
         }
+    }
+    if let Some((file, why)) = ignored {
+        out.push_str(&format!(
+            "  saved layout ignored: {}\n    the file {why}\n    `project save` replaces it, `project forget` deletes it\n",
+            file.display()
+        ));
     }
     out.push_str(&format!(
         "  {} window{}, {} pane{}\n",
@@ -768,6 +894,83 @@ mod tests {
     }
 
     #[test]
+    fn an_ignored_file_is_named_with_its_reason() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("projects");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+
+        std::fs::write(
+            path_in(t.path(), "/p/old"),
+            "path = \"/p/old\"\n[[window]]\nname = \"edit\"\ncommand = \"\\\"reattach-to-user-namespace -l /bin/zsh\\\"\"\n",
+        )
+        .unwrap();
+        let Some((file, why)) = load_checked_in(t.path(), "/p/old", dc)
+            .ignored()
+            .map(|(f, w)| (f.to_path_buf(), w.to_string()))
+        else {
+            panic!("the old capture should be ignored");
+        };
+        assert_eq!(file, path_in(t.path(), "/p/old"));
+        assert!(why.contains("default-command"), "{why}");
+
+        std::fs::write(
+            path_in(t.path(), "/p/bad"),
+            "path = \"/p/bad\"\n[[window]\n",
+        )
+        .unwrap();
+        let bad = load_checked_in(t.path(), "/p/bad", dc);
+        assert!(
+            bad.ignored()
+                .is_some_and(|(_, w)| w.starts_with("does not parse")),
+            "{bad:?}"
+        );
+
+        std::fs::write(path_in(t.path(), "/p/empty"), "path = \"/p/empty\"\n").unwrap();
+        let empty = load_checked_in(t.path(), "/p/empty", dc);
+        assert!(
+            empty
+                .ignored()
+                .is_some_and(|(_, w)| w.contains("no windows")),
+            "{empty:?}"
+        );
+
+        std::fs::write(
+            path_in(t.path(), "/p/good"),
+            "path = \"/p/good\"\n[[window]]\nname = \"edit\"\ncommand = \"nvim\"\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            load_checked_in(t.path(), "/p/good", dc),
+            SavedFile::Layout(_)
+        ));
+        assert!(matches!(
+            load_checked_in(t.path(), "/p/none", dc),
+            SavedFile::Absent
+        ));
+    }
+
+    #[test]
+    fn describe_names_an_ignored_file_and_what_to_do_about_it() {
+        let text = describe(
+            "/w/proj",
+            &[],
+            &Source::Nothing,
+            "/home/me",
+            Some((
+                std::path::Path::new("/state/projects/x.toml"),
+                "does not parse: line 3",
+            )),
+        );
+        assert!(
+            text.contains("saved layout ignored: /state/projects/x.toml"),
+            "{text}"
+        );
+        assert!(text.contains("the file does not parse: line 3"), "{text}");
+        assert!(text.contains("`project forget` deletes it"), "{text}");
+    }
+
+    #[test]
     fn a_saved_default_command_marks_the_file_as_the_old_capture() {
         let dc = "reattach-to-user-namespace -l /bin/zsh";
         let quoted: SavedLayout = toml::from_str(
@@ -791,6 +994,60 @@ mod tests {
         )
         .unwrap();
         assert!(!carries_default_command(&clean, dc));
+    }
+
+    #[test]
+    fn a_file_that_names_its_format_is_trusted_without_sniffing() {
+        // The sniff exists for files from before the number. A build that
+        // writes `format = 1` records what a pane runs, so a pane that really
+        // does run the server's default-command is not the old mistake.
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("projects")).unwrap();
+        let dc = "reattach-to-user-namespace -l /bin/zsh";
+        let body =
+            "[[window]]\nname = \"sh\"\ncommand = \"reattach-to-user-namespace -l /bin/zsh\"\n";
+
+        std::fs::write(
+            path_in(t.path(), "/p/new"),
+            format!("path = \"/p/new\"\nformat = 1\n{body}"),
+        )
+        .unwrap();
+        assert!(matches!(
+            load_checked_in(t.path(), "/p/new", dc),
+            SavedFile::Layout(_)
+        ));
+
+        std::fs::write(
+            path_in(t.path(), "/p/old"),
+            format!("path = \"/p/old\"\n{body}"),
+        )
+        .unwrap();
+        let old = load_checked_in(t.path(), "/p/old", dc);
+        assert!(
+            old.ignored()
+                .is_some_and(|(_, w)| w.contains("default-command")),
+            "{old:?}"
+        );
+    }
+
+    #[test]
+    fn what_is_written_names_the_format_and_the_build() {
+        let l = SavedLayout {
+            path: "/w/proj".to_string(),
+            ..Default::default()
+        };
+        let text = render(&l);
+        assert!(text.contains(&format!("format = {FORMAT}\n")), "{text}");
+        assert!(
+            text.contains(&format!(
+                "companion_version = \"{}\"\n",
+                crate::proto::build_id()
+            )),
+            "{text}"
+        );
+        let back: SavedLayout = toml::from_str(&text).expect("round trip");
+        assert_eq!(back.format, FORMAT);
+        assert_eq!(back.companion_version, crate::proto::build_id());
     }
 
     #[test]
@@ -1122,12 +1379,29 @@ mod tests {
         assert!(matches!(source, Source::Saved(_)), "{source:?}");
     }
 
+    /// A config with the editor-and-agent layout, which tests wrote as
+    /// `Config::default()` while that was the shipped default.
+    fn edit_and_ai() -> Config {
+        crate::config::parse(
+            "[[layout]]\nname = \"default\"\n\n[[layout.window]]\nname = \"edit\"\ncommand = \"nvim\"\nhold_name = true\n\n[[layout.window]]\nname = \"ai\"\ncommand = \"claude\"\nhold_name = true\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn with_nothing_saved_the_config_decides_and_says_which_layout() {
-        let c = Config::default();
+        let c = edit_and_ai();
         let (windows, source) = resolve(&c, None, "/w/proj", "/home/me");
         assert_eq!(windows.len(), 2);
         assert_eq!(source, Source::Named("default".to_string()));
+    }
+
+    #[test]
+    fn with_nothing_saved_and_nothing_configured_a_project_is_a_plain_shell() {
+        let (windows, source) = resolve(&Config::default(), None, "/w/proj", "/home/me");
+        assert!(windows.is_empty());
+        assert_eq!(source, Source::Nothing);
     }
 
     #[test]
@@ -1144,9 +1418,9 @@ mod tests {
 
     #[test]
     fn describe_names_the_file_that_won() {
-        let c = Config::default();
+        let c = edit_and_ai();
         let (windows, source) = resolve(&c, None, "/w/proj", "/home/me");
-        let text = describe("/w/proj", &windows, &source, "/home/me");
+        let text = describe("/w/proj", &windows, &source, "/home/me", None);
         assert!(text.contains("[[layout]] name = \"default\""), "{text}");
         assert!(text.contains("2 windows, 2 panes"), "{text}");
         assert!(text.contains("edit (1)"), "{text}");
@@ -1166,13 +1440,13 @@ mod tests {
                 LayoutPane::default(),
             ],
         }];
-        let text = describe("/w/proj", &windows, &Source::Nothing, "/home/me");
+        let text = describe("/w/proj", &windows, &Source::Nothing, "/home/me", None);
         assert!(text.contains("1 window, 3 panes"), "{text}");
     }
 
     #[test]
     fn describe_says_plain_shell_when_nothing_matched() {
-        let text = describe("/w/proj", &[], &Source::Nothing, "/home/me");
+        let text = describe("/w/proj", &[], &Source::Nothing, "/home/me", None);
         assert!(text.contains("plain shell"), "{text}");
         assert!(text.contains("0 windows, 0 panes"), "{text}");
     }
@@ -1198,7 +1472,13 @@ mod tests {
         };
         std::fs::write(&file, render(&l)).unwrap();
         let back: SavedLayout = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-        assert_eq!(back, l);
+        // Writing stamps the file with the writer, whatever the struct said.
+        let stamped = SavedLayout {
+            format: FORMAT,
+            companion_version: crate::proto::build_id(),
+            ..l
+        };
+        assert_eq!(back, stamped);
     }
 
     // ── all or nothing ───────────────────────────────────────────────────────

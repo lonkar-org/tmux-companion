@@ -53,8 +53,9 @@ the first command will tell you before CI does.
 - Adding a segment and adding a command each have a checklist in `CLAUDE.md`.
 - Icon codepoints live in `src/tmux/icons.rs` and tests refer to them by name,
   so changing one needs no test edits.
-- `docs/comrades-port.md` is where the current work is planned, and
-  `docs/port-checklist.md` says what is done.
+- `docs/dev/` holds the planning records from the port. They say why things
+  were built the way they were, and the reference docs say what they do now;
+  when the two disagree, the reference docs are the ones to trust and fix.
 
 ## Reporting something broken
 

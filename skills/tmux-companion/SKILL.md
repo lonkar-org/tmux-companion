@@ -57,9 +57,9 @@ beside it.
   `sessions shutdown`, which saves and then stops the tmux server
 - Open `run`, `keys`, `cheatsheet`, `start`, `new-window`, `project` with no
   argument or `theme pick` from an agent loop. They are pickers, they draw a
-  full-screen UI and they wait for a human keypress. Most of them take `--print`
-  or `--plain`, which is your version; `new-window` takes nothing, so from a
-  script use `tmux new-window -c DIR`
+  full-screen UI and they wait for a human keypress. Most of them take `--print`,
+  which is your version; `new-window` takes nothing, so from a script use
+  `tmux new-window -c DIR`
 - `send-keys` into a pane the human is looking at, or `switch-client` and
   `select-window` to drag their focus somewhere. Your own pane is the harness
 
@@ -257,10 +257,12 @@ match = "^(codex|gemini|cursor-agent|aider|opencode)( |$)"
 command = "{command}"
 ```
 
-Those two rows are the shipped default, and `{command}` there is the point: an
-agent keeps which conversation it is in inside its own arguments, so replaying
-them verbatim is what brings the conversation back, and a bare `claude` stays
-bare. `claude --continue` in that row is the other choice, and it trades one
+Those are two of the seven rows that ship; the other five bring back vim and
+nvim as a bare `nvim`, and replay lazygit, tig and gitui, htop, top, btop and
+watch, tail, less and journalctl, and ssh as they were saved. `{command}` in
+the agent rows is the point: an agent keeps which conversation it is in inside
+its own arguments, so replaying them verbatim is what brings the conversation
+back, and a bare `claude` stays bare. `claude --continue` in that row is the other choice, and it trades one
 failure for another. It survives a stale snapshot, and it picks the wrong
 conversation when two agents were running in one repository. Say which one the
 human's config has before promising either behaviour.

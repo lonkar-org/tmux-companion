@@ -51,21 +51,106 @@ Every key, its default and what it does is in
 from. A test asserts that every key `config dump` produces appears there, so a
 setting can't exist without being written down.
 
-The tables today are `[general]`, `[dirs.aliases]`, `[git]`, `[network]`,
-`[battery]`, `[glyphs]`, `[status.right]` and `[sh_jobs]`. The port adds `[[layout]]` and the rest as each phase reaches them, and `docs/comrades-port.md` has the table
-saying which phase brings which.
+The top-level tables, in the order the example file has them, and where each
+one is explained on this page:
 
-## tmux user options
+| Table | Decides | Section |
+| --- | --- | --- |
+| `[general]` | where the daemon's log goes | [The daemon's log](#the-daemons-log) |
+| `[dirs.aliases]` | a label for a long path in the window segment | [Labels for long paths](#labels-for-long-paths) |
+| `[git]`, `[[git.branch_types]]`, `[git.autofetch]` | what the git segment shows, the glyph per branch prefix, fetching | [Choosing what the git segment shows](#choosing-what-the-git-segment-shows) |
+| `[network]` | the bandwidth segment's threshold and colours | [Bandwidth and battery](#bandwidth-and-battery) |
+| `[battery]` | how long a battery reading stays fresh | [Bandwidth and battery](#bandwidth-and-battery) |
+| `[glyphs]`, `[glyphs.icons]` | the icon preset and single-icon overrides | [Glyphs](#glyphs-if-your-bar-is-a-row-of-boxes) |
+| `[status.right]`, `[[status.right.segments]]` | which segments the right side draws, and the separators | [Building the right-hand side](#building-the-right-hand-side) |
+| `[sh_jobs]`, `[[sh_jobs.job]]` | the icon per process under a pane, and its window name | [Jobs under a pane](#jobs-under-a-pane) |
+| `[usage]` | whether picked bindings are recorded | [The usage log](#the-usage-log) |
+| `[project]`, `[[project.override]]` | the directory source, the visit command, which layout | [Where the directory list comes from](#where-the-directory-list-comes-from) |
+| `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with | [What a new project session starts with](#what-a-new-project-session-starts-with) |
+| `[notify]` | announcing a long command that finished out of sight | [Saying a long command finished](#saying-a-long-command-finished) |
+| `[window_names]` | naming a window after what runs in it | [Naming windows after what is running](#naming-windows-after-what-is-running) |
+| `[autoreload]` | sourcing tmux's config when it changes | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
+| `[autosave]` | deprecated; the older, narrower `[sessions]` | [Saving every session](#saving-every-session) |
+| `[sessions]` | snapshots of the whole server, kept in generations | [Saving every session](#saving-every-session) |
+| `[[restore.program]]` | what a restore is allowed to run in a pane | [What a restore may run](#what-a-restore-may-run) |
+| `[run]` | where `run` reads history from, and the pane it opens | [The pane a command runs in](#the-pane-a-command-runs-in) |
+| `[clipboard]` | the command a copy is piped into | [Copying to the clipboard](#copying-to-the-clipboard) |
+| `[theme]`, `[theme.namespace]` | the theme a session gets before anybody picked one | [The theme a session gets](#the-theme-a-session-gets) |
+| `[bar]` | the background the segments draw against | [The bar's own background](#the-bars-own-background) |
+| `[picker]`, `[picker.<name>]` | how every picker is laid out, and one picker's exceptions | [How the pickers are drawn](#how-the-pickers-are-drawn) |
+| `[open]`, `[[open.application]]` | what `open` does with a file, and what `open --choose` offers | [What open does with a file](#what-open-does-with-a-file) |
 
-There aren't any, with three exceptions planned for the settings that have to
-differ per session: `@tmux-companion-theme`, `@tmux-companion-layout` and
-`@tmux-companion-status-right`.
+There are no tmux user options. A mapping of this tree onto `@` options would
+cost a `show-options` round trip per option per render, and would produce
+names like `@tmux-companion-layout-window-2-command`, which is a config
+language built out of hyphens by accident. Anything nested lives in the file,
+and the `@theme-*` options a theme file sets when `theme apply` sources it are
+tmux's own, per session, not a second copy of this tree.
 
-A general mapping of the config tree onto `@` options would cost a
-`show-options` round trip per option per render, and would produce names like
-`@tmux-companion-layout-window-2-command`, which is a config language built out
-of hyphens by accident. Anything nested lives in the file and the option refers
-to it by name.
+## The daemon's log
+
+```toml
+[general]
+log = "~/.local/state/tmux-companion/daemon.log"
+```
+
+That's the default, spelled out: `daemon.log` in the state directory, which is
+`~/.local/state/tmux-companion` unless `XDG_STATE_HOME` says otherwise. The
+daemon writes one line when it starts and one per failure, so "autosave
+failed" and a config that wouldn't parse end up here, `tmux-companion doctor`
+prints the last line, and past 1 MiB it's rotated to `daemon.log.1`. A `~`
+in the path is expanded, as in every path in the file.
+
+## Labels for long paths
+
+```toml
+[dirs.aliases]
+"/Users/you/work/some-very-long-project" = "proj"
+```
+
+The window segment abbreviates a path, and this replaces the abbreviation with
+a name of your choosing. It took over from `~/.yrl/lib/dir-aliases`, which was
+a path on one laptop, and that file is still read when the table is empty so an
+upgrade drops nothing.
+
+## Bandwidth and battery
+
+```toml
+[network]
+threshold_bps = 20480
+download_colour = "#5cae36"
+upload_colour = "#0262a8"
+unit_colour = "colour237"
+
+[battery]
+ttl_secs = 30.0
+```
+
+Below `threshold_bps`, 20 KiB/s by default, the bandwidth segment draws
+nothing, since a bar that reacts to every background poll is noise. For a
+while this setting was read from the config and then ignored, because the
+segment used a constant of the same value, so changing it did nothing at all;
+it's honoured now. The two colours are the blocks each rate is drawn on, with
+the number written in the bar's own background colour on top, and
+`unit_colour` is the `KiB/s` after it, drawn dimmer so the figure reads first.
+The default there is a dark grey chosen for a dark bar, and on a light one it's
+very nearly invisible.
+
+`ttl_secs` is how long a battery reading stays fresh. Reading it is expensive
+and the number doesn't move fast enough to matter.
+
+## The usage log
+
+```toml
+[usage]
+enabled = true
+path = "~/.local/state/tmux-companion/keys-usage.tsv"
+```
+
+Which bindings get picked, so the cheat sheet can order each box by it and the
+keys you reach for float to the top of their group. It records what you press,
+which is your business and not the tool's, so turning it off is one line and
+nothing else changes. `path` unset means `$XDG_STATE_HOME/tmux-companion/`.
 
 ## Glyphs, if your bar is a row of boxes
 
@@ -376,9 +461,9 @@ name = "default"
 ```
 
 Those two names are what one laptop runs. Yours might be vim and codex, or one
-window, or five, or a `tail -f` on a log and no editor anywhere. A layout with
-no windows in it is a plain shell, which is what somebody who wants none of
-this gets by writing nothing.
+window, or five, or a `tail -f` on a log and no editor anywhere. With no
+`[[layout]]` written a project opens as one plain shell, which is the shipped
+default: nothing assumes an editor or an agent is installed until you name one.
 
 `[[project.override]]` sends projects under a path to a different layout, first
 match wins:
@@ -463,7 +548,7 @@ default source rather than a requirement. `[project] dirs_source` picks another:
 | `z` | the `~/.z` database, honouring `$_Z_DATA` | rank, highest first |
 | `cdr` | zsh's `~/.chpwd-recent-dirs`, honouring `$ZDOTDIR` | most recent first |
 | `ghq` | `ghq list -p` | ghq's own |
-| `none` | nothing | — |
+| `none` | nothing | none |
 
 `z` and `cdr` are read as files rather than run as commands, because both are
 shell functions. Spawning `zsh -ic 'z -l'` to reach one sources a whole
@@ -497,8 +582,8 @@ it gives a project picker without anything to install.
 
 A source that is not installed, or a database never written, is the empty list
 and not an error. The picker falls back to live sessions and whatever you type,
-which is a smaller tool and still a working one — typing a path that matches no
-row opens it either way, so nothing is unreachable.
+which is a smaller tool and still a working one, since typing a path that
+matches no row opens it either way, so nothing is unreachable.
 
 ### Recording a visit
 
@@ -525,26 +610,272 @@ away in the next release, and `tmux-companion config check` names it until then:
   `[project] zoxide = false` is deprecated; use `dirs_source = "none"`
 ```
 
-## Saving the session list
+## Saving every session
 
-`[autosave]` is the saving half of tmux-resurrect on a timer in the daemon:
+`[sessions]` is snapshots of the whole tmux server, kept in generations, so a
+reboot doesn't cost the sessions you had open:
 
 ```toml
-[autosave]
-enabled = true
+[sessions]
+autosave = "interval"
 interval_secs = 900
+keep = 20
 ```
 
-Restoring stays on a keybinding on purpose. An automatic restore would
-resurrect a stale layout over a session you've already started working in,
-which is a worse failure than losing a layout to a reboot.
+This is the saving half. Restoring stays a command you run, `tmux-companion
+sessions resurrect`, because an automatic restore drops a stale layout over a
+session you've already started working in, which is a worse failure than
+losing a layout to a reboot.
 
-It isn't tmux-continuum, which is the usual answer here, because continuum
-drives its timer by appending `#{continuum_save}` to `status-right`, and
-`status-right` is a single `#()` into this binary tuned down from five spawns a
-second. A task in the daemon leaves that alone.
+`autosave` is `off` by default, where a snapshot is whatever you ask for by
+hand, `interval` takes one every `interval_secs`, and `cron` follows the
+five-field schedule in `cron`, `"0 * * * *"` unless you change it, for people
+who want it on the hour. The floor for `interval_secs` is 10, since below that
+the writes start overlapping the capture on a busy machine, and a number under
+it is an error rather than something quietly rounded up. An earlier design had
+a fourth mode that wrote on every change the daemon noticed, and it's gone,
+because `interval_secs = 10` buys the same thing with the cost written down
+instead of hidden behind a word.
 
-What the daemon removes is the bookkeeping. The zsh version needed a PID lock
-file so `prefix+r` couldn't start a second copy, a stale-lock takeover for when
-a server was killed, and a liveness check between sleeps. One daemon owns one
-task, and it stops when the daemon stops.
+What it costs, measured on one laptop with 7 sessions and 14 panes, with the
+40-pane column extrapolated from that rate rather than measured:
+
+| `interval_secs` | 14 panes | 40 panes | what `keep = 20` spans |
+| --- | --- | --- | --- |
+| 900, the default | 0.015% | 0.04% | 5 hours |
+| 60 | 0.2% | 0.6% | 20 minutes |
+| 10 | 1.3% | 3.7% | 200 seconds |
+| 10, no history | 0.01% | 0.03% | 200 seconds |
+
+That last column is the one nobody expects. Generations are counted, not
+timed, so a ten-second interval with the default `keep` holds under four
+minutes of history and a crash you notice after lunch has already rolled off
+the end of it. A short interval wants a large `keep`, or `keep_days`, which
+also keeps anything younger than that many days however many files that is,
+and is how you keep a month of hourly snapshots without setting `keep` to 700.
+Pruning runs after a successful write, oldest first, and never touches the one
+the `last` pointer names.
+
+`pane_history` is the expensive half, at 9.3 ms per pane against 1 ms for the
+metadata of a whole server, and it's what makes a short interval costly.
+Turning it off leaves the half that carries what each pane was running and
+where, which is the half worth having often. It's also the half that holds
+secrets: pane history is the text that was on your screen, the token you
+echoed and the `.env` you catted included, so the directory is created 0700
+and every file in it 0600, and this is the switch that keeps it off the disk
+entirely. `pane_history_lines`, 2000 by default, is how much of each pane.
+
+`exclude` is sessions never captured, by name. On a shutdown that means the
+session isn't saved and doesn't come back, since stopping the server takes
+every session with it either way, and the command says so before it acts.
+`confirm_secs`, 5 by default, is how long the restore summary counts down
+before going ahead; it only opens when the restore doesn't know something,
+any key stops the clock, and zero is `--yes` made permanent.
+
+`[autosave]` is the older, narrower version of this and is deprecated: it
+shelled out to tmux-resurrect's save script on a timer and kept one file,
+where `[sessions]` keeps generations of its own and knows what each pane was
+running. It's off since `[sessions]` arrived, a config that still asks for it
+keeps it for now, and `tmux-companion config check` names it:
+
+```
+  `[autosave]` is deprecated; `[sessions] autosave` keeps generations of its own and records what each pane was running
+```
+
+## What a restore may run
+
+Default deny. Restoring means executing commands your own machine recorded
+weeks ago, and "re-run anything I saw" is one bad afternoon away from
+restoring a `curl | sh` that was in a pane six weeks back, so a command no row
+claims is captured, shown, and left to you at a prompt in the right directory.
+
+```toml
+[[restore.program]]
+match = "^claude( |$)"
+command = "{command}"
+
+[[restore.program]]
+match = "^n?vim( |$)"
+command = "nvim"
+```
+
+`match` is a regular expression against the whole saved command, not the
+process name, because the process name of an agent is its version string,
+`2.1.281` rather than `claude`, and everything worth matching on is in the
+arguments. `command` is what runs, with `{command}` the saved command verbatim
+and `{cwd}` the pane's directory, and `run = false` is how you say "never
+bring this back" without leaving it to fall through to the unknown pile and be
+asked about every time.
+
+The rows that ship, in order: the agents, `claude` and then `codex`, `gemini`,
+`cursor-agent`, `aider` and `opencode`, replay their arguments verbatim,
+because an agent keeps which conversation it's in inside those arguments and
+a bare `claude` stays bare. `vim` and `nvim` come back as a bare `nvim`, since
+the saved arguments are a file list from an hour ago and reopening buffers is
+the editor's job. `lazygit`, `tig` and `gitui`, then `htop`, `top`, `btop` and
+`watch`, then `tail`, `less` and `journalctl`, and `ssh` each replay as saved.
+Writing the table replaces those rows rather than adding to them, so run
+`tmux-companion config dump`, copy what you want to keep, and add yours.
+
+## The pane a command runs in
+
+```toml
+[run]
+history = "auto"
+width_percent = 33
+slide_steps = 5
+slide_ms = 150
+shell = ""
+```
+
+`history` is where `run` reads the commands from: `auto`, `zsh`, `bash`,
+`fish` or `atuin`. `auto` reads whichever shell `$SHELL` names, and it used to
+be `zsh`, which meant a bash user's picker read a `~/.zsh_history` that wasn't
+there and came up empty with nothing said, the one failure shape that looks
+like the feature having nothing to offer. atuin is worth naming because anybody
+using it has no shell history worth reading; it keeps its own database and
+answers through its own command. `history_file` is for a history that isn't
+where the shell usually puts it.
+
+The pane is `width_percent` of the window, and it slides out rather than
+appearing: tmux has no animation primitive, so this is a stepped `resize-pane`
+eased to read as a slide. Every step sends `SIGWINCH` to the neighbouring pane,
+whose shell repaints its prompt, so more steps is smoother here and flickerier
+next door, and zero opens the pane at its full width at once. `shell` empty
+means `$SHELL`; it used to be `zsh`, so on a machine without zsh, which is most
+Linux boxes, the pane slid out and the command never ran.
+
+## Copying to the clipboard
+
+```toml
+[clipboard]
+copy = "xclip -selection clipboard"
+```
+
+Unset picks one for the platform: `pbcopy` on macOS, then `wl-copy`, then
+`xclip`. This was two `if-shell` branches on `uname` in `tmux.conf`, and one
+binary picking the right command is one less thing the Linux branch has to
+special-case.
+
+## The theme a session gets
+
+```toml
+[theme]
+default = "ink"
+
+[theme.namespace]
+w = "slate"
+a = "plum"
+```
+
+`default` is the theme a session gets before anybody has picked one.
+`docs/tmux.conf.full.example` sets a `session-created` hook that runs
+`theme apply` for every new session, and the starter file ships the same
+line commented out, so with the hook in place this decides the colour of a
+session nothing else claims; a session a project map already claims keeps its
+own. `theme init` writes six, `ember`, `pine`, `slate`, `plum`, `sand` and
+`ink`, each with a lighter and a darker sibling once `theme gen --shades` has
+run, and you can name one of those or one of your own. Empty leaves unclaimed
+sessions unpainted, which is also what happens when the theme named here isn't
+on disk: nothing is sourced and nothing is said, because this runs once per
+session created and a message here would land on the terminal at the moment
+somebody opens a session.
+
+`[theme.namespace]` is a theme per session-name prefix, where the prefix is
+everything before the first `/`, so `w/api` and `w/web` both match `w`. Skip
+it unless your session names already carry a namespace.
+
+## The bar's own background
+
+```toml
+[bar]
+background = "color233"
+current_window_background = "color236"
+```
+
+Every segment ends in a powerline cap, and a cap is two colours: the segment's,
+and whatever is behind it. That second one used to be a compiled-in
+`colour233`, which is one person's `tmux.conf` and nobody else's, so a bar set
+to anything else got wedges and outline backgrounds in a colour that appears
+nowhere on screen. Set it to whatever `status-style` says; `colour233`,
+`#121212`, `black` and `default` all work, and `default` leaves the terminal's
+own background showing through, which is what a transparent bar wants.
+`tmux-companion doctor` reads the live `status-style` and says when the two
+have drifted apart. `current_window_background` sits behind the current window
+in the window list, and only the `window` segment draws it.
+
+## How the pickers are drawn
+
+Everything under `[picker]` is the answer for every picker at once, and every
+key in the example file is commented out because unset isn't the same as set
+to the value that happens to be the default: unset lets each picker use its
+own answer, and writing one here takes that away from all of them.
+
+```toml
+[picker]
+preview = "right"
+preview_percent = 55
+border = "rounded"
+label_position = "bottom-right"
+list_from = "top"
+```
+
+`preview` is where the preview pane goes, `right`, `left`, `bottom`, `top` or
+`none`, and left out each picker uses its own: the key search puts three lines
+underneath, the project list puts a screen of what that session is doing on
+the right, the theme list a card beside a narrow column of names, and the run
+history has none because the command is the row. `preview_percent` is its
+share of the popup, clamped to 20-80, and `ctrl-p` inside a picker cycles it
+through 30, 50, 70 and off, since there's no drag-resize to reach for. How big
+the popup itself is belongs in `tmux.conf`, on the `display-popup -w` and `-h`
+of the binding that opens it.
+
+The rest is the shape inside that: `border` (`none` when `display-popup -B`
+already drew one, or two borders nest), `label_position` and `label_offset`,
+`hint_position`, `prompt_position`, `list_from` (`bottom` is fzf's default and
+puts the best match nearest the query, `top` is what everything else on a
+screen does), `counter`, `rules`, `marker`, `column_order` (`[1, 0]` turns the
+key search round, a position left out is a column not drawn), `min_list_width`
+(the fewest columns a list keeps before the preview moves underneath, 24 by
+default, zero to split whatever it's given the way fzf does), `preview_border`,
+`preview_label_position` and `preview_label_offset`. The comments in
+[`docs/config.example.toml`](../config.example.toml) say what each one does
+and what fzf or skim called it.
+
+`[picker.keys]`, `[picker.project]`, `[picker.window]`, `[picker.theme]`,
+`[picker.run]` and `[picker.open]` hold one picker's exceptions, and a key left out of one takes
+whatever `[picker]` says. `label`, `hint` and `preview_label` exist only there,
+because they're the words one picker says rather than a shape they share:
+`label` is what it calls itself on its border, `hint` the line naming the
+keys, and `preview_label` what it calls its preview.
+
+## What open does with a file
+
+```toml
+[open]
+split = "right"
+size_percent = 0
+editor = "nvim '+call cursor({line},{column})' {path}"
+```
+
+When `open` finds a file rather than a URL, `split` says which side of the pane
+the editor opens on. Right by default, because a file and the log you found it
+in read better side by side, and bottom is better on a narrow terminal, where
+two columns of sixty are two columns nobody can read. `size_percent` zero lets
+tmux halve it.
+
+`editor` is how the editor is told to jump to a line and column, with `{path}`,
+`{line}` and `{column}` replaced, and the path arrives already quoted for the
+shell, so don't quote `{path}` yourself. The quotes around the `+call` matter:
+tmux runs a split's command through `sh`, and `nvim +call cursor(2,22) file` is
+a shell syntax error, so the pane opened, complained to nobody, and closed
+again, and opening a file at a line had never worked until they were added.
+The example file has the helix and emacs spellings.
+
+`[[open.application]]` is what `open --choose`, or `open -i`, offers: a `name`,
+a `command` with `{url}` or `{path}` in it, and `pane = true` for something
+that wants a tmux pane beside the one you're in rather than being launched and
+left alone. An editor wants a pane and a browser doesn't, and the wrong answer
+is either a browser holding a pane open forever or an editor with nowhere to
+draw. Empty means no chooser, and `--choose` then opens what it would have
+opened anyway rather than showing a picker with nothing in it.

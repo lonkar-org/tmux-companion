@@ -119,6 +119,14 @@ pub async fn run() -> anyhow::Result<()> {
         Err(e) => return Err(e.into()),
     };
 
+    // One line per start, so the log says which build has been answering
+    // since when. Everything else the daemon writes is a failure.
+    eprintln!(
+        "tmux-companion: daemon {} started, pid {}",
+        crate::proto::build_id(),
+        std::process::id()
+    );
+
     // The one thing that bounds this process's life.  Everything else here
     // runs forever on purpose.
     match socket_identity(&sock) {
@@ -149,7 +157,17 @@ pub async fn run() -> anyhow::Result<()> {
         if let Err(e) = crate::sessions::timer::mark_running_in(&dir, std::process::id()) {
             eprintln!("tmux-companion: could not record that this daemon is running: {e}");
         }
+        // Which build last wrote here, for the reader of a state directory
+        // that a later build cannot make sense of.
+        if let Err(e) = record_build_in(&dir, &crate::proto::build_id()) {
+            eprintln!("tmux-companion: could not record the build in the state directory: {e}");
+        }
     }
+
+    // `pkill tmux-companion` and a terminal's ^C are how most daemons stop,
+    // and until this ran neither took the marker off, so every restore after
+    // an upgrade thought the machine had gone down badly.
+    tokio::spawn(stop_on_signal(sock.clone()));
     if config.sessions.autosave != crate::config::SessionsAutosave::Off {
         tokio::spawn(crate::sessions::timer::sessions_autosave_loop(
             config.sessions.clone(),
@@ -309,6 +327,50 @@ async fn watch_socket(sock: std::path::PathBuf, mine: (u64, u64, i64, i64)) {
     }
 }
 
+/// Stop on SIGTERM or SIGINT the way `__shutdown` stops: marker off, socket
+/// file gone, exit status zero.
+///
+/// The lock file stays.  The kernel releases the lock itself when this
+/// process exits, and unlinking the file first would hand a start that had
+/// already opened it a lock nobody else can see, which is the pair of
+/// daemons the lock exists to prevent.
+async fn stop_on_signal(sock: std::path::PathBuf) {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let (mut term, mut int) = match (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) {
+        (Ok(t), Ok(i)) => (t, i),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!(
+                "tmux-companion: cannot listen for signals, a kill will leave the marker: {e}"
+            );
+            return;
+        }
+    };
+    let which = tokio::select! {
+        _ = term.recv() => "SIGTERM",
+        _ = int.recv() => "SIGINT",
+    };
+    eprintln!("tmux-companion: {which}, stopping");
+    if let Some(dir) = state_dir() {
+        crate::sessions::timer::clear_marker_in(&dir);
+    }
+    let _ = std::fs::remove_file(&sock);
+    std::process::exit(0);
+}
+
+/// Record which build last wrote the state directory.
+///
+/// One line, the build id, replaced on every start.  A state directory is
+/// read by whichever build is installed, and when that build cannot make
+/// sense of a file the first question is which one wrote it.
+fn record_build_in(dir: &std::path::Path, build_id: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("VERSION"), format!("{build_id}\n"))
+}
+
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     state: Arc<Mutex<ServerState>>,
@@ -359,6 +421,37 @@ fn forget_config_error(dir: &std::path::Path) {
     let _ = std::fs::remove_file(dir.join("last-error"));
 }
 
+/// Where a daemon's stderr goes, from the config when it parses and the state
+/// directory when it does not.
+///
+/// Read by the client that starts the daemon, because a process has no say
+/// over where its own stderr was pointed. The broken-config case still gets a
+/// log, since that is the case where the daemon has the most to say.
+pub fn daemon_log_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let general = crate::config::load()
+        .map(|(c, _)| c.general)
+        .unwrap_or_default();
+    general.log_path(&home, state_dir())
+}
+
+/// Keep the daemon log from growing without bound: past `LOG_LIMIT` bytes the
+/// file is moved aside to `<name>.1`, replacing the previous one.
+pub const LOG_LIMIT: u64 = 1 << 20;
+
+/// Move a log aside once it is over [`LOG_LIMIT`], so a client opening it for
+/// append starts a fresh one.
+pub fn rotate_log(path: &std::path::Path) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.len() > LOG_LIMIT {
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(".1");
+        let _ = std::fs::rename(path, aside);
+    }
+}
+
 /// `$XDG_STATE_HOME/tmux-companion`, or `~/.local/state/tmux-companion`.
 pub fn state_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("XDG_STATE_HOME")
@@ -405,6 +498,21 @@ mod tests {
 
         // And a directory that is not there either.
         forget_config_error(&dir.path().join("no-such-directory"));
+    }
+
+    #[test]
+    fn the_state_directory_names_the_build_that_last_wrote_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path().join("tmux-companion");
+
+        record_build_in(&state, "0.2.0+1790400979").expect("record");
+        let text = std::fs::read_to_string(state.join("VERSION")).expect("written");
+        assert_eq!(text, "0.2.0+1790400979\n");
+
+        // Replaced, not appended: the question is which build wrote last.
+        record_build_in(&state, "0.3.0+1790500000").expect("record again");
+        let text = std::fs::read_to_string(state.join("VERSION")).expect("written");
+        assert_eq!(text, "0.3.0+1790500000\n");
     }
 
     #[test]

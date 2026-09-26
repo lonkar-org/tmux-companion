@@ -86,10 +86,12 @@ pub fn headline(
         plural(sessions),
         plural(panes),
         plural(agents),
+        // A timer's capture is the ordinary case and not a fault, so it is
+        // named by when it was taken rather than by what it lacks.
         if clean {
-            "clean shutdown"
+            "taken at shutdown"
         } else {
-            "no clean shutdown recorded"
+            "taken while running"
         }
     )
 }
@@ -382,11 +384,14 @@ mod tests {
         assert!(line.contains("7 sessions"));
         assert!(line.contains("14 panes"));
         assert!(line.contains("6 agents"));
-        assert!(line.contains("clean shutdown"));
+        assert!(line.contains("taken at shutdown"), "{line}");
 
-        let crashed = headline(1, 1, 0, "2026-09-25 09:23:16 UTC", false);
-        assert!(crashed.contains("1 session "), "{crashed}");
-        assert!(crashed.contains("no clean shutdown recorded"));
+        let running = headline(1, 1, 0, "2026-09-25 09:23:16 UTC", false);
+        assert!(running.contains("1 session "), "{running}");
+        // Every timer snapshot reads this way, so it must not sound like a
+        // fault.
+        assert!(running.contains("taken while running"), "{running}");
+        assert!(!running.contains("no clean"), "{running}");
     }
 
     #[test]
