@@ -348,6 +348,45 @@ pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
     out
 }
 
+/// The rows the log has never recorded a press for, in the order given.
+///
+/// The match is on the table and key exactly as `record_use` wrote them, which
+/// is the row's own spelling with nothing folded: a log line saying `C-A` is
+/// not a press of `C-a`, and `^a` is not one either. The log never held those
+/// spellings, because nothing writes to it but a pick of a row, so treating
+/// them as the same binding would only hide a row that was never pressed.
+///
+/// The log carries no dates, so "never" means no press since the log began,
+/// and the caller says so next to the count.
+pub fn unused<'a>(
+    rows: impl IntoIterator<Item = &'a KeyRow>,
+    counts: &HashMap<(String, String), usize>,
+) -> Vec<&'a KeyRow> {
+    rows.into_iter()
+        .filter(|r| {
+            counts
+                .get(&(r.table.clone(), r.key.clone()))
+                .copied()
+                .unwrap_or(0)
+                == 0
+        })
+        .collect()
+}
+
+/// The line that says what an unused listing is a listing of.
+///
+/// `presses` is the log's total, or `None` when there is no log to count,
+/// which is worth saying in words: a list of every binding under a heading
+/// that says "never used" is the truth on a fresh machine, and looks like a
+/// bug unless the line beneath it explains why.
+pub fn unused_summary(never: usize, total: usize, presses: Option<usize>) -> String {
+    let log = match presses {
+        Some(n) => format!("the log holds {n} press{}", if n == 1 { "" } else { "es" }),
+        None => "no usage log yet".to_string(),
+    };
+    format!("{never} of {total} bindings never pressed; {log}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,6 +558,76 @@ bind-key    -T prefix M-x     display-popup -E something
     fn a_malformed_usage_line_is_ignored_rather_than_counted() {
         let counts = usage_counts("prefix\t?\ngarbage\n\n");
         assert_eq!(counts.len(), 1);
+    }
+
+    #[test]
+    fn unused_keeps_the_rows_with_no_press_in_the_order_given() {
+        let rows = vec![
+            row("prefix", "z", "custom: zoom"),
+            row("prefix", "a", "custom: attach"),
+            row("root", "M-s", "custom: sessions"),
+        ];
+        let counts = usage_counts("prefix\ta\nprefix\ta\n");
+        let never: Vec<&str> = unused(&rows, &counts)
+            .iter()
+            .map(|r| r.key.as_str())
+            .collect();
+        assert_eq!(never, vec!["z", "M-s"]);
+    }
+
+    #[test]
+    fn unused_with_no_log_is_every_row() {
+        let rows = vec![row("prefix", "a", "custom: attach")];
+        assert_eq!(unused(&rows, &HashMap::new()).len(), 1);
+    }
+
+    #[test]
+    fn a_press_in_another_table_does_not_count() {
+        // The same key bound in two tables is two bindings, and the log says
+        // which one was picked.
+        let rows = vec![
+            row("prefix", "a", "custom: one"),
+            row("root", "a", "custom: two"),
+        ];
+        let counts = usage_counts("root\ta\n");
+        let never = unused(&rows, &counts);
+        assert_eq!(never.len(), 1);
+        assert_eq!(never[0].table, "prefix");
+    }
+
+    #[test]
+    fn the_log_is_matched_on_the_rows_own_spelling_and_nothing_looser() {
+        // `record_use` writes the row's key verbatim, so the log has never
+        // held `C-A` or `^a` for a row spelled `C-a`. A line like that is not
+        // evidence the binding was pressed, and folding it in would hide the
+        // one row this listing exists to show.
+        let rows = vec![row("root", "C-a", "custom: last window")];
+        for spelling in ["C-A", "^a", "c-a"] {
+            let counts = usage_counts(&format!("root\t{spelling}\n"));
+            assert_eq!(
+                unused(&rows, &counts).len(),
+                1,
+                "{spelling} counted as a press"
+            );
+        }
+        let counts = usage_counts("root\tC-a\n");
+        assert!(unused(&rows, &counts).is_empty());
+    }
+
+    #[test]
+    fn the_summary_says_how_much_evidence_there_is() {
+        assert_eq!(
+            unused_summary(3, 36, Some(120)),
+            "3 of 36 bindings never pressed; the log holds 120 presses"
+        );
+        assert_eq!(
+            unused_summary(35, 36, Some(1)),
+            "35 of 36 bindings never pressed; the log holds 1 press"
+        );
+        assert_eq!(
+            unused_summary(36, 36, None),
+            "36 of 36 bindings never pressed; no usage log yet"
+        );
     }
 
     #[test]

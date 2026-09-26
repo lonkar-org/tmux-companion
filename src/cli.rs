@@ -209,6 +209,10 @@ pub enum Cmd {
         /// Print the rows and exit, instead of opening the picker
         #[arg(long)]
         print: bool,
+        /// Only the bindings you wrote that the usage log has never seen
+        /// pressed. Not with --all: tmux's own bindings are not yours to prune
+        #[arg(long, conflicts_with = "all")]
+        unused: bool,
     },
 
     /// Open a URL or file found in text
@@ -717,7 +721,8 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             query,
             refresh,
             print,
-        } => run_keys(all, query, refresh, print).await?,
+            unused,
+        } => run_keys(all, query, refresh, print, unused).await?,
         Cmd::Open {
             text,
             selection,
@@ -990,7 +995,16 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
 /// The daemon holds the rows and the picker runs here, because a daemon has no
 /// terminal. `--print` skips the picker entirely, which is what a script wants
 /// and what makes the whole path testable without a tty.
-async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyhow::Result<()> {
+///
+/// `--unused` is the same picker over the rows the usage log has never seen,
+/// so `run_keys_unused` below is the one place the two paths part.
+async fn run_keys(
+    all: bool,
+    query: String,
+    refresh: bool,
+    print: bool,
+    unused: bool,
+) -> anyhow::Result<()> {
     use crate::keys::KeyRow;
 
     let args = crate::proto::KeysArgs {
@@ -1028,6 +1042,14 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
         return Ok(());
     }
 
+    // A broken config should not swallow a keypress somebody already made, so
+    // the defaults stand in here rather than the pick being dropped.
+    let config = config_or_default();
+
+    if unused {
+        return run_keys_unused(&rows, &opening, print, &config).await;
+    }
+
     if print {
         for row in crate::keys::filter(&rows, &opening) {
             println!(
@@ -1038,21 +1060,6 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
         return Ok(());
     }
 
-    let items: Vec<crate::picker::Item> = rows
-        .iter()
-        .map(|r| {
-            crate::picker::Item::with_preview(
-                format!("{} {}", r.shown, r.note),
-                format!("{}\n\n{}", r.shown, r.command),
-            )
-            // Two columns rather than one padded string: the picker measures
-            // them across every row, so the notes line up whatever the widest
-            // chord turns out to be.
-            .in_columns(vec![r.shown.clone(), r.note.clone()])
-        })
-        .collect();
-
-    let config = config_or_default();
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
         footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
@@ -1061,20 +1068,102 @@ async fn run_keys(all: bool, query: String, refresh: bool, print: bool) -> anyho
     }
     .configured(&config.picker, crate::config::Picker::Keys);
 
-    let Some(index) = crate::picker::run(items, &opening, &chrome)? else {
+    let Some(index) = crate::picker::run(key_items(rows.iter()), &opening, &chrome)? else {
         return Ok(());
     };
     let Some(row) = rows.get(index) else {
         return Ok(());
     };
+    run_binding(row, &config).await
+}
 
-    // Recorded before it runs, because the command may replace this process's
-    // terminal and never come back to us.
-    // A broken config should not swallow a keypress somebody already made, so
-    // the defaults stand in here rather than the pick being dropped.
-    let config = config_or_default();
+/// `keys --unused`: the bindings somebody wrote that the log has never seen.
+///
+/// The scope is what the opening query selects, `custom: ` unless `--query`
+/// said otherwise, because a binding tmux ships is not one anybody wrote and
+/// so not one anybody would prune. That is also why the picker opens with no
+/// query and no ctrl-a hint: the rows it holds are already the whole answer.
+///
+/// The log has no dates, so "never" means since the log began, and the line
+/// under the list says how many presses that is so a reader can weigh it. A
+/// fresh machine lists every binding with `no usage log yet` beside it, which
+/// is the truth rather than an error.
+async fn run_keys_unused(
+    rows: &[crate::keys::KeyRow],
+    opening: &str,
+    print: bool,
+    config: &crate::config::Config,
+) -> anyhow::Result<()> {
+    let in_scope = crate::keys::filter(rows, opening);
+    let counts = std::fs::read_to_string(usage_path(config))
+        .ok()
+        .map(|t| crate::keys::usage_counts(&t));
+    let never = crate::keys::unused(
+        in_scope.iter().copied(),
+        counts.as_ref().unwrap_or(&std::collections::HashMap::new()),
+    );
+    let summary = crate::keys::unused_summary(
+        never.len(),
+        in_scope.len(),
+        counts.as_ref().map(|c| c.values().sum()),
+    );
+
+    if print {
+        // The summary goes to stderr so stdout stays one row per line for
+        // whatever is parsing it, the same shape `keys --print` gives.
+        eprintln!("{summary}");
+        for row in &never {
+            println!("{}\t{}\t{}", row.table, row.key, row.note);
+        }
+        return Ok(());
+    }
+
+    // The layout comes from the config like the ordinary keys picker, but the
+    // title and footer are set after, because a `[picker.keys]` label or hint
+    // written for that picker would otherwise replace the one line here that
+    // says what this list is and how much the log knows.
+    let mut chrome = crate::picker::Chrome {
+        preview_title: "[ What it runs ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Keys);
+    chrome.title = "[ Keys never used ]".into();
+    chrome.footer = format!("{summary}   enter runs it   esc cancels");
+
+    let Some(index) = crate::picker::run(key_items(never.iter().copied()), "", &chrome)? else {
+        return Ok(());
+    };
+    let Some(row) = never.get(index) else {
+        return Ok(());
+    };
+    run_binding(row, config).await
+}
+
+/// The picker rows for a set of bindings.
+fn key_items<'a>(rows: impl Iterator<Item = &'a crate::keys::KeyRow>) -> Vec<crate::picker::Item> {
+    rows.map(|r| {
+        crate::picker::Item::with_preview(
+            format!("{} {}", r.shown, r.note),
+            format!("{}\n\n{}", r.shown, r.command),
+        )
+        // Two columns rather than one padded string: the picker measures
+        // them across every row, so the notes line up whatever the widest
+        // chord turns out to be.
+        .in_columns(vec![r.shown.clone(), r.note.clone()])
+    })
+    .collect()
+}
+
+/// Run a picked binding, noting the pick first.
+///
+/// Recorded before it runs, because the command may replace this process's
+/// terminal and never come back to us.
+async fn run_binding(
+    row: &crate::keys::KeyRow,
+    config: &crate::config::Config,
+) -> anyhow::Result<()> {
     if config.usage.enabled {
-        crate::keys::record_use(&usage_path(&config), &row.table, &row.key);
+        crate::keys::record_use(&usage_path(config), &row.table, &row.key);
     }
 
     tokio::process::Command::new("tmux")

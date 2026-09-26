@@ -440,7 +440,7 @@ tmux is not touched;
 is the one that restarts it.
 Exits non-zero when the new daemon does not answer, which is what a config it
 refuses looks like; the reason is in the daemon log.
-.It Ic keys Op Fl -all , Fl -query Ar text , Fl -refresh , Fl -print
+.It Ic keys Op Fl -all , Fl -query Ar text , Fl -refresh , Fl -print , Fl -unused
 Every binding tmux knows, searchable, with what it runs in the preview.
 Enter runs the binding.
 It opens on the bindings whose note starts with
@@ -459,6 +459,23 @@ When no binding carries the note there is nothing to show, and it says so on
 standard error and exits 0 rather than drawing an empty picker.
 Bound to
 .Ql prefix ? .
+.Pp
+.Fl -unused
+narrows the opening set to the bindings the usage log has never recorded a
+press for, under the title
+.Ql "[ Keys never used ]" .
+The log holds no dates, so never means since the log began, and the line under
+the list says how many bindings that is out of how many, and how many presses
+the log holds; with no log yet it says so and lists every binding, which is
+the truth on a fresh machine.
+With
+.Fl -print
+it writes one
+.Ar table key note
+line per binding to standard output and the same summary to standard error.
+It does not combine with
+.Fl -all :
+tmux's own bindings are nobody's to prune.
 .It Ic cheatsheet Op Fl -print
 The bindings written in
 .Pa tmux.conf ,
