@@ -183,6 +183,15 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    // The inbox: which agents have stopped and what each one asked, kept by
+    // the daemon so the question is on record for a window nobody looked at.
+    if config.agents.inbox && !config.agents.programs.is_empty() {
+        tokio::spawn(crate::inbox::inbox_loop(
+            config.agents.clone(),
+            Arc::clone(&state),
+        ));
+    }
+
     if config.autoreload.enabled {
         tokio::spawn(crate::autoreload::autoreload_loop(
             config.autoreload.clone(),
@@ -199,7 +208,11 @@ pub async fn run() -> anyhow::Result<()> {
 
     if config.notify.enabled {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        tokio::spawn(crate::notify::notify_loop(config.notify.clone(), shell));
+        tokio::spawn(crate::notify::notify_loop(
+            config.notify.clone(),
+            shell,
+            Arc::clone(&state),
+        ));
     }
 
     let autofetch = config.git.autofetch.clone();

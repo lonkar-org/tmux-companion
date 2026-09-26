@@ -288,6 +288,21 @@ pub fn rebuild(spec: &RestoreSpec) -> Result<Rebuild, Refusal> {
             }
         }
 
+        // Notes first, so a pane reads as what it was before anything runs
+        // in it; `select-pane -T` neither moves focus nor needs a prompt.
+        for window in &session.window {
+            for pane in window.pane.iter().filter(|p| !p.title.is_empty()) {
+                let at = format!("={}:{}.{}", session.name, window.index, pane.index);
+                out.commands.push(Step::Tmux(args(&[
+                    "select-pane",
+                    "-t",
+                    &at,
+                    "-T",
+                    &pane.title,
+                ])));
+            }
+        }
+
         for window in &session.window {
             for pane in &window.pane {
                 let decision = spec
@@ -382,6 +397,7 @@ mod tests {
             command: command.to_string(),
             confidence: crate::saved::Confidence::Exact,
             active,
+            title: String::new(),
         }
     }
 
@@ -581,6 +597,30 @@ mod tests {
         let select_window = first("select-window").expect("a select-window");
         assert!(new_window < send, "{lines:?}");
         assert!(send < select_window, "{lines:?}");
+    }
+
+    #[test]
+    fn a_note_on_a_pane_is_put_back_before_anything_runs_in_it() {
+        let mut snap = two_edits();
+        snap.session[0].window[1].pane[0].title = "claude: cache".to_string();
+        let table = crate::config::Restore::default();
+        let planned = plan(&table, &snap);
+        let built = rebuild(&spec(&snap, &planned, &[])).expect("rebuild");
+        let lines = flat(&built);
+        let title = lines
+            .iter()
+            .position(|c| c == "select-pane -t =lonkar_org:2.1 -T claude: cache")
+            .expect("the title is set");
+        let send = lines
+            .iter()
+            .position(|c| c.starts_with("send-keys"))
+            .expect("a send-keys");
+        assert!(title < send, "{lines:?}");
+        assert_eq!(
+            lines.iter().filter(|c| c.contains(" -T ")).count(),
+            1,
+            "untitled panes get none"
+        );
     }
 
     #[test]

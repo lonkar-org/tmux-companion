@@ -70,7 +70,9 @@ pub fn newer_than(path: &Path, moment: SystemTime) -> bool {
 
 /// The word the bar shows for a reason: what is wrong, not the whole sentence.
 pub fn short_word(reason: &str) -> &'static str {
-    if reason.starts_with("a timer failed") {
+    if reason.starts_with("quiet for") {
+        "quiet"
+    } else if reason.starts_with("a timer failed") {
         "timer"
     } else if reason.starts_with("config.toml") {
         "config"

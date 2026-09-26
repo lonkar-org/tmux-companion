@@ -13,6 +13,7 @@ pub mod autofetch;
 /// Sourcing tmux config when it changes on disk.
 pub mod autoreload;
 /// Timestamped map with a reader-supplied TTL.
+pub mod brief;
 pub mod cache;
 /// The cheat sheet of hand-written bindings.
 pub mod cheatsheet;
@@ -29,6 +30,7 @@ pub mod dirsource;
 /// What to ask somebody to run before they open an issue.
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
+pub mod inbox;
 pub mod keys;
 
 /// Running a segment in this process, with no daemon.
@@ -50,9 +52,10 @@ pub mod probe;
 pub mod project;
 /// The JSON request and response, and one args struct per command.
 pub mod proto;
+/// Running a command from history in a side pane.
+pub mod quiet;
 /// What a restore will run in each pane, decided before anything runs.
 pub mod restore;
-/// Running a command from history in a side pane.
 pub mod run;
 /// Per-project layouts captured from a live session.
 pub mod saved;

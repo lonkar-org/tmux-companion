@@ -14,6 +14,15 @@ pub fn build_id() -> String {
     BUILD_ID.to_string()
 }
 
+/// `quiet`: how long to be quiet for, zero for off, nothing to only ask.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct QuietArgs {
+    /// Seconds of quiet from now; `Some(0)` turns it off; `None` asks.
+    #[serde(default)]
+    pub secs: Option<u64>,
+}
+
 /// [`build_id`] as a compile-time constant.
 ///
 /// Exists because clap's `version` attribute takes a `&'static str` and cannot

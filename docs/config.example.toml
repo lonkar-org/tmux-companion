@@ -477,9 +477,22 @@ programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
 # has no per-pane activity time, so this is measured on the window the agent is
 # in: a shell you are typing into beside it keeps it reading as busy.
 waiting_secs = 10
-# How often the bar's agents segment re-reads the pane list, in seconds. One
-# tmux call each, shared by every attached client.
+# How often the bar's agents segment and the inbox re-read the pane list, in
+# seconds. One tmux call each, shared by every attached client.
 interval_secs = 2
+# The inbox: the agents that have stopped, with the last lines of each one's
+# screen captured at the moment it stopped, so `tmux-companion inbox` can
+# show the question even for a window nobody has looked at. One capture-pane
+# per stop. Off, and `inbox` has nothing to show.
+inbox = true
+# Say so out loud once an agent has waited this many seconds. Zero never
+# nudges; the bar already counts them. 300 is five minutes.
+nudge_after_secs = 0
+# What says it. Empty is tmux's own display-message. `{program}`, `{at}`,
+# `{waited}` and `{question}` are substituted anywhere they appear:
+#
+#   nudge_command = ["osascript", "-e", "display notification \"{question}\" with title \"{program} at {at} is waiting ({waited})\""]
+nudge_command = []
 
 [window_names]
 # Name a window after what is running in its active pane, using the same

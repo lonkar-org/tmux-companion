@@ -219,7 +219,11 @@ pub fn notify_command(f: &Finished, configured: &[String]) -> Vec<String> {
 }
 
 /// The task: scan, compare, announce.
-pub async fn notify_loop(settings: crate::config::Notify, shell: String) {
+pub async fn notify_loop(
+    settings: crate::config::Notify,
+    shell: String,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+) {
     let interval = Duration::from_secs(settings.interval_secs.max(1));
     let rules_threshold = Duration::from_secs(settings.threshold_secs);
     let mut watched: HashMap<String, Watched> = HashMap::new();
@@ -239,7 +243,13 @@ pub async fn notify_loop(settings: crate::config::Notify, shell: String) {
             threshold: rules_threshold,
             only_when_unwatched: settings.only_when_unwatched,
         };
+        // The scan still runs while quiet, so nothing finishes twice when it
+        // ends; only the announcement is held back.
+        let quiet = state.lock().await.is_quiet();
         for f in step(&mut watched, &parse_panes(&listing), &rules, Instant::now()) {
+            if quiet {
+                continue;
+            }
             let cmd = notify_command(&f, &settings.command);
             let Some((program, args)) = cmd.split_first() else {
                 continue;

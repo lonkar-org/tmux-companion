@@ -29,7 +29,7 @@ pub const WINDOW_FORMAT: &str = "#{session_name}\t#{window_index}\t#{window_name
 ///
 /// A superset of what `[notify]` and `[window_names]` ask for, so one pair of
 /// listings can feed all three once the daemon shares its poll.
-pub const PANE_FORMAT: &str = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}\t#{pane_active}\t#{pane_pid}";
+pub const PANE_FORMAT: &str = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}\t#{pane_active}\t#{pane_pid}\t#{pane_title}\t#{host}";
 
 /// `ps` in the shape [`parse_process_table`] expects.
 ///
@@ -100,6 +100,9 @@ pub struct ServerPaneReport {
     /// Not stored in the snapshot. It is the key into the process table, and
     /// it means nothing once the server it came from has exited.
     pub pid: u32,
+    /// `#{pane_title}` when somebody set one, empty when it is still tmux's
+    /// default, which is the hostname. A note left with `note` lives here.
+    pub title: String,
 }
 
 /// Every process's parent and argument vector, by parent pid.
@@ -226,7 +229,15 @@ pub fn parse_panes(text: &str) -> (Vec<ServerPaneReport>, Vec<String>) {
     let mut out = Vec::new();
     let mut skipped = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let parsed = fields(line, 8).and_then(|f| {
+        // Ten fields since titles were captured; eight from a listing an
+        // older build asked for, which the fixtures still are.
+        let parsed = fields(line, 10).or_else(|| fields(line, 8)).and_then(|f| {
+            let title = match (f.get(8), f.get(9)) {
+                (Some(t), Some(host)) if !t.trim().is_empty() && t.trim() != host.trim() => {
+                    t.trim().to_string()
+                }
+                _ => String::new(),
+            };
             Some(ServerPaneReport {
                 session: f[0].to_string(),
                 pane: PaneReport {
@@ -238,6 +249,7 @@ pub fn parse_panes(text: &str) -> (Vec<ServerPaneReport>, Vec<String>) {
                 },
                 active: flag(f[6]),
                 pid: f[7].parse().ok()?,
+                title,
             })
         });
         match parsed {
@@ -376,6 +388,7 @@ pub fn capture(c: &Capture) -> Captured {
                     command,
                     confidence: how,
                     active: report.active,
+                    title: report.title.clone(),
                 });
             }
             built.window.push(Window {
@@ -550,6 +563,27 @@ mod tests {
         let (command, how) = command_for_pane(&pane, Some("-zsh"), "/bin/zsh", "");
         assert_eq!(command, "");
         assert_eq!(how, Confidence::Shell);
+    }
+
+    #[test]
+    fn a_title_somebody_set_is_kept_and_the_hostname_default_is_not() {
+        // Ten fields, as the listing has carried titles since; the last two
+        // are the title and the host it is compared against.
+        let (panes, skipped) = parse_panes(
+            "y\t1\t1\t/w\tclaude\t\t1\t100\tclaude: cache\tlaptop\n\
+             y\t1\t2\t/w\tzsh\t\t0\t101\tlaptop\tlaptop\n\
+             y\t1\t3\t/w\tzsh\t\t0\t102\n",
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(panes[0].title, "claude: cache");
+        assert_eq!(
+            panes[1].title, "",
+            "the hostname is tmux's default, not a note"
+        );
+        assert_eq!(
+            panes[2].title, "",
+            "an eight-field line from an older listing has none"
+        );
     }
 
     #[test]

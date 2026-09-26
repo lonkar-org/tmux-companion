@@ -70,6 +70,12 @@ pub struct ServerState {
     pub last_failure: Option<(String, Instant)>,
     /// The last health check with the time it ran.
     pub health_cache: Option<(HealthSample, Instant)>,
+    /// The agents that have stopped, keyed by pane id, kept by the inbox task.
+    pub inbox: std::collections::HashMap<String, crate::inbox::Entry>,
+    /// Which of them have been nudged about, so each is nudged once.
+    pub nudged: std::collections::HashSet<String>,
+    /// When quiet hours end, in unix seconds; none or past means not quiet.
+    pub quiet_until: Option<u64>,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
@@ -121,6 +127,9 @@ impl ServerState {
             started_at: std::time::SystemTime::now(),
             last_failure: None,
             health_cache: None,
+            inbox: std::collections::HashMap::new(),
+            nudged: std::collections::HashSet::new(),
+            quiet_until: None,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),
@@ -252,6 +261,11 @@ impl ServerState {
     /// Store a count with the time the list was read.
     pub fn agents_store(&mut self, sample: AgentsSample) {
         self.agents_cache = Some((sample, Instant::now()));
+    }
+
+    /// Whether quiet hours are on right now.
+    pub fn is_quiet(&self) -> bool {
+        crate::quiet::is_quiet(self.quiet_until, crate::panes::now_secs())
     }
 
     // ── health ───────────────────────────────────────────────────────────────

@@ -340,6 +340,7 @@ mod tests {
             command: "nvim".to_string(),
             confidence: Confidence::Guessed,
             active: true,
+            title: String::new(),
         };
         let planned = plan_pane(&shipped(), "mysetup", 1, &pane);
         assert_eq!(planned.decision, Decision::Run("nvim".to_string()));
@@ -357,6 +358,7 @@ mod tests {
             command: "nvim".to_string(),
             confidence: Confidence::Guessed,
             active: true,
+            title: String::new(),
         };
         let plan = vec![plan_pane(&shipped(), "mysetup", 1, &pane)];
 
@@ -375,6 +377,7 @@ mod tests {
             command: "claude --resume abc".to_string(),
             confidence: Confidence::Exact,
             active: true,
+            title: String::new(),
         };
         let plan = vec![plan_pane(&shipped(), "mysetup", 1, &pane)];
         assert_eq!(withhold_unapproved(&plan, &[]), plan);
@@ -389,6 +392,7 @@ mod tests {
                 command: "claude --resume abc".to_string(),
                 confidence: Confidence::Exact,
                 active: i == 1,
+                title: String::new(),
             })
             .collect();
         let plan: Vec<Planned> = panes
@@ -408,6 +412,7 @@ mod tests {
             command: "nvim".to_string(),
             confidence: Confidence::Exact,
             active: true,
+            title: String::new(),
         };
         let odd = Pane {
             index: 2,
@@ -415,6 +420,7 @@ mod tests {
             command: "./deploy --production".to_string(),
             confidence: Confidence::Exact,
             active: false,
+            title: String::new(),
         };
         let plan = vec![
             plan_pane(&shipped(), "mysetup", 1, &known),

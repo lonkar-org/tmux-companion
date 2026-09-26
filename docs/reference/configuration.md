@@ -392,7 +392,17 @@ The plugin this comes from is
 programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
 waiting_secs = 10
 interval_secs = 2
+inbox = true
+nudge_after_secs = 0
+nudge_command = []
 ```
+
+`inbox` keeps the agents that have stopped, with the last lines of each one's
+screen captured the moment it stopped, so `tmux-companion inbox` shows the
+question an agent asked even on a window you haven't looked at; one
+`capture-pane` per stop. `nudge_after_secs` says it out loud, through
+`nudge_command` or tmux's own `display-message`, once an agent has waited that
+long; zero, the default, never does, since the bar already counts them.
 
 One list, read by everything that asks whether a pane is an agent:
 `tmux-companion panes --agents`, the `agents` segment on the bar, and the

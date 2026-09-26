@@ -402,6 +402,37 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// What needs you, on one screen: the agents waiting and what they
+    /// asked, the health reasons, the sessions idle for days, the numbers
+    Brief {
+        /// Print and exit without waiting for a key
+        #[arg(long)]
+        print: bool,
+        /// For the `client-attached` hook: open the screen in a popup only
+        /// when something is waiting or wrong, and say nothing otherwise
+        #[arg(long)]
+        hook: bool,
+    },
+
+    /// The agents waiting on you, each with the question it asked; enter
+    /// jumps there
+    Inbox {
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+    },
+
+    /// Quiet hours: no notifications, no nudges and no agent count on the
+    /// bar for a while; the health mark says `quiet` instead
+    Quiet {
+        /// How long: `45m`, `2h`, `90s`, or a bare number of minutes;
+        /// nothing asks how long is left
+        duration: Option<String>,
+        /// End quiet hours now
+        #[arg(long, conflicts_with = "duration")]
+        off: bool,
+    },
+
     /// Leave a one-line note on a pane, shown by `panes` and in the pane
     /// border; with nothing to say it prints the note that is there
     Note {
@@ -890,6 +921,9 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
+        Cmd::Inbox { print } => crate::inbox::run(print).await?,
+        Cmd::Quiet { duration, off } => crate::quiet::run(duration, off).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,

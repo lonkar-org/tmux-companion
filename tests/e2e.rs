@@ -1218,6 +1218,118 @@ fn panes_lists_what_runs_where_and_the_bar_counts_the_agents() {
 }
 
 #[test]
+fn the_inbox_holds_an_agent_that_stopped_with_what_its_screen_said() {
+    // A sleeping "agent" with a one-second waiting threshold: the daemon's
+    // loop sees it stop, captures the pane, and `inbox` lists it with the
+    // last line on screen, which here is the shell's own prompt line.
+    let Some(t) = Tmux::start("inbox") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[agents]\nprograms = [\"sleep\"]\nwaiting_secs = 1\ninterval_secs = 1\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    send_when_ready(&t, "=alpha:", "echo QUESTION-MARKER; sleep 300");
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("sleep"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+    // Any client call starts the daemon, and with it the inbox loop.
+    let _ = t.run(&["doctor"]);
+    assert!(
+        t.until(15, |t| {
+            let (out, _, _) = t.run(&["inbox", "--print"]);
+            out.lines()
+                .any(|l| l.starts_with("alpha:") && l.contains("\tsleep\t"))
+        }),
+        "the inbox never listed the stopped agent"
+    );
+    let (out, _, _) = t.run(&["inbox", "--print"]);
+    let row = out.lines().find(|l| l.starts_with("alpha:")).unwrap();
+    let cols: Vec<&str> = row.split('\t').collect();
+    assert_eq!(cols.len(), 5, "at, program, waited, question, id: {row:?}");
+    assert!(cols[2].ends_with('s') || cols[2].ends_with('m'), "{row:?}");
+    assert!(
+        cols[3].contains("QUESTION-MARKER"),
+        "the question is the last line drawn: {row:?}"
+    );
+    assert!(cols[4].starts_with('%'), "{row:?}");
+}
+
+#[test]
+fn the_brief_says_what_is_waiting_and_counts_the_server() {
+    let Some(t) = Tmux::start("brief") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let (out, err, ok) = t.run(&["brief", "--print"]);
+    assert!(ok, "brief --print failed:\n{err}");
+    assert!(out.starts_with("Nothing is waiting on you."), "{out:?}");
+    assert!(out.contains("Health: ok"), "{out:?}");
+    assert!(out.contains("1 session, 0 agents (0 waiting)"), "{out:?}");
+    // The hook form on a quiet server does nothing and says nothing.
+    let (out, err, ok) = t.run(&["brief", "--hook"]);
+    assert!(
+        ok && out.trim().is_empty() && err.trim().is_empty(),
+        "{out:?} {err:?}"
+    );
+}
+
+#[test]
+fn quiet_hours_take_the_agent_count_off_the_bar_and_say_so() {
+    let Some(t) = Tmux::start("quiet") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[agents]\nprograms = [\"sleep\"]\n\n\
+         [[status.right.segments]]\nname = \"git\"\n\n\
+         [[status.right.segments]]\nname = \"agents\"\nseparator_before = \" \"\n\n\
+         [[status.right.segments]]\nname = \"health\"\nseparator_before = \" \"\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    send_when_ready(&t, "=alpha:", "sleep 300");
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("sleep"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+    let dir_s = dir.display().to_string();
+    let (out, err, ok) = t.run(&["status-right", &dir_s]);
+    assert!(ok && out.contains("1 agent"), "before quiet: {out:?} {err}");
+
+    let (out, err, ok) = t.run(&["quiet", "5m"]);
+    assert!(ok, "quiet failed:\n{err}");
+    assert!(out.starts_with("quiet for"), "{out:?}");
+    // The agents cache is two seconds old at most; the health check five.
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["status-right", &dir_s]);
+            !out.contains("agent") && out.contains("quiet")
+        }),
+        "the bar kept counting, or never said quiet"
+    );
+    let (out, _, _) = t.run(&["quiet"]);
+    assert!(out.starts_with("quiet for"), "{out:?}");
+    let (out, _, _) = t.run(&["quiet", "off"]);
+    assert_eq!(out.trim(), "not quiet");
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["status-right", &dir_s]);
+            out.contains("1 agent")
+        }),
+        "the count did not come back"
+    );
+}
+
+#[test]
 fn a_note_on_a_pane_is_what_panes_shows_beside_the_program() {
     let Some(t) = Tmux::start("note") else {
         return;
@@ -1246,6 +1358,20 @@ fn a_note_on_a_pane_is_what_panes_shows_beside_the_program() {
             .any(|l| l.starts_with("alpha:") && l.contains("claude: cache")),
         "the note is not beside the program: {out:?}"
     );
+
+    // A snapshot taken while the note is on carries it, so a restore can put
+    // it back; the screen capture is skipped since the words are the point.
+    let (_, err, ok) = t.run(&["sessions", "save", "--skip-pane-history"]);
+    assert!(ok, "sessions save failed:\n{err}");
+    let dir = t.sandbox.join("state/tmux-companion/sessions");
+    let newest = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .max()
+        .expect("a snapshot file");
+    let text = std::fs::read_to_string(&newest).unwrap();
+    assert!(text.contains("title = \"claude: cache\""), "{text}");
 
     let (_, _, ok) = t.run(&["note", "--pane", id, "--clear"]);
     assert!(ok);

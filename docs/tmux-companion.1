@@ -94,6 +94,20 @@ so that plain
 lands in the same picker: it opens only when the session is one tmux named
 itself, all digits, with one window, one pane and a shell in it, and leaves
 any other session alone.
+.It Ic brief Op Fl -print , Fl -hook
+What needs you, on one screen: the agents waiting and what each one asked,
+the reasons the health mark is up, the sessions nobody has touched for three
+days, and one line of numbers with when the last snapshot was.
+Everything on it is a command of its own; this is the one look on sitting
+down.
+In a popup it waits for a key;
+.Fl -print
+prints and exits.
+.Fl -hook
+is for the
+.Ic client-attached
+hook: it opens the popup only when something is waiting or wrong, and says
+nothing when the server is quiet.
 .El
 .Sh STATUS LINE COMMANDS
 These print tmux format strings on standard output and are meant for
@@ -282,6 +296,9 @@ keeps generations of the whole server and throws the oldest away: the first
 answers what a project looks like, the second what you were doing at the time.
 The save is all or nothing, like a project's: a line of tmux output this cannot
 read stops the write rather than shrinking the snapshot.
+A note left on a pane with
+.Ic note
+is captured with it and put back by a restore.
 .Fl -skip-pane-history
 records the sessions and leaves out what was on each pane's screen, which is the
 expensive half and the half holding whatever you printed.
@@ -511,6 +528,19 @@ The same hint as
 when no binding carries the note.
 Bound to
 .Ql prefix C-c .
+.It Ic inbox Op Fl -print
+The agents waiting on you, longest wait first, each with the question it
+asked: the daemon captures the last lines of an agent's screen the moment it
+stops drawing, so the question is on record for a window nobody has looked at
+since.
+Enter switches the attached client to that pane.
+.Fl -print
+writes where, program, how long, the question and the pane id as tab-separated
+columns.
+.Ic [agents] inbox
+turns the capture off, and
+.Ic [agents] nudge_after_secs
+says it out loud once an agent has waited that long.
 .It Ic panes Op Fl -agents , Fl -print , Fl t Ar session
 Every pane on the server, one row each: where it is as
 .Ql session:window.pane ,
@@ -605,9 +635,26 @@ is on.
 With no text it prints the note that is there;
 .Fl -clear
 takes it off.
+A snapshot carries the note and a restore puts it back.
 The pane defaults to the one the key was pressed in.
 An agent working beside you can say what it is doing in four words with this,
 and the skill file tells it to.
+.It Ic quiet Oo Ar duration Oc Op Fl -off
+Quiet hours.
+For the duration given,
+.Ql 45m ,
+.Ql 2h
+or a bare number of minutes,
+.Ic [notify]
+announces nothing, the inbox nudges nobody, and the
+.Ic agents
+segment leaves the bar; the health mark says
+.Ql quiet
+in its place, so the silence reads as chosen rather than broken.
+With nothing given it says how long is left;
+.Fl -off
+ends it now.
+The daemon keeps the clock, so every timer and every client agree.
 .It Ic toggle Oo Ar session Oc Op Fl -last
 Move to the next window in this session, in index order, wrapping from the
 last to the first.

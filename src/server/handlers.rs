@@ -189,6 +189,26 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // Every reason the health mark would show, one per line, empty when
         // there is none; what `doctor` prints on its health line.
         "__health" => Ok(health_check(&state).await.reasons.join("\n")),
+        // Quiet hours: set, clear or ask. The daemon keeps the clock so every
+        // timer and every client agree on it.
+        "__quiet" => match req.parse_args::<crate::proto::QuietArgs>() {
+            Ok(args) => {
+                let now = crate::panes::now_secs();
+                let mut st = state.lock().await;
+                match args.secs {
+                    Some(0) => st.quiet_until = None,
+                    Some(secs) => st.quiet_until = Some(now.saturating_add(secs)),
+                    None => {}
+                }
+                Ok(crate::quiet::status(st.quiet_until, now))
+            }
+            Err(e) => Err(e),
+        },
+        // The inbox as JSON rows, longest wait first, for the `inbox` picker.
+        "__inbox" => {
+            let rows = crate::inbox::ordered(&state.lock().await.inbox);
+            serde_json::to_string(&rows).map_err(|e| anyhow::anyhow!("{e}"))
+        }
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
 
@@ -369,9 +389,13 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
 
 /// The three questions, answered now.
 async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::HealthSample {
-    let (started, failure) = {
+    let (started, failure, quiet) = {
         let s = state.lock().await;
-        (s.started_at, s.recent_failure())
+        let now = crate::panes::now_secs();
+        let quiet = s
+            .is_quiet()
+            .then(|| crate::quiet::status(s.quiet_until, now));
+        (s.started_at, s.recent_failure(), quiet)
     };
     let config_changed = match crate::config::load() {
         Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
@@ -380,9 +404,11 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
     let binary_newer = std::env::current_exe()
         .map(|exe| segments::health::newer_than(&exe, started))
         .unwrap_or(false);
-    segments::health::HealthSample {
-        reasons: segments::health::reasons(failure.as_deref(), config_changed, binary_newer),
+    let mut reasons = segments::health::reasons(failure.as_deref(), config_changed, binary_newer);
+    if let Some(q) = quiet {
+        reasons.insert(0, q);
     }
+    segments::health::HealthSample { reasons }
 }
 
 /// The agent count, behind its `[agents] interval_secs` cache.
@@ -395,7 +421,9 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
     let (wanted, cached, programs, waiting_secs, bar_bg) = {
         let s = state.lock().await;
         (
-            s.agents_wanted(),
+            // Quiet hours take the count off the bar; the health mark says
+            // `quiet` in its place, so the silence reads as chosen.
+            s.agents_wanted() && !s.is_quiet(),
             s.agents_cached(),
             s.config.agents.programs.clone(),
             s.config.agents.waiting_secs,

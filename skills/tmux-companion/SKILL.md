@@ -127,11 +127,15 @@ agent and a shell watching something.
 3. A task that is genuinely separate gets its own window. Name it after the task,
    `tmux rename-window -t SESSION:IDX rebuild-cache`, so the human reading the
    status bar knows which window is yours without switching to it.
-4. Name the pane too when a window holds more than one, and say what you are doing
+4. When you stop to ask the human something, the daemon captures the last lines
+   of your screen at that moment and `tmux-companion inbox` shows them beside
+   your pane, so put the question on the last line, on its own, and do not print
+   anything after it until it is answered.
+5. Name the pane too when a window holds more than one, and say what you are doing
    in it: `tmux-companion note 'claude: cache'` (add `--pane ID` from another pane).
    `panes` shows the note beside the program, so the human sees it without
    switching; `note --clear` when you are done.
-5. Long jobs belong in a pane the human is not watching. `[notify]` announces a
+6. Long jobs belong in a pane the human is not watching. `[notify]` announces a
    command that ran past `threshold_secs`, 30 by default, and finished in a pane
    nobody was looking at, through tmux's own `display-message` unless a `command`
    is configured. It is `enabled = false` out of the box, so check
@@ -139,16 +143,16 @@ agent and a shell watching something.
    announce itself, and remember `ignore` already holds `claude`, `codex`,
    `gemini`, the editors and the pagers, because finishing a two-hour agent is not
    news.
-6. `[project] preview_window` names the window the project picker previews for a
+7. `[project] preview_window` names the window the project picker previews for a
    live session. It is empty by default, which previews whichever window the
    session is on. A human running the editor-beside-an-agent layout sets it to
    `ai`, and that window is how they check on you without switching, so keep
    the agent in the window the layout gave it.
-7. An agent renames its own window to its version string, `2.1.278`, within
+8. An agent renames its own window to its version string, `2.1.278`, within
    seconds. `hold_name = true` on a `[[layout.window]]` pins the name. If the
    human's layout does not have it, say so rather than renaming the window on every
    pass.
-8. Themes carry the project, not the task: `theme apply SESSION` paints a session
+9. Themes carry the project, not the task: `theme apply SESSION` paints a session
    from the project map. Leave it alone unless asked.
 
 ## Starting or resuming an agent

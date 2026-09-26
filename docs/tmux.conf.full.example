@@ -144,6 +144,18 @@ bind -N "custom: config pick a colour theme" C-t \
 # list to reach for when the bar says one of them is waiting.
 bind -N "custom: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
+# What the agents stopped to ask, oldest first; enter jumps to the one picked.
+bind -N "custom: project the agents waiting on you" M-g \
+  display-popup -E -w 80% -h 70% "tmux-companion inbox"
+# One screen of what needs you: the waiting agents, the health reasons, the
+# idle sessions, the numbers. The same screen opens by itself on attach when
+# there is news, through the client-attached hook below.
+bind -N "custom: help what needs me" b \
+  display-popup -E -w 70% -h 60% "tmux-companion brief"
+# Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
+# `quiet` while it lasts.
+bind -N "custom: config quiet hours, no nagging for a while" Q \
+  command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""
 bind -N "custom: window jump to an agent" G \
   display-popup -E -w 80% -h 70% "tmux-companion panes --agents"
 bind -N "custom: project toggle the tools in this session" -n M-a \
@@ -245,6 +257,9 @@ bind -N "custom: sessions save every session now" M-s \
 # the first thing you do after `tmux` is press M-s anyway.
 #
 # set-hook -g client-attached 'run-shell "tmux-companion start --hook"'
+# And the brief, only when something is waiting or wrong; a quiet server
+# stays quiet on attach.
+# set-hook -ga client-attached 'run-shell "tmux-companion brief --hook"'
 
 # ── The theme, applied when a session is created ────────────────────────────
 #

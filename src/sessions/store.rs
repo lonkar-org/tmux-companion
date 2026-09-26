@@ -336,6 +336,7 @@ mod tests {
                         command: "nvim".to_string(),
                         confidence: crate::saved::Confidence::Guessed,
                         active: true,
+                        title: String::new(),
                     }],
                 }],
             }],

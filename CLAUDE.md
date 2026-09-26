@@ -65,6 +65,7 @@ description they had.
 |------|------|
 | `src/autofetch.rs` | fetching in the background, so ahead and behind mean something |
 | `src/autoreload.rs` | sourcing tmux's config when it changes |
+| `src/brief.rs` | one screen with the state of the server, for the moment you sit down |
 | `src/cache.rs` | in-memory TTL maps for the server's segment caches |
 | `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings somebody wrote rather than the ones tmux ships |
 | `src/cli.rs` | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server |
@@ -73,6 +74,7 @@ description they had.
 | `src/config.rs` | the configuration file: where it lives, how it is parsed, and what happens when it cannot be |
 | `src/dirsource.rs` | where the project picker's directory list comes from |
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
+| `src/inbox.rs` | the agents waiting on you, with the question each one asked |
 | `src/keys.rs` | key bindings, parsed out of `tmux list-keys` into rows a picker can search |
 | `src/lib.rs` | one binary in two modes; the library `tests/` links against |
 | `src/local.rs` | running a segment in this process, with no daemon and no socket |
@@ -90,6 +92,7 @@ description they had.
 | `src/probe.rs` | probes: ask the terminal what it does, rather than assuming |
 | `src/project.rs` | projects: one tmux session each, with the windows a layout asks for |
 | `src/proto.rs` | `Request` / `Response` serde types, one args struct per command, and the build id (no module doc) |
+| `src/quiet.rs` | quiet hours: nothing nags for a while, and the bar says why |
 | `src/restore.rs` | what a restore will run in each pane, decided before anything runs |
 | `src/run.rs` | run a command from history in a pane beside the one you are in |
 | `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |

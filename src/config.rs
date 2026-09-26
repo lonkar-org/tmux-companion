@@ -749,8 +749,23 @@ pub struct Agents {
     /// happening.
     pub waiting_secs: u64,
     /// Seconds between two reads of the pane list for the bar's `agents`
-    /// segment. One tmux call each, shared by every attached client.
+    /// segment and the inbox. One tmux call each, shared by every attached
+    /// client.
     pub interval_secs: u64,
+    /// Whether the daemon keeps the inbox: the agents that have stopped, with
+    /// the last lines of each one's screen captured at the moment it stopped.
+    ///
+    /// On by default, because the capture is what makes `inbox` answer "what
+    /// did it ask" for a window nobody has looked at. The cost is one
+    /// `list-panes` per `interval_secs` and one `capture-pane` per stop.
+    pub inbox: bool,
+    /// Seconds an agent may wait before the daemon says so out loud. Zero,
+    /// the default, never nudges: the bar already counts them.
+    pub nudge_after_secs: u64,
+    /// The command that nudges. Empty is tmux's own `display-message`;
+    /// `{program}`, `{at}`, `{waited}` and `{question}` are substituted
+    /// anywhere they appear.
+    pub nudge_command: Vec<String>,
 }
 
 impl Default for Agents {
@@ -769,6 +784,9 @@ impl Default for Agents {
             .collect(),
             waiting_secs: 10,
             interval_secs: 2,
+            inbox: true,
+            nudge_after_secs: 0,
+            nudge_command: Vec::new(),
         }
     }
 }

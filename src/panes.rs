@@ -312,6 +312,13 @@ pub async fn list() -> Vec<Pane> {
     parse(&crate::cli::tmux_capture(&["list-panes", "-a", "-F", pane_format()]).await)
 }
 
+/// The last lines of one pane's screen, as the preview shows them.
+pub async fn tail_of(id: &str) -> String {
+    let screen =
+        crate::cli::tmux_capture(&["capture-pane", "-p", "-t", id, "-S", CAPTURE_LINES]).await;
+    preview_tail(&screen, PREVIEW_LINES)
+}
+
 /// The last lines of each row's screen, in row order.
 ///
 /// Captured concurrently, because two hundred sequential tmux calls at a few
@@ -345,7 +352,7 @@ async fn previews(rows: &[Row]) -> Vec<String> {
 /// `switch-client` treats as nothing to do. From a popup the client to move is
 /// the attached one, not the popup's own, which is the same lookup the project
 /// picker makes.
-async fn jump(id: &str) {
+pub async fn jump(id: &str) {
     if std::env::var_os("TMUX").is_none() {
         crate::cli::tmux(&["attach-session", "-t", id]).await;
         return;

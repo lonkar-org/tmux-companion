@@ -305,6 +305,7 @@ mod tests {
                             command: (*c).to_string(),
                             confidence: *how,
                             active: i == 0,
+                            title: String::new(),
                         })
                         .collect(),
                 }],

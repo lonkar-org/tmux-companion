@@ -166,6 +166,10 @@ pub struct Pane {
     /// `#{pane_active}`: the pane this window was on.
     #[serde(default)]
     pub active: bool,
+    /// The note on the pane, `#{pane_title}` when somebody set one, so a
+    /// restore puts the words back where they were.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 impl Snapshot {
@@ -312,6 +316,7 @@ mod tests {
                         command: "nvim".to_string(),
                         confidence: Confidence::Guessed,
                         active: true,
+                        title: String::new(),
                     }],
                 },
                 Window {
@@ -326,6 +331,7 @@ mod tests {
                         command: agent.to_string(),
                         confidence: Confidence::Guessed,
                         active: true,
+                        title: String::new(),
                     }],
                 },
             ],
@@ -373,6 +379,7 @@ mod tests {
                             command: "nvim".to_string(),
                             confidence: Confidence::Guessed,
                             active: true,
+                            title: String::new(),
                         }],
                     });
                     three
@@ -403,6 +410,7 @@ mod tests {
                             command: String::new(),
                             confidence: Confidence::Shell,
                             active: true,
+                            title: String::new(),
                         }],
                     }],
                 },

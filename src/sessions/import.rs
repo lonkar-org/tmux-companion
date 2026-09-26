@@ -119,6 +119,7 @@ pub fn parse(text: &str, from: &str) -> Snapshot {
                         },
                         command,
                         active: flag(f[3]),
+                        title: String::new(),
                     },
                 ));
             }

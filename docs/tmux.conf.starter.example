@@ -87,6 +87,18 @@ bind -N "custom: window run a command from history" e \
 # enter jumps there. `--agents` narrows it to the coding agents.
 bind -N "custom: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
+# What the agents stopped to ask, oldest first; enter jumps to the one picked.
+bind -N "custom: project the agents waiting on you" M-g \
+  display-popup -E -w 80% -h 70% "tmux-companion inbox"
+# One screen of what needs you: the waiting agents, the health reasons, the
+# idle sessions, the numbers. The same screen opens by itself on attach when
+# there is news, through the client-attached hook below.
+bind -N "custom: help what needs me" b \
+  display-popup -E -w 70% -h 60% "tmux-companion brief"
+# Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
+# `quiet` while it lasts.
+bind -N "custom: config quiet hours, no nagging for a while" Q \
+  command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""
 
 # Everything but this pane goes: a zoom with other panes open, the status bar
 # with none.
