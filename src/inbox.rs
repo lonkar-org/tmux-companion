@@ -169,6 +169,7 @@ pub fn ordered(entries: &HashMap<String, Entry>) -> Vec<Entry> {
 /// bar reads a warm cache while this runs.
 pub async fn inbox_loop(
     config: crate::config::Agents,
+    journal: bool,
     state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
 ) {
     let interval = std::time::Duration::from_secs(config.interval_secs.max(1));
@@ -182,7 +183,17 @@ pub async fn inbox_loop(
             step(&held, &panes, &config.programs, now, config.waiting_secs);
         for pane in &arrived {
             let lines = panes::tail_of(&pane.id).await;
-            kept.insert(pane.id.clone(), entry(pane, &home, lines));
+            let e = entry(pane, &home, lines);
+            if journal {
+                crate::journal::append(&crate::journal::Event {
+                    at: now,
+                    session: pane.session.clone(),
+                    path: e.path.clone(),
+                    kind: crate::journal::Kind::Asked,
+                    detail: format!("{} {}", e.program, question(&e.lines)),
+                });
+            }
+            kept.insert(pane.id.clone(), e);
         }
         let sample =
             crate::segments::agents::count(&panes, &config.programs, now, config.waiting_secs);

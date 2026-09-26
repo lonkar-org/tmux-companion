@@ -306,6 +306,30 @@ expensive half and the half holding whatever you printed.
 adds to
 .Ic [sessions] exclude
 rather than replacing it, and a session left out is one that does not come back.
+.It Ic sessions export Oo Ar file Oc Op Fl -stamp Ar stamp
+A generation as one file that reads on another machine: every path under the
+home directory is spelled
+.Ql ~ ,
+the project colours from
+.Pa _project-map.tsv
+travel with it, and what was on each pane's screen is left behind.
+The newest generation unless
+.Fl -stamp
+names one; printed when no file is given.
+.It Ic sessions import Ar file Op Fl -no-map
+The file
+.Ic sessions export
+wrote, stored here as a new generation with this machine's home in place of
+.Ql ~ ,
+and the project colours it names added for the projects this machine has not
+coloured yet;
+.Fl -no-map
+leaves the map alone.
+Then
+.Ic sessions resurrect
+brings it up and says which directories are not here.
+The themes themselves come from
+.Ic theme init .
 .It Ic sessions resurrect Oo Ar stamp Oc Oo Fl -only Ar names Oc Oo Fl -exclude Ar names Oc Oo Fl -merge Oc Oo Fl -dry-run Oc Oo Fl -yes Oc Op Fl -detach
 Rebuild a server from a generation, defaulting to the newest.
 With no generation of its own to read, it reads tmux-resurrect's newest save
@@ -655,6 +679,21 @@ With nothing given it says how long is left;
 .Fl -off
 ends it now.
 The daemon keeps the clock, so every timer and every client agree.
+.It Ic journal Oo Fl -print Oc Oo Fl t Ar session Oc Op Fl -days Ar n
+What happened in each project, newest first: a command that ran past
+.Ic [journal] min_secs
+and finished, with how long it took; an agent that stopped and what it asked;
+a project opened or closed.
+Enter goes to that session.
+.Fl t
+keeps one session and
+.Fl -days
+reaches further back than the last day.
+.Fl -print
+writes the rows as tab-separated columns.
+The daemon writes it to
+.Pa journal.tsv
+in the state directory as it happens.
 .It Ic toggle Oo Ar session Oc Op Fl -last
 Move to the next window in this session, in index order, wrapping from the
 last to the first.
@@ -884,7 +923,7 @@ The sections are
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
-.Ic [picker]
+.Ic [picker] , [journal]
 and
 .Ic [open] .
 .Bl -tag -width Ds
@@ -1066,6 +1105,8 @@ file of a daemon that never removed it, moved here by the next daemon to
 start once it has found that pid dead; its presence is what makes
 .Ic sessions resurrect
 treat the last snapshot as taken before a crash
+.It Pa $XDG_STATE_HOME/tmux-companion/journal.tsv
+what ran long, what the agents asked, what opened and closed
 .It Pa $XDG_STATE_HOME/tmux-companion/daemon.log
 the daemon's stderr: one line per start, one per failure, unless
 .Ic [general] log

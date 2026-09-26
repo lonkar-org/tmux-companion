@@ -95,6 +95,10 @@ bind -N "custom: project the agents waiting on you" M-g \
 # there is news, through the client-attached hook below.
 bind -N "custom: help what needs me" b \
   display-popup -E -w 70% -h 60% "tmux-companion brief"
+# What happened in each project today, newest first: what ran long, what the
+# agents asked, what opened and closed.
+bind -N "custom: help what happened today" J \
+  display-popup -E -w 80% -h 70% "tmux-companion journal"
 # Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
 # `quiet` while it lasts.
 bind -N "custom: config quiet hours, no nagging for a while" Q \

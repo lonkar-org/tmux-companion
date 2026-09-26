@@ -68,6 +68,7 @@ one is explained on this page:
 | `[project]`, `[[project.override]]` | the directory source, the visit command, which layout | [Where the directory list comes from](#where-the-directory-list-comes-from) |
 | `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with | [What a new project session starts with](#what-a-new-project-session-starts-with) |
 | `[notify]` | announcing a long command that finished out of sight | [Saying a long command finished](#saying-a-long-command-finished) |
+| `[journal]` | what ran long, what the agents asked, what opened and closed | [The journal](#the-journal) |
 | `[agents]` | which programs are coding agents, and when one counts as waiting | [Which programs are agents](#which-programs-are-agents) |
 | `[window_names]` | naming a window after what runs in it | [Naming windows after what is running](#naming-windows-after-what-is-running) |
 | `[autoreload]` | sourcing tmux's config when it changes | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
@@ -384,6 +385,22 @@ long any of it had already been going.
 
 The plugin this comes from is
 [rickstaa/tmux-notify](https://github.com/rickstaa/tmux-notify).
+
+### The journal
+
+```toml
+[journal]
+enabled = true
+interval_secs = 5
+min_secs = 60
+```
+
+The daemon writes down what it sees: a command that ran past `min_secs` and
+finished, with how long it took; an agent that stopped and what it asked; a
+project opened or closed. `tmux-companion journal` reads it newest first, and
+`journal --print -t SESSION` is the standup answer for one project. It lives
+in `journal.tsv` in the state directory and rotates past a megabyte. Programs
+in `[notify] ignore` aren't runs worth a line either.
 
 ### Which programs are agents
 

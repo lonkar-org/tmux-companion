@@ -422,6 +422,20 @@ pub enum Cmd {
         print: bool,
     },
 
+    /// What happened in each project: the commands that ran long, the
+    /// questions the agents asked, the sessions opened and closed
+    Journal {
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+        /// Only this session's events
+        #[arg(short = 't', long, value_name = "SESSION")]
+        target: Option<String>,
+        /// How many days back, default one
+        #[arg(long, default_value_t = 1)]
+        days: u64,
+    },
+
     /// Quiet hours: no notifications, no nudges and no agent count on the
     /// bar for a while; the health mark says `quiet` instead
     Quiet {
@@ -834,6 +848,12 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             None => run_project(dir, print).await?,
         },
         Cmd::Sessions { action } => match action {
+            SessionsAction::Export { file, stamp } => {
+                crate::sessions::portable::export(stamp, file).await?
+            }
+            SessionsAction::Import { file, no_map } => {
+                crate::sessions::portable::import(file, no_map).await?
+            }
             SessionsAction::Save {
                 skip_pane_history,
                 exclude,
@@ -923,6 +943,11 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         } => crate::panes::run(agents, print, target).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
         Cmd::Inbox { print } => crate::inbox::run(print).await?,
+        Cmd::Journal {
+            print,
+            target,
+            days,
+        } => crate::journal::run(print, target, days).await?,
         Cmd::Quiet { duration, off } => crate::quiet::run(duration, off).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
@@ -1552,6 +1577,15 @@ async fn open_project(
             let borrowed: Vec<&str> = cmd.iter().map(String::as_str).collect();
             tmux(&borrowed).await;
         }
+        if config.journal.enabled {
+            crate::journal::append(&crate::journal::Event {
+                at: crate::panes::now_secs(),
+                session: name.clone(),
+                path: crate::project::short_path(path, home),
+                kind: crate::journal::Kind::Opened,
+                detail: String::new(),
+            });
+        }
     }
 
     focus_session(&name).await
@@ -1619,6 +1653,24 @@ pub enum ProjectAction {
 /// `sessions` is plural because it is always about every session at once.
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum SessionsAction {
+    /// Write a generation as one file that reads on another machine: paths
+    /// under home spelled ~, the project colours bundled, screens left out
+    Export {
+        /// Where to write it; none or `-` prints it
+        file: Option<String>,
+        /// Which generation, defaulting to the newest
+        #[arg(long)]
+        stamp: Option<String>,
+    },
+    /// Read a file from `export` and store it here as a new generation, adding
+    /// the project colours this machine does not have
+    Import {
+        /// The file `sessions export` wrote
+        file: String,
+        /// Leave the project map alone
+        #[arg(long)]
+        no_map: bool,
+    },
     /// Capture every session now, as a new generation
     Save {
         /// Record the sessions and skip what was on each pane's screen
@@ -2341,18 +2393,27 @@ fn run_sessions_list(json: bool) -> anyhow::Result<()> {
         };
         match crate::sessions::store::load_in(&state_dir, &g.stamp) {
             Ok(snap) => println!(
-                "{mark} {}  {} session{}, {} pane{}  {}  {}",
+                "{mark} {}  {} session{}, {} pane{}  {}  {}{}",
                 g.stamp,
                 snap.session.len(),
                 plural(snap.session.len()),
                 snap.pane_count(),
                 plural(snap.pane_count()),
-                if snap.header.clean {
+                if !snap.header.imported_from.is_empty() {
+                    "imported"
+                } else if snap.header.clean {
                     "taken at shutdown"
                 } else {
                     "taken while running"
                 },
-                snap.header.captured_at
+                snap.header.captured_at,
+                // Where an import came from, since its stamp is when it
+                // landed here and says nothing about the machine it left.
+                if snap.header.imported_from.is_empty() {
+                    String::new()
+                } else {
+                    format!("  from {}", snap.header.imported_from)
+                }
             ),
             Err(e) => println!("{mark} {}  unreadable: {e}", g.stamp),
         }
@@ -3383,8 +3444,24 @@ async fn run_close_project(
         }
     }
 
+    // Read while the session is still there; the journal line is written
+    // once it is gone, which is the moment the close succeeded.
+    let (journal, project_path) = {
+        let config = config_or_default();
+        (config.journal.enabled, project_of(&session).await)
+    };
     for _ in 0..40 {
         if !session_exists(&target).await {
+            if journal {
+                let home = std::env::var("HOME").unwrap_or_default();
+                crate::journal::append(&crate::journal::Event {
+                    at: crate::panes::now_secs(),
+                    session: session.clone(),
+                    path: crate::project::short_path(&project_path, &home),
+                    kind: crate::journal::Kind::Closed,
+                    detail: String::new(),
+                });
+            }
             return Ok(());
         }
         let listing = tmux_capture(&[

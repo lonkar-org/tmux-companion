@@ -468,6 +468,18 @@ ignore = [
   "claude", "codex", "gemini", "lazygit", "tig", "fzf",
 ]
 
+[journal]
+# What happened in each project, written down as it happens: a command that
+# ran past `min_secs` and finished, with how long it took; an agent that
+# stopped and what it asked; a project opened or closed. `tmux-companion
+# journal` reads it, newest first, and `journal --print -t SESSION` is the
+# standup answer for one project. journal.tsv in the state directory, rotated
+# past a megabyte. Programs in [notify] ignore are not runs worth a line.
+# One list-panes per interval_secs.
+enabled = true
+interval_secs = 5
+min_secs = 60
+
 [agents]
 # One list of what counts as a coding agent, read by everything that asks:
 # `tmux-companion panes --agents`, the `agents` segment on the bar, and the

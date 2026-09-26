@@ -20,6 +20,7 @@ pub mod capture;
 pub mod cli;
 pub mod idle;
 pub mod import;
+pub mod portable;
 pub mod restore;
 pub mod store;
 pub mod summary;

@@ -31,6 +31,7 @@ pub mod dirsource;
 pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod inbox;
+pub mod journal;
 pub mod keys;
 
 /// Running a segment in this process, with no daemon.

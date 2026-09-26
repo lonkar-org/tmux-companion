@@ -1821,6 +1821,7 @@ dependencies = [
  "anyhow",
  "battery",
  "clap",
+ "libc",
  "nix 0.29.0",
  "nucleo-matcher",
  "ratatui",

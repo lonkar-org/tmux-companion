@@ -75,6 +75,7 @@ description they had.
 | `src/dirsource.rs` | where the project picker's directory list comes from |
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
+| `src/journal.rs` | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed |
 | `src/keys.rs` | key bindings, parsed out of `tmux list-keys` into rows a picker can search |
 | `src/lib.rs` | one binary in two modes; the library `tests/` links against |
 | `src/local.rs` | running a segment in this process, with no daemon and no socket |
@@ -114,6 +115,7 @@ description they had.
 | `src/sessions/cli.rs` | the client half of `sessions resurrect`: the confirm screen, the countdown and the crash acknowledgement, which run in the terminal and so cannot live in the daemon |
 | `src/sessions/idle.rs` | sessions nobody has looked at for days: which they are, and the picker that closes one |
 | `src/sessions/import.rs` | reading the tab-separated format tmux-resurrect writes |
+| `src/sessions/portable.rs` | a snapshot that can move house |
 | `src/sessions/restore.rs` | rebuilding a server from a snapshot |
 | `src/sessions/store.rs` | where snapshots live, how many are kept, and which one is newest |
 | `src/sessions/summary.rs` | the screen a restore shows when it does not know something |

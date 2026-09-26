@@ -1330,6 +1330,73 @@ fn quiet_hours_take_the_agent_count_off_the_bar_and_say_so() {
 }
 
 #[test]
+fn the_journal_writes_down_a_command_that_ran_long_enough() {
+    let Some(t) = Tmux::start("journal") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[journal]\nenabled = true\ninterval_secs = 1\nmin_secs = 2\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    // A call that asks the daemon something starts it, and with it the
+    // journal loop, which has to see the sleep start before it can time its
+    // finish. Not `doctor`: that one never starts a daemon on purpose.
+    let _ = t.run(&["quiet"]);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    send_when_ready(&t, "=alpha:", "sleep 3");
+    assert!(
+        t.until(20, |t| {
+            let (out, _, _) = t.run(&["journal", "--print"]);
+            out.lines().any(|l| l.contains("\talpha\tran\tsleep "))
+        }),
+        "the journal never recorded the sleep"
+    );
+    let (out, _, ok) = t.run(&["journal", "--print", "-t", "nowhere"]);
+    assert!(ok && out.trim().is_empty(), "{out:?}");
+}
+
+#[test]
+fn an_export_reads_on_another_machine_and_an_import_is_a_new_generation() {
+    let Some(t) = Tmux::start("portable") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let (_, err, ok) = t.run(&["sessions", "save", "--skip-pane-history"]);
+    assert!(ok, "sessions save failed:\n{err}");
+
+    let file = t.sandbox.join("moving.toml");
+    let (out, err, ok) = t.run(&["sessions", "export", &file.display().to_string()]);
+    assert!(ok, "export failed:\n{err}");
+    assert!(out.starts_with("wrote "), "{out:?}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("path = \"~/"),
+        "paths under the sandbox home travel as ~: {text}"
+    );
+    assert!(!text.contains(&t.sandbox.display().to_string()), "{text}");
+
+    let store = t.sandbox.join("state/tmux-companion/sessions");
+    let before = std::fs::read_dir(&store).unwrap().count();
+    let (out, err, ok) = t.run(&["sessions", "import", &file.display().to_string()]);
+    assert!(ok, "import failed:\n{err}");
+    assert!(
+        out.contains("stored ") && out.contains("sessions resurrect"),
+        "{out:?}"
+    );
+    let after = std::fs::read_dir(&store).unwrap().count();
+    assert!(after > before, "no new generation: {before} -> {after}");
+    let (out, _, _) = t.run(&["sessions", "list"]);
+    assert!(
+        out.contains("moving.toml"),
+        "the import is named as the source: {out:?}"
+    );
+}
+
+#[test]
 fn a_note_on_a_pane_is_what_panes_shows_beside_the_program() {
     let Some(t) = Tmux::start("note") else {
         return;

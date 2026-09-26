@@ -52,6 +52,8 @@ pub struct Config {
     /// Which programs are coding agents, and when one counts as waiting.
     #[serde(default)]
     pub agents: Agents,
+    /// The journal: what ran long, what the agents asked, what opened and closed.
+    pub journal: Journal,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -1106,6 +1108,7 @@ impl Default for Config {
             window_names: WindowNames::default(),
             notify: Notify::default(),
             agents: Agents::default(),
+            journal: Journal::default(),
             autosave: Autosave::default(),
             sessions: Sessions::default(),
             restore: Restore::default(),
@@ -1567,6 +1570,28 @@ impl Preset {
             Preset::Ascii => include_str!("presets/ascii.toml"),
         };
         toml::from_str(text).expect("a shipped preset parses")
+    }
+}
+
+/// The journal: what ran long, what the agents asked, what opened and closed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Journal {
+    /// Whether the daemon writes it. One `list-panes` per `interval_secs`.
+    pub enabled: bool,
+    /// Seconds between two looks at the pane list.
+    pub interval_secs: u64,
+    /// How long a command has to run before finishing is worth a line.
+    pub min_secs: u64,
+}
+
+impl Default for Journal {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 5,
+            min_secs: 60,
+        }
     }
 }
 

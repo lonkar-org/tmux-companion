@@ -3,6 +3,58 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+The attention half of the name. 0.3.0 taught the daemon where the agents are
+and when they've stopped; this is what it does with that for you, and what it
+remembers.
+
+### Added
+
+- `inbox`: the agents waiting on you, longest wait first, each with the
+  question it asked. The daemon captures an agent's last screen lines the
+  moment it stops drawing, so the question is on record for a window nobody
+  has looked at since; one capture per stop, not one per read. Enter jumps
+  there. `[agents] nudge_after_secs` says it out loud once, through
+  `nudge_command` or tmux's own `display-message`, and the skill file tells
+  an agent to put its question on the last line and print nothing after it.
+
+- `brief`: what needs you, on one screen: the agents waiting and what each
+  asked, the reasons the health mark is up, the sessions nobody has touched
+  for three days, and one line of numbers with the last snapshot's age.
+  `--hook` on `client-attached` opens it only when something is waiting or
+  wrong, so attaching to a quiet server stays quiet.
+
+- `quiet 45m`: no notifications, no nudges and no agent count on the bar for
+  a while, with the health mark saying `quiet` in their place so the silence
+  reads as chosen. `quiet` alone says how long is left, `off` ends it. The
+  daemon keeps the clock, so every timer and every client agree.
+
+- `journal`: what happened in each project, written down as it happens by
+  the daemon: a command that ran past `[journal] min_secs` with how long it
+  took, an agent that stopped and what it asked, a project opened or closed.
+  Newest first, Enter goes to the session, `-t SESSION` is the standup
+  answer for one project, `--days` reaches back. `journal.tsv` in the state
+  directory, in local time, rotated like the daemon log.
+
+- `sessions export` and `sessions import`: a generation as one file that
+  reads on another machine, every path under home spelled `~`, the project
+  colours bundled, the screens left behind. Import stores it as a new
+  generation named after its source and adds the colours for the projects
+  this machine hasn't coloured; then `sessions resurrect` names the
+  directories that aren't there.
+
+- A note left on a pane with `note` goes through a snapshot and comes back on
+  restore, set with `select-pane -T` before anything runs in the pane.
+
+### Changed
+
+- `sessions list` says `imported` and where from on a generation that came
+  in through `import`, since its stamp is when it landed here.
+
+- `[agents] interval_secs` now paces the inbox as well as the bar's count,
+  and `[journal]` is a new table: `enabled`, `interval_secs`, `min_secs`.
+
 ## 0.3.0 - 2026-09-26
 
 The work of 2026-09-25 and 26, most of it from a review of the whole tool for the places where it went quiet when it shouldn't have. The one that

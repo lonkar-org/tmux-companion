@@ -114,6 +114,9 @@ The unit of parallel work is a window, not a session. One session is one project
 one window is one task inside it, and panes inside that window are the editor, the
 agent and a shell watching something.
 
+0. `journal --print -t SESSION` says what happened in a project today: what ran
+   long, what an agent asked, when it opened. Read it before asking the human
+   what they were doing.
 1. Find the project session first: `project --print`, or `list-panes -a` matched on
    `#{pane_current_path}`. `panes --print` lists every pane as
    `session:window.pane`, program, state, directory and pane id, one per line,

@@ -183,11 +183,24 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    // The journal: what ran long, written down as it finishes. Programs in
+    // [notify] ignore are not runs worth a line here either.
+    if config.journal.enabled {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        tokio::spawn(crate::journal::journal_loop(
+            config.journal.clone(),
+            config.notify.ignore.clone(),
+            shell,
+            Arc::clone(&state),
+        ));
+    }
+
     // The inbox: which agents have stopped and what each one asked, kept by
     // the daemon so the question is on record for a window nobody looked at.
     if config.agents.inbox && !config.agents.programs.is_empty() {
         tokio::spawn(crate::inbox::inbox_loop(
             config.agents.clone(),
+            config.journal.enabled,
             Arc::clone(&state),
         ));
     }
