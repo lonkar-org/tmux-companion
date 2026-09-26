@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.4.0 - 2026-09-26
 
 The attention half of the name. 0.3.0 taught the daemon where the agents are
 and when they've stopped; this is what it does with that for you, and what it
@@ -47,6 +47,19 @@ remembers.
 - A note left on a pane with `note` goes through a snapshot and comes back on
   restore, set with `select-pane -T` before anything runs in the pane.
 
+- `[agents] style = "glyphs"`: the robot and the count, an arrow, an
+  hourglass and the waiting count, `󰚩 2  1`, for a bar that already has
+  words on it. The three glyphs are `AGENT`, `AGENT_TO` and `WAITING` under
+  `[glyphs.icons]`.
+
+- A click on the bar. The `agents` and `health` segments carry a
+  `range=user|NAME` mark, the way tmux marks its own window list, so
+  `bind -T root MouseDown1StatusRight run-shell "tmux-companion click
+  '#{mouse_status_range}'"` reaches `click` with the segment's name: the
+  inbox for the count, the brief for the mark, or whatever
+  `[[status.right.segments]] on_click` says. The other segments carry no
+  mark, so the default side's output is byte for byte what it was.
+
 ### Changed
 
 - `sessions list` says `imported` and where from on a generation that came
@@ -54,6 +67,16 @@ remembers.
 
 - `[agents] interval_secs` now paces the inbox as well as the bar's count,
   and `[journal]` is a new table: `enabled`, `interval_secs`, `min_secs`.
+
+### Fixed
+
+- A process named only by its version counts as an agent. claude sets its
+  process title to its version, so tmux reported its pane as `2.1.283` and
+  nothing in `[agents] programs` matched it; on the laptop this was written
+  on it was the only agent running and the bar, the inbox, the brief,
+  `panes --agents` and the nudge all said none. The same rule keeps `[notify]`
+  and the journal from treating a claude session ending as a command
+  finishing.
 
 ## 0.3.0 - 2026-09-26
 

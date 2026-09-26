@@ -1,6 +1,6 @@
 [package]
 name = "tmux-companion"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 # The floor the locked tree builds on, not the floor the source needs: the
 # code itself wants 1.88 (let chains), and sysinfo 0.39.3 in Cargo.lock wants
