@@ -596,6 +596,18 @@ Bound to
 .El
 .Sh SESSIONS AND WINDOWS
 .Bl -tag -width Ds
+.It Ic note Oo Ar text Oc Op Fl -pane Ar id , Fl -clear
+Leave a one-line note on a pane: tmux's pane title, which
+.Ic panes
+shows beside the program and the pane border draws when
+.Ic pane-border-status
+is on.
+With no text it prints the note that is there;
+.Fl -clear
+takes it off.
+The pane defaults to the one the key was pressed in.
+An agent working beside you can say what it is doing in four words with this,
+and the skill file tells it to.
 .It Ic toggle Oo Ar session Oc Op Fl -last
 Move to the next window in this session, in index order, wrapping from the
 last to the first.

@@ -77,6 +77,7 @@ description they had.
 | `src/lib.rs` | one binary in two modes; the library `tests/` links against |
 | `src/local.rs` | running a segment in this process, with no daemon and no socket |
 | `src/main.rs` | the binary: parses arguments, picks a runtime, hands over to the library |
+| `src/note.rs` | a one-line note on a pane, for the human who reads the bar and the picker |
 | `src/notify.rs` | telling you a long command finished in a pane you were not looking at |
 | `src/open.rs` | open a URL or a file reference found in text |
 | `src/panes.rs` | every pane on the server, as a list to jump from, and the agents among them |

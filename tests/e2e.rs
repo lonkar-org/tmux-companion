@@ -1218,6 +1218,42 @@ fn panes_lists_what_runs_where_and_the_bar_counts_the_agents() {
 }
 
 #[test]
+fn a_note_on_a_pane_is_what_panes_shows_beside_the_program() {
+    let Some(t) = Tmux::start("note") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    send_when_ready(&t, "=alpha:", "sleep 300");
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("sleep"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+    let id = t.tmux(&["display-message", "-p", "-t", "=alpha:", "#{pane_id}"]);
+    let id = id.trim();
+
+    let (_, err, ok) = t.run(&["note", "--pane", id, "claude: cache"]);
+    assert!(ok, "note failed:\n{err}");
+    let (out, _, ok) = t.run(&["note", "--pane", id]);
+    assert!(ok);
+    assert_eq!(out.trim(), "claude: cache");
+
+    let (out, err, ok) = t.run(&["panes", "--print"]);
+    assert!(ok, "panes --print failed:\n{err}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("alpha:") && l.contains("claude: cache")),
+        "the note is not beside the program: {out:?}"
+    );
+
+    let (_, _, ok) = t.run(&["note", "--pane", id, "--clear"]);
+    assert!(ok);
+    let (out, _, _) = t.run(&["panes", "--print"]);
+    assert!(!out.contains("claude: cache"), "{out:?}");
+}
+
+#[test]
 fn the_health_mark_appears_when_the_config_changes_under_a_running_daemon() {
     // The [autosave] timer failed for a day with only the log to show for it.
     // This drives the one case a test can make happen on purpose: the daemon

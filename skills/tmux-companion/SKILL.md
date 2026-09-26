@@ -127,7 +127,10 @@ agent and a shell watching something.
 3. A task that is genuinely separate gets its own window. Name it after the task,
    `tmux rename-window -t SESSION:IDX rebuild-cache`, so the human reading the
    status bar knows which window is yours without switching to it.
-4. Name the pane too when a window holds more than one: `tmux select-pane -t ... -T 'claude: cache'`.
+4. Name the pane too when a window holds more than one, and say what you are doing
+   in it: `tmux-companion note 'claude: cache'` (add `--pane ID` from another pane).
+   `panes` shows the note beside the program, so the human sees it without
+   switching; `note --clear` when you are done.
 5. Long jobs belong in a pane the human is not watching. `[notify]` announces a
    command that ran past `threshold_secs`, 30 by default, and finished in a pane
    nobody was looking at, through tmux's own `display-message` unless a `command`
@@ -319,7 +322,7 @@ and nothing in it is searchable history.
 
 ## Leaving a note a human will see
 
-- `tmux rename-window`, `tmux select-pane -T 'claude: auth'`
+- `tmux rename-window`, `tmux-companion note 'claude: auth'`
 - A file in the repo, in a sibling pane. Scrollback does not survive a restore in
   any form worth relying on
 

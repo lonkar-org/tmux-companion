@@ -34,6 +34,7 @@ pub mod keys;
 /// Running a segment in this process, with no daemon.
 pub mod local;
 /// Announcing a long command that finished out of sight.
+pub mod note;
 pub mod notify;
 /// Opening a URL or file found in text.
 pub mod open;

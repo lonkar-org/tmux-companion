@@ -402,6 +402,19 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// Leave a one-line note on a pane, shown by `panes` and in the pane
+    /// border; with nothing to say it prints the note that is there
+    Note {
+        /// The note; empty clears it
+        text: Option<String>,
+        /// The pane, defaulting to the one the key was pressed in
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+        /// Take the note off
+        #[arg(long, conflicts_with = "text")]
+        clear: bool,
+    },
+
     /// A cheat sheet of the bindings you wrote, in four boxes
     Cheatsheet {
         /// Print and exit instead of waiting for a keypress
@@ -877,6 +890,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
         Cmd::Theme { action } => crate::theme::cli::run(action)?,
@@ -2484,7 +2498,7 @@ async fn run_project_show(dir: Option<String>) -> anyhow::Result<()> {
 /// editor opened on a path from another project. tmux sets `$TMUX_PANE` in
 /// every pane and in every binding it runs, so there is an exact answer
 /// available and no reason to guess.
-fn pane_target() -> Option<String> {
+pub(crate) fn pane_target() -> Option<String> {
     match std::env::var("TMUX_PANE") {
         Ok(p) if !p.trim().is_empty() => Some(p),
         _ => None,
@@ -2564,7 +2578,7 @@ async fn tmux_display(format: &str) -> String {
 ///
 /// `target` wins when it is given; otherwise this falls back to `$TMUX_PANE`,
 /// and to tmux's own current pane when there is neither.
-async fn tmux_display_at(target: Option<&str>, format: &str) -> String {
+pub(crate) async fn tmux_display_at(target: Option<&str>, format: &str) -> String {
     if let Some(pane) = target.map(str::to_string).or_else(pane_target) {
         let answered = display_message(&["-t", &pane, format]).await;
         if !answered.is_empty() {
