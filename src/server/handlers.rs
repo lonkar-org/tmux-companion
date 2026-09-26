@@ -418,7 +418,7 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
 /// other segment behind a process spawn. Nothing is read at all when no
 /// configured segment is `agents`.
 async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
-    let (wanted, cached, programs, waiting_secs, bar_bg) = {
+    let (wanted, cached, programs, waiting_secs, bar_bg, style) = {
         let s = state.lock().await;
         (
             // Quiet hours take the count off the bar; the health mark says
@@ -428,6 +428,7 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
             s.config.agents.programs.clone(),
             s.config.agents.waiting_secs,
             s.config.bar.background.clone(),
+            s.config.agents.style,
         )
     };
     if !wanted {
@@ -441,7 +442,7 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
             fresh
         }
     };
-    segments::agents::format_agents(sample.total, sample.waiting, &bar_bg)
+    segments::agents::format_agents(sample.total, sample.waiting, &bar_bg, style)
 }
 
 fn segment_or_empty(

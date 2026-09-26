@@ -8,6 +8,7 @@
 ADDED = "+"
 AGENT = "ai "
 HEALTH = "! "
+WAITING = "? "
 AHEAD = "^"
 BEHIND = "v"
 BRANCH = ""

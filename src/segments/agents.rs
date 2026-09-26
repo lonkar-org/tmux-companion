@@ -12,8 +12,12 @@
 //! whatever the number of attached clients, and not at all when no configured
 //! segment asks for it.
 
+use crate::config::AgentsStyle;
 use crate::panes::{self, Pane, WAITING_COLOUR};
-use crate::tmux::{format::colored_segment, icons::AGENT};
+use crate::tmux::{
+    format::colored_segment,
+    icons::{AGENT, WAITING},
+};
 
 /// The colour of the count when nothing is waiting.
 const QUIET_COLOUR: &str = crate::tmux::format::FG_GREY89;
@@ -53,24 +57,25 @@ pub async fn sample(programs: &[String], waiting_secs: u64) -> AgentsSample {
 /// Nothing rather than `0 agents` on purpose: a bar with no agents on it
 /// should not carry a segment about them, and an empty render is what makes
 /// the side drop this segment's separator along with it.
-pub fn format_agents(total: usize, waiting: usize, bar_bg: &str) -> String {
+pub fn format_agents(total: usize, waiting: usize, bar_bg: &str, style: AgentsStyle) -> String {
     if total == 0 {
         return String::new();
     }
-    let plural = if total == 1 { "" } else { "s" };
-    let mut out = colored_segment(
-        false,
-        QUIET_COLOUR,
-        bar_bg,
-        &format!("{AGENT}{total} agent{plural}"),
-    );
+    let (quiet, loud) = match style {
+        AgentsStyle::Words => {
+            let plural = if total == 1 { "" } else { "s" };
+            (
+                format!("{AGENT}{total} agent{plural}"),
+                format!(" \u{b7} {waiting} waiting"),
+            )
+        }
+        // `󰚩 2   1`: the count beside the robot, the waiting count beside a
+        // raised hand, and nothing spelled out.
+        AgentsStyle::Glyphs => (format!("{AGENT}{total}"), format!("  {WAITING}{waiting}")),
+    };
+    let mut out = colored_segment(false, QUIET_COLOUR, bar_bg, &quiet);
     if waiting > 0 {
-        out.push_str(&colored_segment(
-            false,
-            WAITING_COLOUR,
-            bar_bg,
-            &format!(" \u{b7} {waiting} waiting"),
-        ));
+        out.push_str(&colored_segment(false, WAITING_COLOUR, bar_bg, &loud));
     }
     out
 }
@@ -82,25 +87,50 @@ mod tests {
     const BAR: &str = "colour233";
 
     #[test]
+    fn the_glyph_style_is_the_robot_a_count_a_hand_and_a_count() {
+        let drawn = format_agents(2, 1, BAR, AgentsStyle::Glyphs);
+        let plain: String = strip(&drawn);
+        assert_eq!(plain, format!("{AGENT}2  {WAITING}1"));
+        assert!(!strip(&format_agents(2, 0, BAR, AgentsStyle::Glyphs)).contains(WAITING));
+        assert_eq!(format_agents(0, 0, BAR, AgentsStyle::Glyphs), "");
+    }
+
+    /// The text without the tmux colour markup.
+    fn strip(s: &str) -> String {
+        let mut out = String::new();
+        let mut skip = false;
+        for c in s.chars() {
+            match c {
+                '#' => {}
+                '[' if !skip => skip = true,
+                ']' if skip => skip = false,
+                _ if !skip => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
     fn no_agents_is_no_segment() {
-        assert_eq!(format_agents(0, 0, BAR), "");
+        assert_eq!(format_agents(0, 0, BAR, AgentsStyle::Words), "");
     }
 
     #[test]
     fn a_count_with_nothing_waiting_is_one_colour() {
-        let out = format_agents(3, 0, BAR);
+        let out = format_agents(3, 0, BAR, AgentsStyle::Words);
         assert_eq!(out, format!("#[fg={QUIET_COLOUR},bg={BAR}]{AGENT}3 agents"));
         assert!(!out.contains("waiting"));
     }
 
     #[test]
     fn one_agent_is_singular() {
-        assert!(format_agents(1, 0, BAR).ends_with("1 agent"));
+        assert!(format_agents(1, 0, BAR, AgentsStyle::Words).ends_with("1 agent"));
     }
 
     #[test]
     fn the_waiting_count_is_the_part_that_stands_out() {
-        let out = format_agents(4, 1, BAR);
+        let out = format_agents(4, 1, BAR, AgentsStyle::Words);
         assert!(out.starts_with(&format!("#[fg={QUIET_COLOUR},bg={BAR}]{AGENT}4 agents")));
         assert!(
             out.ends_with(&format!("#[fg={WAITING_COLOUR},bg={BAR}] \u{b7} 1 waiting")),
@@ -110,7 +140,7 @@ mod tests {
 
     #[test]
     fn the_bar_background_is_the_one_given() {
-        assert!(format_agents(1, 1, "#121212").contains("bg=#121212"));
+        assert!(format_agents(1, 1, "#121212", AgentsStyle::Words).contains("bg=#121212"));
     }
 
     #[test]

@@ -768,6 +768,10 @@ pub struct Agents {
     /// `{program}`, `{at}`, `{waited}` and `{question}` are substituted
     /// anywhere they appear.
     pub nudge_command: Vec<String>,
+    /// How the bar's `agents` segment reads: `words` is `2 agents · 1
+    /// waiting`, `glyphs` is the robot, the count, and a raised hand with the
+    /// waiting count, for a bar that is already full of words.
+    pub style: AgentsStyle,
 }
 
 impl Default for Agents {
@@ -789,6 +793,7 @@ impl Default for Agents {
             inbox: true,
             nudge_after_secs: 0,
             nudge_command: Vec::new(),
+            style: AgentsStyle::Words,
         }
     }
 }
@@ -1571,6 +1576,17 @@ impl Preset {
         };
         toml::from_str(text).expect("a shipped preset parses")
     }
+}
+
+/// How the `agents` segment spells its count.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentsStyle {
+    /// `2 agents · 1 waiting`.
+    #[default]
+    Words,
+    /// The robot and a count, then a raised hand and a count when any wait.
+    Glyphs,
 }
 
 /// The journal: what ran long, what the agents asked, what opened and closed.

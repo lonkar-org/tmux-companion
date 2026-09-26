@@ -508,6 +508,11 @@ nudge_after_secs = 0
 #
 #   nudge_command = ["osascript", "-e", "display notification \"{question}\" with title \"{program} at {at} is waiting ({waited})\""]
 nudge_command = []
+# How the bar's segment reads. `words` is `2 agents · 1 waiting`; `glyphs` is
+# the robot and the count, then a raised hand and the waiting count, for a
+# bar that is already full of words. The glyphs are AGENT and WAITING under
+# [glyphs.icons] if the font disagrees.
+style = "words"
 
 [window_names]
 # Name a window after what is running in its active pane, using the same

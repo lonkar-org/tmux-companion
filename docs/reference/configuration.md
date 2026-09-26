@@ -412,7 +412,12 @@ interval_secs = 2
 inbox = true
 nudge_after_secs = 0
 nudge_command = []
+style = "words"
 ```
+
+`style = "glyphs"` draws the segment as the robot and the count, then a
+raised hand and the waiting count, for a bar already full of words; the two
+glyphs are `AGENT` and `WAITING` under `[glyphs.icons]`.
 
 `inbox` keeps the agents that have stopped, with the last lines of each one's
 screen captured the moment it stopped, so `tmux-companion inbox` shows the
