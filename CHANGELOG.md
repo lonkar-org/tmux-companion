@@ -124,7 +124,7 @@ it by accident while chasing an `M-a` bug.
 
 - `project show` names a saved-layout file that is there and not used, with
   the reason: it doesn't parse, it has no windows, or an older build wrote
-  tmux's `default-command` where every pane's program should be. Three cases
+  tmux's `default-command` where every pane's program should be. All of those
   collapsed into "the config decided" while the file sat there.
 
 - `project --print` with a directory is refused; it opened the session and
