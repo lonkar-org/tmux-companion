@@ -14,6 +14,16 @@ pub fn build_id() -> String {
     BUILD_ID.to_string()
 }
 
+/// `agent`: what an agent says about itself, and which pane it is in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentArgs {
+    /// `#{pane_id}`, from `$TMUX_PANE` in the hook's environment.
+    pub pane: String,
+    /// Busy, asked or done.
+    pub state: crate::panes::Report,
+}
+
 /// `quiet`: how long to be quiet for, zero for off, nothing to only ask.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

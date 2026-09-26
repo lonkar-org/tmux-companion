@@ -122,7 +122,7 @@ agent and a shell watching something.
    `session:window.pane`, program, state, directory and pane id, one per line,
    and `panes --agents --print` only the panes running a program in
    `[agents] programs`; that is how you find where the other agents are and
-   whether one is `busy` or `waiting 3m`. Work there. A second session for a
+   whether one is `busy`, `asked 3m`, `done 3m` or `waiting 3m`. Work there. A second session for a
    repo that already has one splits the human's attention and breaks
    `project show`.
 2. One agent per repository unless the human asked for more. Two agents in one
@@ -133,7 +133,11 @@ agent and a shell watching something.
 4. When you stop to ask the human something, the daemon captures the last lines
    of your screen at that moment and `tmux-companion inbox` shows them beside
    your pane, so put the question on the last line, on its own, and do not print
-   anything after it until it is answered.
+   anything after it until it is answered. The daemon knows you stopped when
+   your hooks say so (`tmux-companion agent hooks claude` prints the block for
+   `settings.json`), when you ring the terminal bell, or, failing both, when
+   your window has drawn nothing for `[agents] waiting_secs`; a hook that says
+   `busy` during a long silent tool run is what keeps you off the inbox then.
 5. Name the pane too when a window holds more than one, and say what you are doing
    in it: `tmux-companion note 'claude: cache'` (add `--pane ID` from another pane).
    `panes` shows the note beside the program, so the human sees it without

@@ -76,6 +76,10 @@ pub struct ServerState {
     pub nudged: std::collections::HashSet<String>,
     /// When quiet hours end, in unix seconds; none or past means not quiet.
     pub quiet_until: Option<u64>,
+    /// What each agent last said about itself, keyed by pane id, from
+    /// `tmux-companion agent` run out of its hooks. Dropped when the pane
+    /// goes or stops running an agent.
+    pub reports: crate::panes::Reports,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
@@ -130,6 +134,7 @@ impl ServerState {
             inbox: std::collections::HashMap::new(),
             nudged: std::collections::HashSet::new(),
             quiet_until: None,
+            reports: crate::panes::Reports::new(),
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),
@@ -261,6 +266,21 @@ impl ServerState {
     /// Store a count with the time the list was read.
     pub fn agents_store(&mut self, sample: AgentsSample) {
         self.agents_cache = Some((sample, Instant::now()));
+    }
+
+    /// Keep only the reports about panes still running an agent.
+    ///
+    /// A report is trusted for as long as the pane it names runs an agent,
+    /// so this is the one place it goes: when the pane vanishes, or a shell
+    /// takes its place. Called by whichever task read the pane list last.
+    pub fn retain_reports(&mut self, panes: &[crate::panes::Pane]) {
+        let programs = &self.config.agents.programs;
+        let live: std::collections::HashSet<&str> = panes
+            .iter()
+            .filter(|p| crate::panes::is_agent(&p.command, programs))
+            .map(|p| p.id.as_str())
+            .collect();
+        self.reports.retain(|id, _| live.contains(id.as_str()));
     }
 
     /// Whether quiet hours are on right now.
@@ -438,6 +458,7 @@ mod tests {
         let sample = AgentsSample {
             total: 2,
             waiting: 1,
+            busy: 1,
         };
         st.agents_store(sample);
         assert_eq!(st.agents_cached(), Some(sample));

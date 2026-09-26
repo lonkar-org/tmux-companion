@@ -63,6 +63,7 @@ description they had.
 
 | Path | Owns |
 |------|------|
+| `src/agent.rs` | what an agent says about itself, and the hooks that make it say so |
 | `src/autofetch.rs` | fetching in the background, so ahead and behind mean something |
 | `src/autoreload.rs` | sourcing tmux's config when it changes |
 | `src/brief.rs` | one screen with the state of the server, for the moment you sit down |
@@ -99,7 +100,7 @@ description they had.
 | `src/run.rs` | run a command from history in a pane beside the one you are in |
 | `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |
 | `src/segments/mod.rs` | one module per thing the status bar can draw |
-| `src/segments/agents.rs` | how many coding agents are running, and how many are waiting on you |
+| `src/segments/agents.rs` | how many coding agents are running, and how many are busy or waiting on you |
 | `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |
 | `src/segments/clients.rs` | how many other clients are attached to this server, session and window |
 | `src/segments/health.rs` | one mark on the bar when the daemon knows something is wrong |

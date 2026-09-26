@@ -421,6 +421,14 @@ pub enum Cmd {
         hook: bool,
     },
 
+    /// What an agent is doing, said by the agent itself from a hook: busy,
+    /// asked or done; `hooks` prints the settings block that wires it up
+    Agent {
+        /// What to say, or `hooks`
+        #[command(subcommand)]
+        action: crate::agent::AgentAction,
+    },
+
     /// The agents waiting on you, each with the question it asked; enter
     /// jumps there
     Inbox {
@@ -950,6 +958,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         } => crate::panes::run(agents, print, target).await?,
         Cmd::Click { range } => crate::click::run(range).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
+        Cmd::Agent { action } => crate::agent::run(action).await?,
         Cmd::Inbox { print } => crate::inbox::run(print).await?,
         Cmd::Journal {
             print,

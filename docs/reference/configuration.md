@@ -413,11 +413,30 @@ inbox = true
 nudge_after_secs = 0
 nudge_command = []
 style = "words"
+show = "waiting"
 ```
 
 `style = "glyphs"` draws the segment as the robot and the count, then an
 arrow, an hourglass and the waiting count, for a bar already full of words;
-the glyphs are `AGENT`, `AGENT_TO` and `WAITING` under `[glyphs.icons]`.
+the glyphs are `AGENT`, `AGENT_TO`, `WAITING` and `BUSY` under
+`[glyphs.icons]`.
+
+`show` picks the count after the total. `waiting` is the agents that have
+stopped: one whose hook said `asked` or `done`, one that rang the bell, or one
+quiet past `waiting_secs`. `busy` is the agents working, drawn with the
+progress glyph in the glyph style, which is the number to watch when you keep
+a dozen agents open and work one at a time: `󰚩 12 󰦖 1` says one is going and
+eleven are sitting, where the waiting count would say eleven and mean nothing.
+`both` draws both, busy first.
+
+An agent can say which it is rather than leaving the daemon to guess from
+silence. `tmux-companion agent busy`, `asked` or `done`, run from the agent's
+own hooks, is kept per pane and wins over the window's quiet time everywhere
+the daemon reads it; `tmux-companion agent hooks claude` prints the
+`settings.json` block that wires claude up. Without hooks, an agent that rings
+the terminal bell when it needs you (claude's `preferredNotifChannel` set to
+`terminal_bell`) reads as `asked` until its window is visited, since tmux keeps
+the bell flag up until then.
 
 A click on the segment opens the inbox, and one on `health` the brief, once
 tmux.conf has `bind -T root MouseDown1StatusRight run-shell "tmux-companion

@@ -25,17 +25,19 @@ pub struct Brief {
     pub idle: Vec<IdleSession>,
     /// How many sessions the server has.
     pub sessions: usize,
-    /// How many agents run, and how many of those are waiting.
-    pub agents: (usize, usize),
+    /// How many agents run, how many of those are busy, and how many are
+    /// waiting.
+    pub agents: (usize, usize, usize),
     /// The last snapshot's stamp and how long ago it was taken, when any.
     pub last_snapshot: Option<(String, u64)>,
 }
 
 impl Brief {
-    /// Whether the screen has anything that needs a person: a waiting agent,
-    /// or a health reason. Idle sessions and an old snapshot are not news.
+    /// Whether the screen has anything that needs a person: an agent that
+    /// asked or went quiet, or a health reason. One that said `done`
+    /// answered and can wait; idle sessions and an old snapshot are not news.
     pub fn has_news(&self) -> bool {
-        !self.waiting.is_empty() || !self.health.is_empty()
+        self.waiting.iter().any(|e| e.state != "done") || !self.health.is_empty()
     }
 }
 
@@ -76,9 +78,10 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
         out.push_str(&format!("Waiting on you ({})\n", b.waiting.len()));
         for e in &b.waiting {
             out.push_str(&format!(
-                "  {:<14} {:<12} {:<5} {}\n",
+                "  {:<14} {:<12} {:<7} {:<5} {}\n",
                 e.at,
                 e.program,
+                e.state,
                 crate::panes::age(now.saturating_sub(e.since)),
                 inbox::question(&e.lines)
             ));
@@ -107,12 +110,13 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
         None => "no snapshot yet".to_string(),
     };
     out.push_str(&format!(
-        "{} session{}, {} agent{} ({} waiting), {snapshot}\n",
+        "{} session{}, {} agent{} ({} busy, {} waiting), {snapshot}\n",
         b.sessions,
         if b.sessions == 1 { "" } else { "s" },
         b.agents.0,
         if b.agents.0 == 1 { "" } else { "s" },
-        b.agents.1
+        b.agents.1,
+        b.agents.2
     ));
     out
 }
@@ -128,9 +132,10 @@ pub async fn gather() -> Brief {
             .map(|r| r.output)
             .unwrap_or_default()
     };
-    let (inbox_json, health_text, idle, sessions_text) = tokio::join!(
+    let (inbox_json, health_text, reports, idle, sessions_text) = tokio::join!(
         ask("__inbox"),
         ask("__health"),
+        crate::panes::reports(),
         crate::sessions::idle::list(IDLE_DAYS),
         crate::cli::tmux_capture(&["list-sessions", "-F", "#{session_name}"]),
     );
@@ -145,6 +150,7 @@ pub async fn gather() -> Brief {
     let sample = crate::segments::agents::count(
         &panes,
         &config.agents.programs,
+        &reports,
         now,
         config.agents.waiting_secs,
     );
@@ -162,7 +168,7 @@ pub async fn gather() -> Brief {
             .lines()
             .filter(|l| !l.trim().is_empty())
             .count(),
-        agents: (sample.total, sample.waiting),
+        agents: (sample.total, sample.busy, sample.waiting),
         last_snapshot,
     }
 }
@@ -235,7 +241,7 @@ mod tests {
         assert!(text.starts_with("Nothing is waiting on you.\n"), "{text}");
         assert!(text.contains("Health: ok\n"), "{text}");
         assert!(
-            text.contains("3 sessions, 0 agents (0 waiting), no snapshot yet"),
+            text.contains("3 sessions, 0 agents (0 busy, 0 waiting), no snapshot yet"),
             "{text}"
         );
         assert!(!text.contains("Idle for"), "{text}");
@@ -256,14 +262,24 @@ mod tests {
             activity: 700,
             in_mode: false,
             host: "laptop".into(),
+            bell: false,
+        };
+        let asked = |lines: &str| {
+            inbox::entry(
+                &pane,
+                crate::panes::State::Waiting(300),
+                None,
+                "/home/me",
+                lines.into(),
+            )
         };
         let b = Brief {
-            waiting: vec![inbox::entry(&pane, "/home/me", "> Continue? (y/n)".into())],
+            waiting: vec![asked("> Continue? (y/n)")],
             health: vec![
                 "config.toml changed after the daemon started; run tmux-companion restart".into(),
             ],
             sessions: 1,
-            agents: (1, 1),
+            agents: (1, 0, 1),
             last_snapshot: Some(("20260926T133256".into(), 720)),
             ..Default::default()
         };
@@ -280,8 +296,18 @@ mod tests {
         );
         assert!(text.contains("Health\n  config.toml changed"), "{text}");
         assert!(
-            text.ends_with("1 session, 1 agent (1 waiting), last snapshot 12m ago\n"),
+            text.ends_with("1 session, 1 agent (0 busy, 1 waiting), last snapshot 12m ago\n"),
             "{text}"
         );
+        // An agent that said `done` is listed, but it is not news.
+        let mut done = asked("Here is the diff.");
+        done.state = "done".into();
+        let quiet = Brief {
+            waiting: vec![done],
+            sessions: 1,
+            ..Default::default()
+        };
+        assert!(!quiet.has_news());
+        assert!(render(&quiet, 1000, "/home/me").contains("done"));
     }
 }

@@ -16,6 +16,8 @@ pub const AGENT: &str = "\u{f06a9} ";
 pub const AGENT_TO: &str = "\u{f432} ";
 /// nf-fa-hourglass_start, the agents segment's "waiting" in its glyph style.
 pub const WAITING: &str = "\u{f251} ";
+/// `nf-md-progress_check`: the busy count on the `agents` segment.
+pub const BUSY: &str = "\u{f0996} ";
 /// nf-md-alert, the mark the health segment draws.
 pub const HEALTH: &str = "\u{f0026} ";
 /// Commits this branch has that its upstream does not (md-arrow_up).
@@ -119,6 +121,7 @@ pub fn by_name(name: &str) -> Option<&'static str> {
         "AGENT" => Some(AGENT),
         "HEALTH" => Some(HEALTH),
         "WAITING" => Some(WAITING),
+        "BUSY" => Some(BUSY),
         "AGENT_TO" => Some(AGENT_TO),
         "AHEAD" => Some(AHEAD),
         "ARROW_RIGHT" => Some(ARROW_RIGHT),

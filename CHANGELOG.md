@@ -3,6 +3,35 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+### Added
+
+- `agent busy`, `agent asked`, `agent done`: what an agent is doing, said by
+  the agent itself from one of its hooks, kept per pane by the daemon and
+  winning over the window's quiet time on the bar, in the inbox, in `panes`
+  and in the brief. `agent hooks claude` prints the `settings.json` block
+  that wires claude up: a prompt sent or a tool finished is busy, a
+  permission prompt or an `AskUserQuestion` is asked, the end of a response is
+  done. Silence alone could not tell a two-minute build from a question, and
+  called every idle agent waiting.
+
+- The terminal bell as a signal: an agent pane whose window rang the bell and
+  has not been visited since reads as `asked`, which covers any agent with no
+  hooks that can ring one.
+
+- `[agents] show`: which count follows the total on the bar. `waiting`, as
+  before; `busy`, drawn with the progress glyph, for somebody who keeps a
+  dozen agents open and works one at a time; or `both`. `BUSY` joins the
+  glyph names under `[glyphs.icons]`.
+
+### Changed
+
+- The inbox and the brief say how an agent stopped: `asked`, `done` or
+  `waiting`. A `done` agent is listed so the answer can be read, is not
+  coloured, and is not news for `brief --hook`; `panes` reads the same words.
+  The brief's numbers line counts busy as well as waiting.
+
 ## 0.4.0 - 2026-09-26
 
 The attention half of the name. 0.3.0 taught the daemon where the agents are

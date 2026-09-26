@@ -515,9 +515,18 @@ nudge_after_secs = 0
 nudge_command = []
 # How the bar's segment reads. `words` is `2 agents · 1 waiting`; `glyphs` is
 # the robot and the count, then an arrow, an hourglass and the waiting count,
-# for a bar that is already full of words. The glyphs are AGENT, AGENT_TO
-# and WAITING under [glyphs.icons] if the font disagrees.
+# for a bar that is already full of words. The glyphs are AGENT, AGENT_TO,
+# WAITING and BUSY under [glyphs.icons] if the font disagrees.
 style = "words"
+# Which count follows the total. `waiting` is the agents that have stopped:
+# one that said `asked` or `done` through its hooks, one that rang the bell,
+# or one quiet past waiting_secs. `busy` is the agents working, for somebody
+# who keeps a dozen open and works one at a time and wants to see the one
+# that is going rather than the eleven that are not. `both` draws both, busy
+# first. An agent can say which it is: `tmux-companion agent hooks claude`
+# prints the settings block that makes claude report busy, asked and done as
+# they happen, and a report wins over the window's quiet time.
+show = "waiting"
 
 [window_names]
 # Name a window after what is running in its active pane, using the same

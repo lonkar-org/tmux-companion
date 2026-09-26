@@ -156,6 +156,18 @@ set to
 .Ql glyphs
 draws the robot and the count, then an arrow, an hourglass and the waiting
 count, with nothing spelled out.
+.Ic [agents] show
+picks the count after the total:
+.Ql waiting ,
+the agents that have stopped, whether a hook said
+.Cm asked
+or
+.Cm done ,
+the bell rang, or the window went quiet;
+.Ql busy ,
+the agents that are working, drawn with the progress glyph, for somebody who
+keeps a dozen open and works one at a time; or
+.Ql both .
 It draws nothing when no agent is running, and the pane list behind it is read
 at most once per
 .Ic [agents] interval_secs
@@ -573,15 +585,77 @@ The same hint as
 when no binding carries the note.
 Bound to
 .Ql prefix C-c .
+.It Ic agent Cm busy | asked | done Op Fl -pane Ar id
+What an agent is doing, said by the agent itself.
+Run from one of its hooks, it tells the daemon that the agent in
+.Ev $TMUX_PANE
+is working
+.Pq Cm busy :
+a prompt was sent or a tool just ran ,
+has stopped on a question or a permission prompt
+.Pq Cm asked ,
+or has finished its answer and waits for the next prompt
+.Pq Cm done .
+The last word per pane wins over the window's quiet time everywhere the
+daemon reads it: the bar's
+.Ic agents
+segment, the inbox, the
+.Ic panes
+picker and the brief, and it lasts as long as the pane runs one of
+.Ic [agents] programs .
+Nothing is printed and the exit is 0 whatever happens, since the command runs
+inside the agent's own hook and an error there would land in its transcript;
+outside tmux it does nothing.
+.Fl -pane
+names another pane.
+.It Ic agent hooks Op Ar program
+Print the hooks block for an agent's settings file, the way
+.Ic shell-init
+prints the prompt marks.
+For
+.Ql claude ,
+the only program so far, that is
+.Ql UserPromptSubmit
+and
+.Ql PostToolUse
+saying busy,
+.Ql Stop
+saying done, and
+.Ql Notification
+on a permission prompt or
+.Ql PreToolUse
+on
+.Ql AskUserQuestion
+saying asked, to merge into
+.Pa ~/.claude/settings.json .
+.Ql idle_prompt
+is left out on purpose: it fires a minute after every answer and would turn
+each
+.Cm done
+into a question.
+Between a hook and silence sits the terminal bell: an agent that rings it
+sets the window's bell flag until the window is visited, and an agent pane
+with the flag up reads as asked.
 .It Ic inbox Op Fl -print
 The agents waiting on you, longest wait first, each with the question it
 asked: the daemon captures the last lines of an agent's screen the moment it
-stops drawing, so the question is on record for a window nobody has looked at
-since.
+stops drawing, or the moment its hook says
+.Cm asked
+or
+.Cm done ,
+so the question is on record for a window nobody has looked at since.
+The third column says how it stopped and for how long:
+.Ql asked 3m
+for a hook or the bell,
+.Ql done 3m
+for a hook that said the answer was complete, which is on the list to be read
+rather than answered and is not coloured, and
+.Ql waiting 3m
+for silence alone.
 Enter switches the attached client to that pane.
 .Fl -print
-writes where, program, how long, the question and the pane id as tab-separated
-columns.
+writes where, program, state and how long, the question and the pane id as
+tab-separated columns.
 .Ic [agents] inbox
 turns the capture off, and
 .Ic [agents] nudge_after_secs
@@ -594,11 +668,16 @@ lines of its screen in the preview.
 Enter switches the attached client to that pane, whatever session it is in.
 The pane this runs in is left out, since jumping to where you are is nothing.
 The state column reads
-.Ql busy
+.Ql busy ,
+.Ql asked 3m ,
+.Ql done 3m
 or
 .Ql waiting 3m
 for a pane running one of
 .Ic [agents] programs ,
+the first three when the agent said so through
+.Ic agent
+or rang the bell and the last when only the window's quiet time is known,
 .Ql active
 or
 .Ql idle 3m
@@ -1019,9 +1098,14 @@ the
 .Ic agents
 segment and the restore headline alike;
 .Ic waiting_secs
-is how long one has to be quiet before it counts as waiting on you, and
+is how long one has to be quiet before it counts as waiting on you, when it
+has not said better through
+.Ic agent ,
 .Ic interval_secs
-how often the bar's segment re-reads the pane list.
+how often the bar's segment re-reads the pane list, and
+.Ic show
+whether the count after the total is the agents waiting, the agents busy, or
+both.
 .Ic [open] split
 is which side the editor opens on,
 .Ql right

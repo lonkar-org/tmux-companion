@@ -1260,6 +1260,99 @@ fn the_inbox_holds_an_agent_that_stopped_with_what_its_screen_said() {
     assert!(cols[4].starts_with('%'), "{row:?}");
 }
 
+/// What an agent reports about itself wins over the window's quiet time, and
+/// lasts as long as the pane runs an agent.
+///
+/// The sleeping "agent" would read as `waiting` within a second of starting;
+/// a report of `busy` for its pane keeps it busy on the bar and out of the
+/// inbox, and one of `asked` puts it there at once with the word in the row.
+#[test]
+fn an_agent_that_reports_is_believed_over_its_silence() {
+    let Some(t) = Tmux::start("agent") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[agents]\nprograms = [\"sleep\"]\nwaiting_secs = 1\ninterval_secs = 1\nshow = \"both\"\n\n\
+         [[status.right.segments]]\nname = \"agents\"\nseparator_before = \" \"\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    send_when_ready(&t, "=alpha:", "sleep 300");
+    assert!(
+        t.until(10, |t| t.panes().iter().any(|p| p.contains("sleep"))),
+        "the fixture never started: {:?}",
+        t.panes()
+    );
+    let (out, _, _) = t.run(&["panes", "--agents", "--print"]);
+    let id = out
+        .lines()
+        .find(|l| l.starts_with("alpha:"))
+        .and_then(|l| l.split('\t').next_back())
+        .unwrap_or_else(|| panic!("no agent row in {out:?}"))
+        .to_string();
+
+    // Busy: the row says so however long the pane has been quiet.
+    let (out, err, ok) = t.run(&["agent", "busy", "--pane", &id]);
+    assert!(ok && out.is_empty() && err.is_empty(), "{out:?} {err:?}");
+    let (out, _, _) = t.run(&["panes", "--agents", "--print"]);
+    assert!(out.contains("\tsleep\tbusy\t"), "{out:?}");
+    let (out, _, _) = t.run(&["status-right", &dir.display().to_string()]);
+    assert!(
+        out.contains("1 busy") && !out.contains("waiting"),
+        "{out:?}"
+    );
+
+    // Asked: in the inbox at once, with the word.
+    let (_, _, ok) = t.run(&["agent", "asked", "--pane", &id]);
+    assert!(ok);
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["inbox", "--print"]);
+            out.lines()
+                .any(|l| l.starts_with("alpha:") && l.contains("\tasked "))
+        }),
+        "the inbox never listed the agent that said asked"
+    );
+    let (out, _, _) = t.run(&["panes", "--agents", "--print"]);
+    assert!(out.contains("\tsleep\tasked "), "{out:?}");
+    let (out, _, _) = t.run(&["brief", "--print"]);
+    assert!(
+        out.starts_with("Waiting on you (1)") && out.contains("asked"),
+        "{out:?}"
+    );
+
+    // Done: listed, but not news.
+    let (_, _, ok) = t.run(&["agent", "done", "--pane", &id]);
+    assert!(ok);
+    assert!(
+        t.until(10, |t| {
+            let (out, _, _) = t.run(&["inbox", "--print"]);
+            out.lines()
+                .any(|l| l.starts_with("alpha:") && l.contains("\tdone "))
+        }),
+        "the inbox never listed the agent that said done"
+    );
+    let (out, _, ok) = t.run(&["brief", "--hook"]);
+    assert!(
+        ok && out.trim().is_empty(),
+        "a done agent is not news: {out:?}"
+    );
+
+    // Outside tmux, or with no pane to speak of, it does nothing and says nothing.
+    let (out, err, ok) = t.run(&["agent", "busy", "--pane", ""]);
+    assert!(ok && out.is_empty() && err.is_empty(), "{out:?} {err:?}");
+
+    // The hooks block parses and names the command.
+    let (out, err, ok) = t.run(&["agent", "hooks", "claude"]);
+    assert!(ok, "{err}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+    assert!(v["hooks"]["Stop"].is_array(), "{out}");
+    let (_, err, ok) = t.run(&["agent", "hooks", "codex"]);
+    assert!(!ok && err.contains("no hooks known"), "{err:?}");
+}
+
 #[test]
 fn the_brief_says_what_is_waiting_and_counts_the_server() {
     let Some(t) = Tmux::start("brief") else {
@@ -1271,7 +1364,10 @@ fn the_brief_says_what_is_waiting_and_counts_the_server() {
     assert!(ok, "brief --print failed:\n{err}");
     assert!(out.starts_with("Nothing is waiting on you."), "{out:?}");
     assert!(out.contains("Health: ok"), "{out:?}");
-    assert!(out.contains("1 session, 0 agents (0 waiting)"), "{out:?}");
+    assert!(
+        out.contains("1 session, 0 agents (0 busy, 0 waiting)"),
+        "{out:?}"
+    );
     // The hook form on a quiet server does nothing and says nothing.
     let (out, err, ok) = t.run(&["brief", "--hook"]);
     assert!(

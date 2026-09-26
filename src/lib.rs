@@ -9,6 +9,8 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 /// Fetching repositories in the background, so ahead and behind mean something.
+/// What an agent says about itself, and the hooks that make it say so.
+pub mod agent;
 pub mod autofetch;
 /// Sourcing tmux config when it changes on disk.
 pub mod autoreload;

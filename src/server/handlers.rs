@@ -220,6 +220,31 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             let rows = crate::inbox::ordered(&state.lock().await.inbox);
             serde_json::to_string(&rows).map_err(|e| anyhow::anyhow!("{e}"))
         }
+        // An agent saying what it is doing, from one of its hooks. Stored
+        // with the time, and the count's cache dropped so the bar shows it
+        // on the next draw rather than up to `interval_secs` later.
+        "__agent" => match req.parse_args::<crate::proto::AgentArgs>() {
+            Ok(args) => {
+                let at = crate::panes::now_secs();
+                let mut st = state.lock().await;
+                st.reports.insert(
+                    args.pane,
+                    crate::panes::Reported {
+                        state: args.state,
+                        at,
+                    },
+                );
+                st.agents_cache = None;
+                Ok(String::new())
+            }
+            Err(e) => Err(e),
+        },
+        // What every agent last said, as a JSON map of pane id to report,
+        // for the `panes` picker and the brief, which run in a client.
+        "__reports" => {
+            let reports = state.lock().await.reports.clone();
+            serde_json::to_string(&reports).map_err(|e| anyhow::anyhow!("{e}"))
+        }
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
 
@@ -429,7 +454,7 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
 /// other segment behind a process spawn. Nothing is read at all when no
 /// configured segment is `agents`.
 async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
-    let (wanted, cached, programs, waiting_secs, bar_bg, style) = {
+    let (wanted, cached, programs, reports, waiting_secs, bar_bg, style, show) = {
         let s = state.lock().await;
         (
             // Quiet hours take the count off the bar; the health mark says
@@ -437,9 +462,11 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
             s.agents_wanted() && !s.is_quiet(),
             s.agents_cached(),
             s.config.agents.programs.clone(),
+            s.reports.clone(),
             s.config.agents.waiting_secs,
             s.config.bar.background.clone(),
             s.config.agents.style,
+            s.config.agents.show,
         )
     };
     if !wanted {
@@ -448,12 +475,12 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
     let sample = match cached {
         Some(sample) => sample,
         None => {
-            let fresh = segments::agents::sample(&programs, waiting_secs).await;
+            let fresh = segments::agents::sample(&programs, &reports, waiting_secs).await;
             state.lock().await.agents_store(fresh);
             fresh
         }
     };
-    segments::agents::format_agents(sample.total, sample.waiting, &bar_bg, style)
+    segments::agents::format_agents(sample, &bar_bg, style, show)
 }
 
 fn segment_or_empty(

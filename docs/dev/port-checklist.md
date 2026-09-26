@@ -89,3 +89,7 @@ Said plainly rather than left to be discovered.
   `new-window`, which is the same list, the same resolution order for a typed
   path, and the pane's own directory prefilled so the key and enter mean what
   tmux's own prefix+c meant.
+- `agent busy|asked|done` and `agent hooks` are new rather than ported: the
+  zsh had one proxy for an agent's state, the window's quiet time, and this
+  lets the agent say for itself through its hooks. The bell flag is the middle
+  ground for an agent with no hooks.

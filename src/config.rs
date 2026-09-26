@@ -772,6 +772,10 @@ pub struct Agents {
     /// waiting`, `glyphs` is the robot, the count, and a raised hand with the
     /// waiting count, for a bar that is already full of words.
     pub style: AgentsStyle,
+    /// Which count follows the total: `waiting`, the agents that have
+    /// stopped; `busy`, the ones working, for somebody who keeps many open
+    /// and works one at a time; or `both`.
+    pub show: AgentsShow,
 }
 
 impl Default for Agents {
@@ -794,6 +798,7 @@ impl Default for Agents {
             nudge_after_secs: 0,
             nudge_command: Vec::new(),
             style: AgentsStyle::Words,
+            show: AgentsShow::Waiting,
         }
     }
 }
@@ -1616,6 +1621,31 @@ pub enum AgentsStyle {
     Words,
     /// The robot and a count, then a raised hand and a count when any wait.
     Glyphs,
+}
+
+/// Which count the `agents` segment puts after the total.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentsShow {
+    /// The agents that have stopped: asked, done, or quiet.
+    #[default]
+    Waiting,
+    /// The agents that are working.
+    Busy,
+    /// Both, busy first.
+    Both,
+}
+
+impl AgentsShow {
+    /// Whether the busy count is drawn.
+    pub fn busy(self) -> bool {
+        matches!(self, AgentsShow::Busy | AgentsShow::Both)
+    }
+
+    /// Whether the waiting count is drawn.
+    pub fn waiting(self) -> bool {
+        matches!(self, AgentsShow::Waiting | AgentsShow::Both)
+    }
 }
 
 /// The journal: what ran long, what the agents asked, what opened and closed.

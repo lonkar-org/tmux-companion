@@ -15,15 +15,27 @@
 //! the agent, and for a window holding an agent beside a shell you are typing
 //! in is you. That is a known limit rather than a bug, and the manual says so.
 //!
+//! An agent can say better than silence can. `tmux-companion agent asked`
+//! from one of its hooks tells the daemon it stopped on a question, `done`
+//! that it answered and is waiting for the next thing, `busy` that it is
+//! working again; see `agent.rs`. A report wins over the window's quiet time
+//! for as long as the pane runs an agent. Between the two sits the terminal
+//! bell: an agent that rings it when it needs you sets `#{window_bell_flag}`
+//! until the window is visited, and that reads as asked.
+//!
 //! The one `list-panes -a` here is shared with the bar's `agents` segment,
 //! which counts the same rows the picker shows, so the two cannot disagree
 //! about what an agent is or when one is waiting.
 //!
-//! This runs in the **client**, and talks to tmux directly: there is nothing
-//! for a daemon to cache in a list somebody is about to pick from, and the
-//! picker needs the terminal the daemon does not have.
+//! The picker runs in the **client**, and talks to tmux directly: there is
+//! nothing for a daemon to cache in a list somebody is about to pick from,
+//! and the picker needs the terminal the daemon does not have. It asks the
+//! daemon for one thing only, the reports, since those live nowhere else.
 
+use std::collections::HashMap;
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// The colour of a waiting agent's row, and of the waiting count on the bar.
 ///
@@ -32,6 +44,56 @@ use std::fmt;
 /// colours rather than taken from the theme, which paints sessions, not the
 /// bar.
 pub const WAITING_COLOUR: &str = "colour214";
+
+/// The colour of the busy count on the bar: a green that says nothing is
+/// needed, distinct from the grey of the total so the number reads at a
+/// glance.
+pub const BUSY_COLOUR: &str = "colour114";
+
+/// What an agent says about itself, through a hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Report {
+    /// Working: a prompt was sent, or a tool just ran.
+    Busy,
+    /// Stopped on a question or a permission prompt.
+    Asked,
+    /// Answered, and waiting for the next prompt.
+    Done,
+}
+
+impl Report {
+    /// The word on the command line and in the column.
+    pub fn word(self) -> &'static str {
+        match self {
+            Report::Busy => "busy",
+            Report::Asked => "asked",
+            Report::Done => "done",
+        }
+    }
+
+    /// The report a word names, when it does.
+    pub fn from_word(w: &str) -> Option<Self> {
+        Some(match w.trim() {
+            "busy" => Report::Busy,
+            "asked" => Report::Asked,
+            "done" => Report::Done,
+            _ => return None,
+        })
+    }
+}
+
+/// One report, with when it arrived, as the daemon keeps it per pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reported {
+    /// What the agent said.
+    pub state: Report,
+    /// When, in unix seconds.
+    pub at: u64,
+}
+
+/// The reports the daemon holds, keyed by pane id.
+pub type Reports = HashMap<String, Reported>;
 
 /// One pane as tmux reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +122,9 @@ pub struct Pane {
     pub in_mode: bool,
     /// `#{host}`, which is what a pane's title is until a program sets one.
     pub host: String,
+    /// `#{window_bell_flag}`: the window rang the bell and nobody has visited
+    /// it since. Needs `monitor-bell on`, which is tmux's default.
+    pub bell: bool,
 }
 
 /// The `-F` string the listing asks for.
@@ -70,11 +135,12 @@ pub struct Pane {
 pub fn pane_format() -> &'static str {
     "#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t\
      #{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_active}\t\
-     #{window_active}\t#{session_attached}\t#{window_activity}\t#{pane_in_mode}\t#{host}"
+     #{window_active}\t#{session_attached}\t#{window_activity}\t#{pane_in_mode}\t#{host}\t\
+     #{window_bell_flag}"
 }
 
 /// How many fields [`pane_format`] produces.
-const FIELDS: usize = 14;
+const FIELDS: usize = 15;
 
 /// Parse what [`pane_format`] produces, sorted by session, window and pane.
 ///
@@ -105,6 +171,7 @@ pub fn parse(text: &str) -> Vec<Pane> {
                 activity: f[11].trim().parse().unwrap_or(0),
                 in_mode: on(f[12]),
                 host: f[13].trim().to_string(),
+                bell: on(f[14]),
             })
         })
         .collect();
@@ -139,14 +206,21 @@ pub fn is_version_name(command: &str) -> bool {
         && !c.contains("..")
 }
 
-/// What a pane is doing, as far as a window's activity time can tell.
+/// What a pane is doing, as far as the daemon can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     /// In copy mode: somebody is looking at it, whatever it is doing.
     Reading,
-    /// An agent that drew something recently.
+    /// An agent that is working: it said so, or it drew something recently.
     Busy,
-    /// An agent that has been quiet this long, in seconds.
+    /// An agent that stopped on a question this long ago, in seconds: it
+    /// said so through a hook, or it rang the bell.
+    Asked(u64),
+    /// An agent that said it answered, this long ago, and waits for the next
+    /// prompt.
+    Done(u64),
+    /// An agent that has been quiet this long, in seconds, with nothing
+    /// better to go on.
     Waiting(u64),
     /// Anything else that drew something recently.
     Active,
@@ -155,20 +229,52 @@ pub enum State {
 }
 
 impl State {
-    /// An agent that has stopped and may be waiting on a person.
+    /// An agent that has stopped and may be waiting on a person: asked,
+    /// done, or quiet.
     pub fn is_waiting(self) -> bool {
-        matches!(self, State::Waiting(_))
+        matches!(self, State::Asked(_) | State::Done(_) | State::Waiting(_))
+    }
+
+    /// An agent that is working.
+    pub fn is_busy(self) -> bool {
+        matches!(self, State::Busy)
+    }
+
+    /// An agent that stopped on a question, which is the one that needs an
+    /// answer rather than a next prompt.
+    pub fn is_asked(self) -> bool {
+        matches!(self, State::Asked(_))
+    }
+
+    /// How long a stopped agent has waited, in seconds.
+    pub fn waited(self) -> Option<u64> {
+        match self {
+            State::Asked(s) | State::Done(s) | State::Waiting(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The first word, for a column that sorts or colours by it.
+    pub fn word(self) -> &'static str {
+        match self {
+            State::Reading => "reading",
+            State::Busy => "busy",
+            State::Asked(_) => "asked",
+            State::Done(_) => "done",
+            State::Waiting(_) => "waiting",
+            State::Active => "active",
+            State::Idle(_) => "idle",
+        }
     }
 }
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            State::Reading => f.write_str("reading"),
-            State::Busy => f.write_str("busy"),
-            State::Waiting(secs) => write!(f, "waiting {}", age(*secs)),
-            State::Active => f.write_str("active"),
-            State::Idle(secs) => write!(f, "idle {}", age(*secs)),
+            State::Asked(secs) | State::Done(secs) | State::Waiting(secs) | State::Idle(secs) => {
+                write!(f, "{} {}", self.word(), age(*secs))
+            }
+            _ => f.write_str(self.word()),
         }
     }
 }
@@ -176,15 +282,45 @@ impl fmt::Display for State {
 /// Classify one pane at a given moment.
 ///
 /// Copy mode wins over everything: a pane somebody is reading is not one that
-/// needs pointing out. Then the window's quiet time against `waiting_secs`,
-/// with agents and everything else getting different words for the same two
-/// answers, because "idle" is what a shell is most of the day and "waiting" is
-/// what an agent is when it has asked you something.
-pub fn state(pane: &Pane, agent: bool, now: u64, waiting_secs: u64) -> State {
+/// needs pointing out. For an agent, what it reported wins next: a hook that
+/// said `asked` or `done` knows more than a quiet window does, and one that
+/// said `busy` covers the silent minute of a long tool. Then the bell: a
+/// window that rang it and has not been visited since is an agent that wanted
+/// somebody. Last, the window's quiet time against `waiting_secs`, with
+/// agents and everything else getting different words for the same two
+/// answers, because "idle" is what a shell is most of the day and "waiting"
+/// is what an agent is when it may have asked you something.
+pub fn state(
+    pane: &Pane,
+    agent: bool,
+    report: Option<Reported>,
+    now: u64,
+    waiting_secs: u64,
+) -> State {
     if pane.in_mode {
         return State::Reading;
     }
     let quiet = now.saturating_sub(pane.activity);
+    if agent {
+        match report {
+            Some(Reported {
+                state: Report::Busy,
+                ..
+            }) => return State::Busy,
+            Some(Reported {
+                state: Report::Asked,
+                at,
+            }) => return State::Asked(now.saturating_sub(at)),
+            Some(Reported {
+                state: Report::Done,
+                at,
+            }) => return State::Done(now.saturating_sub(at)),
+            None => {}
+        }
+        if pane.bell {
+            return State::Asked(quiet);
+        }
+    }
     match (agent, quiet < waiting_secs) {
         (true, true) => State::Busy,
         (true, false) => State::Waiting(quiet),
@@ -260,6 +396,9 @@ pub struct Clock<'a> {
     pub waiting_secs: u64,
     /// `[agents] programs`.
     pub programs: &'a [String],
+    /// What the agents reported, from the daemon; empty when it was not
+    /// asked.
+    pub reports: &'a Reports,
     /// The home directory, for the short path.
     pub home: &'a str,
 }
@@ -278,7 +417,13 @@ pub fn rows(panes: &[Pane], filter: &Filter, clock: &Clock) -> Vec<Row> {
             Some(Row {
                 at: format!("{}:{}.{}", p.session, p.window_index, p.pane_index),
                 program: program(p),
-                state: state(p, agent, clock.now, clock.waiting_secs),
+                state: state(
+                    p,
+                    agent,
+                    clock.reports.get(&p.id).copied(),
+                    clock.now,
+                    clock.waiting_secs,
+                ),
                 cwd: crate::project::short_path(&p.path, clock.home),
                 id: p.id.clone(),
                 agent,
@@ -327,6 +472,20 @@ pub fn now_secs() -> u64 {
 /// Every pane on the server. Empty when tmux is not there to ask.
 pub async fn list() -> Vec<Pane> {
     parse(&crate::cli::tmux_capture(&["list-panes", "-a", "-F", pane_format()]).await)
+}
+
+/// What the agents have reported, from the daemon. Empty when it cannot be
+/// asked, which leaves every state to the window's quiet time.
+pub async fn reports() -> Reports {
+    crate::client::send(crate::proto::Request::raw(
+        "__reports",
+        serde_json::Value::Null,
+    ))
+    .await
+    .ok()
+    .filter(|r| r.error.is_none())
+    .and_then(|r| serde_json::from_str(&r.output).ok())
+    .unwrap_or_default()
 }
 
 /// The last lines of one pane's screen, as the preview shows them.
@@ -385,6 +544,17 @@ pub async fn jump(id: &str) {
     crate::cli::tmux(&["select-pane", "-t", id]).await;
 }
 
+/// The colour a picker row gets for its state: the bar's waiting colour for
+/// an agent that asked or went quiet, the busy colour for one that said it
+/// is working, nothing for a `done` agent, which needs no more than the row.
+pub fn row_colour(state: State) -> Option<String> {
+    match state {
+        State::Asked(_) | State::Waiting(_) => Some(WAITING_COLOUR.to_string()),
+        State::Busy => Some(BUSY_COLOUR.to_string()),
+        _ => None,
+    }
+}
+
 /// `panes`: list every pane, or every agent, and jump to the one picked.
 ///
 /// Talks to tmux directly and never to the daemon, so there is no args struct
@@ -395,7 +565,7 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
     let home = std::env::var("HOME").unwrap_or_default();
     let here = std::env::var("TMUX_PANE").ok();
 
-    let panes = list().await;
+    let (panes, reports) = tokio::join!(list(), reports());
     let filter = Filter {
         exclude: here.as_deref(),
         session: target.as_deref(),
@@ -405,6 +575,7 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
         now: now_secs(),
         waiting_secs: config.agents.waiting_secs,
         programs: &config.agents.programs,
+        reports: &reports,
         home: &home,
     };
     let rows = rows(&panes, &filter, &clock);
@@ -439,9 +610,9 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
                 preview,
             )
             .in_columns(vec![r.at.clone(), r.program.clone(), state, r.cwd.clone()])
-            // The same colour the bar uses for the waiting count, so the row
-            // that wants you is the one that stands out here too.
-            .in_colour(r.state.is_waiting().then(|| WAITING_COLOUR.to_string()))
+            // The same colours the bar uses, so the row that wants you is
+            // the one that stands out here too.
+            .in_colour(row_colour(r.state))
         })
         .collect();
 
@@ -493,7 +664,7 @@ mod tests {
         in_mode: bool,
     ) -> String {
         format!(
-            "{session}\t{window}\tedit\t{pane}\t{id}\t{command}\t{path}\t{title}\t1\t1\t1\t{activity}\t{}\tlaptop\n",
+            "{session}\t{window}\tedit\t{pane}\t{id}\t{command}\t{path}\t{title}\t1\t1\t1\t{activity}\t{}\tlaptop\t0\n",
             u8::from(in_mode)
         )
     }
@@ -537,6 +708,7 @@ mod tests {
         assert_eq!(p.activity, 1_700_000_000);
         assert!(!p.in_mode);
         assert_eq!(p.host, "laptop");
+        assert!(!p.bell);
     }
 
     #[test]
@@ -560,9 +732,9 @@ mod tests {
 
     #[test]
     fn a_pane_is_visible_only_when_somebody_could_see_it() {
-        let hidden = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t0\t1\t0\t0\tlaptop\n";
+        let hidden = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t0\t1\t0\t0\tlaptop\t0\n";
         assert!(!parse(hidden)[0].visible, "window not active");
-        let detached = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t1\t0\t0\t0\tlaptop\n";
+        let detached = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t1\t0\t0\t0\tlaptop\t0\n";
         assert!(!parse(detached)[0].visible, "nobody attached");
     }
 
@@ -572,30 +744,108 @@ mod tests {
     fn an_agent_that_drew_recently_is_busy_and_a_quiet_one_is_waiting() {
         let now = 1_000;
         assert_eq!(
-            state(&pane("claude", 995, false), true, now, 10),
+            state(&pane("claude", 995, false), true, None, now, 10),
             State::Busy
         );
         assert_eq!(
-            state(&pane("claude", 800, false), true, now, 10),
+            state(&pane("claude", 800, false), true, None, now, 10),
             State::Waiting(200)
         );
         // Exactly the threshold is waiting: ten seconds of nothing is what
         // the setting says counts.
         assert_eq!(
-            state(&pane("claude", 990, false), true, now, 10),
+            state(&pane("claude", 990, false), true, None, now, 10),
             State::Waiting(10)
         );
+    }
+
+    #[test]
+    fn a_report_wins_over_the_window_and_the_bell_over_silence() {
+        let now = 1_000;
+        let said = |state, at| Some(Reported { state, at });
+        // Quiet for 200s but it said busy: a long silent tool, not a stop.
+        let s = state(
+            &pane("claude", 800, false),
+            true,
+            said(Report::Busy, 900),
+            now,
+            10,
+        );
+        assert_eq!(s, State::Busy);
+        assert!(s.is_busy() && !s.is_waiting());
+        // Drawing away, but it said asked: the wait is counted from the hook.
+        let s = state(
+            &pane("claude", 999, false),
+            true,
+            said(Report::Asked, 940),
+            now,
+            10,
+        );
+        assert_eq!(s, State::Asked(60));
+        assert!(s.is_asked() && s.is_waiting() && !s.is_busy());
+        let s = state(
+            &pane("claude", 999, false),
+            true,
+            said(Report::Done, 700),
+            now,
+            10,
+        );
+        assert_eq!(s, State::Done(300));
+        assert!(s.is_waiting() && !s.is_asked());
+        // A report about a shell means nothing: the pane is not an agent.
+        assert_eq!(
+            state(
+                &pane("zsh", 999, false),
+                false,
+                said(Report::Asked, 900),
+                now,
+                10
+            ),
+            State::Active
+        );
+        // The bell: drawing recently, but it rang and nobody came.
+        let mut rang = pane("claude", 999, false);
+        rang.bell = true;
+        assert_eq!(state(&rang, true, None, now, 10), State::Asked(1));
+        // Unless it has since said it is busy again.
+        assert_eq!(
+            state(&rang, true, said(Report::Busy, 999), now, 10),
+            State::Busy
+        );
+        // Copy mode still wins over everything.
+        let mut read = pane("claude", 800, true);
+        read.bell = true;
+        assert_eq!(
+            state(&read, true, said(Report::Asked, 900), now, 10),
+            State::Reading
+        );
+    }
+
+    #[test]
+    fn the_report_words_round_trip_and_colour_the_rows() {
+        for r in [Report::Busy, Report::Asked, Report::Done] {
+            assert_eq!(Report::from_word(r.word()), Some(r));
+        }
+        assert_eq!(Report::from_word("thinking"), None);
+        assert_eq!(row_colour(State::Asked(1)).as_deref(), Some(WAITING_COLOUR));
+        assert_eq!(
+            row_colour(State::Waiting(1)).as_deref(),
+            Some(WAITING_COLOUR)
+        );
+        assert_eq!(row_colour(State::Busy).as_deref(), Some(BUSY_COLOUR));
+        assert_eq!(row_colour(State::Done(1)), None);
+        assert_eq!(row_colour(State::Idle(1)), None);
     }
 
     #[test]
     fn everything_else_gets_the_plain_words() {
         let now = 1_000;
         assert_eq!(
-            state(&pane("zsh", 999, false), false, now, 10),
+            state(&pane("zsh", 999, false), false, None, now, 10),
             State::Active
         );
         assert_eq!(
-            state(&pane("zsh", 0, false), false, now, 10),
+            state(&pane("zsh", 0, false), false, None, now, 10),
             State::Idle(1_000)
         );
     }
@@ -604,7 +854,7 @@ mod tests {
     fn copy_mode_is_reading_whatever_else_is_true() {
         // Somebody is looking at it, so it is not a pane that needs pointing
         // out, and it is not counted as waiting on the bar either.
-        let s = state(&pane("claude", 0, true), true, 1_000, 10);
+        let s = state(&pane("claude", 0, true), true, None, 1_000, 10);
         assert_eq!(s, State::Reading);
         assert!(!s.is_waiting());
     }
@@ -614,7 +864,7 @@ mod tests {
         // tmux's clock and this process's are two reads of the same thing,
         // and a window that drew between them reports a future time.
         assert_eq!(
-            state(&pane("zsh", 2_000, false), false, 1_000, 10),
+            state(&pane("zsh", 2_000, false), false, None, 1_000, 10),
             State::Active
         );
     }
@@ -636,6 +886,8 @@ mod tests {
         assert_eq!(State::Reading.to_string(), "reading");
         assert_eq!(State::Busy.to_string(), "busy");
         assert_eq!(State::Waiting(180).to_string(), "waiting 3m");
+        assert_eq!(State::Asked(65).to_string(), "asked 1m");
+        assert_eq!(State::Done(5).to_string(), "done 5s");
         assert_eq!(State::Active.to_string(), "active");
         assert_eq!(State::Idle(7_200).to_string(), "idle 2h");
     }
@@ -710,10 +962,12 @@ mod tests {
     }
 
     fn clock(programs: &[String]) -> Clock<'_> {
+        static NONE: std::sync::LazyLock<Reports> = std::sync::LazyLock::new(Reports::new);
         Clock {
             now: 1_000,
             waiting_secs: 10,
             programs,
+            reports: &NONE,
             home: "/home/me",
         }
     }
