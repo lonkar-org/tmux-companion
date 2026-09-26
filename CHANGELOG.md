@@ -3,7 +3,7 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.3.0 - 2026-09-26
 
 The work of 2026-09-25 and 26, most of it from a review of the whole tool for the places where it went quiet when it shouldn't have. The one that
 started it: the `[autosave]` timer had been failing every fifteen minutes for
@@ -82,7 +82,7 @@ it by accident while chasing an `M-a` bug.
 - `just install` builds, installs and restarts the daemon; `just test-unit`
   and `just test-e2e` split the fast suite from the fifty-second one, and
   `TC_SKIP_E2E=1` skips the tmux tests. CI runs an MSRV job and a check that
-  fails on any `@Yogesh(` marker left in the tree; the release workflow gains
+  fails on any review marker left in the tree; the release workflow gains
   a gate that runs fmt, clippy, the tests and the tag-matches-Cargo.toml
   check before it builds anything.
 
