@@ -97,3 +97,6 @@ Said plainly rather than left to be discovered.
   `after-port-checklist.md`, built as option 1 of
   `design-project-local-config.md`: the full layout behind `[project]
   trusted`, with names-only as the untrusted fallback.
+- `pocket` is `nickdiego/tmux-pocket-pane` as option 1 of
+  `design-pocket-pane.md`: the pane is parked with `join-pane` into a window
+  called `_pocket` and brought back the same way, marked by a pane option.

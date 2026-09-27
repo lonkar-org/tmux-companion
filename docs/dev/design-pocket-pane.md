@@ -1,6 +1,6 @@
 # Design: a pocket pane per session
 
-Status: proposed, 2026-09-26. Queue item 8. Nothing here is built.
+Status: built 2026-09-27 as option 1, `tmux-companion pocket [NAME]`. More than one pocket per session works by name; what `zen` does to an open pocket and whether one comes back after `sessions resurrect` are still open. Kept for the reasoning.
 
 ## The problem
 

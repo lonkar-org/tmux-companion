@@ -204,6 +204,7 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | `new-window` | Pick a directory and open a window there, from the same source as `project`. The query starts on the pane's own directory, so the key then enter is "another window here"; any path can be typed in full, listed or not. Both the directory it starts on and the session the window lands in come from the attached client, not from tmux's current session, which inside a popup is whichever one the server touched last |
 | `shell-init [SHELL]` | Print the shell code that emits the OSC 133 prompt marks, for zsh, bash or fish. Defaults to `$SHELL` |
 | `clipboard` | Copy to the system clipboard, picking the command for the platform. `--stdin` reads standard input rather than the tmux buffer |
+| `pocket [NAME]` | A shell that slides out beside this pane on the first press, is parked in a window called `_pocket` on the second, and comes back with its process and scrollback on the third. `NAME` tells pockets apart and defaults to `shell`; `--pane ID` is the pane the key was pressed in, which the binding passes. The width and the slide are `[run]`'s. `toggle` cycles past `_pocket`, and `project save` leaves it and any pocket that is out off the layout |
 | `zen [--pane ID]` | Clear everything but this pane: a zoom when there are other panes, the status bar when there are not. `--pane` says which, and the binding passes it. `zoom` is the old name, kept one release |
 
 ## Diagnostics

@@ -138,6 +138,8 @@ agent and a shell watching something.
    `settings.json`), when you ring the terminal bell, or, failing both, when
    your window has drawn nothing for `[agents] waiting_secs`; a hook that says
    `busy` during a long silent tool run is what keeps you off the inbox then.
+   A window called `_pocket` holds the human's parked scratch shells
+   (`tmux-companion pocket`); leave it and its panes alone.
 5. Name the pane too when a window holds more than one, and say what you are doing
    in it: `tmux-companion note 'claude: cache'` (add `--pane ID` from another pane).
    `panes` shows the note beside the program, so the human sees it without

@@ -850,6 +850,38 @@ A session that is not there is an error rather than a session that closed at
 once.
 Bound to
 .Ql prefix X .
+.It Ic pocket Oo Ar name Oc Op Fl -pane Ar id
+A shell you pull out beside the pane you are in, look at, and put away
+without losing it.
+The first press splits a shell off the side of the window at
+.Ic [run] width_percent ,
+sliding the way
+.Ic run
+does; the second parks it in a window called
+.Ql _pocket ;
+the third brings the same pane back beside wherever you are now, its process
+and its scrollback as they were.
+.Ar name
+tells one pocket from another when a session keeps more than one, and
+defaults to
+.Ql shell .
+A pocket is known by the pane option
+.Ql @tmux-companion-pocket
+rather than by its title, which a shell is free to change.
+.Ic toggle
+cycles past the
+.Ql _pocket
+window, and
+.Ic project save
+leaves it, and any pocket that is out, off the layout it writes.
+.Fl -pane
+is the pane the key was pressed in, which the binding passes.
+Pressed inside the
+.Ql _pocket
+window it does nothing and says so.
+Needs tmux 3.1 for pane options.
+Bound to
+.Ql prefix ` .
 .It Ic zen Op Fl -pane Ar id
 Clear everything but the pane you are working in.
 With other panes open that is tmux's own zoom: this pane fills the window, the

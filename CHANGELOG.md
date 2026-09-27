@@ -24,6 +24,12 @@ entry per phase of the comrades port.
   else the window names count and every command is blanked, and `project
   show` says which happened. `config check` inside the checkout reads it.
 
+- `pocket`: a shell that slides out beside the pane you're in, goes away
+  into a window called `_pocket` on the second press, and comes back on the
+  third with its process and its scrollback. `pocket NAME` keeps more than
+  one. `toggle` cycles past the window, and `project save` leaves it and any
+  pocket that is out off the layout it writes.
+
 - The terminal bell as a signal: an agent pane whose window rang the bell and
   has not been visited since reads as `asked`, which covers any agent with no
   hooks that can ring one.

@@ -421,6 +421,16 @@ pub enum Cmd {
         hook: bool,
     },
 
+    /// A shell that slides out beside this pane and is put away, process
+    /// and scrollback kept, by the same key
+    Pocket {
+        /// Which pocket, when a session keeps more than one
+        name: Option<String>,
+        /// The pane the key was pressed in, as `#{pane_id}` from the binding
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+    },
+
     /// What an agent is doing, said by the agent itself from a hook: busy,
     /// asked or done; `hooks` prints the settings block that wires it up
     Agent {
@@ -958,6 +968,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         } => crate::panes::run(agents, print, target).await?,
         Cmd::Click { range } => crate::click::run(range).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
+        Cmd::Pocket { name, pane } => crate::pocket::run(name, pane).await?,
         Cmd::Agent { action } => crate::agent::run(action).await?,
         Cmd::Inbox { print } => crate::inbox::run(print).await?,
         Cmd::Journal {
@@ -2538,6 +2549,23 @@ async fn capture_session(
     ])
     .await?;
 
+    // A scratch shell is not part of what a project opens with: the pocket
+    // window and any pocket that is out are taken off both listings. A
+    // listing that cannot be read leaves the window's name to decide.
+    let marks = tmux_capture(&[
+        "list-panes",
+        "-s",
+        "-t",
+        &target,
+        "-F",
+        &format!(
+            "#{{window_index}}\t#{{pane_index}}\t#{{window_name}}\t#{{{}}}",
+            crate::pocket::MARK
+        ),
+    ])
+    .await;
+    let (windows, panes) = crate::pocket::without_pocket(&windows, &panes, &marks);
+
     // A server with this set reports it as the start command of every pane
     // nobody gave a command to, so the capture needs it to tell a wrapped shell
     // from a command somebody typed. Reading it is best effort: an old tmux or
@@ -2671,7 +2699,7 @@ async fn run_toggle(
             "-t",
             &format!("={session}"),
             "-F",
-            "#{window_index} #{window_active}",
+            "#{window_index} #{window_active} #{window_name}",
         ])
         .output()
         .await?;
@@ -2979,7 +3007,7 @@ async fn run_in_this_pane(command: &str, config: &crate::config::Config) -> anyh
 }
 
 /// Step a pane's width, so it slides rather than appears.
-async fn slide(target: &str, from: u16, to: u16, config: &crate::config::Config) {
+pub(crate) async fn slide(target: &str, from: u16, to: u16, config: &crate::config::Config) {
     let steps = crate::run::slide_steps(from, to, config.run.slide_steps);
     if steps.is_empty() {
         tmux(&["resize-pane", "-t", target, "-x", &to.to_string()]).await;

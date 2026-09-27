@@ -124,8 +124,15 @@ pub fn toggle_target(list: &str) -> Option<u32> {
     let mut windows: Vec<(u32, bool)> = list
         .lines()
         .filter_map(|l| {
-            let (index, active) = l.trim().split_once(' ')?;
-            Some((index.parse().ok()?, active == "1"))
+            let mut f = l.trim().splitn(3, ' ');
+            let index = f.next()?.parse().ok()?;
+            let active = f.next()? == "1";
+            // The window pockets are parked in is not one to cycle into,
+            // unless that is where the key was pressed.
+            if !active && f.next() == Some(crate::pocket::WINDOW) {
+                return None;
+            }
+            Some((index, active))
         })
         .collect();
     if windows.len() < 2 {
@@ -162,6 +169,20 @@ mod tests {
         // 2000-03-01T00:00:00Z: 1900 was not a leap year and 2000 was, which is
         // where a hand-rolled calendar usually goes wrong.
         assert_eq!(format_unix(951_868_800), "2000-03-01 00:00:00 UTC");
+    }
+
+    #[test]
+    fn toggling_passes_the_pocket_window_unless_it_is_where_you_are() {
+        // Three windows and a parked pocket: the cycle is the three.
+        let list = "1 0 edit\n2 1 ai\n3 0 _pocket\n4 0 my logs\n";
+        assert_eq!(toggle_target(list), Some(4));
+        let at_the_end = "1 0 edit\n2 1 ai\n3 0 _pocket\n";
+        assert_eq!(toggle_target(at_the_end), Some(1));
+        // Pressed inside it, the key still leaves.
+        let inside = "1 0 edit\n3 1 _pocket\n";
+        assert_eq!(toggle_target(inside), Some(1));
+        // The old two-field listing still reads.
+        assert_eq!(toggle_target("1 1\n2 0\n"), Some(2));
     }
 
     #[test]

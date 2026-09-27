@@ -680,6 +680,103 @@ fn project_builds_the_windows_the_layout_asks_for() {
     assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
 }
 
+/// Three presses of the pocket key: out, away, and back, the same pane
+/// throughout.
+#[test]
+fn the_pocket_comes_out_is_parked_and_comes_back_the_same_pane() {
+    let Some(t) = Tmux::start("pocket") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[run]\nslide_steps = 0\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let listing = |t: &Tmux| {
+        t.tmux(&[
+            "list-panes",
+            "-s",
+            "-t",
+            "=alpha",
+            "-F",
+            "#{pane_id} #{window_name} #{@tmux-companion-pocket}",
+        ])
+    };
+    let first = listing(&t);
+    let home_pane = first
+        .split_whitespace()
+        .next()
+        .unwrap_or_else(|| panic!("no pane in {first:?}"))
+        .to_string();
+
+    // Out: a second pane in the same window, marked.
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let out = listing(&t);
+    let pocket: Vec<&str> = out
+        .lines()
+        .find(|l| l.ends_with(" shell"))
+        .unwrap_or_else(|| panic!("no pane marked as the pocket in {out:?}"))
+        .split(' ')
+        .collect();
+    let (pocket_id, pocket_window) = (pocket[0].to_string(), pocket[1].to_string());
+    assert_ne!(pocket_id, home_pane);
+    assert_ne!(pocket_window, "_pocket", "{out:?}");
+    assert_eq!(out.lines().count(), 2, "{out:?}");
+
+    // Away: the same pane, now in `_pocket`, and the first window has one pane.
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let away = listing(&t);
+    assert!(
+        away.lines()
+            .any(|l| l == format!("{pocket_id} _pocket shell")),
+        "{away:?}"
+    );
+    // `toggle` has nowhere to go: the only other window is the pocket's.
+    let before = t.tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        &home_pane,
+        "#{window_active}",
+    ]);
+    let (_, _, ok) = t.run(&["toggle", "alpha"]);
+    assert!(ok);
+    let after = t.tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        &home_pane,
+        "#{window_active}",
+    ]);
+    assert_eq!(
+        before.trim(),
+        after.trim(),
+        "toggle went into the pocket window"
+    );
+    // Back: the same pane beside the first one, and `_pocket` is gone.
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let back = listing(&t);
+    assert!(
+        back.lines()
+            .any(|l| l.starts_with(&format!("{pocket_id} ")) && !l.contains("_pocket")),
+        "{back:?}"
+    );
+    assert!(!back.contains("_pocket"), "{back:?}");
+    assert_eq!(back.lines().count(), 2, "{back:?}");
+
+    // A second pocket under another name is a second pane.
+    let (_, err, ok) = t.run(&["pocket", "logs", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let two = listing(&t);
+    assert!(two.lines().any(|l| l.ends_with(" logs")), "{two:?}");
+    assert_eq!(two.lines().count(), 3, "{two:?}");
+}
+
 /// A checkout's own `.tmux-companion.toml` decides the windows, and runs its
 /// commands only under a path `[project] trusted` names.
 #[test]

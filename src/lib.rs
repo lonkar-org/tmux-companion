@@ -46,8 +46,10 @@ pub mod notify;
 pub mod open;
 /// Every pane on the server, as a list to jump from.
 pub mod panes;
-/// The fuzzy picker and its state machine.
 pub mod picker;
+/// The fuzzy picker and its state machine.
+/// A pocket pane: a shell pulled out beside the editor and put away again.
+pub mod pocket;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// Asking the terminal what it does.

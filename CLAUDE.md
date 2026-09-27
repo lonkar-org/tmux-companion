@@ -91,6 +91,7 @@ description they had.
 | `src/picker/screen.rs` | the picker's own screen: the state behind it, the matching, and the drawing |
 | `src/picker/style.rs` | what a picker looks like, as settings rather than as a shape compiled into the drawing |
 | `src/presets/ascii.toml` | the 7-bit fallback: one value per Nerd Font glyph name, for a machine whose font nobody controls |
+| `src/pocket.rs` | a pocket pane: a shell you pull out beside the editor, look at, and put away without losing it |
 | `src/preview.rs` | renders the git segment for a spread of repo states in every color style |
 | `src/probe.rs` | probes: ask the terminal what it does, rather than assuming |
 | `src/project.rs` | projects: one tmux session each, with the windows a layout asks for |

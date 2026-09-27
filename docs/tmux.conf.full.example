@@ -226,6 +226,13 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 bind -N "custom: pane zen, everything but this one goes" z \
   run-shell "tmux-companion zen --pane '#{pane_id}'"
 
+# The pocket: a shell that slides out beside this pane on the first press,
+# goes away into a window called `_pocket` on the second, and comes back,
+# process and scrollback kept, on the third. `pocket logs` is a second one
+# under its own name, for a key of its own.
+bind -N "custom: pane the pocket shell, out and away" ` \
+  run-shell "tmux-companion pocket --pane '#{pane_id}'"
+
 # ── Every session, kept in generations ──────────────────────────────────────
 #
 # A project layout answers what one project looks like. This answers what the
