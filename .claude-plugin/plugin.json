@@ -1,7 +1,7 @@
 {
   "name": "tmux-companion",
   "description": "Drive tmux through tmux-companion: project sessions and layouts, snapshots and resurrect, and running agent panes alongside a human in one tmux server.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Yogesh Lonkar",
     "email": "yogesh@lonkar.org"
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/lonkar-org/tmux-companion",
   "repository": "https://github.com/lonkar-org/tmux-companion",
   "license": "MIT",
-  "keywords": ["tmux", "sessions", "resurrect", "layout", "agents"]
+  "keywords": [
+    "tmux",
+    "sessions",
+    "resurrect",
+    "layout",
+    "agents"
+  ]
 }
