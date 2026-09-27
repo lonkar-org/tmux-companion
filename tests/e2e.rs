@@ -1518,7 +1518,12 @@ fn ports_names_the_pane_that_started_the_listener() {
             last = (out, err);
             found
         }),
-        "no port of alpha's ever showed up: {last:?}"
+        // What every listener looked like and what the pane shows, because
+        // "no row" alone can't tell a server that never started from one
+        // that started and was not traced back to its pane.
+        "no port of alpha's ever showed up: {last:?}\nports --all: {:?}\nthe pane: {:?}",
+        t.run(&["ports", "--print", "--all"]),
+        t.capture("=alpha:")
     );
     let row = of_alpha(&last.0).unwrap();
     let cols: Vec<&str> = row.split('\t').collect();
