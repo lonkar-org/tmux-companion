@@ -885,6 +885,15 @@ pub struct Project {
     pub visit_command: Vec<String>,
     /// The layout a new session starts with, by name.
     pub layout: String,
+    /// Path prefixes under which a checkout's own `.tmux-companion.toml` may
+    /// run commands.
+    ///
+    /// A file in a checkout that can start programs is a file anybody who
+    /// can push to that repository can use to start programs on your
+    /// machine, so the commands in it count only under a prefix listed here,
+    /// `~` for home and a trailing `*` allowed. Anywhere else the window
+    /// names still count and every command is blanked. Empty trusts nowhere.
+    pub trusted: Vec<String>,
     /// Path-prefix overrides, first match wins.
     ///
     /// Named with a trailing underscore because `override` is a reserved word
@@ -912,6 +921,7 @@ impl Default for Project {
             dirs_command: Vec::new(),
             visit_command: Vec::new(),
             layout: "default".to_string(),
+            trusted: Vec::new(),
             override_: Vec::new(),
             preview_window: String::new(),
         }
@@ -1054,18 +1064,28 @@ impl Config {
             .project
             .override_
             .iter()
-            .find(|o| {
-                let prefix = match o.match_.strip_prefix("~/") {
-                    Some(rest) => format!("{home}/{rest}"),
-                    None => o.match_.clone(),
-                };
-                let prefix = prefix.trim_end_matches('*').trim_end_matches('/');
-                !prefix.is_empty() && path.starts_with(prefix)
-            })
+            .find(|o| path_has_prefix(path, &o.match_, home))
             .map(|o| o.use_layout.as_str())
             .unwrap_or(&self.project.layout);
-        self.layout.iter().find(|l| l.name == wanted)
+        self.layout_named(wanted)
     }
+
+    /// A `[[layout]]` by name, when one is defined.
+    pub fn layout_named(&self, name: &str) -> Option<&Layout> {
+        self.layout.iter().find(|l| l.name == name)
+    }
+}
+
+/// Whether `path` sits under `prefix`, the way `[[project.override]]` and
+/// `[project] trusted` mean it: `~` is home, a trailing `*` or `/` is
+/// ignored, and an empty prefix matches nothing rather than everything.
+pub fn path_has_prefix(path: &str, prefix: &str, home: &str) -> bool {
+    let prefix = match prefix.strip_prefix("~/") {
+        Some(rest) => format!("{home}/{rest}"),
+        None => prefix.to_string(),
+    };
+    let prefix = prefix.trim_end_matches('*').trim_end_matches('/');
+    !prefix.is_empty() && path.starts_with(prefix)
 }
 
 /// The record of which bindings get used, which orders the cheat sheet.

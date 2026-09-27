@@ -58,6 +58,8 @@ pub mod project;
 pub mod proto;
 /// Running a command from history in a side pane.
 pub mod quiet;
+/// The layout a checkout carries with it, and the trust it needs.
+pub mod repofile;
 /// What a restore will run in each pane, decided before anything runs.
 pub mod restore;
 pub mod run;

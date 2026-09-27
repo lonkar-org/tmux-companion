@@ -96,6 +96,7 @@ description they had.
 | `src/project.rs` | projects: one tmux session each, with the windows a layout asks for |
 | `src/proto.rs` | `Request` / `Response` serde types, one args struct per command, and the build id (no module doc) |
 | `src/quiet.rs` | quiet hours: nothing nags for a while, and the bar says why |
+| `src/repofile.rs` | the layout a checkout carries with it: `.tmux-companion.toml` in the project root |
 | `src/restore.rs` | what a restore will run in each pane, decided before anything runs |
 | `src/run.rs` | run a command from history in a pane beside the one you are in |
 | `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |

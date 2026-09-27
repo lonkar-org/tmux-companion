@@ -24,6 +24,11 @@ tmux-companion config dump    # every setting with its default
 `config dump` writes a valid config file, so `tmux-companion config dump >
 ~/.config/tmux-companion/config.toml` is a reasonable way to start.
 
+A checkout can carry a second, smaller file, `.tmux-companion.toml` in its
+root, which says what that project opens with; see [the layout a checkout
+carries](#the-layout-a-checkout-carries). `config check` run inside the
+checkout reads that one too.
+
 ## When it doesn't parse
 
 The daemon refuses to start. That's the deliberate half; the other half is that
@@ -578,6 +583,48 @@ use_layout = "work"
 
 A layout name nothing defines costs the windows rather than the session: you
 get a shell and no error, because a typo shouldn't stop you opening a project.
+
+### The layout a checkout carries
+
+An override matches a path in one person's config, so the same repository on
+a second machine, or in a colleague's home, opens as whatever that machine's
+default is. `.tmux-companion.toml` in the project root travels with the
+checkout instead:
+
+```toml
+[[window]]
+name = "edit"
+command = "nvim"
+
+[[window]]
+name = "ai"
+command = "claude"
+```
+
+The rows are `[[layout.window]]` rows, panes and all, and `layout = "work"`
+on its own names a `[[layout]]` the reader's config defines, so a checkout can
+say "the work layout" without saying what that is. Anything else in the file
+is a parse error naming the key, the way `config.toml` reports one.
+
+A file in a checkout that can start programs is a file anybody who can push to
+that repository can use to start programs on your machine, so the commands
+count only under a path `[project] trusted` lists:
+
+```toml
+[project]
+trusted = ["~/work/*", "~/src/mine"]
+```
+
+The match is by whole directory names, so trusting `~/work/api` doesn't trust
+`~/work/api-fork`, and both sides are resolved first, so a symlinked home or
+macOS's `/var` and `/private/var` don't make a trusted checkout a stranger.
+
+Anywhere else the window names still count, since a plain shell called `edit`
+beside one called `ai` is already what `toggle` and the bar need, and every
+`command` is blanked. `project show` says which happened, and names the file
+when it was ignored and why. The order is a saved layout, because it was
+captured on this machine by a key you pressed; then the checkout file; then
+`[[project.override]]`; then `[project] layout`.
 
 `hold_name` keeps a window's name against the running program, and it's on by
 default for a reason. Without it an editor window follows whatever is running,

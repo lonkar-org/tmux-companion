@@ -60,6 +60,17 @@ pub struct SavedLayout {
 pub enum Source {
     /// A file written by `project save` or `project close`.
     Saved(std::path::PathBuf),
+    /// The checkout's own `.tmux-companion.toml`.
+    Repo {
+        /// The file.
+        file: std::path::PathBuf,
+        /// Whether the project is under `[project] trusted`, so its commands
+        /// ran; otherwise the names alone were taken.
+        trusted: bool,
+        /// The `[[layout]]` it named, when it named one rather than listing
+        /// windows.
+        names: Option<String>,
+    },
     /// A `[[layout]]` in the config, by name.
     Named(String),
     /// Nothing matched, so the session is a plain shell.
@@ -335,17 +346,41 @@ pub fn forget(project_path: &str) -> anyhow::Result<bool> {
 
 /// The windows a project opens with, and which file decided.
 ///
-/// A saved layout wins over the config, because somebody pressed a key to make
-/// it and the config is what they had before they did.
+/// A saved layout wins over everything, because somebody pressed a key to
+/// make it on this machine. Then the checkout's own file, with its commands
+/// only when the project is under `[project] trusted`; a file that names a
+/// layout the config does not define falls through to the config, the way a
+/// misspelled `[project] layout` does. Then the override table and the
+/// default.
 pub fn resolve(
     config: &Config,
     saved: Option<SavedLayout>,
+    repo: &crate::repofile::RepoFile,
     project_path: &str,
     home: &str,
 ) -> (Vec<LayoutWindow>, Source) {
     if let Some(s) = saved {
         let file = path_for(project_path).unwrap_or_default();
         return (s.window, Source::Saved(file));
+    }
+    if let crate::repofile::RepoFile::Layout { file, layout } = repo {
+        let trusted = crate::repofile::is_trusted(project_path, &config.project.trusted, home);
+        let source = |names| Source::Repo {
+            file: file.clone(),
+            trusted,
+            names,
+        };
+        if !layout.window.is_empty() {
+            let windows = if trusted {
+                layout.window.clone()
+            } else {
+                crate::repofile::names_only(&layout.window)
+            };
+            return (windows, source(None));
+        }
+        if let Some(l) = config.layout_named(&layout.layout) {
+            return (l.window.clone(), source(Some(l.name.clone())));
+        }
     }
     match config.layout_for(project_path, home) {
         Some(l) => (l.window.clone(), Source::Named(l.name.clone())),
@@ -750,12 +785,29 @@ pub fn describe(
     source: &Source,
     home: &str,
     ignored: Option<(&std::path::Path, &str)>,
+    repo_ignored: Option<(&std::path::Path, &str)>,
 ) -> String {
     let panes: usize = windows.iter().map(|w| w.pane_count()).sum();
     let mut out = format!("{}\n", crate::project::short_path(project_path, home));
     match source {
         Source::Saved(file) => {
             out.push_str(&format!("  layout: saved  ({})\n", file.display()));
+        }
+        Source::Repo {
+            file,
+            trusted,
+            names,
+        } => {
+            let file = file.display();
+            match names {
+                Some(name) => out.push_str(&format!(
+                    "  layout: {file} names [[layout]] \"{name}\"\n"
+                )),
+                None if *trusted => out.push_str(&format!("  layout: {file}  (trusted)\n")),
+                None => out.push_str(&format!(
+                    "  layout: {file}  (names only: not under [project] trusted, so every command was blanked)\n"
+                )),
+            }
         }
         Source::Named(name) => {
             out.push_str(&format!("  layout: [[layout]] name = \"{name}\"\n"));
@@ -767,6 +819,12 @@ pub fn describe(
     if let Some((file, why)) = ignored {
         out.push_str(&format!(
             "  saved layout ignored: {}\n    the file {why}\n    `project save` replaces it, `project forget` deletes it\n",
+            file.display()
+        ));
+    }
+    if let Some((file, why)) = repo_ignored {
+        out.push_str(&format!(
+            "  checkout file ignored: {}\n    the file {why}\n    `config check` in that directory says where\n",
             file.display()
         ));
     }
@@ -961,6 +1019,7 @@ mod tests {
                 std::path::Path::new("/state/projects/x.toml"),
                 "does not parse: line 3",
             )),
+            None,
         );
         assert!(
             text.contains("saved layout ignored: /state/projects/x.toml"),
@@ -1373,10 +1432,131 @@ mod tests {
             }],
             ..Default::default()
         };
-        let (windows, source) = resolve(&c, Some(saved), "/w/proj", "/home/me");
+        let (windows, source) = resolve(&c, Some(saved), &NO_REPO, "/w/proj", "/home/me");
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].name, "one");
         assert!(matches!(source, Source::Saved(_)), "{source:?}");
+    }
+
+    const NO_REPO: crate::repofile::RepoFile = crate::repofile::RepoFile::Absent;
+
+    fn repo(text: &str) -> crate::repofile::RepoFile {
+        crate::repofile::RepoFile::Layout {
+            file: std::path::PathBuf::from("/w/proj/.tmux-companion.toml"),
+            layout: crate::repofile::parse(text).unwrap(),
+        }
+    }
+
+    #[test]
+    fn the_checkout_file_runs_its_commands_only_where_trusted() {
+        let file = repo(
+            "[[window]]\nname = \"edit\"\ncommand = \"nvim\"\n[[window]]\nname = \"ai\"\ncommand = \"claude\"\n",
+        );
+        let trusting = crate::config::parse(
+            "[project]\ntrusted = [\"/w\"]\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        let (windows, source) = resolve(&trusting, None, &file, "/w/proj", "/home/me");
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].command, "nvim");
+        assert!(
+            matches!(
+                &source,
+                Source::Repo {
+                    trusted: true,
+                    names: None,
+                    ..
+                }
+            ),
+            "{source:?}"
+        );
+        // The same file, a checkout nobody trusts: the shape without the programs.
+        let (windows, source) = resolve(&edit_and_ai(), None, &file, "/w/proj", "/home/me");
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].name, "edit");
+        assert_eq!(windows[0].command, "");
+        assert!(
+            matches!(&source, Source::Repo { trusted: false, .. }),
+            "{source:?}"
+        );
+        // And a saved layout still beats it.
+        let saved = SavedLayout {
+            path: "/w/proj".to_string(),
+            window: vec![LayoutWindow {
+                name: "one".to_string(),
+                command: String::new(),
+                hold_name: true,
+                layout: None,
+                main_size: None,
+                pane: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let (_, source) = resolve(&trusting, Some(saved), &file, "/w/proj", "/home/me");
+        assert!(matches!(source, Source::Saved(_)));
+    }
+
+    #[test]
+    fn the_checkout_file_can_name_a_layout_and_a_missing_name_falls_through() {
+        let c = edit_and_ai();
+        let (windows, source) = resolve(
+            &c,
+            None,
+            &repo("layout = \"default\"\n"),
+            "/w/proj",
+            "/home/me",
+        );
+        assert_eq!(windows.len(), 2);
+        assert!(
+            matches!(&source, Source::Repo { names: Some(n), .. } if n == "default"),
+            "{source:?}"
+        );
+        let (windows, source) = resolve(
+            &c,
+            None,
+            &repo("layout = \"nope\"\n"),
+            "/w/proj",
+            "/home/me",
+        );
+        assert_eq!(windows.len(), 2, "the config's own default");
+        assert_eq!(source, Source::Named("default".to_string()));
+        // Ignored is the same as absent for the decision; `describe` says why.
+        let ignored = crate::repofile::RepoFile::Ignored {
+            file: "/w/proj/.tmux-companion.toml".into(),
+            why: "does not parse: x".into(),
+        };
+        let (_, source) = resolve(&c, None, &ignored, "/w/proj", "/home/me");
+        assert_eq!(source, Source::Named("default".to_string()));
+        let text = describe("/w/proj", &[], &source, "/home/me", None, ignored.ignored());
+        assert!(text.contains("checkout file ignored"), "{text}");
+        assert!(text.contains("does not parse: x"), "{text}");
+    }
+
+    #[test]
+    fn describe_says_whether_the_checkout_file_was_trusted() {
+        let untrusted = Source::Repo {
+            file: "/w/proj/.tmux-companion.toml".into(),
+            trusted: false,
+            names: None,
+        };
+        let text = describe("/w/proj", &[], &untrusted, "/home/me", None, None);
+        assert!(text.contains("names only"), "{text}");
+        let trusted = Source::Repo {
+            file: "/w/proj/.tmux-companion.toml".into(),
+            trusted: true,
+            names: None,
+        };
+        assert!(describe("/w/proj", &[], &trusted, "/home/me", None, None).contains("(trusted)"));
+        let named = Source::Repo {
+            file: "/w/proj/.tmux-companion.toml".into(),
+            trusted: false,
+            names: Some("work".into()),
+        };
+        assert!(
+            describe("/w/proj", &[], &named, "/home/me", None, None)
+                .contains("names [[layout]] \"work\"")
+        );
     }
 
     /// A config with the editor-and-agent layout, which tests wrote as
@@ -1392,14 +1572,14 @@ mod tests {
     #[test]
     fn with_nothing_saved_the_config_decides_and_says_which_layout() {
         let c = edit_and_ai();
-        let (windows, source) = resolve(&c, None, "/w/proj", "/home/me");
+        let (windows, source) = resolve(&c, None, &NO_REPO, "/w/proj", "/home/me");
         assert_eq!(windows.len(), 2);
         assert_eq!(source, Source::Named("default".to_string()));
     }
 
     #[test]
     fn with_nothing_saved_and_nothing_configured_a_project_is_a_plain_shell() {
-        let (windows, source) = resolve(&Config::default(), None, "/w/proj", "/home/me");
+        let (windows, source) = resolve(&Config::default(), None, &NO_REPO, "/w/proj", "/home/me");
         assert!(windows.is_empty());
         assert_eq!(source, Source::Nothing);
     }
@@ -1411,7 +1591,7 @@ mod tests {
             std::path::Path::new("t.toml"),
         )
         .unwrap();
-        let (windows, source) = resolve(&c, None, "/w/proj", "/home/me");
+        let (windows, source) = resolve(&c, None, &NO_REPO, "/w/proj", "/home/me");
         assert!(windows.is_empty());
         assert_eq!(source, Source::Nothing);
     }
@@ -1419,8 +1599,8 @@ mod tests {
     #[test]
     fn describe_names_the_file_that_won() {
         let c = edit_and_ai();
-        let (windows, source) = resolve(&c, None, "/w/proj", "/home/me");
-        let text = describe("/w/proj", &windows, &source, "/home/me", None);
+        let (windows, source) = resolve(&c, None, &NO_REPO, "/w/proj", "/home/me");
+        let text = describe("/w/proj", &windows, &source, "/home/me", None, None);
         assert!(text.contains("[[layout]] name = \"default\""), "{text}");
         assert!(text.contains("2 windows, 2 panes"), "{text}");
         assert!(text.contains("edit (1)"), "{text}");
@@ -1440,13 +1620,20 @@ mod tests {
                 LayoutPane::default(),
             ],
         }];
-        let text = describe("/w/proj", &windows, &Source::Nothing, "/home/me", None);
+        let text = describe(
+            "/w/proj",
+            &windows,
+            &Source::Nothing,
+            "/home/me",
+            None,
+            None,
+        );
         assert!(text.contains("1 window, 3 panes"), "{text}");
     }
 
     #[test]
     fn describe_says_plain_shell_when_nothing_matched() {
-        let text = describe("/w/proj", &[], &Source::Nothing, "/home/me", None);
+        let text = describe("/w/proj", &[], &Source::Nothing, "/home/me", None, None);
         assert!(text.contains("plain shell"), "{text}");
         assert!(text.contains("0 windows, 0 panes"), "{text}");
     }

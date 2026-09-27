@@ -1079,6 +1079,22 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+            // The checkout's own file, when this runs inside one: the second
+            // input `project` reads, checked the same way so a bad key is
+            // found here rather than by opening the project.
+            let cwd = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            match crate::repofile::load(&cwd) {
+                crate::repofile::RepoFile::Absent => {}
+                crate::repofile::RepoFile::Layout { file, .. } => {
+                    println!("{}: ok", file.display());
+                }
+                crate::repofile::RepoFile::Ignored { file, why } => {
+                    eprintln!("{}: {why}", file.display());
+                    std::process::exit(1);
+                }
+            }
         }
         ConfigAction::Dump => print!("{}", config::dump_defaults()),
         ConfigAction::Init { force } => {
@@ -1580,8 +1596,9 @@ async fn open_project(
     if !session_exists(&format!("={name}")).await {
         crate::project::record_visit(config, path).await;
 
+        let repo = crate::repofile::load(path);
         let (windows, _) =
-            crate::saved::resolve(config, load_saved(path).await.layout(), path, home);
+            crate::saved::resolve(config, load_saved(path).await.layout(), &repo, path, home);
 
         let spec = crate::project::SessionSpec {
             name: &name,
@@ -2582,7 +2599,8 @@ async fn run_project_show(dir: Option<String>) -> anyhow::Result<()> {
     let ignored = file
         .ignored()
         .map(|(f, w)| (f.to_path_buf(), w.to_string()));
-    let (windows, source) = crate::saved::resolve(&config, file.layout(), &path, &home);
+    let repo = crate::repofile::load(&path);
+    let (windows, source) = crate::saved::resolve(&config, file.layout(), &repo, &path, &home);
     print!(
         "{}",
         crate::saved::describe(
@@ -2590,7 +2608,8 @@ async fn run_project_show(dir: Option<String>) -> anyhow::Result<()> {
             &windows,
             &source,
             &home,
-            ignored.as_ref().map(|(f, w)| (f.as_path(), w.as_str()))
+            ignored.as_ref().map(|(f, w)| (f.as_path(), w.as_str())),
+            repo.ignored(),
         )
     );
     Ok(())

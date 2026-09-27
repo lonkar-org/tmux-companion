@@ -311,8 +311,17 @@ Bound to
 .Ql prefix M-S .
 .It Ic project show Op Ar directory
 Which layout this project gets, which file decided, and the windows it opens.
+The order is a saved layout, then the checkout's own
+.Pa .tmux-companion.toml ,
+then
+.Ic [[project.override]] ,
+then
+.Ic [project] layout .
 A saved file that is there and not used is named with the reason, whether it
-does not parse or an older build wrote it wrong.
+does not parse or an older build wrote it wrong, and so is a checkout file;
+a checkout file whose commands were blanked because the project is not under
+.Ic [project] trusted
+says so.
 The project is the session this runs in, or the directory given.
 .Pp
 .Ic close-project
@@ -1119,6 +1128,11 @@ is which side the editor opens on,
 or
 .Ql bottom .
 .Pp
+.Ic [project] trusted
+is the paths under which a checkout's
+.Pa .tmux-companion.toml
+may run what it says; see
+.Sx FILES .
 .Ic [project] dirs_source
 is where the project picker gets its directories, one of
 .Ql zoxide ,
@@ -1197,6 +1211,18 @@ What the terminal answers about itself.
 .Bl -tag -width "$XDG_STATE_HOME/tmux-companion/projects/" -compact
 .It Pa ~/.config/tmux-companion/config.toml
 the configuration
+.It Pa .tmux-companion.toml
+in a project root, the layout that checkout opens with:
+.Ic [[window]]
+rows in the shape of
+.Ic [[layout.window]] ,
+or
+.Ic layout
+naming one of the reader's own; its commands run only under a path
+.Ic [project] trusted
+lists, and elsewhere the names alone are taken.
+.Ic config check
+run inside the checkout reads it too
 .It Pa ~/.config/tmux/themes/
 themes, and the two files that apply them
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/

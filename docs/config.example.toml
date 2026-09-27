@@ -360,6 +360,19 @@ visit_command = []
 # The layout a new project session starts with.
 layout = "default"
 
+# Paths under which a checkout's own `.tmux-companion.toml` may run commands.
+# That file travels with the repository: `[[window]]` rows in the shape of
+# [[layout.window]] below, or `layout = "name"` naming a layout this config
+# defines. A file in a checkout that can start programs is a file anybody who
+# can push to the repository can use to start programs on your machine, so
+# its commands count only under a prefix listed here, `~` for home and a
+# trailing `*` allowed. Anywhere else the window names still count and every
+# command is blanked; `project show` says which happened. Empty trusts
+# nowhere.
+#
+#   trusted = ["~/work/*", "~/src/mine"]
+trusted = []
+
 # Use a different layout for projects under a path. First match wins.
 #
 #   [[project.override]]

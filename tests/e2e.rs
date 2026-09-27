@@ -243,6 +243,21 @@ impl Tmux {
         }
     }
 
+    /// [`run`] from a directory, for a command that reads its cwd.
+    fn run_in(&self, dir: &Path, args: &[&str]) -> (String, String, bool) {
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(args).current_dir(dir);
+        self.env(&mut cmd);
+        match cmd.output() {
+            Ok(o) => (
+                String::from_utf8_lossy(&o.stdout).to_string(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+                o.status.success(),
+            ),
+            Err(e) => (String::new(), e.to_string(), false),
+        }
+    }
+
     /// Create a session running the shipped example config.
     fn session(&self, name: &str, dir: &Path) {
         let conf = repo_root().join("docs/tmux.conf.full.example");
@@ -663,6 +678,135 @@ fn project_builds_the_windows_the_layout_asks_for() {
     ]);
     let names: Vec<&str> = windows.lines().collect();
     assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
+}
+
+/// A checkout's own `.tmux-companion.toml` decides the windows, and runs its
+/// commands only under a path `[project] trusted` names.
+#[test]
+fn a_checkout_file_shapes_the_session_and_runs_commands_only_where_trusted() {
+    let Some(t) = Tmux::start("repofile") else {
+        return;
+    };
+    let trusted = t.sandbox.join("payments-api");
+    let stranger = t.sandbox.join("vendor-api");
+    let file =
+        "[[window]]\nname = \"edit\"\ncommand = \"sleep 300\"\n\n[[window]]\nname = \"tests\"\n";
+    for dir in [&trusted, &stranger] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(".tmux-companion.toml"), file).unwrap();
+    }
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        format!(
+            "[project]\nzoxide = false\ntrusted = [{:?}]\n",
+            trusted.display().to_string()
+        ),
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("home", &dir);
+    let exe = t.binary.display().to_string();
+    t.tmux(&[
+        "send-keys",
+        "-t",
+        "home:0",
+        &format!("{exe} project {}", trusted.display()),
+        "Enter",
+    ]);
+    assert!(
+        t.until(15, |t| t
+            .tmux(&[
+                "list-panes",
+                "-s",
+                "-t",
+                "=payments-api",
+                "-F",
+                "#{window_name} #{pane_current_command}"
+            ])
+            .lines()
+            .count()
+            == 2),
+        "the session never got both windows"
+    );
+    assert!(
+        t.until(10, |t| t
+            .tmux(&[
+                "list-panes",
+                "-s",
+                "-t",
+                "=payments-api",
+                "-F",
+                "#{window_name} #{pane_current_command}"
+            ])
+            .contains("edit sleep")),
+        "the trusted checkout's command never ran: {:?}",
+        t.tmux(&[
+            "list-panes",
+            "-s",
+            "-t",
+            "=payments-api",
+            "-F",
+            "#{window_name} #{pane_current_command}"
+        ])
+    );
+
+    // `project show` says which file and whether it was trusted.
+    let (out, err, ok) = t.run(&["project", "show", &trusted.display().to_string()]);
+    assert!(ok, "{err}");
+    assert!(
+        out.contains(".tmux-companion.toml") && out.contains("(trusted)"),
+        "{out}"
+    );
+    let (out, _, ok) = t.run(&["project", "show", &stranger.display().to_string()]);
+    assert!(ok);
+    assert!(out.contains("names only"), "{out}");
+    assert!(
+        out.contains("edit (1)") && out.contains("tests (1)"),
+        "the shape survives: {out}"
+    );
+
+    // And the untrusted one opens as shells with the right names.
+    t.tmux(&[
+        "send-keys",
+        "-t",
+        "home:0",
+        &format!("{exe} project {}", stranger.display()),
+        "Enter",
+    ]);
+    assert!(
+        t.until(15, |t| t
+            .tmux(&["list-windows", "-t", "=vendor-api", "-F", "#{window_name}"])
+            .lines()
+            .count()
+            == 2),
+        "the stranger's session never got both windows"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    let panes = t.tmux(&[
+        "list-panes",
+        "-s",
+        "-t",
+        "=vendor-api",
+        "-F",
+        "#{window_name} #{pane_current_command}",
+    ]);
+    assert!(
+        !panes.contains("sleep"),
+        "an untrusted checkout ran a command: {panes:?}"
+    );
+
+    // A bad key in the file is reported by `config check` in that directory.
+    std::fs::write(
+        stranger.join(".tmux-companion.toml"),
+        "[[window]]\nname = \"x\"\nrun = \"rm\"\n",
+    )
+    .unwrap();
+    let (out, err, ok) = t.run_in(&stranger, &["config", "check"]);
+    assert!(!ok, "{out}");
+    assert!(
+        err.contains(".tmux-companion.toml") && err.contains("run"),
+        "{err}"
+    );
 }
 
 /// The `session-created` hook in the example config has to paint a session

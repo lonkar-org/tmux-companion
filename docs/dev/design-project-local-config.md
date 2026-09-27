@@ -1,6 +1,6 @@
 # Design: a `.tmux-companion.toml` in the project root
 
-Status: proposed, 2026-09-26. Queue item 7. Nothing here is built.
+Status: built 2026-09-27 as option 1, with the names-only half of option 2 as the fallback for an untrusted checkout. `[project] trusted` is the trust list. Kept for the reasoning.
 
 ## The problem
 

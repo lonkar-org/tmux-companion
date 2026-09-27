@@ -93,3 +93,7 @@ Said plainly rather than left to be discovered.
   zsh had one proxy for an agent's state, the window's quiet time, and this
   lets the agent say for itself through its hooks. The bell flag is the middle
   ground for an agent with no hooks.
+- `.tmux-companion.toml` in a checkout is the held item 4 from
+  `after-port-checklist.md`, built as option 1 of
+  `design-project-local-config.md`: the full layout behind `[project]
+  trusted`, with names-only as the untrusted fallback.

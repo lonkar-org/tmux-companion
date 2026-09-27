@@ -17,6 +17,13 @@ entry per phase of the comrades port.
   tell a two-minute build from a question, and called every idle agent
   waiting.
 
+- `.tmux-companion.toml` in a project root: the layout that checkout opens
+  with, travelling with the repository. `[[window]]` rows in the shape of
+  `[[layout.window]]`, or `layout = "name"` naming one of the reader's own.
+  Its commands run only under a path `[project] trusted` lists; anywhere
+  else the window names count and every command is blanked, and `project
+  show` says which happened. `config check` inside the checkout reads it.
+
 - The terminal bell as a signal: an agent pane whose window rang the bell and
   has not been visited since reads as `asked`, which covers any agent with no
   hooks that can ring one.
