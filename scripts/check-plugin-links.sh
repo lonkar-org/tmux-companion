@@ -13,6 +13,18 @@
 # Staleness alone does not fail: a plugin that works and is finished is not a
 # problem, and deciding otherwise is a judgement nobody should make in a script.
 #
+# A dead plugin whose mention already says it is dead is listed in
+# scripts/plugin-links.acknowledged with what it is, and is reported without
+# failing for as long as that is still what it is. One that was acknowledged
+# as archived and has since gone fails again, because the mention is now wrong.
+# The same file names the matches that are not repositories at all.
+#
+# Fixed once, 2026-09-27: the gate could never pass. It failed on
+# `b0o/tmux-autoreload` and `jrmoulton/tmux-port` after every mention of them
+# had been rewritten to say archived and gone, since the script reads GitHub
+# and not the sentence, and on `posts/tmux`, which is a branch name in a test.
+# `just plugin-release` depends on this, so the plugin could not be cut.
+#
 # Needs `gh`, authenticated. Rate limits apply; there are about thirty of these.
 #
 # Written after an audit found `b0o/tmux-autoreload` archived and
@@ -60,15 +72,36 @@ while IFS= read -r line; do
   [ -n "$line" ] && repos+=("$line")
 done < "$list"
 
+# What a name was acknowledged as, or nothing. grep and not an associative
+# array, for the bash 3.2 reason above.
+ACK="$root/scripts/plugin-links.acknowledged"
+acknowledged() {
+  [ -f "$ACK" ] || return 0
+  awk -v repo="$1" '$1 == repo { print $2; exit }' "$ACK"
+}
+
+# Report a dead plugin, failing unless this is what it was acknowledged as.
+dead() {
+  local repo=$1 status=$2 pushed=$3 stars=$4 known
+  known=$(acknowledged "$repo")
+  if [ "$known" = "$status" ]; then
+    [ "$QUIET" = 1 ] ||
+      printf '%-44s %-9s %-12s %s\n' "$repo" "$status" "$pushed" "$stars  (the mention says so)"
+    return 0
+  fi
+  printf '%-44s %-9s %-12s %s\n' "$repo" "$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')" "$pushed" "$stars"
+  bad=1
+}
+
 now=$(date +%s)
 bad=0
 printf '%-44s %-9s %-12s %s\n' PLUGIN STATUS "LAST PUSH" STARS
 printf '%s\n' "------------------------------------------------------------------------------"
 
 for repo in "${repos[@]}"; do
+  [ "$(acknowledged "$repo")" = not-a-repo ] && continue
   if ! json=$(gh repo view "$repo" --json isArchived,pushedAt,stargazerCount 2>/dev/null); then
-    printf '%-44s %-9s %-12s %s\n' "$repo" GONE - -
-    bad=1
+    dead "$repo" gone - -
     continue
   fi
   archived=$(printf '%s' "$json" | sed -n 's/.*"isArchived":\([a-z]*\).*/\1/p')
@@ -85,7 +118,8 @@ for repo in "${repos[@]}"; do
   days=$(( (now - when) / 86400 ))
 
   if [ "$archived" = true ]; then
-    status=ARCHIVED; bad=1
+    dead "$repo" archived "${pushed%%T*}" "$stars"
+    continue
   elif [ "$days" -gt "$STALE_DAYS" ]; then
     status=stale
   else
@@ -100,7 +134,8 @@ echo
 if [ "$bad" = 1 ]; then
   echo "Something above is archived or gone. This repository credits plugins and"
   echo "tells people to install them, so a dead one needs its mention changed to"
-  echo "say so -- and a successor named only if its author named one."
+  echo "say so -- and a successor named only if its author named one. Once every"
+  echo "mention does, add it to scripts/plugin-links.acknowledged."
   exit 1
 fi
-echo "Nothing archived or gone."
+echo "Nothing archived or gone that the mentions do not already say."

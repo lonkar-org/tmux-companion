@@ -1,0 +1,20 @@
+# Names scripts/check-plugin-links.sh finds that it should not fail on.
+#
+#   owner/repo   archived | gone | not-a-repo
+#
+# archived, gone: the plugin is dead and every mention of it in this
+# repository already says so. The check still looks it up, and fails again
+# if what it finds is no longer what is written here.
+#
+# not-a-repo: the name has the shape of one and is something else.
+
+# Archived February 2024. config.example.toml, reference/configuration.md and
+# src/autoreload.rs all say so, and that no successor was named.
+b0o/tmux-autoreload    archived
+
+# Deleted. dev/after-the-port.md, dev/port-checklist.md and src/ports.rs say
+# it is gone and that nothing living was found to send people to.
+jrmoulton/tmux-port    gone
+
+# A branch name in the tests of src/segments/git.rs.
+posts/tmux             not-a-repo

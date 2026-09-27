@@ -126,7 +126,7 @@ Said plainly rather than left to be discovered.
   `docs/tmux.conf.full.example`, commented, and have not been run against an
   installed fingers.
 - The prefix and copy-mode indicator is two `status-left` lines in the full
-  example and a section in `how-to/things-tmux-already-does.md`, where
+  example and a section in `docs/how-to/things-tmux-already-does.md`, where
   `tmux-prefix-highlight` and `tmux-mode-indicator` are plugins.
 - `search` finds its line again by text at the moment of landing, so a pane
   at its `history-limit` lands on the line too; counting how much the
