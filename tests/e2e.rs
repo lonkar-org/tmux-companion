@@ -1460,7 +1460,14 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
         cols[1],
         "#{pane_in_mode} #{selection_present} #{copy_cursor_line}",
     ]);
-    assert_eq!(landed, "1 1 needle-42");
+    // The first three words and not the whole string: the needle is the
+    // oldest line in the history, so it lands on the top row, and tmux 3.4
+    // gives that row back with the position indicator that's drawn over it.
+    // The release gate for 0.5.0 read
+    // `1 1 needle-42` and then, after a run of spaces, `12:53:32 [170/170]`
+    // on the runner's 3.4-1ubuntu0.1, where 3.7c gives the line alone.
+    let words: Vec<&str> = landed.split_whitespace().take(3).collect();
+    assert_eq!(words, ["1", "1", "needle-42"], "{landed:?}");
 }
 
 /// `ports --print` names the pane a listener was started in.
