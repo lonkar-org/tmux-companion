@@ -8,7 +8,7 @@
 
 use std::io::IsTerminal;
 
-use crate::inbox::{self, Entry};
+use crate::inbox::Entry;
 use crate::sessions::idle::IdleSession;
 
 /// Days a session has to sit untouched before the brief lists it.
@@ -83,7 +83,7 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
                 e.program,
                 e.state,
                 crate::panes::age(now.saturating_sub(e.since)),
-                inbox::question(&e.lines)
+                e.question_line()
             ));
         }
     }
@@ -265,12 +265,13 @@ mod tests {
             bell: false,
         };
         let asked = |lines: &str| {
-            inbox::entry(
+            crate::inbox::entry(
                 &pane,
                 crate::panes::State::Waiting(300),
                 None,
                 "/home/me",
                 lines.into(),
+                &[],
             )
         };
         let b = Brief {

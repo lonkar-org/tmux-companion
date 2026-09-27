@@ -41,6 +41,22 @@ pub struct Entry {
     /// How it stopped: `asked`, `done` or `waiting`, the state's first word.
     #[serde(default = "waiting_word")]
     pub state: String,
+    /// The one line of `lines` that is the question, picked at the capture
+    /// with `[agents] question_skip`. Empty from a daemon that did not pick
+    /// one, and then [`Entry::question_line`] picks with the shipped list.
+    #[serde(default)]
+    pub question: String,
+}
+
+impl Entry {
+    /// The question, as one line.
+    pub fn question_line(&self) -> String {
+        if self.question.is_empty() {
+            question(&self.lines)
+        } else {
+            self.question.clone()
+        }
+    }
 }
 
 /// The word an entry written before the field existed reads back with.
@@ -112,6 +128,7 @@ pub fn entry(
     report: Option<Reported>,
     home: &str,
     lines: String,
+    skip: &[regex::Regex],
 ) -> Entry {
     Entry {
         id: pane.id.clone(),
@@ -119,27 +136,107 @@ pub fn entry(
         program: panes::program(pane),
         path: crate::project::short_path(&pane.path, home),
         since: stopped_at(pane, report),
+        question: question_in(&lines, skip),
         lines,
         state: state.word().to_string(),
     }
 }
 
-/// The question, as one line: the last non-empty line of the capture, which
-/// is where a prompt waiting for an answer sits.
-pub fn question(lines: &str) -> String {
-    lines
-        .lines()
+/// `[agents] question_skip` compiled. A pattern that does not parse is left
+/// out, the bargain every other pattern in the config makes: one bad row
+/// costs its own line and not the inbox.
+pub fn compile(patterns: &[String]) -> Vec<regex::Regex> {
+    patterns
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect()
+}
+
+/// Whether a line is a horizontal rule: ten or more rule characters and
+/// nothing else, which is what an agent draws above and below its input box.
+fn is_rule(line: &str) -> bool {
+    let t = line.trim();
+    t.chars().count() >= 10 && t.chars().all(|c| matches!(c, '─' | '━' | '═' | '-'))
+}
+
+/// The screen above the input box.
+///
+/// claude, and the agents drawn like it, end the screen with a rule, a
+/// prompt, a rule, and then a status line and a mode line of their own. None
+/// of that is anything the agent said, and the status line is whatever its
+/// owner configured, so no list of patterns could name it. The last rule with
+/// a prompt straight under it is where the box begins, and everything from
+/// there down is cut.
+fn above_the_input_box<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    let is_prompt = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with('❯') || t.starts_with('>')
+    };
+    let cut = (0..lines.len())
         .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .to_string()
+        .find(|&i| is_rule(lines[i]) && lines.get(i + 1).is_some_and(|n| is_prompt(n)));
+    match cut {
+        Some(i) => lines[..i].to_vec(),
+        None => lines.to_vec(),
+    }
+}
+
+/// The question, as one line: the last line of the capture that is something
+/// the agent said, which is where a prompt waiting for an answer sits.
+///
+/// The input box and what is under it go first, then every line a `skip`
+/// pattern matches, and the edges of a box are taken off what is left, so a
+/// question inside a dialog reads as the question. When that leaves nothing,
+/// the last line with anything on it stands in, since a line of furniture
+/// says more than an empty row.
+pub fn question_in(lines: &str, skip: &[regex::Regex]) -> String {
+    let all: Vec<&str> = lines.lines().filter(|l| !l.trim().is_empty()).collect();
+    let said = above_the_input_box(&all);
+    let unboxed = |l: &str| {
+        l.trim()
+            .trim_matches(|c| matches!(c, '│' | '┃' | '|'))
+            .trim()
+            .to_string()
+    };
+    said.iter()
+        .rev()
+        .map(|l| unboxed(l))
+        .find(|l| !l.is_empty() && !skip.iter().any(|re| re.is_match(l)))
+        .or_else(|| all.last().map(|l| l.trim().to_string()))
+        .unwrap_or_default()
+}
+
+/// [`question_in`] with the shipped patterns, for a capture whose question
+/// was not picked when it was taken.
+pub fn question(lines: &str) -> String {
+    let shipped: Vec<String> = crate::config::QUESTION_SKIP
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    question_in(lines, &compile(&shipped))
+}
+
+/// Whether this pane's question is the one last written to the journal for
+/// it, and if it is not, remember it as the last.
+///
+/// An agent with no hooks that redraws its status line and goes quiet again
+/// is a new stop every time as far as the window can tell, and wrote the same
+/// line every thirty seconds. Nothing new was said, so nothing new is
+/// written.
+pub fn is_repeat(last: &mut HashMap<String, String>, id: &str, question: &str) -> bool {
+    if last.get(id).is_some_and(|q| q == question) {
+        return true;
+    }
+    last.insert(id.to_string(), question.to_string());
+    false
 }
 
 /// Which entries have waited past `after` seconds and have not been nudged.
 ///
 /// `after` of zero means never, which is the default: a nudge is a
-/// notification, and the bar already says how many are waiting.
+/// notification, and the bar already says how many are waiting. An agent
+/// that said `done` is never due: it answered, and "has waited five
+/// minutes" about every finished reply is the notification people turn off.
 pub fn due(
     entries: &HashMap<String, Entry>,
     nudged: &HashSet<String>,
@@ -151,6 +248,7 @@ pub fn due(
     }
     let mut out: Vec<Entry> = entries
         .values()
+        .filter(|e| e.state != "done")
         .filter(|e| !nudged.contains(&e.id) && now.saturating_sub(e.since) >= after)
         .cloned()
         .collect();
@@ -165,7 +263,7 @@ pub fn due(
 /// appear, so a desktop notifier can be given a title and a body.
 pub fn nudge_command(e: &Entry, now: u64, configured: &[String]) -> Vec<String> {
     let waited = panes::age(now.saturating_sub(e.since));
-    let question = question(&e.lines);
+    let question = e.question_line();
     if configured.is_empty() {
         return vec![
             "tmux".to_string(),
@@ -236,6 +334,8 @@ pub async fn inbox_loop(
     let interval = std::time::Duration::from_secs(config.interval_secs.max(1));
     let home = std::env::var("HOME").unwrap_or_default();
     let mut turns: HashMap<String, u64> = HashMap::new();
+    let mut last_asked: HashMap<String, String> = HashMap::new();
+    let skip = compile(&config.question_skip);
     loop {
         tokio::time::sleep(interval).await;
         let panes = panes::list().await;
@@ -268,9 +368,24 @@ pub async fn inbox_loop(
             })
             .collect();
         turns_step(&mut turns, &seen, now);
+        // A pane that has gone, or an agent that said it is working again,
+        // may ask the same thing twice and mean it.
+        last_asked.retain(|id, _| {
+            seen.iter().any(|(s, _)| s == id)
+                && reports
+                    .get(id)
+                    .is_none_or(|r| r.state != panes::Report::Busy)
+        });
         for (pane, how) in &arrived {
             let lines = panes::tail_of(&pane.id).await;
-            let e = entry(pane, *how, reports.get(&pane.id).copied(), &home, lines);
+            let e = entry(
+                pane,
+                *how,
+                reports.get(&pane.id).copied(),
+                &home,
+                lines,
+                &skip,
+            );
             if journal.enabled {
                 let event = |kind, detail| crate::journal::Event {
                     at: now,
@@ -292,15 +407,19 @@ pub async fn inbox_loop(
                                     "{} {} {}",
                                     e.program,
                                     panes::age(now.saturating_sub(began)),
-                                    question(&e.lines)
+                                    e.question
                                 ),
                             ));
                         }
                     }
-                    _ => crate::journal::append(&event(
-                        crate::journal::Kind::Asked,
-                        format!("{} {}", e.program, question(&e.lines)),
-                    )),
+                    _ => {
+                        if !is_repeat(&mut last_asked, &pane.id, &e.question) {
+                            crate::journal::append(&event(
+                                crate::journal::Kind::Asked,
+                                format!("{} {}", e.program, e.question),
+                            ));
+                        }
+                    }
                 }
             }
             kept.insert(pane.id.clone(), e);
@@ -365,7 +484,7 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
                 e.program,
                 e.state,
                 panes::age(now.saturating_sub(e.since)),
-                question(&e.lines),
+                e.question_line(),
                 e.id
             );
         }
@@ -375,7 +494,7 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
         .iter()
         .map(|e| {
             let waited = format!("{} {}", e.state, panes::age(now.saturating_sub(e.since)));
-            let q = question(&e.lines);
+            let q = e.question_line();
             crate::picker::Item::with_preview(
                 format!("{} {} {} {}", e.at, e.program, waited, q),
                 e.lines.clone(),
@@ -428,7 +547,18 @@ mod tests {
     }
 
     fn quiet(pane: &Pane, lines: &str) -> Entry {
-        entry(pane, State::Waiting(0), None, "/home/me", lines.into())
+        entry(
+            pane,
+            State::Waiting(0),
+            None,
+            "/home/me",
+            lines.into(),
+            &shipped(),
+        )
+    }
+
+    fn shipped() -> Vec<regex::Regex> {
+        compile(&crate::config::Agents::default().question_skip)
     }
 
     fn said(id: &str, state: panes::Report, at: u64) -> Reports {
@@ -483,6 +613,7 @@ mod tests {
             asked.get("%1").copied(),
             "/h",
             "q".into(),
+            &shipped(),
         );
         assert_eq!(e.since, 1004, "the hook's time, not the window's");
         assert_eq!(e.state, "asked");
@@ -604,6 +735,89 @@ mod tests {
             r#"{"id":"%1","at":"api:2.1","program":"claude","path":"~/w","since":1,"lines":"q"}"#;
         let e: Entry = serde_json::from_str(json).unwrap();
         assert_eq!(e.state, "waiting");
+    }
+
+    #[test]
+    fn every_shipped_pattern_parses() {
+        let patterns = crate::config::Agents::default().question_skip;
+        assert_eq!(shipped().len(), patterns.len());
+        // And one that does not is left out rather than taking the rest down.
+        assert_eq!(compile(&["(".to_string(), "^x".to_string()]).len(), 1);
+    }
+
+    #[test]
+    fn the_question_is_what_was_said_above_the_input_box() {
+        // A finished claude turn, as the pane draws it.
+        let done = "\
+\u{23fa} The build passes. Want me to push it?
+\u{273b} Baked for 37s
+\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+\u{276f}\u{a0}
+\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+  Fable 5.1 | [\u{2588}\u{2591}] 36% ctx | 17% 5h
+  \u{23f5}\u{23f5} auto mode on (shift+tab to cycle) \u{b7} \u{2190} 1 agent
+";
+        assert_eq!(
+            question_in(done, &shipped()),
+            "\u{23fa} The build passes. Want me to push it?"
+        );
+        // Working: the spinner and the tool output are not the question.
+        let working = "\
+\u{23fa} Running the tests
+  \u{23bf}  $ cargo test
+\u{2722} Meandering\u{2026} (51s \u{b7} \u{2193} 3.2k tokens)
+\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+\u{276f} 
+\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}
+";
+        assert_eq!(
+            question_in(working, &shipped()),
+            "\u{23fa} Running the tests"
+        );
+        // A permission dialog: the question, not its options or its hint.
+        let dialog = "\
+\u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e}
+\u{2502} Bash command
+\u{2502}   rm -rf target
+\u{2502} Do you want to proceed?
+\u{2502} \u{276f} 1. Yes
+\u{2502}   2. No, and tell Claude what to do differently
+\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}
+  Esc to cancel
+";
+        assert_eq!(question_in(dialog, &shipped()), "Do you want to proceed?");
+        // Nothing but furniture: the last line stands in for an empty row.
+        let bare = "\u{23f5}\u{23f5} auto mode on\n";
+        assert_eq!(
+            question_in(bare, &shipped()),
+            "\u{23f5}\u{23f5} auto mode on"
+        );
+        // With no patterns only the input box is cut.
+        assert_eq!(question_in(done, &[]), "\u{273b} Baked for 37s");
+    }
+
+    #[test]
+    fn a_done_agent_is_never_nudged_about() {
+        let mut e = quiet(&pane("%1", "claude", 1000, false), "here is the diff");
+        e.state = "done".into();
+        let entries = HashMap::from([("%1".to_string(), e.clone())]);
+        assert!(due(&entries, &HashSet::new(), 9_000, 300).is_empty());
+        e.state = "asked".into();
+        let entries = HashMap::from([("%1".to_string(), e)]);
+        assert_eq!(due(&entries, &HashSet::new(), 9_000, 300).len(), 1);
+    }
+
+    #[test]
+    fn the_same_question_from_the_same_pane_is_written_once() {
+        let mut last = HashMap::new();
+        assert!(!is_repeat(&mut last, "%1", "Continue?"));
+        assert!(is_repeat(&mut last, "%1", "Continue?"));
+        assert!(!is_repeat(&mut last, "%2", "Continue?"), "another pane");
+        assert!(!is_repeat(&mut last, "%1", "Push it?"), "a new question");
+        assert!(
+            !is_repeat(&mut last, "%1", "Continue?"),
+            "and the old one after it"
+        );
     }
 
     #[test]

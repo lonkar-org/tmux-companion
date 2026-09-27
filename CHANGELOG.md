@@ -44,6 +44,24 @@ entry per phase of the comrades port.
   default, and says it is done: the program, how long, and the last line of
   the answer. A turn under that is a chat and gets nothing.
 
+### Fixed
+
+- The question an inbox row, a nudge and a journal line carry was the last
+  line on the agent's screen, which for claude is its mode line, so a
+  notification read `⏵⏵ auto mode on`. It's now the last thing the agent
+  said: the input box and everything under it are cut, then the lines
+  `[agents] question_skip` matches, and a question inside a dialog loses the
+  box's edges.
+
+- A nudge is no longer sent about an agent that said `done`.
+
+- A process named by its version is shown as `claude` in rows, nudges and
+  the journal, where it read `2.1.283`.
+
+- The journal writes a question once per pane rather than once per stop: an
+  agent with no hooks that redrew its status line and went quiet again wrote
+  the same line every thirty seconds.
+
 ### Changed
 
 - A click on the agent count opens the agent list rather than the inbox when

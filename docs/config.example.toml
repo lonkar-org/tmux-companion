@@ -549,6 +549,26 @@ style = "words"
 # prints the settings block that makes claude report busy, asked and done as
 # they happen, and a report wins over the window's quiet time.
 show = "waiting"
+# Lines of an agent's screen that are furniture rather than something it
+# said, as regular expressions. The question an inbox row, a nudge and a
+# journal line carry is the last line on the screen that matches none of
+# these. The input box at the foot of the screen, a rule with a prompt under
+# it and whatever sits below, is cut before these are tried, so they are for
+# what is left above it. In order: a rule or the edge of a box, an empty
+# prompt, a spinner, the line a finished turn leaves, tool output, the mode
+# line, two hints, and a dialog's numbered options. A pattern that does not
+# parse matches nothing.
+question_skip = [
+  '^[\s─━═╭╮╰╯│┃|-]*$',
+  '^\s*[❯>]\s*$',
+  '^\s*[✢✳✶✻✽✺·*]\s+\S+(…|\.\.\.)',
+  '^\s*[✢✳✶✻✽✺]\s+\S+ for \d',
+  '^\s*⎿',
+  '^\s*⏵⏵ ',
+  '^\s*\? for shortcuts',
+  '(?i)^\s*esc to (cancel|interrupt)',
+  '^\s*[❯>]?\s*\d+\.\s',
+]
 
 [window_names]
 # Name a window after what is running in its active pane, using the same

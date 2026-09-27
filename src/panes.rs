@@ -351,12 +351,27 @@ pub fn age(secs: u64) -> String {
 /// hostname, and a shell that sets its title to its own name adds nothing to
 /// the command already there.
 pub fn program(pane: &Pane) -> String {
+    let command = program_name(&pane.command);
     let title = pane.title.trim();
-    if title.is_empty() || title == pane.host || title == pane.command {
-        return pane.command.clone();
+    if title.is_empty() || title == pane.host || title == pane.command || title == command {
+        return command.to_string();
     }
-    format!("{} \u{2014} {title}", pane.command)
+    format!("{command} \u{2014} {title}")
 }
+
+/// The name a command is shown by: itself, unless it is only a version
+/// number, which is claude, the one program that names its process that way.
+/// `2.1.283 has waited 5m` told nobody which program had.
+pub fn program_name(command: &str) -> &str {
+    if is_version_name(command) {
+        VERSION_NAMED
+    } else {
+        command
+    }
+}
+
+/// What a process named by its version is called in a row or a nudge.
+pub const VERSION_NAMED: &str = "claude";
 
 /// Which panes the list holds.
 #[derive(Debug, Clone, Copy, Default)]
@@ -905,6 +920,12 @@ mod tests {
         p.command = "claude".into();
         p.title = "claude: cache".into();
         assert_eq!(program(&p), "claude \u{2014} claude: cache");
+        // A process named by its version is shown by the name it has.
+        p.command = "2.1.283".into();
+        p.title = "\u{2733} fix the build".into();
+        assert_eq!(program(&p), "claude \u{2014} \u{2733} fix the build");
+        p.title = "laptop".into();
+        assert_eq!(program(&p), "claude");
     }
 
     // ── rows ────────────────────────────────────────────────────────────────

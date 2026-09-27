@@ -422,6 +422,7 @@ nudge_after_secs = 0
 nudge_command = []
 style = "words"
 show = "waiting"
+question_skip = ['^[\s─━═╭╮╰╯│┃|-]*$', '^\s*[❯>]\s*$', "…"]
 ```
 
 `style = "glyphs"` draws the segment as the robot and the count, then an
@@ -450,6 +451,23 @@ A click on the segment opens the inbox, and one on `health` the brief, once
 tmux.conf has `bind -T root MouseDown1StatusRight run-shell "tmux-companion
 click '#{mouse_status_range}'"`; `on_click` on a `[[status.right.segments]]`
 row runs a tmux command of your own instead, with `{me}` for this binary.
+
+`question_skip` is how the one-line question is picked out of a captured
+screen, for the inbox row, the nudge and the journal. The last line on an
+agent's screen is never what it said: claude ends with an input box, a status
+line and a mode line, so the nudge used to read `⏵⏵ auto mode on`. The input
+box, a rule with a prompt under it, and everything below it are cut first,
+which takes care of a status line whatever its owner put on it. The patterns
+are for what's left above: a rule or a box edge, an empty prompt, a spinner,
+the line a finished turn leaves, tool output, the hints, and a dialog's
+numbered options, so a permission prompt reads as `Do you want to proceed?`
+and not as `2. No`. `config dump` prints the shipped list. A pattern that
+doesn't parse matches nothing.
+
+A nudge is never sent about an agent that said `done`: it answered, and it
+can wait. The journal writes a question once per pane, not once per stop, so
+an agent with no hooks that redraws and goes quiet again doesn't fill the
+file with the same line.
 
 `inbox` keeps the agents that have stopped, with the last lines of each one's
 screen captured the moment it stopped, so `tmux-companion inbox` shows the

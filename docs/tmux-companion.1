@@ -669,10 +669,18 @@ Enter switches the attached client to that pane.
 .Fl -print
 writes where, program, state and how long, the question and the pane id as
 tab-separated columns.
+The question is the last line of the screen that is something the agent
+said: the input box at the foot of the screen and whatever is under it are
+cut, and then every line matching one of
+.Ic [agents] question_skip ,
+a list of regular expressions that ships covering rules, spinners, hints and a
+dialog's numbered options.
 .Ic [agents] inbox
 turns the capture off, and
 .Ic [agents] nudge_after_secs
-says it out loud once an agent has waited that long.
+says it out loud once an agent has waited that long, unless it said
+.Cm done ,
+which is an answer and not a question.
 .It Ic panes Op Fl -agents , Fl -print , Fl t Ar session
 Every pane on the server, one row each: where it is as
 .Ql session:window.pane ,

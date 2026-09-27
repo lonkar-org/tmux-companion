@@ -778,7 +778,37 @@ pub struct Agents {
     /// stopped; `busy`, the ones working, for somebody who keeps many open
     /// and works one at a time; or `both`.
     pub show: AgentsShow,
+    /// Lines of an agent's screen that are furniture rather than something
+    /// it said, as regular expressions: the question an inbox row, a nudge
+    /// and a journal line carry is the last line that matches none of them.
+    ///
+    /// The input box at the foot of the screen, a rule, a prompt and
+    /// whatever sits under them, is cut before these are tried, so they are
+    /// for what is left above it: a spinner, a dialog's numbered options.
+    /// A pattern that does not parse matches nothing.
+    pub question_skip: Vec<String>,
 }
+
+/// The shipped `[agents] question_skip`: what claude, and agents drawn like
+/// it, put between the last thing said and the input box.
+pub const QUESTION_SKIP: &[&str] = &[
+    // A rule, or the edge of a box, with nothing in it.
+    r"^[\s─━═╭╮╰╯│┃|-]*$",
+    // A prompt with nothing typed.
+    r"^\s*[❯>]\s*$",
+    // A spinner while it works: `✢ Meandering… (51s · ↓ 3.2k tokens)`.
+    r"^\s*[✢✳✶✻✽✺·*]\s+\S+(…|\.\.\.)",
+    // The line it leaves when it is done: `✻ Baked for 37s`.
+    r"^\s*[✢✳✶✻✽✺]\s+\S+ for \d",
+    // Tool output hanging under a tool call.
+    r"^\s*⎿",
+    // The mode line and the hints.
+    r"^\s*⏵⏵ ",
+    r"^\s*\? for shortcuts",
+    r"(?i)^\s*esc to (cancel|interrupt)",
+    // A dialog's numbered options, which sit under the question.
+    r"^\s*[❯>]?\s*\d+\.\s",
+];
 
 impl Default for Agents {
     fn default() -> Self {
@@ -801,6 +831,7 @@ impl Default for Agents {
             nudge_command: Vec::new(),
             style: AgentsStyle::Words,
             show: AgentsShow::Waiting,
+            question_skip: QUESTION_SKIP.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
