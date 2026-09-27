@@ -1495,7 +1495,14 @@ fn ports_names_the_pane_that_started_the_listener() {
     // that it started, and the command is typed again every two seconds for
     // a shell that was not reading yet, which a server already in front
     // never sees.
-    let serve = "python3 -m http.server 0 --bind 127.0.0.1";
+    //
+    // A socket and a sleep, and not `python3 -m http.server`: `HTTPServer`
+    // binds, asks `socket.getfqdn` for its own name and only then listens,
+    // and on the macOS runner Python 3.14.7 was thirty seconds into the pane's
+    // foreground with nothing in `lsof` and no `Serving HTTP` line on the
+    // screen. I think it's the reverse lookup that was stalling and I haven't
+    // proved it, this just doesn't ask.
+    let serve = "python3 -c \"import socket,time; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); time.sleep(600)\"";
     let of_alpha = |out: &str| {
         out.lines()
             .find(|l| {
