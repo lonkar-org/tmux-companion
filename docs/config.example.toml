@@ -252,7 +252,7 @@ separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 # in the last hour, config.toml edited after the daemon started, or a newer
 # binary on disk than the one running. The glyph and the word for the first
 # reason, `+N` when there are more, and nothing at all when the daemon is
-# fine. `tmux-companion doctor` prints every reason in full on its health
+# fine. With [online] turned on, the network being gone is a reason too. `tmux-companion doctor` prints every reason in full on its health
 # line. Two stats every five seconds while this block is here.
 #
 # [[status.right.segments]]
@@ -502,6 +502,23 @@ min_secs = 60
 # ever says done, so this is silent for the rest. Five minutes: a turn under
 # that is a chat, one over it is work. Zero writes every turn down.
 agent_min_secs = 300
+
+[online]
+# Whether the network is there, said by the health mark: `offline` on the
+# bar, and `offline for 3m: nothing answers at 1.1.1.1:443` from `doctor` and
+# the brief. Online draws nothing. It needs the `health` segment in
+# [[status.right.segments]] to be seen on the bar.
+#
+# Off, because the probe is a TCP connection to an address outside this
+# machine, opened and dropped every interval_secs, and that's yours to turn
+# on. `probe` is any host:port that should always answer; something inside
+# your own network is a fair choice if what you care about is the VPN.
+# Two probes in a row have to go unanswered before the mark comes up, so a
+# lost packet doesn't flash it.
+enabled = false
+probe = "1.1.1.1:443"
+interval_secs = 30
+timeout_ms = 2000
 
 [agents]
 # One list of what counts as a coding agent, read by everything that asks:

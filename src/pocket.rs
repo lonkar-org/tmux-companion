@@ -47,7 +47,7 @@ pub fn format() -> String {
     format!("#{{pane_id}}\t#{{window_id}}\t#{{window_name}}\t#{{pane_width}}\t#{{{MARK}}}")
 }
 
-/// Parse a `list-panes -s` in [`format`]. A line that does not fit is
+/// Parse a `list-panes -s` in [`format()`]. A line that does not fit is
 /// skipped.
 pub fn parse(text: &str) -> Vec<Seen> {
     text.lines()

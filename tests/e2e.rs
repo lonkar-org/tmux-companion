@@ -1396,6 +1396,362 @@ fn the_manual_names_every_configuration_section() {
     );
 }
 
+/// `search` finds a line that has scrolled into the history of a pane nobody
+/// is in, and `--first` leaves that pane in copy mode on the line.
+///
+/// The needle is written as arithmetic so the command line that printed it
+/// doesn't contain it: the shell echoes what was typed, and a search that
+/// found the typing would pass with the output never read.
+#[test]
+fn search_finds_a_line_in_the_history_and_lands_on_it() {
+    let Some(t) = Tmux::start("search") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    t.session("beta", &dir);
+    assert!(
+        t.until(20, |t| {
+            t.tmux(&[
+                "send-keys",
+                "-t",
+                "=alpha:",
+                "clear; echo needle-$((40+2)); seq 1 200",
+                "C-m",
+            ]);
+            std::thread::sleep(Duration::from_millis(300));
+            let (out, _, _) = t.run(&["search", "--print", "-F", "needle-42"]);
+            !out.trim().is_empty()
+        }),
+        "the needle never reached the scrollback: {:?}",
+        t.capture("=alpha:")
+    );
+
+    let (out, err, ok) = t.run(&["search", "--print", "-F", "needle-42"]);
+    assert!(ok, "search --print failed:\n{err}");
+    let row = out.lines().next().unwrap_or_default();
+    let cols: Vec<&str> = row.split('\t').collect();
+    assert_eq!(cols.len(), 4, "where, id, line number, line: {row:?}");
+    assert!(cols[0].starts_with("alpha:"), "{row:?}");
+    assert!(cols[1].starts_with('%'), "{row:?}");
+    let y: i64 = cols[2].parse().unwrap_or(0);
+    assert!(
+        y < 0,
+        "two hundred lines later it is in the history: {row:?}"
+    );
+    assert_eq!(cols[3], "needle-42", "{row:?}");
+
+    // The other session's panes are not searched when one is named, and a
+    // pattern nothing matches is nothing to show, not an error.
+    let (out, err, ok) = t.run(&["search", "--print", "-F", "needle-42", "-t", "beta"]);
+    assert!(ok, "{err}");
+    assert!(out.trim().is_empty(), "{out:?}");
+    assert!(err.contains("nothing in the scrollback"), "{err:?}");
+    // A pattern that is not one says how to mean it as text.
+    let (_, err, ok) = t.run(&["search", "--print", "needle-[42"]);
+    assert!(!ok && err.contains("--fixed"), "{err:?}");
+
+    let (_, err, ok) = t.run(&["search", "--first", "-F", "needle-42"]);
+    assert!(ok, "{err}");
+    let landed = t.tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        cols[1],
+        "#{pane_in_mode} #{selection_present} #{copy_cursor_line}",
+    ]);
+    assert_eq!(landed, "1 1 needle-42");
+}
+
+/// `ports --print` names the pane a listener was started in.
+///
+/// python is the listener because it is on the runners and on a laptop and
+/// its arguments are the same on both, which `nc` cannot say.
+#[test]
+fn ports_names_the_pane_that_started_the_listener() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        skipping("ports", "no python3 on this machine");
+        return;
+    }
+    let Some(t) = Tmux::start("ports") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    // Port 0, so the kernel picks one and holds it: a port chosen here and
+    // handed to python is free for anybody in between, and the suite runs in
+    // parallel. The row is known by its pane, which is the point of the
+    // command anyway.
+    //
+    // Not `send_when_ready`: it waits for the pane to name the command, and
+    // macOS names this one `Python`. The row showing up is the better sign
+    // that it started, and the command is typed again every two seconds for
+    // a shell that was not reading yet, which a server already in front
+    // never sees.
+    let serve = "python3 -m http.server 0 --bind 127.0.0.1";
+    let of_alpha = |out: &str| {
+        out.lines()
+            .find(|l| {
+                l.split('\t')
+                    .nth(5)
+                    .is_some_and(|w| w.starts_with("alpha:"))
+            })
+            .map(str::to_string)
+    };
+    let mut last = (String::new(), String::new());
+    let mut tries = 0;
+    assert!(
+        t.until(30, |t| {
+            if tries % 20 == 0 {
+                t.tmux(&["send-keys", "-t", "=alpha:", serve, "C-m"]);
+            }
+            tries += 1;
+            let (out, err, _) = t.run(&["ports", "--print"]);
+            let found = of_alpha(&out).is_some();
+            last = (out, err);
+            found
+        }),
+        "no port of alpha's ever showed up: {last:?}"
+    );
+    let row = of_alpha(&last.0).unwrap();
+    let cols: Vec<&str> = row.split('\t').collect();
+    let port = cols[0].to_string();
+    assert!(port.parse::<u16>().is_ok_and(|p| p > 0), "{row:?}");
+    assert_eq!(
+        cols.len(),
+        7,
+        "port, protocol, address, program, pid, where, id: {row:?}"
+    );
+    assert_eq!(cols[1], "tcp", "{row:?}");
+    assert_eq!(cols[2], "localhost", "{row:?}");
+    assert!(cols[3].to_lowercase().contains("python"), "{row:?}");
+    assert!(cols[5].starts_with("alpha:"), "{row:?}");
+    assert!(cols[6].starts_with('%'), "{row:?}");
+    // UDP is asked for, and asking for it takes nothing away.
+    let (out, err, ok) = t.run(&["ports", "--print", "--udp"]);
+    assert!(ok, "{err}");
+    assert!(out.contains(&format!("{port}\ttcp\t")), "{out:?}");
+
+    // Another session's filter leaves it out, and says why the list is empty.
+    let (out, err, ok) = t.run(&["ports", "--print", "-t", "nowhere"]);
+    assert!(ok, "{err}");
+    assert!(of_alpha(&out).is_none(), "{out:?}");
+}
+
+/// `kill` stops what is in front in a pane and leaves the pane, and refuses
+/// a shell at its prompt.
+#[test]
+fn kill_stops_the_program_and_keeps_the_pane() {
+    let Some(t) = Tmux::start("kill") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let pane = t.tmux(&["display-message", "-p", "-t", "=alpha:", "#{pane_id}"]);
+    let running = |t: &Tmux| {
+        t.tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &pane,
+            "#{pane_current_command}",
+        ])
+    };
+    send_when_ready(&t, "=alpha:", "sleep 300");
+    assert!(
+        t.until(10, |t| running(t) == "sleep"),
+        "the fixture never started: {:?}",
+        running(&t)
+    );
+    let shells_before = t.panes().len();
+
+    let (out, err, ok) = t.run(&["kill", "--pane", &pane, "--grace", "5"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "sleep stopped on TERM");
+    assert!(
+        t.until(10, |t| running(t) != "sleep"),
+        "sleep is still in front: {:?}",
+        running(&t)
+    );
+    assert_eq!(t.panes().len(), shells_before, "the pane went with it");
+
+    // Back at the prompt there is only the shell, and that is refused.
+    let (out, err, ok) = t.run(&["kill", "--pane", &pane]);
+    assert!(ok, "{err}");
+    assert!(out.contains("kill-pane"), "{out:?}");
+    assert_eq!(t.panes().len(), shells_before);
+}
+
+/// `doctor` names a tmux option that costs something, with the line that
+/// fixes it, and stops naming it once it is fixed.
+#[test]
+fn doctor_says_which_tmux_options_cost_something() {
+    let Some(t) = Tmux::start("doctoropts") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let section = |t: &Tmux| {
+        let (out, err, ok) = t.run(&["doctor"]);
+        assert!(ok, "{err}");
+        let at = out
+            .find("tmux options")
+            .unwrap_or_else(|| panic!("no options section in {out:?}"));
+        out[at..].to_string()
+    };
+
+    // The example config sets what it advises, so what it left alone is all
+    // there is to say about a server started from it.
+    let shipped = section(&t);
+    for set in [
+        "escape-time",
+        "history-limit",
+        "display-time",
+        "focus-events",
+    ] {
+        assert!(
+            !shipped.contains(set),
+            "{set} is set by the example: {shipped}"
+        );
+    }
+
+    t.tmux(&["set-option", "-s", "escape-time", "500"]);
+    let slow = section(&t);
+    assert!(slow.contains("escape-time 500"), "{slow}");
+    assert!(slow.contains("set -s escape-time 10"), "{slow}");
+
+    t.tmux(&["set-option", "-s", "escape-time", "10"]);
+    assert!(!section(&t).contains("escape-time"));
+}
+
+/// `promote` moves a pane to a session named for its directory, renames a
+/// session the pane is the whole of, and joins one that is already there.
+#[test]
+fn promote_gives_a_pane_the_session_its_directory_names() {
+    let Some(t) = Tmux::start("promote") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    let other = t.sandbox.join("web.site");
+    std::fs::create_dir_all(&other).unwrap();
+    t.session("alpha", &dir);
+    t.tmux(&[
+        "split-window",
+        "-t",
+        "=alpha:",
+        "-c",
+        &other.display().to_string(),
+    ]);
+    let where_is =
+        |t: &Tmux, id: &str| t.tmux(&["display-message", "-p", "-t", id, "#{session_name}"]);
+    let ids = t.tmux(&["list-panes", "-s", "-t", "=alpha", "-F", "#{pane_id}"]);
+    let ids: Vec<&str> = ids.lines().collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let (stayed, moved) = (ids[0], ids[1]);
+    // The shell has to be in its directory before tmux can say which it is.
+    assert!(
+        t.until(10, |t| {
+            t.tmux(&["display-message", "-p", "-t", moved, "#{pane_current_path}"])
+                .ends_with("web.site")
+        }),
+        "the split never reached its directory"
+    );
+
+    // A dot cannot be in a session's name, so the directory's becomes `_`.
+    let (out, err, ok) = t.run(&["promote", "--pane", moved]);
+    assert!(ok, "{err}");
+    assert!(out.contains("web_site"), "{out:?}");
+    assert_eq!(where_is(&t, moved), "web_site");
+    assert_eq!(where_is(&t, stayed), "alpha");
+    assert_eq!(t.sessions(), vec!["alpha", "web_site"]);
+    // The window the session was made with is gone: one pane, the one moved.
+    let there = t.tmux(&["list-panes", "-s", "-t", "=web_site", "-F", "#{pane_id}"]);
+    assert_eq!(there.trim(), moved);
+
+    // Already where it would be sent.
+    let (out, _, ok) = t.run(&["promote", "--pane", moved]);
+    assert!(ok && out.contains("already"), "{out:?}");
+
+    // All its session holds: a rename, and the pane is the same pane.
+    let (out, err, ok) = t.run(&["promote", "notes", "--pane", stayed]);
+    assert!(ok, "{err}");
+    assert!(out.contains("alpha is now notes"), "{out:?}");
+    assert_eq!(where_is(&t, stayed), "notes");
+    assert_eq!(t.sessions(), vec!["notes", "web_site"]);
+
+    // A session that is there is joined, and the one left empty closes.
+    let (out, err, ok) = t.run(&["promote", "web_site", "--pane", stayed]);
+    assert!(ok, "{err}");
+    assert!(out.contains("joined web_site"), "{out:?}");
+    assert_eq!(where_is(&t, stayed), "web_site");
+    assert_eq!(t.sessions(), vec!["web_site"]);
+}
+
+/// With `[online]` on, the health line says offline while nothing answers
+/// the probe and stops saying it once something does.
+///
+/// The probe is a port on this machine that nothing listens on, and then one
+/// this test listens on, so no packet leaves the runner.
+#[test]
+fn the_health_mark_says_offline_until_the_probe_answers() {
+    let Some(t) = Tmux::start("online") else {
+        return;
+    };
+    // Bound and not listening: every connection is refused, and the port is
+    // this test's for as long as it runs. A port picked and let go is free
+    // for anybody until it is taken again, and the suite runs in parallel.
+    let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+    socket
+        .bind("127.0.0.1:0".parse().unwrap())
+        .expect("a loopback port");
+    let port = socket.local_addr().expect("its address").port();
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        format!(
+            "[online]\nenabled = true\nprobe = \"127.0.0.1:{port}\"\n\
+             interval_secs = 1\ntimeout_ms = 500\n\n\
+             [[status.right.segments]]\nname = \"health\"\n"
+        ),
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    // The first call starts the daemon, which is what starts the probe.
+    let _ = t.run(&["status-right", &dir.display().to_string()]);
+    let health = |t: &Tmux| {
+        let (out, _, _) = t.run(&["doctor"]);
+        out.lines()
+            .find(|l| l.trim_start().starts_with("health"))
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    assert!(
+        t.until(20, |t| health(t).contains("offline for")),
+        "never offline: {:?}",
+        health(&t)
+    );
+    assert!(health(&t).contains(&format!("127.0.0.1:{port}")));
+    assert!(
+        t.until(10, |t| {
+            let (bar, _, _) = t.run(&["status-right", &dir.display().to_string()]);
+            bar.contains("offline")
+        }),
+        "the bar never said offline"
+    );
+
+    // The same socket starts listening. Nothing accepts, and nothing has to:
+    // the kernel finishes the handshake for a connection in the backlog.
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let _reactor = runtime.enter();
+    let _listening = socket.listen(16).expect("the socket listens");
+    assert!(
+        t.until(20, |t| !health(t).contains("offline")),
+        "still offline with something answering: {:?}",
+        health(&t)
+    );
+}
+
 /// `panes --print` lists a pane with what it runs, and the bar counts it as an
 /// agent when `[agents] programs` says so.
 ///

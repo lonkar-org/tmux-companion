@@ -402,6 +402,79 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// Every line of every pane's scrollback, newest first; enter goes to
+    /// the pane and the line
+    Search {
+        /// Only the lines this matches: a regular expression, any case
+        /// unless it holds a capital
+        pattern: Option<String>,
+        /// Take the pattern as text, not as a regular expression
+        #[arg(short = 'F', long, requires = "pattern")]
+        fixed: bool,
+        /// A stored search in place of a pattern
+        #[arg(short, long, value_enum, conflicts_with = "pattern")]
+        kind: Option<crate::search::Kind>,
+        /// Only this session's panes
+        #[arg(short = 't', long, value_name = "SESSION")]
+        target: Option<String>,
+        /// Only this pane, as `#{pane_id}` from the binding
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+        /// How many lines of each pane's history to read
+        #[arg(long, value_name = "N", default_value_t = crate::search::DEFAULT_LINES)]
+        lines: u32,
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+        /// Go to the newest line that matches without showing the list
+        #[arg(long, conflicts_with = "print")]
+        first: bool,
+    },
+
+    /// The ports something is listening on and the pane that started each;
+    /// enter jumps there
+    Ports {
+        /// The ports no pane started as well
+        #[arg(long)]
+        all: bool,
+        /// UDP sockets that are bound and not connected as well
+        #[arg(long)]
+        udp: bool,
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+        /// Only this session's panes
+        #[arg(short = 't', long, value_name = "SESSION")]
+        target: Option<String>,
+        /// Enter stops the program listening, TERM and then KILL, where it
+        /// would have gone to the pane
+        #[arg(long, conflicts_with = "print")]
+        kill: bool,
+        /// With --kill, the seconds between TERM and KILL
+        #[arg(long, value_name = "SECS", default_value_t = crate::kill::DEFAULT_GRACE_SECS)]
+        grace: u64,
+    },
+
+    /// Give a pane a session of its own, named for the directory it is in
+    Promote {
+        /// The session's name, where the directory's would not do
+        name: Option<String>,
+        /// The pane, defaulting to the one the key was pressed in
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+    },
+
+    /// Stop what runs in front in a pane: TERM, and KILL if it is still
+    /// there after the grace
+    Kill {
+        /// The pane, defaulting to the one the key was pressed in
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+        /// The seconds between TERM and KILL
+        #[arg(long, value_name = "SECS", default_value_t = crate::kill::DEFAULT_GRACE_SECS)]
+        grace: u64,
+    },
+
     /// What a mouse click on a segment of the bar does: bound to
     /// `MouseDown1StatusRight` with `#{mouse_status_range}`
     Click {
@@ -966,6 +1039,41 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        Cmd::Search {
+            pattern,
+            fixed,
+            kind,
+            target,
+            pane,
+            lines,
+            print,
+            first,
+        } => {
+            crate::search::run(crate::search::Asked {
+                pattern,
+                fixed,
+                kind,
+                target,
+                pane,
+                lines,
+                print,
+                first,
+            })
+            .await?
+        }
+        Cmd::Ports {
+            all,
+            udp,
+            print,
+            target,
+            kill,
+            grace,
+        } => {
+            let stop = kill.then(|| std::time::Duration::from_secs(grace));
+            crate::ports::run(all, udp, print, target, stop).await?
+        }
+        Cmd::Kill { pane, grace } => crate::kill::run(pane, grace).await?,
+        Cmd::Promote { name, pane } => crate::promote::run(name, pane).await?,
         Cmd::Click { range } => crate::click::run(range).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,
         Cmd::Pocket { name, pane } => crate::pocket::run(name, pane).await?,
@@ -1579,7 +1687,7 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
 }
 
 /// Switch this client to a session, or attach when run from outside tmux.
-async fn focus_session(name: &str) -> anyhow::Result<()> {
+pub(crate) async fn focus_session(name: &str) -> anyhow::Result<()> {
     let inside = std::env::var_os("TMUX").is_some();
     let verb = if inside {
         "switch-client"
@@ -3568,7 +3676,7 @@ async fn run_close_project(
 }
 
 /// Whether a session is still there.
-async fn session_exists(target: &str) -> bool {
+pub(crate) async fn session_exists(target: &str) -> bool {
     // stdout and stderr both go nowhere. This is asked in a loop while a
     // session is shutting down, so the answer "no" is the expected one, and
     // letting tmux print "can't find session" to the terminal would make every

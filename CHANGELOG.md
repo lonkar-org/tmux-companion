@@ -30,6 +30,36 @@ entry per phase of the comrades port.
   one. `toggle` cycles past the window, and `project save` leaves it and any
   pocket that is out off the layout it writes.
 
+- `search`: every line of every pane's scrollback in one list, newest
+  first, and enter lands on the line in copy mode with the line selected.
+  A pattern narrows it, `--kind url|path|sha|ip` is a stored search,
+  `--first` goes to the newest match without the list and `--print` is the
+  same rows for a script. tmux-copycat did the stored searches and hasn't
+  been pushed since May 2023.
+
+- `ports`: the TCP ports something is listening on, each with the pane
+  that started it, and enter goes to the pane. `--all` adds the ports no
+  pane started, `--udp` the UDP sockets bound and not connected, `--print`
+  is the rows for a script, and `--kill` makes enter stop the program.
+
+- `doctor` ends on tmux's own options: the ones that cost something as
+  they are set, each with its value, what that costs and the line for
+  tmux.conf. It sets nothing. `docs/tmux.conf.full.example` now sets
+  `escape-time`, `history-limit`, `display-time` and `focus-events`, which
+  is what tmux-sensible did for people before it stopped in April 2024.
+
+- `promote`: give a pane a session of its own, named for its directory
+  the way `project` names one, with its process and scrollback. A session
+  of that name that's already there is joined instead.
+
+- `[online]`: the health mark reads `offline` when two TCP connections in a
+  row to `probe` went unanswered, and `doctor` and the brief say for how
+  long. Off by default, since the probe leaves the machine.
+
+- `kill`: stop a program that stopped answering `C-c` without closing its
+  pane. TERM to the terminal's foreground group, KILL after `--grace`
+  seconds if it's still there, and a shell at its prompt is refused.
+
 - The terminal bell as a signal: an agent pane whose window rang the bell and
   has not been visited since reads as `asked`, which covers any agent with no
   hooks that can ring one.
@@ -43,6 +73,11 @@ entry per phase of the comrades port.
   its hooks works one turn past `[journal] agent_min_secs`, five minutes by
   default, and says it is done: the program, how long, and the last line of
   the answer. A turn under that is a chat and gets nothing.
+
+- `docs/tmux.conf.full.example` says the prefix, copy mode and
+  synchronised panes on the left of the bar with tmux's own formats, and
+  carries the two lines that hand a tmux-fingers match to `open`.
+  `how-to/things-tmux-already-does.md` has a section on the first.
 
 ### Fixed
 

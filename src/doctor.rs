@@ -4,6 +4,13 @@
 //! Everything here is a question somebody would otherwise be asked one at a
 //! time over three days: which binary, which daemon, which socket, which
 //! config, which tmux, which glyphs.
+//!
+//! The last section reads tmux's own options and says which ones cost
+//! something as they are set. `tmux-plugins/tmux-sensible` is where most
+//! people got those settings from, by having a plugin set them, and it has
+//! not been pushed since April 2024. Nothing is set from here: each line
+//! names the option, what it costs, and the line for tmux.conf, and whether
+//! to add it is for whoever owns the file.
 
 use std::fmt::Write as _;
 
@@ -30,7 +37,165 @@ pub async fn report() -> String {
     let _ = writeln!(out, "  health        {}", health_state().await);
     let _ = writeln!(out, "  tmux          {}", tmux_version());
     let _ = writeln!(out, "  platform      {}", platform());
+    out.push_str(&options_section(tmux_options().as_ref()));
     out
+}
+
+/// One thing about tmux's own options that is worth changing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Advice {
+    /// The option and the value it has.
+    pub found: String,
+    /// What that costs.
+    pub why: String,
+    /// The line for tmux.conf.
+    pub fix: &'static str,
+}
+
+/// tmux's options by name, quotes taken off the values.
+pub fn parse_options(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|l| {
+            let (name, value) = l.trim().split_once(' ')?;
+            Some((
+                name.to_string(),
+                value
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'')
+                    .to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// What is worth changing in a set of options.
+///
+/// An option that is not there is an older tmux that doesn't have it, and
+/// gets no line. A number that doesn't parse gets none either: the point is
+/// advice somebody can trust, and a guess about a value this couldn't read
+/// isn't that.
+pub fn advice(options: &std::collections::HashMap<String, String>) -> Vec<Advice> {
+    let get = |name: &str| options.get(name).map(String::as_str);
+    let number = |name: &str| get(name).and_then(|v| v.parse::<u64>().ok());
+    let mut out = Vec::new();
+    let mut say = |found: String, why: String, fix: &'static str| {
+        out.push(Advice { found, why, fix });
+    };
+
+    if let Some(ms) = number("escape-time").filter(|ms| *ms > 50) {
+        say(
+            format!("escape-time {ms}"),
+            format!("Esc waits {ms} ms before the program in the pane sees it"),
+            "set -s escape-time 10",
+        );
+    }
+    if let Some(lines) = number("history-limit").filter(|l| *l <= 2000) {
+        say(
+            format!("history-limit {lines}"),
+            format!(
+                "a pane keeps {lines} lines, one long build, and `search` reads only what is kept"
+            ),
+            "set -g history-limit 50000",
+        );
+    }
+    if let Some(ms) = number("display-time").filter(|ms| *ms < 2000) {
+        say(
+            format!("display-time {ms}"),
+            format!("a message stays {ms} ms, and that is where notify and the nudges speak"),
+            "set -g display-time 4000",
+        );
+    }
+    match number("status-interval") {
+        Some(0) => say(
+            "status-interval 0".to_string(),
+            "the bar is redrawn only when something else redraws it".to_string(),
+            "set -g status-interval 1",
+        ),
+        Some(secs) if secs > 5 => say(
+            format!("status-interval {secs}"),
+            format!("the bar is {secs} s old by the time it is redrawn, the net rate with it"),
+            "set -g status-interval 1",
+        ),
+        _ => {}
+    }
+    if get("focus-events") == Some("off") {
+        say(
+            "focus-events off".to_string(),
+            "an editor in a pane isn't told when you come back to it, so it can't reread a file"
+                .to_string(),
+            "set -s focus-events on",
+        );
+    }
+    if let Some(term) = get("default-terminal").filter(|t| !t.contains("256color")) {
+        say(
+            format!("default-terminal {term}"),
+            "programs in a pane are told the terminal has 8 colours".to_string(),
+            "set -s default-terminal \"screen-256color\"",
+        );
+    }
+    if get("set-clipboard") == Some("off") {
+        say(
+            "set-clipboard off".to_string(),
+            "a copy never reaches the terminal's clipboard, which over ssh is the only one"
+                .to_string(),
+            "set -s set-clipboard external",
+        );
+    }
+    if get("monitor-bell") == Some("off") {
+        say(
+            "monitor-bell off".to_string(),
+            "an agent that rings the bell when it asks isn't seen asking".to_string(),
+            "set -gw monitor-bell on",
+        );
+    }
+    if get("mouse") == Some("off") {
+        say(
+            "mouse off".to_string(),
+            "a click on a segment of the bar does nothing, if you wanted it to".to_string(),
+            "set -g mouse on",
+        );
+    }
+    out
+}
+
+/// The options section of the report.
+///
+/// `None` is a tmux that would not answer, which outside a server is the
+/// ordinary case and gets one line saying so.
+pub fn options_section(options: Option<&std::collections::HashMap<String, String>>) -> String {
+    let mut out = String::from("tmux options\n");
+    let Some(options) = options else {
+        out.push_str("  no tmux server to ask\n");
+        return out;
+    };
+    let advice = advice(options);
+    if advice.is_empty() {
+        out.push_str("  nothing to suggest\n");
+        return out;
+    }
+    let width = advice.iter().map(|a| a.found.len()).max().unwrap_or(0);
+    for a in &advice {
+        let _ = writeln!(out, "  {:<width$}  {}", a.found, a.why);
+        let _ = writeln!(out, "  {:<width$}  {}", "", a.fix);
+    }
+    out
+}
+
+/// The server, session and window options of the running tmux.
+fn tmux_options() -> Option<std::collections::HashMap<String, String>> {
+    let mut all = String::new();
+    for scope in ["-s", "-g", "-gw"] {
+        let out = std::process::Command::new("tmux")
+            .args(["show-options", scope])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        all.push_str(&String::from_utf8_lossy(&out.stdout));
+        all.push('\n');
+    }
+    Some(parse_options(&all))
 }
 
 fn current_exe() -> String {
@@ -278,6 +443,85 @@ mod tests {
         ] {
             assert!(r.contains(line), "`{line}` missing from:\n{r}");
         }
+    }
+
+    /// What a tmux 3.7 started with no config answers.
+    const DEFAULTS: &str = "default-terminal tmux-256color\nescape-time 10\n\
+                            focus-events off\nset-clipboard external\n\
+                            display-time 750\nhistory-limit 2000\nmouse off\n\
+                            status-interval 15\nmonitor-bell on\n";
+
+    /// What tmux-sensible would have left behind, and the examples here.
+    const TUNED: &str = "default-terminal \"screen-256color\"\nescape-time 0\n\
+                         focus-events on\nset-clipboard external\n\
+                         display-time 4000\nhistory-limit 50000\nmouse on\n\
+                         status-interval 1\nmonitor-bell on\n";
+
+    #[test]
+    fn a_bare_tmux_gets_a_line_for_each_default_that_costs_something() {
+        let got = advice(&parse_options(DEFAULTS));
+        let found: Vec<&str> = got.iter().map(|a| a.found.as_str()).collect();
+        assert_eq!(
+            found,
+            vec![
+                "history-limit 2000",
+                "display-time 750",
+                "status-interval 15",
+                "focus-events off",
+                "mouse off",
+            ]
+        );
+        let history = &got[0];
+        assert!(history.why.contains("2000 lines"), "{history:?}");
+        assert_eq!(history.fix, "set -g history-limit 50000");
+    }
+
+    #[test]
+    fn a_tuned_tmux_gets_nothing_and_the_section_says_so() {
+        let options = parse_options(TUNED);
+        assert!(advice(&options).is_empty());
+        assert_eq!(
+            options_section(Some(&options)),
+            "tmux options\n  nothing to suggest\n"
+        );
+        assert_eq!(
+            options_section(None),
+            "tmux options\n  no tmux server to ask\n"
+        );
+    }
+
+    #[test]
+    fn the_thresholds_sit_where_the_advice_says() {
+        let one = |line: &str| advice(&parse_options(line));
+        assert!(one("escape-time 50").is_empty());
+        assert_eq!(one("escape-time 500")[0].fix, "set -s escape-time 10");
+        assert!(one("history-limit 2001").is_empty());
+        assert!(one("display-time 2000").is_empty());
+        assert!(one("status-interval 5").is_empty());
+        assert!(one("status-interval 0")[0].why.contains("only when"));
+        assert_eq!(one("default-terminal screen").len(), 1);
+        assert!(one("default-terminal xterm-256color").is_empty());
+        assert_eq!(one("set-clipboard off").len(), 1);
+        assert_eq!(one("monitor-bell off").len(), 1);
+    }
+
+    #[test]
+    fn an_option_this_tmux_lacks_or_a_value_nobody_can_read_gets_no_line() {
+        assert!(advice(&parse_options("")).is_empty());
+        assert!(advice(&parse_options("escape-time soon\nhistory-limit\n")).is_empty());
+    }
+
+    #[test]
+    fn the_section_lines_the_fix_up_under_the_reason() {
+        let got = options_section(Some(&parse_options("escape-time 500\nmouse off\n")));
+        let lines: Vec<&str> = got.lines().collect();
+        assert_eq!(lines[0], "tmux options");
+        assert_eq!(
+            lines[1],
+            "  escape-time 500  Esc waits 500 ms before the program in the pane sees it"
+        );
+        assert_eq!(lines[2], "                   set -s escape-time 10");
+        assert!(lines[3].starts_with("  mouse off        "), "{got}");
     }
 
     #[test]

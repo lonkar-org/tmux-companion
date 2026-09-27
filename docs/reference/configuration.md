@@ -74,6 +74,7 @@ one is explained on this page:
 | `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with | [What a new project session starts with](#what-a-new-project-session-starts-with) |
 | `[notify]` | announcing a long command that finished out of sight | [Saying a long command finished](#saying-a-long-command-finished) |
 | `[journal]` | what ran long, what the agents asked, what opened and closed | [The journal](#the-journal) |
+| `[online]` | asking whether the network is there, for the health mark | [Saying the network is gone](#saying-the-network-is-gone) |
 | `[agents]` | which programs are coding agents, and when one counts as waiting | [Which programs are agents](#which-programs-are-agents) |
 | `[window_names]` | naming a window after what runs in it | [Naming windows after what is running](#naming-windows-after-what-is-running) |
 | `[autoreload]` | sourcing tmux's config when it changes | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
@@ -409,6 +410,39 @@ through its hooks ever says; a project opened or closed. `tmux-companion journal
 `journal --print -t SESSION` is the standup answer for one project. It lives
 in `journal.tsv` in the state directory and rotates past a megabyte. Programs
 in `[notify] ignore` aren't runs worth a line either.
+
+### Saying the network is gone
+
+```toml
+[online]
+enabled = false
+probe = "1.1.1.1:443"
+interval_secs = 30
+timeout_ms = 2000
+```
+
+An agent that stalls, a fetch that fails and a page that won't load are the
+same fact, and with this on the health mark says it once: `offline` on the
+bar, and `offline for 3m: nothing answers at 1.1.1.1:443` from `doctor` and
+the brief. Online draws nothing. The bar needs the `health` segment in
+`[[status.right.segments]]` for the word to have somewhere to go.
+
+The daemon opens a TCP connection to `probe` every `interval_secs` and drops
+it, waiting `timeout_ms` for the answer, and the mark comes up when two in a
+row got none, so one lost packet doesn't flash it and the time it reports is
+counted from the first miss. It's off until you turn it on because it reaches
+an address outside the machine. `probe` is any `host:port` that should always
+answer, and one inside your own network is the right choice when the question
+is whether the VPN is up. A `probe` with no port is a config error, since it
+would read as offline for ever.
+
+I haven't measured what a probe costs. It's one connect every thirty seconds
+on a timer in the daemon and never on the bar's own path, so a slow answer
+can't hold a redraw up.
+
+The plugin this comes from is
+[tmux-plugins/tmux-online-status](https://github.com/tmux-plugins/tmux-online-status),
+which ran `ping` from a `#()` and was last pushed in September 2023.
 
 ### Which programs are agents
 

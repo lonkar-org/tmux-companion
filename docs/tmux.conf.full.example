@@ -38,6 +38,20 @@
 
 set -g status-interval 1
 
+# What tmux-sensible used to set, written out, since that plugin stopped in
+# April 2024 and a setting in this file is one you can see. `tmux-companion
+# doctor` lists the ones a tmux.conf is missing and what each costs.
+#
+#   escape-time     how long Esc waits to see if it starts a sequence
+#   history-limit   lines a pane keeps, which is all `search` can read; it
+#                   applies to panes opened after it is set
+#   display-time    how long a message stays on the bar
+#   focus-events    tells an editor in a pane when you come back to it
+set -s escape-time 10
+set -g history-limit 50000
+set -g display-time 4000
+set -s focus-events on
+
 # ── The bar itself ──────────────────────────────────────────────────────────
 #
 # Not optional. The segments draw their own backgrounds against colour233,
@@ -90,6 +104,14 @@ if-shell '[ -n "$SSH_CONNECTION" ]' \
   'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
 
 set -ga status-left "#[fg=color240,bg=color233] %H:%M:%S"
+
+# The prefix, copy mode and synchronised panes, each said on the bar for as
+# long as it lasts. tmux knows all three, so nothing runs and nothing is
+# installed: tmux-prefix-highlight and tmux-mode-indicator are plugins for
+# these two lines. A comma inside a `#{?...}` has to be written `#,` or tmux
+# takes it for the end of the branch.
+set -ga status-left "#{?client_prefix,#[fg=color233#,bg=color214] prefix ,}"
+set -ga status-left "#{?pane_in_mode,#[fg=color233#,bg=color114] copy ,}#{?pane_synchronized,#[fg=color233#,bg=color203] sync ,}"
 # A gap, so the window list does not start against the clock.
 set -ga status-left "#[fg=color235,bg=color233] "
 
@@ -145,6 +167,16 @@ bind -N "custom: config pick a colour theme" C-t \
 bind -N "custom: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
 # What the agents stopped to ask, oldest first; enter jumps to the one picked.
+# Where did I see that: every line of every pane's scrollback in one list,
+# and enter lands on the line in copy mode. `--pane '#{pane_id}'` on the end
+# keeps it to the pane the key was pressed in. tmux's own prefix+/ describes
+# a key, which the key search on prefix+? already does.
+bind -N "custom: copy search every pane's scrollback" / \
+  display-popup -E -w 90% -h 80% "tmux-companion search"
+# "address already in use": which pane is listening on what. Enter goes to
+# the pane. tmux has nothing on prefix+P.
+bind -N "custom: window which pane listens on which port" P \
+  display-popup -E -w 80% -h 70% "tmux-companion ports"
 bind -N "custom: project the agents waiting on you" M-g \
   display-popup -E -w 80% -h 70% "tmux-companion inbox"
 # One screen of what needs you: the waiting agents, the health reasons, the
@@ -211,6 +243,18 @@ bind -N "custom: copy jump to the next prompt" -T copy-mode-vi C-n \
 # which matters the first time a log line contains an apostrophe.
 bind -N "custom: copy open what is under the cursor" -T copy-mode-vi o \
   run-shell "tmux-companion open --pane '#{pane_id}' --cursor-x '#{copy_cursor_x}' -- #{q:copy_cursor_line}"
+# Picking the thing by a hint instead of moving the cursor to it is
+# tmux-fingers, which is alive and does it well, so there is no fourth
+# implementation of it here. It pipes the match to a command, and `open`
+# reads what it is given on standard input, so with fingers installed this
+# makes ctrl and a hint open the match the way `o` above does:
+#
+#   set -g @plugin 'Morantron/tmux-fingers'
+#   set -g @fingers-ctrl-action 'tmux-companion open'
+#
+# `open` resolves a relative path against the directory of the pane tmux
+# calls current. These two lines have not been run against an installed
+# fingers, so treat a relative path as the part to check first.
 bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
   send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion clipboard"
@@ -225,6 +269,18 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 # and tmux's own `prefix z` does nothing there.
 bind -N "custom: pane zen, everything but this one goes" z \
   run-shell "tmux-companion zen --pane '#{pane_id}'"
+
+# The pane that started as a look at another repository and became the work:
+# it moves to a session of its own, named for its directory the way `project`
+# names one, with its process and scrollback. tmux has nothing on prefix+@.
+bind -N "custom: session give this pane a session of its own" @ \
+  run-shell "tmux-companion promote --pane '#{pane_id}'"
+
+# For a program that stopped answering C-c: TERM to what is in front in this
+# pane, KILL three seconds later if it is still there. The scrollback stays,
+# which kill-pane on prefix+x can't say. A shell at its prompt is refused.
+bind -N "custom: pane stop what hangs in it" K \
+  confirm-before -p "stop what runs in this pane? (y/n)" "run-shell \"tmux-companion kill --pane '#{pane_id}'\""
 
 # The pocket: a shell that slides out beside this pane on the first press,
 # goes away into a window called `_pocket` on the second, and comes back,

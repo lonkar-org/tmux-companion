@@ -36,12 +36,16 @@ pub mod doctor;
 pub mod inbox;
 pub mod journal;
 pub mod keys;
+/// Stopping what hangs in a pane: TERM, a wait, then KILL.
+pub mod kill;
 
 /// Running a segment in this process, with no daemon.
 pub mod local;
 /// Announcing a long command that finished out of sight.
 pub mod note;
 pub mod notify;
+/// Whether the network is there, for the health mark.
+pub mod online;
 /// Opening a URL or file found in text.
 pub mod open;
 /// Every pane on the server, as a list to jump from.
@@ -50,12 +54,16 @@ pub mod picker;
 /// The fuzzy picker and its state machine.
 /// A pocket pane: a shell pulled out beside the editor and put away again.
 pub mod pocket;
+/// Who is listening on which port, and which pane started it.
+pub mod ports;
 /// Rendering samples of every style, for eyeballing.
 pub mod preview;
 /// Asking the terminal what it does.
 pub mod probe;
 /// Projects: one session each.
 pub mod project;
+/// Giving a pane a session of its own.
+pub mod promote;
 /// The JSON request and response, and one args struct per command.
 pub mod proto;
 /// Running a command from history in a side pane.
@@ -67,6 +75,8 @@ pub mod restore;
 pub mod run;
 /// Per-project layouts captured from a live session.
 pub mod saved;
+/// Searching the scrollback of every pane at once.
+pub mod search;
 /// The things the status bar can draw.
 pub mod segments;
 /// The daemon.

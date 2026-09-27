@@ -70,6 +70,9 @@ pub struct ServerState {
     pub last_failure: Option<(String, Instant)>,
     /// The last health check with the time it ran.
     pub health_cache: Option<(HealthSample, Instant)>,
+    /// Since when the network has been gone, in unix seconds, as the online
+    /// task last found it; none is online, or nobody asking.
+    pub offline_since: Option<u64>,
     /// The agents that have stopped, keyed by pane id, kept by the inbox task.
     pub inbox: std::collections::HashMap<String, crate::inbox::Entry>,
     /// Which of them have been nudged about, so each is nudged once.
@@ -131,6 +134,7 @@ impl ServerState {
             started_at: std::time::SystemTime::now(),
             last_failure: None,
             health_cache: None,
+            offline_since: None,
             inbox: std::collections::HashMap::new(),
             nudged: std::collections::HashSet::new(),
             quiet_until: None,

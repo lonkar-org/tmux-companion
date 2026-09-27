@@ -11,7 +11,7 @@
 //!
 //! `agent hooks claude` prints the block of `settings.json` that wires this
 //! up, the way `shell-init` prints the prompt marks. Only claude so far; a
-//! second program goes in [`hooks`] beside it.
+//! second program goes in [`hooks`](crate::agent::hooks) beside it.
 //!
 //! The report runs from inside the agent's own hook, so it never fails out
 //! loud: an error there would land in the agent's transcript, and a bar that

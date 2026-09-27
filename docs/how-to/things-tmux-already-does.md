@@ -155,6 +155,30 @@ the next program that wants to.
 `tmux-companion panes` shows this title beside the program in each row, which
 is what makes naming one worth the keystroke.
 
+## `client_prefix` and `pane_in_mode`: say the mode on the bar
+
+`tmux-plugins/tmux-prefix-highlight` and `MunifTanjim/tmux-mode-indicator`
+draw a word on the bar while the prefix is down or a pane is in copy mode, and
+both are plugins for something a format does. `#{?x,a,b}` is tmux's
+conditional, `client_prefix` is 1 once the prefix key has been pressed,
+`pane_in_mode` counts the modes a pane is in and `pane_synchronized` is 1
+when its window has `synchronize-panes` on, so the whole of it is two lines
+appended to a `status-left` you've already set:
+
+```tmux
+set -ga status-left "#{?client_prefix,#[fg=color233#,bg=color214] prefix ,}"
+set -ga status-left "#{?pane_in_mode,#[fg=color233#,bg=color114] copy ,}#{?pane_synchronized,#[fg=color233#,bg=color203] sync ,}"
+```
+
+The `#,` is the part that costs an evening. A comma ends a branch of the
+conditional, so the one inside `#[fg=...,bg=...]` has to be escaped or the
+style is cut in half and the rest of it is drawn as text. I checked the copy
+and sync halves by expanding `#{T:status-left}` with `display-message -p`
+against a pane in each state; the prefix one I couldn't check that way, since
+it needs a client with a key held down.
+
+`docs/tmux.conf.full.example` has both lines.
+
 ## `%if` and `#{version}`: one config across versions
 
 A tmux.conf line that uses an option an older tmux doesn't have is a

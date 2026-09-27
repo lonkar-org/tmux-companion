@@ -240,6 +240,15 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    // Off unless asked for, for the reason the fetch is: it reaches an
+    // address outside the machine.
+    if config.online.enabled {
+        tokio::spawn(crate::online::online_loop(
+            Arc::clone(&state),
+            config.online.clone(),
+        ));
+    }
+
     // Pre-warm battery cache so the first tmux refresh doesn't hit the ~600ms
     // cold-start cost of IOKit initialization in the battery crate.
     {

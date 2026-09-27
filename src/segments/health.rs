@@ -72,6 +72,8 @@ pub fn newer_than(path: &Path, moment: SystemTime) -> bool {
 pub fn short_word(reason: &str) -> &'static str {
     if reason.starts_with("quiet for") {
         "quiet"
+    } else if reason.starts_with("offline for") {
+        "offline"
     } else if reason.starts_with("a timer failed") {
         "timer"
     } else if reason.starts_with("config.toml") {
@@ -120,6 +122,20 @@ mod tests {
         let drawn = format_health(&HealthSample { reasons: r }, BAR);
         assert!(drawn.contains("timer +2"), "{drawn}");
         assert!(drawn.contains(WAITING_COLOUR), "{drawn}");
+    }
+
+    #[test]
+    fn offline_is_said_in_one_word() {
+        let reason = crate::online::reason(100, 280, "1.1.1.1:443");
+        assert_eq!(short_word(&reason), "offline");
+        let drawn = format_health(
+            &HealthSample {
+                reasons: vec![reason],
+            },
+            BAR,
+        );
+        assert!(drawn.contains("offline"), "{drawn}");
+        assert!(!drawn.contains("1.1.1.1"), "the bar has no room: {drawn}");
     }
 
     #[test]

@@ -100,3 +100,35 @@ Said plainly rather than left to be discovered.
 - `pocket` is `nickdiego/tmux-pocket-pane` as option 1 of
   `design-pocket-pane.md`: the pane is parked with `join-pane` into a window
   called `_pocket` and brought back the same way, marked by a pane option.
+- `search` is new: the zsh had nothing that read a pane it wasn't in. The
+  stored searches are `tmux-plugins/tmux-copycat`'s and the list is
+  `roosta/tmux-fuzzback`'s over every pane, and the jump is `goto-line`
+  rather than a second search, so it lands on the line that was picked.
+- `ports` is new. `jrmoulton/tmux-port` did it as a plugin and its
+  repository is gone, so there's nobody to credit with a link that works.
+- `kill` is `tmux-plugins/tmux-cowboy` with TERM sent first and the group
+  taken from the terminal rather than from the shell's children, so a
+  background job survives it. `ports --kill` is the same escalation on one
+  pid.
+- `doctor` reads tmux's options and says which cost something, where
+  `tmux-plugins/tmux-sensible` set them for you. It sets nothing, so a
+  tmux.conf stays the only place an option comes from.
+- `promote` is the one piece of `tmux-plugins/tmux-sessionist` that
+  `project` and `project close` didn't already cover. It names the session
+  from the pane's directory where sessionist asked.
+- `[online]` is `tmux-plugins/tmux-online-status` as a reason on the health
+  mark rather than a segment of its own: a TCP connect on a timer in the
+  daemon where the plugin ran `ping` from a `#()`. Off by default.
+- Hint-based copy stays out, as `after-the-port.md` decided, and the
+  hand-off it promised is to `Morantron/tmux-fingers` rather than to
+  `fcsonline/tmux-thumbs`: thumbs was last pushed in April 2024 and fingers
+  released 2.7.1 in June 2026. The two lines are in
+  `docs/tmux.conf.full.example`, commented, and have not been run against an
+  installed fingers.
+- The prefix and copy-mode indicator is two `status-left` lines in the full
+  example and a section in `how-to/things-tmux-already-does.md`, where
+  `tmux-prefix-highlight` and `tmux-mode-indicator` are plugins.
+- `search` finds its line again by text at the moment of landing, so a pane
+  at its `history-limit` lands on the line too; counting how much the
+  history grew can't see a history that has stopped growing. `ports --udp`
+  adds the UDP sockets bound and not connected.

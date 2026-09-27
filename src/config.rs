@@ -54,6 +54,9 @@ pub struct Config {
     pub agents: Agents,
     /// The journal: what ran long, what the agents asked, what opened and closed.
     pub journal: Journal,
+    /// Asking whether the network is there.
+    #[serde(default)]
+    pub online: Online,
     /// Where projects come from and how they are named.
     pub project: Project,
     /// Saving the session list on a timer.
@@ -1172,6 +1175,7 @@ impl Default for Config {
             notify: Notify::default(),
             agents: Agents::default(),
             journal: Journal::default(),
+            online: Online::default(),
             autosave: Autosave::default(),
             sessions: Sessions::default(),
             restore: Restore::default(),
@@ -1731,6 +1735,32 @@ impl Default for Journal {
     }
 }
 
+/// Asking whether the network is there, for the health mark.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Online {
+    /// Whether the daemon asks. Off, because asking reaches an address
+    /// outside the machine.
+    pub enabled: bool,
+    /// The `host:port` a TCP connection is opened to and dropped.
+    pub probe: String,
+    /// Seconds between two probes.
+    pub interval_secs: u64,
+    /// How long a probe waits for its answer, in milliseconds.
+    pub timeout_ms: u64,
+}
+
+impl Default for Online {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            probe: "1.1.1.1:443".to_string(),
+            interval_secs: 30,
+            timeout_ms: 2000,
+        }
+    }
+}
+
 /// Process-wide settings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields, default)]
@@ -2225,6 +2255,19 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
         });
     }
 
+    // A probe with no port never connects, so the mark would read offline
+    // for as long as the daemon ran and look like the network's fault.
+    let probe = &config.online.probe;
+    if config.online.enabled && !crate::online::is_probe(probe) {
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message: format!(
+                "`[online] probe` is `{probe}`, and it has to be a host and a port, like `1.1.1.1:443`"
+            ),
+            did_you_mean: None,
+        });
+    }
+
     let name = &config.project.dirs_source;
     if crate::dirsource::DirsSource::from_name(name).is_none() {
         let known: Vec<String> = crate::dirsource::NAMES
@@ -2632,6 +2675,16 @@ border = "none"
         let s = e.to_string();
         assert!(s.contains("/tmp/x.toml"), "{s}");
         assert!(s.contains("line 2") || s.contains("2:"), "{s}");
+    }
+
+    #[test]
+    fn a_probe_with_no_port_is_refused_only_when_the_probe_is_on() {
+        let path = std::path::Path::new("config.toml");
+        let e = parse("[online]\nenabled = true\nprobe = \"1.1.1.1\"\n", path).unwrap_err();
+        assert!(e.message.contains("a host and a port"), "{}", e.message);
+        // Turned off it is never connected to, so it is nobody's problem yet.
+        assert!(parse("[online]\nprobe = \"1.1.1.1\"\n", path).is_ok());
+        assert!(parse("[online]\nenabled = true\nprobe = \"10.0.0.1:22\"\n", path).is_ok());
     }
 
     #[test]

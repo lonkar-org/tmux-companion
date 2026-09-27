@@ -122,7 +122,18 @@ agent and a shell watching something.
    `session:window.pane`, program, state, directory and pane id, one per line,
    and `panes --agents --print` only the panes running a program in
    `[agents] programs`; that is how you find where the other agents are and
-   whether one is `busy`, `asked 3m`, `done 3m` or `waiting 3m`. Work there. A second session for a
+   whether one is `busy`, `asked 3m`, `done 3m` or `waiting 3m`.
+   `search --print -F 'TEXT'` finds a line in any pane's scrollback, newest
+   first, as where, pane id, line number and the line, which is quicker than
+   a `capture-pane` per pane when the human says "the error from before".
+   `ports --print` lists the listening ports with the pane that started
+   each, so check it before starting a server on a port and stop the ones
+   you started when the task is done. `kill --pane ID` stops what runs in
+   front in a pane, TERM first; use it on a pane you started, never on one
+   the human is working in.
+   `promote --pane ID` moves a pane that ended up in the wrong project into
+   the session its directory names, which is better than starting over there.
+   Work there. A second session for a
    repo that already has one splits the human's attention and breaks
    `project show`.
 2. One agent per repository unless the human asked for more. Two agents in one

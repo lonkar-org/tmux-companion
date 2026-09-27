@@ -427,13 +427,16 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
 
 /// The three questions, answered now.
 async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::HealthSample {
-    let (started, failure, quiet) = {
+    let (started, failure, quiet, offline) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
         let quiet = s
             .is_quiet()
             .then(|| crate::quiet::status(s.quiet_until, now));
-        (s.started_at, s.recent_failure(), quiet)
+        let offline = s
+            .offline_since
+            .map(|since| crate::online::reason(since, now, &s.config.online.probe));
+        (s.started_at, s.recent_failure(), quiet, offline)
     };
     let config_changed = match crate::config::load() {
         Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
@@ -443,6 +446,11 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
         .map(|exe| segments::health::newer_than(&exe, started))
         .unwrap_or(false);
     let mut reasons = segments::health::reasons(failure.as_deref(), config_changed, binary_newer);
+    // Ahead of a failed timer, which with the network gone is usually the
+    // fetch, and so the effect of this rather than a second thing wrong.
+    if let Some(o) = offline {
+        reasons.insert(0, o);
+    }
     if let Some(q) = quiet {
         reasons.insert(0, q);
     }

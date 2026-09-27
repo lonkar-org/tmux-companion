@@ -79,11 +79,13 @@ description they had.
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
 | `src/journal.rs` | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed |
 | `src/keys.rs` | key bindings, parsed out of `tmux list-keys` into rows a picker can search |
+| `src/kill.rs` | stopping what hangs in a pane: TERM, a wait, and KILL if it is still there |
 | `src/lib.rs` | one binary in two modes; the library `tests/` links against |
 | `src/local.rs` | running a segment in this process, with no daemon and no socket |
 | `src/main.rs` | the binary: parses arguments, picks a runtime, hands over to the library |
 | `src/note.rs` | a one-line note on a pane, for the human who reads the bar and the picker |
 | `src/notify.rs` | telling you a long command finished in a pane you were not looking at |
+| `src/online.rs` | whether the network is there, asked on a timer and said on the health mark |
 | `src/open.rs` | open a URL or a file reference found in text |
 | `src/panes.rs` | every pane on the server, as a list to jump from, and the agents among them |
 | `src/picker/mod.rs` | the picker: a fuzzy-matched list in a terminal, shared by every chooser in the tool |
@@ -92,8 +94,10 @@ description they had.
 | `src/picker/style.rs` | what a picker looks like, as settings rather than as a shape compiled into the drawing |
 | `src/presets/ascii.toml` | the 7-bit fallback: one value per Nerd Font glyph name, for a machine whose font nobody controls |
 | `src/pocket.rs` | a pocket pane: a shell you pull out beside the editor, look at, and put away without losing it |
+| `src/ports.rs` | who is listening on which port, and which pane started it |
 | `src/preview.rs` | renders the git segment for a spread of repo states in every color style |
 | `src/probe.rs` | probes: ask the terminal what it does, rather than assuming |
+| `src/promote.rs` | giving a pane a session of its own, named for the directory it is in |
 | `src/project.rs` | projects: one tmux session each, with the windows a layout asks for |
 | `src/proto.rs` | `Request` / `Response` serde types, one args struct per command, and the build id (no module doc) |
 | `src/quiet.rs` | quiet hours: nothing nags for a while, and the bar says why |
@@ -101,6 +105,7 @@ description they had.
 | `src/restore.rs` | what a restore will run in each pane, decided before anything runs |
 | `src/run.rs` | run a command from history in a pane beside the one you are in |
 | `src/saved.rs` | per-project layouts: the file a key writes and `project` reads back |
+| `src/search.rs` | searching the scrollback of every pane at once, and landing on the line |
 | `src/segments/mod.rs` | one module per thing the status bar can draw |
 | `src/segments/agents.rs` | how many coding agents are running, and how many are busy or waiting on you |
 | `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |

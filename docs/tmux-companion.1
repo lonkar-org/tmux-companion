@@ -140,6 +140,16 @@ The health mark is one glyph and a word when a timer failed in the last hour,
 .Pa config.toml
 changed after the daemon started, or the binary on disk is newer than the
 daemon running; nothing when the daemon is fine.
+With
+.Ic [online] enabled
+it also reads
+.Ql offline
+when two TCP connections in a row to
+.Ic [online] probe
+went unanswered,
+.Ic [online] interval_secs
+apart; it is off until turned on, since the probe reaches an address outside
+the machine.
 One
 .Ql #()
 rather than three.
@@ -725,6 +735,103 @@ and
 .Ql prefix G
 with
 .Fl -agents .
+.It Ic search Oo Ar pattern Oc Op Fl F , Fl -kind Ar kind , Fl t Ar session , Fl -pane Ar id , Fl -lines Ar n , Fl -print , Fl -first
+Every line of every pane's scrollback, one row each and the newest first:
+where it is as
+.Ql session:window.pane ,
+what the pane runs, and the line, with the five lines on either side of it in
+the preview.
+Enter switches the attached client to that pane, puts it in copy mode
+scrolled to the line and selects the line, so what you found is what's
+highlighted and the copy key takes it.
+The panes are read most recently active first, a blank line is no row, and a
+line one pane drew twice is one row at its newest, so a prompt drawn forty
+times doesn't fill the list.
+.Ar pattern
+keeps only the lines it matches.
+It's a regular expression, matched in either case unless it holds a capital
+letter, and
+.Fl F
+takes it as text, for an error message full of brackets.
+.Fl -kind
+is a stored search in place of a pattern:
+.Cm url ,
+.Cm path ,
+.Cm sha
+or
+.Cm ip .
+.Fl t
+keeps one session's panes and
+.Fl -pane
+one pane.
+.Fl -lines
+is how far back each pane is read, 1000 when nothing says, and the list stops
+at 20000 rows.
+.Fl -print
+writes the rows as tab-separated columns and exits: where, the pane id, the
+line's number as tmux counts it, with 0 the top row of the screen and the
+history below zero, and the line.
+.Fl -first
+goes to the newest match without showing the list, and needs a pattern or a
+kind.
+A line is a line the terminal drew, so a URL that wrapped is two of them and
+neither matches whole.
+What a pane wrote while the list was open moved the line up, so at landing
+the pane is read again and the line found by its text, which also holds for a
+pane whose history is already at
+.Ql history-limit
+and can't grow.
+The stored searches come from
+.Lk https://github.com/tmux-plugins/tmux-copycat tmux-copycat ,
+which hasn't been pushed since May 2023, and the fuzzy list over one pane is
+.Lk https://github.com/roosta/tmux-fuzzback tmux-fuzzback ,
+which is the one to install on a machine that doesn't run this.
+Bound to
+.Ql prefix / .
+.It Ic ports Op Fl -all , Fl -udp , Fl -print , Fl t Ar session , Fl -kill , Fl -grace Ar secs
+The TCP ports something is listening on, one row each: the port and its
+protocol, where it can be reached from, the program and its pid, the pane that started it as
+.Ql session:window.pane ,
+and that pane's directory, with the last lines of the pane's screen in the
+preview.
+Enter switches the attached client to the pane.
+The address column reads
+.Ql *
+for every interface,
+.Ql localhost
+for either loopback, or the address it is bound to, and a program listening
+on one port over IPv4 and IPv6 is one row.
+A port belongs to the pane whose own process is an ancestor of the one
+listening, so a server started by a script started by an agent is still that
+agent's pane's.
+Only the ports a pane started are listed;
+.Fl -all
+adds the rest after them, with a dash for the pane.
+.Fl -udp
+adds the UDP sockets that are bound and connected to nobody, which is as
+near as UDP comes to listening; it's asked for rather than given because any
+program that resolves a name holds one for a moment.
+.Fl t
+keeps one session's, and
+.Fl -print
+writes the rows as tab-separated columns and exits: port, protocol, address,
+program, pid, where, and the pane id.
+With
+.Fl -kill
+enter stops the program where it would have gone to the pane: TERM to the
+process holding the socket, and KILL if it's still there after
+.Fl -grace
+seconds, 3 when nothing says.
+Only that process is signalled and not its group, since what started it is
+often the pane's shell.
+The sockets come from
+.Xr lsof 8 ,
+or from
+.Xr ss 8
+on a machine without it, and either one names only the processes you own
+unless you're root.
+Bound to
+.Ql prefix P .
 .It Ic new-window
 A window here, or at any directory.
 The rows are the pane's own directory and then the same source
@@ -890,6 +997,65 @@ window it does nothing and says so.
 Needs tmux 3.1 for pane options.
 Bound to
 .Ql prefix ` .
+.It Ic promote Oo Ar name Oc Op Fl -pane Ar id
+Give a pane a session of its own, its process and its scrollback with it:
+for the pane opened beside the editor to look at another repository, which
+an hour later is the thing being worked on.
+The session is named the way
+.Ic project
+names one, from the pane's directory, so it is the session
+.Ic project
+finds the next time that directory is picked.
+.Ar name
+is for when the directory's name won't do.
+When a session of that name is already there the pane joins it as a window,
+and when the pane is all its own session holds the session is renamed and
+nothing moves.
+A pane already in the session it would be given is refused, with a line
+saying to pass a name.
+The attached client follows the pane, and the journal gets an
+.Ql opened
+line for a session this made.
+.Fl -pane
+is the pane the key was pressed in, which the binding passes.
+The idea is
+.Lk https://github.com/tmux-plugins/tmux-sessionist tmux-sessionist Ns 's
+.Ql prefix @ ,
+which asked for the name, and it hasn't been pushed since May 2023.
+Bound to
+.Ql prefix @ .
+.It Ic kill Op Fl -pane Ar id , Fl -grace Ar secs
+Stop what runs in front in a pane, for a program that stopped answering
+.Ql C-c .
+The foreground process group of the pane's terminal gets TERM, which a
+program can catch to put the terminal back and remove its lock file, and KILL
+when it's still running after
+.Fl -grace
+seconds, 3 when nothing says.
+The group is the one the terminal delivers
+.Ql C-c
+to, so a build goes together with the compilers it started and a job put in
+the background with
+.Ql &
+is left alone.
+It prints how it ended,
+.Ql cargo stopped on TERM
+or
+.Ql cargo ignored TERM for 3s and was killed ,
+and exits 1 when the program is still there after KILL or could not be
+signalled.
+A pane with nothing in front but its own shell is refused, since stopping
+that closes the pane and tmux has
+.Ql kill-pane
+for it.
+.Fl -pane
+is the pane the key was pressed in, which the binding passes.
+.Lk https://github.com/tmux-plugins/tmux-cowboy tmux-cowboy
+was the one key for this, sending KILL with no TERM before it, and was last
+pushed in May 2021.
+Bound to
+.Ql prefix K
+behind a confirmation.
 .It Ic zen Op Fl -pane Ar id
 Clear everything but the pane you are working in.
 With other panes open that is tmux's own zoom: this pane fills the window, the
@@ -1079,7 +1245,7 @@ The sections are
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
-.Ic [picker] , [journal]
+.Ic [picker] , [journal] , [online]
 and
 .Ic [open] .
 .Bl -tag -width Ds
@@ -1244,6 +1410,34 @@ A daemon from another build, one that does not answer, and a config file
 edited after the daemon started each end their line with
 .Ql run tmux-companion restart ,
 because that is the answer to all three.
+The report ends on tmux's own options, the ones that cost something as they
+are set: an
+.Ql escape-time
+over 50 ms, a
+.Ql history-limit
+of 2000 lines or under, a
+.Ql display-time
+under two seconds, a
+.Ql status-interval
+over five or of zero,
+.Ql focus-events ,
+.Ql set-clipboard ,
+.Ql monitor-bell
+or
+.Ql mouse
+turned off, and a
+.Ql default-terminal
+with no 256 colours in its name.
+Each gets the value it has, what that costs, and the line for
+.Pa tmux.conf
+under it.
+Nothing is set: the file is yours, and
+.Ql mouse
+for one is a preference.
+A tmux with nothing to change says so in one line.
+Most people got these settings from
+.Lk https://github.com/tmux-plugins/tmux-sensible tmux-sensible ,
+which set them as a plugin and hasn't been pushed since April 2024.
 .It Ic probe
 What the terminal answers about itself.
 .El
