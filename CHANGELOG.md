@@ -3,7 +3,14 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.5.0 - 2026-09-27
+
+The agents say what they're doing, where 0.4.0 read it off how long a window
+had been quiet. The rest is what six tmux plugins did before they stopped
+being pushed, `search`, `ports`, `kill`, `promote`, the options `doctor` ends
+on and the `[online]` mark, and along with those the pocket, a shell you pull
+out beside the editor and put away again, and a layout that travels with the
+checkout.
 
 ### Added
 
