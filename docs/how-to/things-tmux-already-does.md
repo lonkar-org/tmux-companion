@@ -174,8 +174,9 @@ The `#,` is the part that costs an evening. A comma ends a branch of the
 conditional, so the one inside `#[fg=...,bg=...]` has to be escaped or the
 style is cut in half and the rest of it is drawn as text. I checked the copy
 and sync halves by expanding `#{T:status-left}` with `display-message -p`
-against a pane in each state; the prefix one I couldn't check that way, since
-it needs a client with a key held down.
+against a pane in each state, and the prefix one with a client attached in a
+pty and `C-b` written to it, where `client_prefix` read 0, then 1 with the
+word on the bar, then 0 again after the next key.
 
 `docs/tmux.conf.full.example` has both lines.
 
