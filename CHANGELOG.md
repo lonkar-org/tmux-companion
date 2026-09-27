@@ -3,6 +3,23 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## 0.5.1 - 2026-09-27
+
+0.5.0 was tagged and never published. The release gate runs the suite on the
+runner's tmux 3.4 before it builds anything, one e2e test failed there that
+passes on the 3.7c I have here, so there are no 0.5.0 binaries and the tap
+never saw it. This is 0.5.0 with the test corrected, and what's new since
+0.4.0 is the entry under this one.
+
+### Fixed
+
+- The e2e test for `search --first` compared the whole of
+  `#{copy_cursor_line}` with the needle. tmux 3.4 gives that line back with
+  the copy-mode position indicator on it when the line is on the top row,
+  which is where the oldest line in the history lands, so the test reads the
+  first three words now. `search` had put the pane in copy mode on the line
+  and selected it on both versions.
+
 ## 0.5.0 - 2026-09-27
 
 The agents say what they're doing, where 0.4.0 read it off how long a window
