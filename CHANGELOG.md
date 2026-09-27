@@ -26,7 +26,16 @@ entry per phase of the comrades port.
   dozen agents open and works one at a time; or `both`. `BUSY` joins the
   glyph names under `[glyphs.icons]`.
 
+- The journal writes an `answered` line when an agent that reports through
+  its hooks works one turn past `[journal] agent_min_secs`, five minutes by
+  default, and says it is done: the program, how long, and the last line of
+  the answer. A turn under that is a chat and gets nothing.
+
 ### Changed
+
+- A click on the agent count opens the agent list rather than the inbox when
+  `[agents] show` is `busy`, since the number clicked is the working agents
+  and the inbox holds the stopped ones.
 
 - The inbox and the brief say how an agent stopped: `asked`, `done` or
   `waiting`. A `done` agent is listed so the answer can be read, is not

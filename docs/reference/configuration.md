@@ -393,11 +393,14 @@ The plugin this comes from is
 enabled = true
 interval_secs = 5
 min_secs = 60
+agent_min_secs = 300
 ```
 
 The daemon writes down what it sees: a command that ran past `min_secs` and
-finished, with how long it took; an agent that stopped and what it asked; a
-project opened or closed. `tmux-companion journal` reads it newest first, and
+finished, with how long it took; an agent that stopped and what it asked; an
+agent that worked one turn past `agent_min_secs` and said it was done, with
+how long and the last line of its answer, which only an agent reporting
+through its hooks ever says; a project opened or closed. `tmux-companion journal` reads it newest first, and
 `journal --print -t SESSION` is the standup answer for one project. It lives
 in `journal.tsv` in the state directory and rotates past a megabyte. Programs
 in `[notify] ignore` aren't runs worth a line either.
@@ -462,12 +465,13 @@ none. The same rule keeps `[notify]` and the journal from treating a claude
 session ending as a command finishing.
 
 `waiting_secs` is how long an agent has to draw nothing before it counts as
-waiting on you, which is the number the bar colours and the picker sorts
-first. tmux keeps no activity time per pane, only per window, so it's measured
+waiting on you, when it has said nothing better through `agent` and rung no
+bell. tmux keeps no activity time per pane, only per window, so it's measured
 on the window the agent is in: a shell you're typing into beside it keeps it
-reading as busy. Ten seconds is long enough that a model thinking between two
-tool calls isn't called idle, and short enough that a question left on the
-screen is noticed before you wonder why nothing's happening.
+reading as busy. A working claude redraws its spinner every second and never
+goes quiet, so for claude this only ever tells one sitting at its prompt from
+one that drew a moment ago, and ten seconds is short enough that a question
+left on the screen is noticed before you wonder why nothing's happening.
 
 `interval_secs` is how often the daemon re-reads the pane list for the bar's
 segment. One `tmux list-panes` each, shared by every attached client, and none

@@ -21,6 +21,8 @@ pub enum Kind {
     Ran,
     /// An agent stopped and asked something.
     Asked,
+    /// An agent worked a turn past `[journal] agent_min_secs` and said done.
+    Answered,
     /// A project session was built.
     Opened,
     /// A project session was closed cleanly.
@@ -33,6 +35,7 @@ impl Kind {
         match self {
             Kind::Ran => "ran",
             Kind::Asked => "asked",
+            Kind::Answered => "answered",
             Kind::Opened => "opened",
             Kind::Closed => "closed",
         }
@@ -43,6 +46,7 @@ impl Kind {
         Some(match w {
             "ran" => Kind::Ran,
             "asked" => Kind::Asked,
+            "answered" => Kind::Answered,
             "opened" => Kind::Opened,
             "closed" => Kind::Closed,
             _ => return None,
@@ -352,7 +356,13 @@ mod tests {
 
     #[test]
     fn the_words_round_trip() {
-        for k in [Kind::Ran, Kind::Asked, Kind::Opened, Kind::Closed] {
+        for k in [
+            Kind::Ran,
+            Kind::Asked,
+            Kind::Answered,
+            Kind::Opened,
+            Kind::Closed,
+        ] {
             assert_eq!(Kind::from_word(k.word()), Some(k));
         }
     }

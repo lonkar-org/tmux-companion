@@ -787,7 +787,10 @@ The daemon keeps the clock, so every timer and every client agree.
 What happened in each project, newest first: a command that ran past
 .Ic [journal] min_secs
 and finished, with how long it took; an agent that stopped and what it asked;
-a project opened or closed.
+an agent that worked one turn past
+.Ic [journal] agent_min_secs
+and said it was done, with how long and the last line of its answer; a
+project opened or closed.
 Enter goes to that session.
 .Fl t
 keeps one session and

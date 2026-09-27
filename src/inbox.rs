@@ -197,6 +197,31 @@ pub fn ordered(entries: &HashMap<String, Entry>) -> Vec<Entry> {
     out
 }
 
+/// When each agent's current turn began, keyed by pane id: the first tick it
+/// read as busy. A `done` closes the turn, and one that ran past
+/// `[journal] agent_min_secs` is worth a journal line.
+///
+/// A question in the middle does not close it: the wait for the answer is
+/// part of how long the task took. A pane that vanishes, or goes quiet with
+/// nothing reported, is forgotten, so an agent without hooks never gets a
+/// line here.
+pub fn turns_step(turns: &mut HashMap<String, u64>, seen: &[(String, State)], now: u64) {
+    let mut live = HashSet::new();
+    for (id, state) in seen {
+        live.insert(id.as_str());
+        match state {
+            State::Busy => {
+                turns.entry(id.clone()).or_insert(now);
+            }
+            State::Asked(_) | State::Done(_) | State::Reading => {}
+            _ => {
+                turns.remove(id);
+            }
+        }
+    }
+    turns.retain(|id, _| live.contains(id.as_str()));
+}
+
 /// The daemon's task: read, compare, capture the arrivals, nudge the overdue.
 ///
 /// The pane list is read outside the lock and the captures run outside it
@@ -205,11 +230,12 @@ pub fn ordered(entries: &HashMap<String, Entry>) -> Vec<Entry> {
 /// bar reads a warm cache while this runs.
 pub async fn inbox_loop(
     config: crate::config::Agents,
-    journal: bool,
+    journal: crate::config::Journal,
     state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
 ) {
     let interval = std::time::Duration::from_secs(config.interval_secs.max(1));
     let home = std::env::var("HOME").unwrap_or_default();
+    let mut turns: HashMap<String, u64> = HashMap::new();
     loop {
         tokio::time::sleep(interval).await;
         let panes = panes::list().await;
@@ -227,19 +253,55 @@ pub async fn inbox_loop(
             now,
             config.waiting_secs,
         );
+        let seen: Vec<(String, State)> = panes
+            .iter()
+            .filter(|p| panes::is_agent(&p.command, &config.programs))
+            .map(|p| {
+                let s = panes::state(
+                    p,
+                    true,
+                    reports.get(&p.id).copied(),
+                    now,
+                    config.waiting_secs,
+                );
+                (p.id.clone(), s)
+            })
+            .collect();
+        turns_step(&mut turns, &seen, now);
         for (pane, how) in &arrived {
             let lines = panes::tail_of(&pane.id).await;
             let e = entry(pane, *how, reports.get(&pane.id).copied(), &home, lines);
-            // An agent that said `done` answered rather than asked, so the
-            // journal, which records questions, is left alone.
-            if journal && !matches!(how, State::Done(_)) {
-                crate::journal::append(&crate::journal::Event {
+            if journal.enabled {
+                let event = |kind, detail| crate::journal::Event {
                     at: now,
                     session: pane.session.clone(),
                     path: e.path.clone(),
-                    kind: crate::journal::Kind::Asked,
-                    detail: format!("{} {}", e.program, question(&e.lines)),
-                });
+                    kind,
+                    detail,
+                };
+                match how {
+                    // An agent that said `done` answered rather than asked:
+                    // a line when the turn ran long enough to be work.
+                    State::Done(_) => {
+                        if let Some(began) = turns.remove(&pane.id)
+                            && now.saturating_sub(began) >= journal.agent_min_secs
+                        {
+                            crate::journal::append(&event(
+                                crate::journal::Kind::Answered,
+                                format!(
+                                    "{} {} {}",
+                                    e.program,
+                                    panes::age(now.saturating_sub(began)),
+                                    question(&e.lines)
+                                ),
+                            ));
+                        }
+                    }
+                    _ => crate::journal::append(&event(
+                        crate::journal::Kind::Asked,
+                        format!("{} {}", e.program, question(&e.lines)),
+                    )),
+                }
             }
             kept.insert(pane.id.clone(), e);
         }
@@ -513,6 +575,27 @@ mod tests {
             .is_empty()
         );
         assert!(step(&held, &[], &p, &none, 1100, 10).kept.is_empty());
+    }
+
+    #[test]
+    fn a_turn_runs_from_the_first_busy_tick_and_survives_a_question() {
+        let mut turns = HashMap::new();
+        let busy = |id: &str| (id.to_string(), State::Busy);
+        turns_step(&mut turns, &[busy("%1")], 1000);
+        turns_step(&mut turns, &[busy("%1")], 1010);
+        assert_eq!(turns.get("%1"), Some(&1000), "the first tick, not the last");
+        // A question in the middle keeps the clock running.
+        turns_step(&mut turns, &[("%1".into(), State::Asked(3))], 1020);
+        assert_eq!(turns.get("%1"), Some(&1000));
+        // Somebody reading it does too.
+        turns_step(&mut turns, &[("%1".into(), State::Reading)], 1030);
+        assert_eq!(turns.get("%1"), Some(&1000));
+        // Silence with nothing reported forgets it, and so does the pane going.
+        turns_step(&mut turns, &[("%1".into(), State::Waiting(20))], 1040);
+        assert!(turns.is_empty());
+        turns_step(&mut turns, &[busy("%1")], 1050);
+        turns_step(&mut turns, &[], 1060);
+        assert!(turns.is_empty());
     }
 
     #[test]

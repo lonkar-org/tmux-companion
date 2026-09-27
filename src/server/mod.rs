@@ -200,7 +200,7 @@ pub async fn run() -> anyhow::Result<()> {
     if config.agents.inbox && !config.agents.programs.is_empty() {
         tokio::spawn(crate::inbox::inbox_loop(
             config.agents.clone(),
-            config.journal.enabled,
+            config.journal.clone(),
             Arc::clone(&state),
         ));
     }

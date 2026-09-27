@@ -741,14 +741,16 @@ impl Default for Notify {
 pub struct Agents {
     /// Programs that are coding agents, matched against `pane_current_command`.
     pub programs: Vec<String>,
-    /// Seconds without output after which an agent counts as waiting for you.
+    /// Seconds without output after which an agent counts as waiting for you,
+    /// when it has said nothing better through `agent` and rung no bell.
     ///
     /// tmux has no per-pane activity time, so this is measured on the window
     /// the agent is in: a shell you are typing into beside the agent keeps it
-    /// reading as busy. Ten seconds is long enough that a model thinking
-    /// between two tool calls is not called idle, and short enough that a
-    /// question left on the screen is noticed before you wonder why nothing is
-    /// happening.
+    /// reading as busy. A working claude redraws its spinner every second and
+    /// never goes quiet, so for claude this only ever decides between an
+    /// agent sitting at its prompt and one that drew a moment ago; ten seconds
+    /// is short enough that a question left on the screen is noticed before
+    /// you wonder why nothing is happening.
     pub waiting_secs: u64,
     /// Seconds between two reads of the pane list for the bar's `agents`
     /// segment and the inbox. One tmux call each, shared by every attached
@@ -1658,6 +1660,13 @@ pub struct Journal {
     pub interval_secs: u64,
     /// How long a command has to run before finishing is worth a line.
     pub min_secs: u64,
+    /// How long an agent has to work on one turn before its `done` is worth
+    /// a line. Only an agent that reports through its hooks ever says done,
+    /// so this is silent for the rest.
+    ///
+    /// Five minutes: a turn under that is a chat, one over it is work the
+    /// standup wants to hear about. Zero writes every turn down.
+    pub agent_min_secs: u64,
 }
 
 impl Default for Journal {
@@ -1666,6 +1675,7 @@ impl Default for Journal {
             enabled: true,
             interval_secs: 5,
             min_secs: 60,
+            agent_min_secs: 300,
         }
     }
 }
