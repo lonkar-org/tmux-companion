@@ -216,6 +216,8 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 | Command | Does |
 | --- | --- |
 | `doctor` | The binary and its build, the daemon and its build, the socket with its mode and owner, the config in use, the glyph preset, the state directory, the daemon log's last line, both autosave timers, the tmux version and the platform. It ends on tmux's own options that cost something as they are set, `escape-time`, `history-limit`, `display-time`, `status-interval`, `focus-events`, `default-terminal`, `set-clipboard`, `monitor-bell` and `mouse`, each with its value, what that costs and the line for tmux.conf; it sets nothing. [tmux-sensible](https://github.com/tmux-plugins/tmux-sensible) set these as a plugin and was last pushed in April 2024 |
+| `health` | Why the health mark is up, one reason a line, or `ok`. A timer or a segment that failed is a reason for an hour, or until the same timer runs and works. The sessions timer finding no tmux server, or one with no session in it, is not a failure |
+| `health ack` | Forget the failures, so the mark comes down now, and print each one forgotten. A `config.toml` edited after the daemon started, a newer binary, quiet hours and a network that's gone are not failures and stay, listed as `still on the mark` |
 | `probe keys` | Show what the terminal sends for a key. `-n COUNT` stops after that many |
 | `probe cells [STRING…]` | Ask how many cells the terminal advances for a string, or for a built-in set |
 

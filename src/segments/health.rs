@@ -8,6 +8,10 @@
 //! reason's name when any of those is true, and nothing at all otherwise, so a
 //! healthy bar carries nothing extra. `tmux-companion doctor` asks the daemon
 //! the same question and prints every reason in full.
+//!
+//! A failure leaves the mark three ways: an hour passes, the timer it came
+//! from runs and works, or `tmux-companion health ack` forgets it. The other
+//! reasons are how things are and leave when that changes.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime};
@@ -18,7 +22,9 @@ use crate::tmux::{format::colored_segment, icons::HEALTH};
 /// How long a failed timer keeps the mark up after its last failure.
 ///
 /// An hour, because the timers run every two to fifteen minutes and a failure
-/// that has not repeated in an hour has been fixed, or the timer is off.
+/// that has not repeated in an hour has been fixed, or the timer is off. It
+/// is the longest a failure stays, for a segment or a timer that never runs
+/// again; a timer that works takes its own back sooner.
 pub const FAILURE_WINDOW: Duration = Duration::from_secs(3600);
 
 /// How often the daemon re-checks the two files.
@@ -38,11 +44,11 @@ pub struct HealthSample {
 ///
 /// The failure comes first because it is the one that costs something now; a
 /// changed config or a newer binary only means a restart is due.
-pub fn reasons(failure: Option<&str>, config_changed: bool, binary_newer: bool) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(what) = failure {
-        out.push(format!("a timer failed: {what}"));
-    }
+pub fn reasons(failures: &[String], config_changed: bool, binary_newer: bool) -> Vec<String> {
+    let mut out: Vec<String> = failures
+        .iter()
+        .map(|what| format!("a timer failed: {what}"))
+        .collect();
     if config_changed {
         out.push(
             "config.toml changed after the daemon started; run tmux-companion restart".to_string(),
@@ -55,6 +61,34 @@ pub fn reasons(failure: Option<&str>, config_changed: bool, binary_newer: bool) 
         );
     }
     out
+}
+
+/// What `health` prints: the reasons, one a line, or `ok`.
+pub fn report(reasons: &[String]) -> String {
+    if reasons.is_empty() {
+        "ok".to_string()
+    } else {
+        reasons.join("\n")
+    }
+}
+
+/// What `health ack` prints: what was forgotten, and what the mark still says.
+///
+/// What is left is said because an acknowledgement that leaves the mark up
+/// with no word about why looks like a command that did nothing. Those are
+/// the reasons that describe how things are now, and each one already names
+/// what ends it.
+pub fn ack_report(forgotten: &[String], left: &[String]) -> String {
+    let mut lines: Vec<String> = if forgotten.is_empty() {
+        vec!["nothing to acknowledge".to_string()]
+    } else {
+        forgotten
+            .iter()
+            .map(|what| format!("acknowledged: {what}"))
+            .collect()
+    };
+    lines.extend(left.iter().map(|why| format!("still on the mark: {why}")));
+    lines.join("\n")
 }
 
 /// Whether a file was written after a moment.
@@ -109,12 +143,12 @@ mod tests {
     #[test]
     fn healthy_is_nothing_at_all() {
         assert_eq!(format_health(&HealthSample::default(), BAR), "");
-        assert!(reasons(None, false, false).is_empty());
+        assert!(reasons(&[], false, false).is_empty());
     }
 
     #[test]
     fn a_failure_comes_first_and_the_bar_says_which_kind() {
-        let r = reasons(Some("autosave: script missing"), true, true);
+        let r = reasons(&["autosave: script missing".to_string()], true, true);
         assert_eq!(r.len(), 3);
         assert!(r[0].contains("autosave: script missing"), "{}", r[0]);
         assert!(r[1].contains("config.toml"), "{}", r[1]);
@@ -122,6 +156,48 @@ mod tests {
         let drawn = format_health(&HealthSample { reasons: r }, BAR);
         assert!(drawn.contains("timer +2"), "{drawn}");
         assert!(drawn.contains(WAITING_COLOUR), "{drawn}");
+    }
+
+    #[test]
+    fn two_things_that_failed_are_two_reasons() {
+        let failed = [
+            "sessions autosave: disk full".to_string(),
+            "net segment: no counters".to_string(),
+        ];
+        let r = reasons(&failed, false, false);
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert!(r[0].ends_with("sessions autosave: disk full"), "{}", r[0]);
+        assert!(r[1].ends_with("net segment: no counters"), "{}", r[1]);
+        let drawn = format_health(&HealthSample { reasons: r }, BAR);
+        assert!(drawn.contains("timer +1"), "{drawn}");
+    }
+
+    #[test]
+    fn health_says_ok_or_the_reasons_one_a_line() {
+        assert_eq!(report(&[]), "ok");
+        let r = reasons(&["autosave: script missing".to_string()], true, false);
+        let said = report(&r);
+        assert_eq!(said.lines().count(), 2, "{said}");
+        assert!(said.starts_with("a timer failed: autosave"), "{said}");
+    }
+
+    #[test]
+    fn an_acknowledgement_says_what_it_forgot_and_what_it_could_not() {
+        assert_eq!(ack_report(&[], &[]), "nothing to acknowledge");
+        let forgotten = ["sessions autosave: disk full".to_string()];
+        assert_eq!(
+            ack_report(&forgotten, &[]),
+            "acknowledged: sessions autosave: disk full"
+        );
+        let left = reasons(&[], true, false);
+        let said = ack_report(&forgotten, &left);
+        let lines: Vec<&str> = said.lines().collect();
+        assert_eq!(lines.len(), 2, "{said}");
+        assert!(
+            lines[1].starts_with("still on the mark: config.toml"),
+            "{said}"
+        );
+        assert!(lines[1].ends_with("tmux-companion restart"), "{said}");
     }
 
     #[test]
@@ -141,7 +217,7 @@ mod tests {
     #[test]
     fn one_reason_carries_no_count() {
         let sample = HealthSample {
-            reasons: reasons(None, true, false),
+            reasons: reasons(&[], true, false),
         };
         let drawn = format_health(&sample, BAR);
         assert!(

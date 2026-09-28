@@ -267,6 +267,68 @@ async fn tmux_out(args: &[&str]) -> String {
     }
 }
 
+/// What tmux answered when the timer asked it for its sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Server {
+    /// There is a server and it has sessions, so there is something to save.
+    Running,
+    /// No server, or one with no session in it: every session was closed,
+    /// which is a thing people do and not a thing that went wrong.
+    Nothing,
+    /// tmux was there and said something else, or could not be started.
+    Unreadable(String),
+}
+
+/// Read tmux's answer to `list-sessions`.
+///
+/// Only tmux's own two ways of saying there is no server count as nothing to
+/// save: `no server running on PATH` for a socket with nobody behind it, and
+/// `error connecting to PATH (No such file or directory)` for no socket at
+/// all, which is what 3.7c says when the last session was closed. Any other
+/// failure is kept as one, a socket that may not be read among them, because
+/// this timer failed for thirty hours once with nothing on the screen and a
+/// wide net here would bring that back.
+pub fn server_answer(success: bool, stdout: &str, stderr: &str) -> Server {
+    if success {
+        return if stdout.trim().is_empty() {
+            Server::Nothing
+        } else {
+            Server::Running
+        };
+    }
+    let said = stderr.trim();
+    let gone = said.starts_with("no server running on")
+        || (said.starts_with("error connecting to")
+            && (said.ends_with("(No such file or directory)")
+                || said.ends_with("(Connection refused)")));
+    if gone {
+        Server::Nothing
+    } else if said.is_empty() {
+        Server::Unreadable("tmux list-sessions failed and said nothing".to_string())
+    } else {
+        Server::Unreadable(format!("tmux list-sessions: {said}"))
+    }
+}
+
+/// Ask tmux whether there is anything to save.
+async fn server() -> Server {
+    match tokio::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+        .await
+    {
+        Ok(o) => server_answer(
+            o.status.success(),
+            &String::from_utf8_lossy(&o.stdout),
+            &String::from_utf8_lossy(&o.stderr),
+        ),
+        Err(e) => Server::Unreadable(format!("tmux could not be started: {e}")),
+    }
+}
+
+/// The name the `[sessions]` timer's failure is kept under.
+const SOURCE: &str = "sessions autosave";
+
 /// Everything one snapshot produced, for a caller that wants to report it.
 pub struct Taken {
     /// What the capture read, including what it was unsure of.
@@ -401,22 +463,40 @@ pub async fn sessions_autosave_loop(
         if !due(&config, last, now) {
             continue;
         }
+        // Asked first, because the daemon outlives the server: every session
+        // closed at 21:38 and tmux started again at 21:45 left `timer` on the
+        // new bar for an hour, about a snapshot there was nothing to take.
+        // The slot is spent either way, so the next one is an interval from
+        // now and not the moment tmux comes back with one empty session.
+        match server().await {
+            Server::Running => {}
+            Server::Nothing => {
+                last = Some(now);
+                continue;
+            }
+            Server::Unreadable(why) => {
+                state
+                    .lock()
+                    .await
+                    .note_failure(SOURCE, format!("{SOURCE}: {why}"));
+                last = Some(now);
+                continue;
+            }
+        }
         // `clean` is false: this daemon does not know yet whether it will stop
         // politely, and a snapshot that turned out to be the last one before a
         // crash is exactly the one nobody comes back to correct.
         match take_snapshot(&config, &[], false, false).await {
-            Ok(_) => last = Some(now),
-            // A server that is not running is the usual case, and the bar is
-            // not drawn then either, so recording it costs nothing; a failure
-            // while tmux runs is the one the health mark is for.
-            Err(e) => {
-                state
-                    .lock()
-                    .await
-                    .note_failure(format!("sessions autosave: {e}"));
-                last = Some(now);
-            }
+            // It works, so whatever the mark said about the last run is old.
+            Ok(_) => state.lock().await.note_ok(SOURCE),
+            // tmux was running a moment ago, so this is the failure the
+            // health mark is for.
+            Err(e) => state
+                .lock()
+                .await
+                .note_failure(SOURCE, format!("{SOURCE}: {e}")),
         }
+        last = Some(now);
     }
 }
 
@@ -436,6 +516,42 @@ mod tests {
 
     /// A pid no process on this machine has: past every pid_max in use.
     const DEAD: u32 = i32::MAX as u32;
+
+    #[test]
+    fn a_server_with_sessions_is_one_to_save() {
+        assert_eq!(server_answer(true, "main\nwork\n", ""), Server::Running);
+    }
+
+    #[test]
+    fn every_session_closed_is_nothing_to_save_and_nothing_wrong() {
+        // Both lines are tmux 3.7c's own, read off this laptop.
+        for said in [
+            "no server running on /private/tmp/tmux-501/default\n",
+            "error connecting to /private/tmp/tmux-501/default (No such file or directory)\n",
+            "error connecting to /tmp/tmux-1000/default (Connection refused)\n",
+        ] {
+            assert_eq!(server_answer(false, "", said), Server::Nothing, "{said}");
+        }
+        // `exit-empty off` keeps a server with no session in it.
+        assert_eq!(server_answer(true, "\n", ""), Server::Nothing);
+    }
+
+    #[test]
+    fn anything_else_tmux_says_is_still_a_failure() {
+        let denied = "error connecting to /tmp/tmux-1000/default (Permission denied)\n";
+        match server_answer(false, "", denied) {
+            Server::Unreadable(why) => assert!(why.contains("Permission denied"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            server_answer(false, "", "server exited unexpectedly\n"),
+            Server::Unreadable(_)
+        ));
+        assert!(matches!(
+            server_answer(false, "", ""),
+            Server::Unreadable(_)
+        ));
+    }
 
     #[test]
     fn a_clean_stop_leaves_nothing_for_the_next_start_to_find() {

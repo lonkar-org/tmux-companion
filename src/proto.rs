@@ -35,6 +35,15 @@ pub struct QuietArgs {
     pub secs: Option<u64>,
 }
 
+/// `health`: say why the mark is up, and forget the failures when asked to.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HealthArgs {
+    /// Forget the failures once they're listed.
+    #[serde(default)]
+    pub ack: bool,
+}
+
 /// [`build_id`] as a compile-time constant.
 ///
 /// Exists because clap's `version` attribute takes a `&'static str` and cannot

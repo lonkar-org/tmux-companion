@@ -66,8 +66,10 @@ pub struct ServerState {
     /// When this daemon came up, for telling a file edited since from one
     /// edited before.
     pub started_at: std::time::SystemTime,
-    /// The last timer or segment that failed, and when, for the health mark.
-    pub last_failure: Option<(String, Instant)>,
+    /// What failed and when, for the health mark, under the name of the
+    /// timer or segment it came from: one entry each, so a timer that works
+    /// again can take its own failure back and leave the others standing.
+    pub failures: std::collections::BTreeMap<String, (String, Instant)>,
     /// The last health check with the time it ran.
     pub health_cache: Option<(HealthSample, Instant)>,
     /// Since when the network has been gone, in unix seconds, as the online
@@ -132,7 +134,7 @@ impl ServerState {
             battery_cache: None,
             agents_cache: None,
             started_at: std::time::SystemTime::now(),
-            last_failure: None,
+            failures: std::collections::BTreeMap::new(),
             health_cache: None,
             offline_since: None,
             inbox: std::collections::HashMap::new(),
@@ -295,16 +297,47 @@ impl ServerState {
     // ── health ───────────────────────────────────────────────────────────────
 
     /// Remember that something failed, for the mark on the bar.
-    pub fn note_failure(&mut self, what: impl Into<String>) {
-        self.last_failure = Some((what.into(), Instant::now()));
+    ///
+    /// `source` is the timer or the segment, and `what` is the line the mark
+    /// and `doctor` show, which already names it.
+    pub fn note_failure(&mut self, source: &str, what: impl Into<String>) {
+        self.failures
+            .insert(source.to_string(), (what.into(), Instant::now()));
     }
 
-    /// The last failure, if it was within the health window.
-    pub fn recent_failure(&self) -> Option<String> {
-        self.last_failure
-            .as_ref()
+    /// A timer ran and it worked, so what it said when it last failed is no
+    /// longer true.
+    ///
+    /// The health check is dropped with it, or the bar would go on showing
+    /// the mark for the five seconds the check is kept.
+    pub fn note_ok(&mut self, source: &str) {
+        if self.failures.remove(source).is_some() {
+            self.health_cache = None;
+        }
+    }
+
+    /// The failures inside the health window, newest first.
+    pub fn recent_failures(&self) -> Vec<String> {
+        let mut recent: Vec<&(String, Instant)> = self
+            .failures
+            .values()
             .filter(|(_, t)| t.elapsed() < crate::segments::health::FAILURE_WINDOW)
-            .map(|(what, _)| what.clone())
+            .collect();
+        recent.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+        recent.into_iter().map(|(what, _)| what.clone()).collect()
+    }
+
+    /// Forget every failure, because somebody has read them, and say which
+    /// ones there were.
+    ///
+    /// Only the failures: a config edited since the daemon started, a newer
+    /// binary, quiet hours and a network that is gone are how things are, and
+    /// the mark would put them back on its next check.
+    pub fn acknowledge_failures(&mut self) -> Vec<String> {
+        let seen = self.recent_failures();
+        self.failures.clear();
+        self.health_cache = None;
+        seen
     }
 
     /// Whether any configured segment is `health`.
@@ -379,6 +412,49 @@ mod tests {
             remote_success: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_timer_that_works_again_takes_back_its_own_failure_and_no_other() {
+        let mut st = ServerState::new();
+        st.note_failure("sessions autosave", "sessions autosave: disk full");
+        st.note_failure("net segment", "net segment: no counters");
+        assert_eq!(st.recent_failures().len(), 2);
+
+        st.health_store(HealthSample::default());
+        st.note_ok("sessions autosave");
+        assert_eq!(st.recent_failures(), ["net segment: no counters"]);
+        assert!(
+            st.health_cached().is_none(),
+            "the bar would show the old mark for five more seconds"
+        );
+
+        // Nothing taken back, nothing thrown away.
+        st.health_store(HealthSample::default());
+        st.note_ok("sessions autosave");
+        assert!(st.health_cached().is_some());
+    }
+
+    #[test]
+    fn a_second_failure_of_one_timer_replaces_its_first() {
+        let mut st = ServerState::new();
+        st.note_failure("autosave", "autosave: exited Some(1)");
+        st.note_failure("autosave", "autosave: exited Some(2)");
+        assert_eq!(st.recent_failures(), ["autosave: exited Some(2)"]);
+    }
+
+    #[test]
+    fn acknowledging_forgets_every_failure_and_says_which() {
+        let mut st = ServerState::new();
+        assert!(st.acknowledge_failures().is_empty());
+        st.note_failure("sessions autosave", "sessions autosave: disk full");
+        st.health_store(HealthSample::default());
+        assert_eq!(st.acknowledge_failures(), ["sessions autosave: disk full"]);
+        assert!(st.recent_failures().is_empty());
+        assert!(st.health_cached().is_none());
+        // One that fails after that is news again.
+        st.note_failure("sessions autosave", "sessions autosave: disk full");
+        assert_eq!(st.recent_failures().len(), 1);
     }
 
     #[test]

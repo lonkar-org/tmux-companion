@@ -392,9 +392,22 @@ async fn health_state() -> String {
     {
         Ok(r) if r.error.is_some() => "the daemon predates the health check".to_string(),
         Ok(r) if r.output.trim().is_empty() => "ok".to_string(),
-        Ok(r) => r.output.lines().collect::<Vec<_>>().join("; "),
+        Ok(r) => health_line(&r.output),
         Err(e) => format!("not answering: {e}"),
     }
+}
+
+/// The reasons on one line, ending on the command that forgets a failure
+/// when one of them is a failure.
+///
+/// The other reasons already end on what to run, and a failure had nothing:
+/// the mark stayed for its hour whether or not anybody had read it.
+fn health_line(reasons: &str) -> String {
+    let mut line = reasons.lines().collect::<Vec<_>>().join("; ");
+    if reasons.lines().any(|r| r.starts_with("a timer failed")) {
+        line.push_str("; tmux-companion health ack forgets a failure");
+    }
+    line
 }
 
 fn state_dir_state() -> String {
@@ -427,6 +440,16 @@ fn platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_health_line_names_ack_only_when_something_failed() {
+        let failed = "a timer failed: sessions autosave: disk full\nconfig.toml changed";
+        let line = health_line(failed);
+        assert!(line.starts_with("a timer failed: sessions"), "{line}");
+        assert!(line.ends_with("health ack forgets a failure"), "{line}");
+        let state = health_line("quiet for 40m");
+        assert_eq!(state, "quiet for 40m");
+    }
 
     #[tokio::test]
     async fn the_report_answers_every_question_it_promises() {

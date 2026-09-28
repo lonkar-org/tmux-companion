@@ -132,3 +132,10 @@ Said plainly rather than left to be discovered.
   at its `history-limit` lands on the line too; counting how much the
   history grew can't see a history that has stopped growing. `ports --udp`
   adds the UDP sockets bound and not connected.
+- `health` and `health ack` are new rather than ported. The mark kept a
+  failure for an hour whatever happened after it, and the sessions timer
+  called an absent tmux server a failure, so closing every session and
+  starting tmux again seven minutes later put `timer` on a bar with nothing
+  wrong behind it. A timer that works takes its own failure back now, no
+  server is nothing to save, and `ack` is for the failure that was read and
+  dealt with by hand.

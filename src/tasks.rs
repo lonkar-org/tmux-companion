@@ -91,6 +91,9 @@ pub fn last_save() -> String {
     }
 }
 
+/// The name the `[autosave]` timer's failure is kept under.
+const AUTOSAVE: &str = "autosave";
+
 /// Save on a timer until the daemon stops.
 ///
 /// No lock file, because there is one daemon and it owns this task. No liveness
@@ -103,11 +106,18 @@ pub async fn autosave_loop(
 ) {
     loop {
         tokio::time::sleep(interval).await;
-        if let Err(e) = save_now(&script).await {
-            eprintln!("tmux-companion: autosave failed: {e}");
-            // The log is where this went for a day unseen; the health mark
-            // on the bar is the reason anybody looks at the log.
-            state.lock().await.note_failure(format!("autosave: {e}"));
+        match save_now(&script).await {
+            // It works now, so what the mark said about the last run is old.
+            Ok(_) => state.lock().await.note_ok(AUTOSAVE),
+            Err(e) => {
+                eprintln!("tmux-companion: autosave failed: {e}");
+                // The log is where this went for a day unseen; the health
+                // mark on the bar is the reason anybody looks at the log.
+                state
+                    .lock()
+                    .await
+                    .note_failure(AUTOSAVE, format!("autosave: {e}"));
+            }
         }
     }
 }

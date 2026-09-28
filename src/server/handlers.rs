@@ -200,6 +200,20 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // Every reason the health mark would show, one per line, empty when
         // there is none; what `doctor` prints on its health line.
         "__health" => Ok(health_check(&state).await.reasons.join("\n")),
+        // The same reasons for a person, and with `ack` the failures
+        // forgotten first. The lock is let go before the check, which stats
+        // two files and takes the lock itself.
+        "health" => match req.parse_args::<crate::proto::HealthArgs>() {
+            Ok(args) if args.ack => {
+                let forgotten = state.lock().await.acknowledge_failures();
+                let left = health_check(&state).await.reasons;
+                Ok(segments::health::ack_report(&forgotten, &left))
+            }
+            Ok(_) => Ok(segments::health::report(
+                &health_check(&state).await.reasons,
+            )),
+            Err(e) => Err(e),
+        },
         // Quiet hours: set, clear or ask. The daemon keeps the clock so every
         // timer and every client agree on it.
         "__quiet" => match req.parse_args::<crate::proto::QuietArgs>() {
@@ -351,7 +365,7 @@ async fn render_right(
     );
     // What failed on this pass, remembered once the locks below are done
     // with, so the health mark can say so.
-    let mut failed: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
 
     let net = match net_sample {
         Ok((rx, tx)) => {
@@ -375,7 +389,7 @@ async fn render_right(
         }
         Err(e) => {
             eprintln!("tmux-companion: net segment failed: {e}");
-            failed.push(format!("net segment: {e}"));
+            failed.push(("net segment".to_string(), format!("net segment: {e}")));
             String::new()
         }
     };
@@ -387,8 +401,8 @@ async fn render_right(
     let battery = segment_or_empty("battery", battery, &mut failed);
     let right = {
         let mut st = state.lock().await;
-        for what in failed {
-            st.note_failure(what);
+        for (source, what) in failed {
+            st.note_failure(&source, what);
         }
         st.config.status.right.clone()
     };
@@ -427,7 +441,7 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
 
 /// The three questions, answered now.
 async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::HealthSample {
-    let (started, failure, quiet, offline) = {
+    let (started, failures, quiet, offline) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
         let quiet = s
@@ -436,7 +450,7 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
         let offline = s
             .offline_since
             .map(|since| crate::online::reason(since, now, &s.config.online.probe));
-        (s.started_at, s.recent_failure(), quiet, offline)
+        (s.started_at, s.recent_failures(), quiet, offline)
     };
     let config_changed = match crate::config::load() {
         Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
@@ -445,7 +459,7 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
     let binary_newer = std::env::current_exe()
         .map(|exe| segments::health::newer_than(&exe, started))
         .unwrap_or(false);
-    let mut reasons = segments::health::reasons(failure.as_deref(), config_changed, binary_newer);
+    let mut reasons = segments::health::reasons(&failures, config_changed, binary_newer);
     // Ahead of a failed timer, which with the network gone is usually the
     // fetch, and so the effect of this rather than a second thing wrong.
     if let Some(o) = offline {
@@ -496,13 +510,13 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
 fn segment_or_empty(
     name: &str,
     result: anyhow::Result<String>,
-    failed: &mut Vec<String>,
+    failed: &mut Vec<(String, String)>,
 ) -> String {
     match result {
         Ok(s) => s,
         Err(e) => {
             eprintln!("tmux-companion: {name} segment failed: {e}");
-            failed.push(format!("{name} segment: {e}"));
+            failed.push((format!("{name} segment"), format!("{name} segment: {e}")));
             String::new()
         }
     }

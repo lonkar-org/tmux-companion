@@ -545,6 +545,14 @@ pub enum Cmd {
         off: bool,
     },
 
+    /// Why the health mark is up, a reason a line, or `ok`; `ack` forgets
+    /// the failures once they've been read
+    Health {
+        /// `ack`, or nothing to only ask
+        #[command(subcommand)]
+        action: Option<HealthAction>,
+    },
+
     /// Leave a one-line note on a pane, shown by `panes` and in the pane
     /// border; with nothing to say it prints the note that is there
     Note {
@@ -1085,6 +1093,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             days,
         } => crate::journal::run(print, target, days).await?,
         Cmd::Quiet { duration, off } => crate::quiet::run(duration, off).await?,
+        Cmd::Health { action } => run_health(action.is_some()).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
@@ -1443,6 +1452,28 @@ fn nothing_noted(rows: &[crate::keys::KeyRow]) -> bool {
 fn usage_path(config: &crate::config::Config) -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     config.usage.log_path(&home, crate::server::state_dir())
+}
+
+/// What `health` can be told to do.
+#[derive(Subcommand, Debug, Clone, Copy)]
+pub enum HealthAction {
+    /// Forget the timers and segments that failed, so the mark comes down
+    /// now and not an hour after the last of them
+    Ack,
+}
+
+/// `health`: the daemon's reasons, or with `ack` what it forgot.
+///
+/// The daemon writes both, since it holds the failures and the moment it
+/// started, and a client has neither.
+async fn run_health(ack: bool) -> anyhow::Result<()> {
+    let args = crate::proto::HealthArgs { ack };
+    let resp = crate::client::send(Request::build("health", &args)).await?;
+    if let Some(e) = resp.error {
+        anyhow::bail!(e);
+    }
+    println!("{}", resp.output);
+    Ok(())
 }
 
 /// `cheatsheet`: the same rows the picker uses, laid out in four boxes.

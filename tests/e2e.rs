@@ -1470,6 +1470,62 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
     assert_eq!(words, ["1", "1", "needle-42"], "{landed:?}");
 }
 
+/// `health` says what the mark says, and `health ack` says what it left
+/// standing: quiet hours are how things are, so acknowledging doesn't end them.
+#[test]
+fn health_gives_the_reasons_and_an_acknowledgement_leaves_what_is_still_true() {
+    let Some(t) = Tmux::start("healthack") else {
+        return;
+    };
+    let (out, err, ok) = t.run(&["health"]);
+    assert!(ok, "health failed:\n{err}");
+    assert_eq!(out.trim(), "ok");
+    let (out, err, ok) = t.run(&["health", "ack"]);
+    assert!(ok, "health ack failed:\n{err}");
+    assert_eq!(out.trim(), "nothing to acknowledge");
+
+    let (_, err, ok) = t.run(&["quiet", "5m"]);
+    assert!(ok, "quiet failed:\n{err}");
+    let (out, _, _) = t.run(&["health"]);
+    assert!(out.starts_with("quiet for"), "{out:?}");
+    let (out, _, _) = t.run(&["health", "ack"]);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out:?}");
+    assert_eq!(lines[0], "nothing to acknowledge");
+    assert!(
+        lines[1].starts_with("still on the mark: quiet for"),
+        "{out:?}"
+    );
+}
+
+/// The sessions timer with no tmux server to save is not a timer that failed.
+///
+/// The daemon outlives the server, so this is every evening all the sessions
+/// get closed: on 2026-09-27 the bar came back seven minutes later saying
+/// `timer` about a snapshot there had been nothing to take. The test has no
+/// server at all, since no session is ever made, and waits one tick of the
+/// timer past its first slot.
+#[test]
+fn a_timer_with_no_server_to_save_has_not_failed() {
+    let Some(t) = Tmux::start("noserver") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[sessions]\nautosave = \"interval\"\ninterval_secs = 900\n",
+    )
+    .unwrap();
+    let (out, err, ok) = t.run(&["health"]);
+    assert!(ok && out.trim() == "ok", "at the start: {out:?} {err}");
+    std::thread::sleep(tmux_companion::sessions::timer::TICK + Duration::from_secs(4));
+    let (out, err, ok) = t.run(&["health"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "ok", "the timer ran and called it a failure");
+    // Nothing was written either, which is the half that was already right.
+    let (out, _, _) = t.run(&["sessions", "list"]);
+    assert!(!out.contains("sessions,"), "{out:?}");
+}
+
 /// `ports --print` names the pane a listener was started in.
 ///
 /// python is the listener because it is on the runners and on a laptop and
