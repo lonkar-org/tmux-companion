@@ -3,31 +3,35 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.5.2 - 2026-09-28
+
+The evening 0.5.1 went out the bar said `timer` over something that wasn't
+wrong. This is what changed so it doesn't and so a failure that's been read
+can be taken off the mark.
 
 ### Added
 
-- `health`: why the health mark is up, one reason a line, or `ok`. `health
-  ack` forgets the timers and segments that failed and prints each one, so
+- `health`: why the health mark is up, one reason a line or `ok`. `health
+  ack` forgets the timers and segments that failed and prints each one so
   the mark comes down when you've read it and not an hour later. It leaves
-  what's still true, an edited `config.toml`, a newer binary, quiet hours or
-  a network that's gone, and lists those as `still on the mark`. `doctor`
-  names the command on its health line when a failure is there.
+  what's still true and lists it as `still on the mark`: an edited
+  `config.toml`, a newer binary, quiet hours or a network that's gone.
+  `doctor` names the command on its health line when a failure is there.
 
 ### Fixed
 
 - The sessions timer called it a failure when there was no tmux server to
-  save. I closed every session, started tmux again seven minutes later, and
-  the bar said `timer` for the rest of the hour, because the daemon had
+  save. I closed every session, started tmux again seven minutes later and
+  the bar said `timer` for the rest of the hour because the daemon had
   outlived the server and remembered, so no server, or one with no session
   in it, is nothing to save now and nothing on the mark. Anything else tmux
   says when asked for its sessions is still a failure, a socket it may not
   read among them.
 
 - A timer that failed and then worked kept its failure on the mark until the
-  hour ran out. It takes its own back on the next run that works, and leaves
-  any other timer's standing. The mark also held one failure at a time, so a
-  second one replaced the first; it holds one per timer and per segment, and
+  hour ran out. It takes its own back on the next run that works and leaves
+  any other timer's standing. The mark also held one failure at a time so a
+  second one replaced the first; it holds one per timer and per segment and
   `+N` counts them.
 
 ## 0.5.1 - 2026-09-27
