@@ -7,7 +7,7 @@
 [![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
 [![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
-[![Demo](https://img.shields.io/badge/demo-asciinema-d40000?logo=asciinema&logoColor=white)](https://asciinema.org/a/1266213)
+[![Demo](https://img.shields.io/badge/demo-asciinema-d40000?logo=asciinema&logoColor=white)](https://asciinema.org/a/1266992)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 One binary behind your whole tmux config. It draws the status bar, runs the
@@ -15,14 +15,14 @@ pickers behind your keybindings, and builds your project sessions, out of a
 daemon that is already warm.
 
 <p align="center">
-  <a href="https://asciinema.org/a/1266213">
-    <img src="https://media.lonkar.org/tmux-companion/usage.gif"
-         alt="tmux-companion: the project picker, a new window, run and zen">
+  <a href="https://asciinema.org/a/1266992">
+    <img src="https://media.lonkar.org/tmux-companion/usage-2026-09-30.gif"
+         alt="tmux-companion: the project picker, a new window and run">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://asciinema.org/a/1266213">https://asciinema.org/a/1266213</a>
+  <a href="https://asciinema.org/a/1266992">https://asciinema.org/a/1266992</a>
 </p>
 
 ## What you get
