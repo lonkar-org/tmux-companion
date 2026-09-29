@@ -37,7 +37,7 @@ daemon that is already warm.
 | `inbox`, `brief`, `journal` | the agents waiting on you and what each asked, a nudge when one waits too long, and what happened today              |
 | `sessions`                  | every session saved on a timer, and `sessions resurrect` brings them back after a reboot                             |
 | `panes`, `search`, `ports`  | jump to any pane, any line of any scrollback, or whatever's listening on that port                                   |
-| `pocket`, `zen`, `kill`     | a shell that slides out and back, everything but this pane out of the way, a hung program stopped with the pane kept |
+| `pocket`, `zen`, `kill`     | a shell you pull out and put away, everything but this pane out of the way, a hung program stopped with the pane kept|
 | `promote`, `note`, `quiet`  | a pane into a session of its own, a note on a pane, an hour with nothing nagging                                     |
 | `run`                       | pick from shell history, run it in a pane that slides out                                                            |
 | `open`                      | open the URL or `file:line:col` under your cursor                                                                    |

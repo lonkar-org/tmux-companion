@@ -505,8 +505,8 @@ pub enum Cmd {
         hook: bool,
     },
 
-    /// A shell that slides out beside this pane and is put away, process
-    /// and scrollback kept, by the same key
+    /// A shell you pull out beside this pane and put away, process and
+    /// scrollback kept, by the same key
     Pocket {
         /// Which pocket, when a session keeps more than one
         name: Option<String>,

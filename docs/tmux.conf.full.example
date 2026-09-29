@@ -304,7 +304,7 @@ bind -N "companion: session give this pane a session of its own" @ \
 bind -N "companion: pane stop what hangs in it" K \
   run-shell "tmux-companion kill --ask --pane '#{pane_id}'"
 
-# The pocket: a shell that slides out beside this pane on the first press,
+# The pocket: a shell you pull out beside this pane on the first press,
 # goes away into a window called `_pocket` on the second, and comes back,
 # process and scrollback kept, on the third. `pocket logs` is a second one
 # under its own name, for a key of its own.

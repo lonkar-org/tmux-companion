@@ -64,3 +64,21 @@ which is the case that matters.
 More than one pocket per session at a time, what `zen` does to a pocket pane
 that's open, and whether a pocket should come back after `sessions resurrect`
 as a parked pane or as nothing.
+
+The slide. The pocket opened, parked and came back through a one-column pane
+to slide the way `run` does, and on 2026-09-30 it came out of that: a shell
+whose prompt was drawn at one column cleared the screen on its next redraw,
+and bringing a pocket back at one column wrapped its output into history.
+The recording showed it coming back as a bare prompt. It now opens and moves
+at its own width, which works and doesn't animate. Ways to get the slide
+back, none tried yet:
+
+- start the shell only once the slide is done, so its first prompt is drawn
+  at the full width (`split-window` running a small wait, then `exec $SHELL`);
+- open at a width the prompt fits in rather than at one column, which fixes
+  the first prompt but not a return with output wider than that;
+- animate the neighbour instead: join at full width and resize the pane the
+  key was pressed in, so the pocket itself is never narrow.
+
+Whatever comes back needs to keep `a_pocket_brought_back_still_shows_what_it_printed`
+passing with the slide settings on, since that test is the one that failed.
