@@ -8,7 +8,7 @@ one at a time.
 docker run --rm -it lonkarorg/tmux-companion:playground
 ```
 
-27 MB, amd64 and arm64. Nothing is mounted from your machine and nothing is
+<30 MB, amd64 and arm64. Nothing is mounted from your machine and nothing is
 published off it, so the whole thing goes away with the container.
 
 **Run it from a terminal that isn't already in tmux.** Start it from inside a
