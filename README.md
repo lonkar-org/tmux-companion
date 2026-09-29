@@ -27,12 +27,11 @@ daemon that is already warm.
 
 ## What you get
 
-<!-- @Yogesh(word): the cheatsheet row says "the bindings you wrote, four boxes, most-used first"; it now shows the ones you keep looking up and drops what you've learned -->
 |                             |                                                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `status-right`              | git, bandwidth and battery in one call                                                                               |
 | `keys`                      | fuzzy search every binding, press enter to run it                                                                    |
-| `cheatsheet`                | the bindings you wrote, four boxes, most-used first                                                                  |
+| `cheatsheet`                | the bindings you keep looking up, until you've learned them                                                          |
 | `project`                   | one session per project, sessions and your directory jumper in one list                                              |
 | `project save`              | capture this session's panes as the layout it reopens with                                                           |
 | `inbox`, `brief`, `journal` | the agents waiting on you and what each asked, a nudge when one waits too long, and what happened today              |

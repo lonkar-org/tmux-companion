@@ -51,7 +51,6 @@ say() { printf 'tmux-companion: %s\n' "$*" >&2; }
 # what the tool offers and which of it is on, which is the question a fresh
 # install has.
 hint_setup() {
-  # @Yogesh(word): the installer's last line, pointing at setup
   say "next: tmux-companion setup"
 }
 die() { printf 'tmux-companion: %s\n' "$*" >&2; exit 1; }

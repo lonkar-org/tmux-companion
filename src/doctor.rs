@@ -35,7 +35,6 @@ pub async fn report() -> String {
     let _ = writeln!(out, "  sessions      {}", sessions_state());
     let _ = writeln!(out, "  autosave      {}", autosave_state());
     let _ = writeln!(out, "  health        {}", health_state().await);
-    // @Yogesh(word): the label of doctor's setup line
     let _ = writeln!(out, "  setup         {}", setup_state().await);
     let _ = writeln!(out, "  tmux          {}", tmux_version());
     let _ = writeln!(out, "  platform      {}", platform());

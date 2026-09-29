@@ -195,7 +195,6 @@ pub enum Cmd {
     /// Print what somebody would otherwise have to ask you for
     Doctor,
 
-    // @Yogesh(word): --help for setup, the line under Commands and the one for --print
     /// What the tool offers, whether each is on for you, and a way to add what
     /// is missing
     Setup {
@@ -578,10 +577,8 @@ pub enum Cmd {
         clear: bool,
     },
 
-    // @Yogesh(word): --help line for cheatsheet
     /// A cheat sheet of the bindings you keep looking up, in four boxes
     Cheatsheet {
-        // @Yogesh(word): --help line for cheatsheet --print
         /// List the entries one per line, tab-separated, instead of drawing
         /// the sheet
         #[arg(long, alias = "plain")]

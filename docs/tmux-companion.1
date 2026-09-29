@@ -124,11 +124,9 @@ is for the
 .Ic client-attached
 hook: it opens the popup only when something is waiting or wrong, and says
 nothing when the server is quiet.
-.\" @Yogesh(gap): the brief's setup line: shown for the week after a build first runs, only when setup has items open, and never a reason to open the popup on attach
 In the week after a build first runs, a line counts the
 .Ic setup
 items still open, when there are any.
-.\" @Yogesh(gap): the paragraph for setup: what it lists and why, the five states, enter (copy, then ask before writing; outside-tmux rows are only copied), ctrl-x, ctrl-e and the key it offers, where it writes (a fenced block in the tmux.conf tmux loaded, written through a symlink and sourced; config.toml with its comments kept, checked, then the daemon restarted), and --print
 .It Ic setup Op Fl -print
 Lists what the tool offers and the state of each:
 .Ql on ,
@@ -625,7 +623,6 @@ It does not combine with
 .Fl -all :
 tmux's own bindings are nobody's to prune.
 .It Ic cheatsheet Op Fl -print
-.\" @Yogesh(gap): the cheatsheet paragraph; check it says what you want the sheet to be for
 The bindings you keep looking up, so you learn them and stop.
 A pick in the
 .Ic keys
@@ -1243,7 +1240,6 @@ since 3.3 and they do nothing until the shell says where a prompt begins.
 eval "$(tmux-companion shell-init zsh)"     # or bash
 tmux-companion shell-init fish | source
 .Ed
-.\" @Yogesh(gap): the pane option the first prompt sets, and that setup reads it
 On its first prompt the shell sets the pane option
 .Ql @tmux-companion-marks
 to 1, once, inside tmux only.
@@ -1546,7 +1542,6 @@ A tmux with nothing to change says so in one line.
 Most people got these settings from
 .Lk https://github.com/tmux-plugins/tmux-sensible tmux-sensible ,
 which set them as a plugin and hasn't been pushed since April 2024.
-.\" @Yogesh(gap): doctor's setup line
 The
 .Ql setup
 line counts the items
@@ -1624,12 +1619,10 @@ file of a daemon that never removed it, moved here by the next daemon to
 start once it has found that pid dead; its presence is what makes
 .Ic sessions resurrect
 treat the last snapshot as taken before a crash
-.\" @Yogesh(gap): the skip file's entry
 .It Pa $XDG_STATE_HOME/tmux-companion/setup-skipped.tsv
 the ids
 .Ic setup
 was told to skip, one per line
-.\" @Yogesh(gap): the build stamp's entry
 .It Pa $XDG_STATE_HOME/tmux-companion/build-seen
 the build a daemon first ran here and when, tab-separated
 .It Pa $XDG_STATE_HOME/tmux-companion/journal.tsv

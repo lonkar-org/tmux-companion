@@ -55,7 +55,6 @@ beside it.
   and a human asking for it
 - Confuse `tmux-companion shutdown`, which stops the daemon only, with
   `sessions shutdown`, which saves and then stops the tmux server
-<!-- @Yogesh(gap): setup joins the picker list, and the line under it saying why an agent must never open it -->
 - Open `run`, `keys`, `cheatsheet`, `setup`, `start`, `new-window`, `project`
   with no argument or `theme pick` from an agent loop. They are pickers, they
   draw a full-screen UI and they wait for a human keypress. Most of them take

@@ -24,10 +24,8 @@ pub const END: &str = "# <<< tmux-companion setup";
 /// What an entry's header line starts with; the id and the key follow.
 pub const ENTRY: &str = "# setup-item:";
 
-// @Yogesh(word): the words after the opening fence in tmux.conf
 const BEGIN_WORDS: &str =
     ">>> written by tmux-companion setup; lines between the fences are replaced";
-// @Yogesh(word): the words after the closing fence in tmux.conf
 const END_WORDS: &str = "<<<";
 
 /// One item in the block: its id, the key it was bound on, and its lines.

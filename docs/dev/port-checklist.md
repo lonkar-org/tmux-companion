@@ -141,7 +141,6 @@ pid.
   wrong behind it. A timer that works takes its own failure back now, no
   server is nothing to save, and `ack` is for the failure that was read and
   dealt with by hand.
-<!-- @Yogesh(gap): the setup line in this list -->
 - `setup` is new rather than ported: a checklist of what the tool offers,
   read from `src/setup/items.toml`, with each item's state detected from
   `list-keys`, `show-hooks`, the config and PATH, and a fenced block in the

@@ -23,7 +23,6 @@ week. The next lookup puts a date on them.
 
 ## Three boxes and one more
 
-<!-- @Yogesh(check): the box split and why unlooked-up defaults never show -->
 Your own bindings, the ones noted `companion: `, fill three boxes by the word
 after the prefix: panes, windows, sessions and projects in one, copy mode,
 opening and searching in the next, and config, help and anything else in the
@@ -35,7 +34,6 @@ plugin key bound with no note shows its command.
 
 ## What gets recorded
 
-<!-- @Yogesh(check): privacy paragraph; path and line format are exact, wording is a placeholder -->
 Nothing, until `[usage] enabled = true`. With it off the sheet lists your
 bindings unranked, the fourth box stays empty and one line says it learns only
 with the log on. With it on each pick writes one line to

@@ -30,7 +30,6 @@ pub enum State {
 impl State {
     /// The word for it, in `--print` and in the picker.
     pub fn word(self) -> &'static str {
-        // @Yogesh(word): the five state names, in the picker's first column and in --print
         match self {
             State::On => "on",
             State::Open => "open",

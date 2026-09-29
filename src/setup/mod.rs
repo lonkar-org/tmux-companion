@@ -161,7 +161,6 @@ pub async fn count() -> (usize, usize) {
 
 /// The doctor's line.
 pub fn doctor_line(open: usize, total: usize) -> String {
-    // @Yogesh(word): doctor's setup line, after the label
     format!("{open} of {total} open")
 }
 
@@ -239,7 +238,6 @@ pub fn tsv(items: &[Item], states: &[State], keys: &[Option<(String, String)>]) 
 
 /// The preview for a row: what it is for, the lines, and where they go.
 pub fn preview(item: &Item, key: Option<&str>, file: &str) -> String {
-    // @Yogesh(word): the label in front of the file a row's lines go in, in the preview
     let goes = "goes in";
     format!(
         "{}\n\n{}\n\n{goes} {file}\n",
@@ -287,7 +285,6 @@ pub fn config_file() -> anyhow::Result<PathBuf> {
             .ok_or_else(|| {
                 anyhow::anyhow!("nowhere to write: neither XDG_CONFIG_HOME nor HOME is set")
             }),
-        // @Yogesh(word): refusing to write a config.toml that does not parse
         Err(e) => anyhow::bail!("{e}\nconfig.toml does not parse; fix it before adding to it"),
     }
 }
@@ -339,7 +336,6 @@ pub async fn add_to_tmux_conf(
         Err(e) => e.to_string(),
     };
     restore(path, old.as_deref());
-    // @Yogesh(word): tmux refused the file; it was put back
     anyhow::bail!(
         "tmux refused {}, so it is back as it was: {}",
         landed.display(),
@@ -365,7 +361,6 @@ pub async fn add_to_config(path: &Path, item: &Item) -> anyhow::Result<String> {
     block::write_through(path, &text)?;
     if let Err(e) = crate::config::load_from(path) {
         restore(path, old.as_deref());
-        // @Yogesh(word): config check refused the merged file; it was put back
         anyhow::bail!("{e}\nso {} is back as it was", path.display());
     }
     crate::cli::restart_daemon().await
@@ -469,7 +464,6 @@ pub async fn tmux_defaults() -> Vec<detect::Bound> {
 
 /// Ask for a key for a binding item, and check it before taking it.
 async fn choose_key(item: &Item, inputs: &Inputs) -> Option<String> {
-    // @Yogesh(word): asking for a key for one item, in its table
     let key = ask(&format!(
         "key for {} in the {} table (enter cancels):",
         item.id, item.table
@@ -481,7 +475,6 @@ async fn choose_key(item: &Item, inputs: &Inputs) -> Option<String> {
     match check_key(item, &key, &inputs.bindings, &defaults) {
         KeyCheck::Free | KeyCheck::Same => Some(key),
         KeyCheck::Invalid => {
-            // @Yogesh(word): a key tmux could not take
             println!("`{key}` is not a key tmux can bind");
             None
         }
@@ -489,13 +482,11 @@ async fn choose_key(item: &Item, inputs: &Inputs) -> Option<String> {
             command,
             tmux_default,
         } => {
-            // @Yogesh(word): what binding a chosen key would replace
             println!(
                 "{} is {}: {command}",
                 key_label(&item.table, &key),
                 if tmux_default { "tmux's own" } else { "bound" }
             );
-            // @Yogesh(word): confirm replacing it
             confirm("replace it?").then_some(key)
         }
     }
@@ -511,12 +502,9 @@ async fn copy(text: &str) -> Result<(), String> {
 /// The chrome the setup picker is drawn with.
 fn chrome(config: &crate::config::Config) -> crate::picker::Chrome {
     crate::picker::Chrome {
-        // @Yogesh(word): the setup picker's label on its border
         title: "[ Setup ]".into(),
-        // @Yogesh(word): the setup picker's hint line naming its keys
         footer: "enter copies and offers to add   ctrl-x skip   ctrl-e set the key   esc leaves"
             .into(),
-        // @Yogesh(word): the label over the setup picker's preview
         preview_title: "[ What it adds ]".into(),
         ..crate::picker::Chrome::default()
     }
@@ -591,19 +579,16 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
             Some(SKIP_KEY) => {
                 let skips = toggled(load_skips(), &item.id);
                 said = Some(match save_skips(&skips) {
-                    // @Yogesh(word): a row skipped or put back
                     Ok(()) if skips.contains(&item.id) => format!("{} skipped", item.id),
                     Ok(()) => format!("{} back in the list", item.id),
                     Err(e) => e.to_string(),
                 });
             }
             Some(_) if item.kind != Kind::Binding => {
-                // @Yogesh(word): ctrl-e on a row that has no key
                 said = Some(format!("{} has no key to set", item.id));
             }
             Some(_) => {
                 if let Some(k) = choose_key(item, &inputs).await {
-                    // @Yogesh(word): a key chosen for a row
                     said = Some(format!(
                         "{} will go on {}",
                         item.id,
@@ -617,7 +602,6 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
                 // hook, so an item that is on is copied and left alone.
                 let shown = keys[index].as_ref().map(|(_, k)| k.as_str());
                 said = Some(match copy(&item.snippet_for(shown)).await {
-                    // @Yogesh(word): enter on a row that is already on
                     Ok(()) => format!("{} is already on; copied", item.id),
                     Err(e) => format!("could not copy: {e}"),
                 });
@@ -650,7 +634,6 @@ async fn add(
                     chosen.insert(item.id.clone(), k.clone());
                     Some(k)
                 }
-                // @Yogesh(word): a binding with no free key and none typed
                 None => return format!("{} needs a key; ctrl-e sets one", item.id),
             },
         }
@@ -662,9 +645,7 @@ async fn add(
 
     let Some(target) = item.target() else {
         return match copied {
-            // @Yogesh(word): copied an item that is never written, and where it goes
             Ok(()) => format!("copied; it goes in {}", item.goes),
-            // @Yogesh(word): the copy failed
             Err(e) => format!("could not copy: {e}"),
         };
     };
@@ -683,7 +664,6 @@ async fn add(
     if let Err(e) = &copied {
         println!("could not copy: {e}");
     }
-    // @Yogesh(word): offering to write the lines into the file as well
     if !confirm(&format!("also add it to {}?", file.display())) {
         return match copied {
             Ok(()) => "copied".to_string(),
@@ -693,11 +673,9 @@ async fn add(
     let written = match target {
         Target::TmuxConf => add_to_tmux_conf(&file, item, key.as_deref(), catalog)
             .await
-            // @Yogesh(word): added to tmux.conf and sourced
             .map(|landed| format!("added to {} and sourced", landed.display())),
         Target::Config => add_to_config(&file, item)
             .await
-            // @Yogesh(word): added to config.toml and the daemon restarted
             .map(|restarted| format!("added to {}; {restarted}", file.display())),
     };
     match written {
@@ -707,7 +685,6 @@ async fn add(
             // the check's can run to several, so the whole of it is printed
             // and waited on before the list comes back.
             println!("{e}");
-            // @Yogesh(word): the prompt that holds a long error on screen until enter
             let _ = ask("(enter)");
             e.to_string().lines().next().unwrap_or("").to_string()
         }

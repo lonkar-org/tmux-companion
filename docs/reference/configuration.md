@@ -156,14 +156,12 @@ path = "~/.local/state/tmux-companion/keys-usage.tsv"
 learned_after_days = 14
 ```
 
-<!-- @Yogesh(gap): first sentence of the usage log section; placeholder wording -->
 Which bindings you look up in the key search, and when, so the cheat sheet can
 show the ones you're still learning and drop the ones you've learned. It records what you press,
 which is your business and not the tool's, it's off by default so you can set it
 to false or remove the section.
 `path` unset means `$XDG_STATE_HOME/tmux-companion/`.
 
-<!-- @Yogesh(gap): learned_after_days paragraph; placeholder wording -->
 `learned_after_days` is how long a binding can go without a lookup before it
 counts as learned and leaves the sheet; 0 means never. Each pick is written as
 `table key @secs`, and once the file passes five thousand lines it's rewritten

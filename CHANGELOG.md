@@ -7,7 +7,6 @@ entry per phase of the comrades port.
 
 ### Added
 
-<!-- @Yogesh(gap): the setup entry: what it is for, where it writes and how, the shell-init first-prompt option, doctor's line and the brief's first-week line -->
 - `setup`: what the tool offers and the state of each, with the lines to add
   one. Enter copies them and asks before writing a fenced block into the
   tmux.conf tmux loaded, or merging into config.toml. `--print` prints the

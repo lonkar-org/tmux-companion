@@ -206,13 +206,11 @@ pub fn sheet(rows: &[KeyRow], usage: &HashMap<(String, String), Use>, learning: 
 /// being learned at all. Empty when there is nothing to say.
 pub fn footer(sheet: &Sheet) -> String {
     if !sheet.learning {
-        // @Yogesh(word): the line under the sheet when [usage] is off
         return "usage log off: the sheet learns nothing until [usage] enabled = true".to_string();
     }
     if sheet.learned == 0 {
         return String::new();
     }
-    // @Yogesh(word): the footer count of bindings that dropped off as learned
     format!("{} learned, off the sheet", sheet.learned)
 }
 

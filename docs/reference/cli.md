@@ -216,7 +216,6 @@ rewrites 76 files on a bare invocation is one people run once by accident.
 
 ## Diagnostics
 
-<!-- @Yogesh(gap): the setup row below, and the words added to the doctor row for its setup line -->
 | Command | Does |
 | --- | --- |
 | `doctor` | The binary and its build, the daemon and its build, the socket with its mode and owner, the config in use, the glyph preset, the state directory, the daemon log's last line, both autosave timers, how many `setup` items are open, the tmux version and the platform. It ends on tmux's own options that cost something as they are set, `escape-time`, `history-limit`, `display-time`, `status-interval`, `focus-events`, `default-terminal`, `set-clipboard`, `monitor-bell` and `mouse`, each with its value, what that costs and the line for tmux.conf; it sets nothing. [tmux-sensible](https://github.com/tmux-plugins/tmux-sensible) set these as a plugin and was last pushed in April 2024 |
