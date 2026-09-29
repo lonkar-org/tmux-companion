@@ -129,7 +129,7 @@ pub async fn window_names_loop(settings: crate::config::WindowNames, jobs: ShJob
     let interval = std::time::Duration::from_secs(settings.interval_secs.max(1));
     loop {
         tokio::time::sleep(interval).await;
-        let listing = tokio::process::Command::new("tmux")
+        let listing = crate::tmux::command()
             .args(["list-windows", "-a", "-F", &window_format()])
             .stderr(std::process::Stdio::null())
             .output()
@@ -139,7 +139,7 @@ pub async fn window_names_loop(settings: crate::config::WindowNames, jobs: ShJob
             .unwrap_or_default();
         for action in plan(&parse_windows(&listing), &jobs) {
             for cmd in commands(&action) {
-                let _ = tokio::process::Command::new("tmux")
+                let _ = crate::tmux::command()
                     .args(&cmd)
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())

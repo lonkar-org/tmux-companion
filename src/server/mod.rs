@@ -253,7 +253,13 @@ pub async fn run() -> anyhow::Result<()> {
     }
 
     // Pre-warm battery cache so the first tmux refresh doesn't hit the ~600ms
-    // cold-start cost of IOKit initialization in the battery crate.
+    // cold-start cost of IOKit initialization in the battery crate. Only for a
+    // bar that draws the battery: anything else would pay that cost for a
+    // segment nobody asked for, and a `battery` command by hand pays it once.
+    if config
+        .status
+        .right
+        .draws(crate::config::SegmentName::Battery)
     {
         let state = Arc::clone(&state);
         tokio::spawn(async move {

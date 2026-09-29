@@ -242,7 +242,7 @@ pub async fn collect() -> anyhow::Result<Vec<KeyRow>> {
 /// A table tmux does not know is not an error worth failing the whole listing
 /// for: the answer is that it contributes no rows.
 async fn list_keys(args: &[&str]) -> String {
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .arg("list-keys")
         .args(args)
         .output()

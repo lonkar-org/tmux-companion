@@ -36,7 +36,7 @@ fn format_client_output(
 pub async fn render(session_attached: u32, window_active_clients: u32) -> anyhow::Result<String> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        tokio::process::Command::new("tmux")
+        crate::tmux::command()
             .args(["-S", "/tmp/tmux-sock", "list-clients"])
             .output(),
     )

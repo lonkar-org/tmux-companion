@@ -486,7 +486,7 @@ pub async fn say_nothing_to_show(text: &str, print: bool) {
     let text = format!("tmux-companion: {}", literal_for_tmux(text));
     // Output captured and dropped: tmux's own complaint, such as no client to
     // show it on, is not something the caller printed.
-    let _ = tokio::process::Command::new("tmux")
+    let _ = crate::tmux::command()
         .args(["display-message", &text])
         .output()
         .await;

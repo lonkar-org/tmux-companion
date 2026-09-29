@@ -2449,6 +2449,41 @@ fn a_restore_refuses_a_server_that_is_already_busy_and_changes_nothing() {
     assert_eq!(t.panes(), before, "a refused restore changed the server");
 }
 
+/// Saved from a terminal with no UTF-8 locale and no `$TMUX`.
+///
+/// tmux assumes UTF-8 when `$TMUX` is set or a locale variable names it, and
+/// otherwise prints every tab in `-F` output as `_`. Every listing here is
+/// split on tabs, so `sessions save` refused with "could not be read ...
+/// alpha_/tmp/..._0", and so did `shutdown` and `restart`, which run outside
+/// tmux by design. A daemon started by a service manager is in the same place.
+/// CI sets a UTF-8 locale and a laptop has one, so nothing here saw it until a
+/// plain container did. tmux 3.4 and 3.7c both substitute.
+#[test]
+fn a_save_from_a_terminal_without_a_utf8_locale_reads_every_line() {
+    let Some(t) = Tmux::start("sessnoloc") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+
+    let mut cmd = Command::new(&t.binary);
+    cmd.args(["sessions", "save", "--skip-pane-history"]);
+    t.env(&mut cmd);
+    cmd.env_remove("TMUX");
+    for (key, _) in std::env::vars_os() {
+        if key == "LANG" || key.to_string_lossy().starts_with("LC_") {
+            cmd.env_remove(key);
+        }
+    }
+    let out = cmd.output().expect("run the binary");
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(out.status.success(), "save failed: {stdout} {stderr}");
+    assert!(stdout.contains("2 sessions"), "{stdout}");
+}
+
 #[test]
 fn a_merge_brings_back_only_what_is_missing() {
     let Some(t) = Tmux::start("sessmerge") else {

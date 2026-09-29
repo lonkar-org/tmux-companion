@@ -256,7 +256,7 @@ pub const TICK: std::time::Duration = std::time::Duration::from_secs(20);
 /// Each daemon task makes its own tmux calls, which is how `[notify]` and
 /// `[window_names]` already work.
 async fn tmux_out(args: &[&str]) -> String {
-    match tokio::process::Command::new("tmux")
+    match crate::tmux::command()
         .args(args)
         .stderr(std::process::Stdio::null())
         .output()
@@ -312,7 +312,7 @@ pub fn server_answer(success: bool, stdout: &str, stderr: &str) -> Server {
 
 /// Ask tmux whether there is anything to save.
 async fn server() -> Server {
-    match tokio::process::Command::new("tmux")
+    match crate::tmux::command()
         .args(["list-sessions", "-F", "#{session_name}"])
         .output()
         .await

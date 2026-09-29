@@ -31,7 +31,7 @@ pub fn run(action: ThemeAction) -> anyhow::Result<()> {
                 // so a reload leaves every session painted with whatever the
                 // file says rather than with its own colour. One pass over
                 // the session list puts them all back.
-                let listed = std::process::Command::new("tmux")
+                let listed = crate::tmux::command_sync()
                     .args(["list-sessions", "-F", "#{session_name}"])
                     .output()
                     .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -535,7 +535,7 @@ fn theme_preview(row: &crate::theme::ThemeRow) -> String {
 /// server touched last. Switch project, press the key, watch the session you
 /// just left change colour.
 fn attached_session_sync() -> Option<String> {
-    let out = std::process::Command::new("tmux")
+    let out = crate::tmux::command_sync()
         .args(["list-clients", "-F", "#{client_session}"])
         .output()
         .ok()?;
@@ -554,5 +554,5 @@ fn source_theme(path: &std::path::Path, target: Option<&str>) {
         args.push(t);
     }
     args.push(&path);
-    let _ = std::process::Command::new("tmux").args(args).status();
+    let _ = crate::tmux::command_sync().args(args).status();
 }

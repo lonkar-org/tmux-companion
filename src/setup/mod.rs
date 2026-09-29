@@ -321,7 +321,7 @@ pub async fn add_to_tmux_conf(
     );
     let text = block::apply(old.as_deref().unwrap_or(""), &entries, catalog);
     let landed = block::write_through(path, &text)?;
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .arg("source-file")
         .arg(&landed)
         .output()
@@ -443,7 +443,7 @@ pub fn check_key(
 /// asked about as though it were somebody's own.
 pub async fn tmux_defaults() -> Vec<detect::Bound> {
     let socket = format!("tc-setup-defaults-{}", std::process::id());
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args([
             "-L",
             &socket,

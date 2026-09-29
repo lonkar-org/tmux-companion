@@ -1441,7 +1441,7 @@ async fn run_binding(
         crate::keys::record_use(&usage_path(config), &row.table, &row.key);
     }
 
-    tokio::process::Command::new("tmux")
+    crate::tmux::command()
         .args(["run-shell", "-C", &row.command])
         .status()
         .await?;
@@ -1769,7 +1769,7 @@ pub(crate) async fn focus_session(name: &str) -> anyhow::Result<()> {
     } else {
         "attach-session"
     };
-    tokio::process::Command::new("tmux")
+    crate::tmux::attach_command()
         .args([verb, "-t", &format!("={name}")])
         .status()
         .await?;
@@ -1826,7 +1826,7 @@ async fn open_project(
 /// rather than by saying so, so the session would come up with its commands
 /// quietly absent.
 async fn pane_base_index() -> usize {
-    tokio::process::Command::new("tmux")
+    crate::tmux::command()
         .args(["show-option", "-gv", "pane-base-index"])
         .output()
         .await
@@ -2525,10 +2525,7 @@ async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
 
     run_sessions_save(false, &opts.exclude, true).await?;
     println!("stopping the tmux server");
-    let _ = tokio::process::Command::new("tmux")
-        .arg("kill-server")
-        .status()
-        .await;
+    let _ = crate::tmux::command().arg("kill-server").status().await;
     if opts.daemon {
         stop_the_daemon().await;
         println!("daemon stopped");
@@ -2856,10 +2853,7 @@ pub(crate) fn pane_target() -> Option<String> {
 }
 
 pub(crate) async fn tmux(args: &[&str]) {
-    let _ = tokio::process::Command::new("tmux")
-        .args(args)
-        .status()
-        .await;
+    let _ = crate::tmux::command().args(args).status().await;
 }
 
 /// `toggle`: move to the next window in this session.
@@ -2884,7 +2878,7 @@ async fn run_toggle(
         tmux(&["last-window", "-t", &format!("={session}")]).await;
         return Ok(());
     }
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args([
             "list-windows",
             "-t",
@@ -2949,11 +2943,7 @@ pub(crate) async fn tmux_display_at(target: Option<&str>, format: &str) -> Strin
 async fn display_message(args: &[&str]) -> String {
     let mut argv: Vec<&str> = vec!["display-message", "-p"];
     argv.extend_from_slice(args);
-    match tokio::process::Command::new("tmux")
-        .args(&argv)
-        .output()
-        .await
-    {
+    match crate::tmux::command().args(&argv).output().await {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => String::new(),
     }
@@ -3114,7 +3104,7 @@ async fn attached_session() -> Option<String> {
 /// when the mover is a popup: `panes` needs it for the same reason
 /// `attached_session` exists.
 pub(crate) async fn attached_client() -> Option<(String, String)> {
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args(["list-clients", "-F", "#{client_name}\t#{client_session}"])
         .output()
         .await
@@ -3257,7 +3247,7 @@ async fn popup_dialog(code: i32) -> Option<crate::run::Choice> {
         shell_quote(&me.display().to_string()),
         shell_quote(&answer.display().to_string())
     );
-    let status = tokio::process::Command::new("tmux")
+    let status = crate::tmux::command()
         .args([
             "display-popup",
             "-x",
@@ -3509,10 +3499,7 @@ async fn run_open(
     let pane = pane.filter(|p| !p.trim().is_empty()).or_else(pane_target);
 
     let text = if selection {
-        let out = tokio::process::Command::new("tmux")
-            .arg("show-buffer")
-            .output()
-            .await?;
+        let out = crate::tmux::command().arg("show-buffer").output().await?;
         String::from_utf8_lossy(&out.stdout).into_owned()
     } else if text.is_empty() {
         use std::io::Read;
@@ -3764,7 +3751,7 @@ pub(crate) async fn session_exists(target: &str) -> bool {
     // session is shutting down, so the answer "no" is the expected one, and
     // letting tmux print "can't find session" to the terminal would make every
     // successful close look like it went wrong.
-    tokio::process::Command::new("tmux")
+    crate::tmux::command()
         .args(["has-session", "-t", target])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -3793,7 +3780,7 @@ async fn pane_command(id: &str) -> String {
 /// as a session with no windows, which used to be written over a good layout as
 /// though it were a true picture of the session.
 async fn tmux_capture_checked(args: &[&str]) -> anyhow::Result<String> {
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args(args)
         .output()
         .await
@@ -3812,10 +3799,7 @@ async fn tmux_capture_checked(args: &[&str]) -> anyhow::Result<String> {
 }
 
 pub(crate) async fn tmux_capture(args: &[&str]) -> String {
-    let out = tokio::process::Command::new("tmux")
-        .args(args)
-        .output()
-        .await;
+    let out = crate::tmux::command().args(args).output().await;
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(_) => String::new(),

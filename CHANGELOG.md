@@ -43,6 +43,18 @@ entry per phase of the comrades port.
 - A machine with no `/sys/class/power_supply` at all, such as a container,
   reads as having no battery. It used to count as a failed battery read, so
   the health mark said `timer` on every render and hid whatever came after.
+- `sessions save`, `shutdown` and `restart` work from a terminal outside
+  tmux with no UTF-8 locale, and so does the sessions timer in a daemon a
+  service manager started. tmux printed every tab in its listings as `_`
+  there, so nothing could be read and the save refused with `alpha_/tmp/..._0`.
+  Every tmux call now passes `-u`, except `attach`, which leaves the terminal
+  to your locale.
+- `status-right` computes only the segments `[status.right]` lists. Git, net
+  and battery used to run on every render whatever the list said, so a bar
+  without a battery still queried it and a failed read still put `battery
+  segment` on the health mark. The daemon no longer warms the battery at
+  start either unless the bar draws it. `gst`, `net` and `battery` by hand
+  compute as before.
 
 ## 0.5.2 - 2026-09-28
 

@@ -186,7 +186,7 @@ pub fn options_section(options: Option<&std::collections::HashMap<String, String
 fn tmux_options() -> Option<std::collections::HashMap<String, String>> {
     let mut all = String::new();
     for scope in ["-s", "-g", "-gw"] {
-        let out = std::process::Command::new("tmux")
+        let out = crate::tmux::command_sync()
             .args(["show-options", scope])
             .output()
             .ok()?;
@@ -433,7 +433,7 @@ fn state_dir_state() -> String {
 }
 
 fn tmux_version() -> String {
-    match std::process::Command::new("tmux").arg("-V").output() {
+    match crate::tmux::command_sync().arg("-V").output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Ok(_) => "installed, but `tmux -V` failed".to_string(),
         Err(_) => "not found on PATH".to_string(),

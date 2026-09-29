@@ -1553,6 +1553,16 @@ impl Default for StatusRight {
     }
 }
 
+impl StatusRight {
+    /// Whether the side draws `name` anywhere in its list.
+    ///
+    /// Everything that computes a segment for the bar asks this first, so a
+    /// segment left off the side costs nothing and cannot fail.
+    pub fn draws(&self, name: SegmentName) -> bool {
+        self.segments.iter().any(|s| s.name == name)
+    }
+}
+
 /// One segment on a side of the status bar.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]

@@ -53,10 +53,7 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
     // Start the server before asking it anything. `show-option -gv base-index`
     // against a server that is not running answers nothing, which parsed as
     // zero and made the first restore move a window that was never there.
-    let _ = tokio::process::Command::new("tmux")
-        .arg("start-server")
-        .status()
-        .await;
+    let _ = crate::tmux::command().arg("start-server").status().await;
 
     let plan = crate::restore::plan(&config.restore, &snapshot);
     let missing = crate::sessions::restore::missing_directories(&snapshot, |d| {
@@ -222,7 +219,7 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
         .filter(|t| built.sessions.iter().any(|s| s == t))
         .or_else(|| built.sessions.first().map(String::as_str));
     if let Some(target) = target {
-        let _ = tokio::process::Command::new("tmux")
+        let _ = crate::tmux::attach_command()
             .args(["attach", "-t", &format!("={target}")])
             .status()
             .await;

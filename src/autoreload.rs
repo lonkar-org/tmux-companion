@@ -98,7 +98,7 @@ pub async fn autoreload_loop(settings: crate::config::Autoreload, default_file: 
 /// somebody needs to be told, and the reload they just triggered is the only
 /// reason they would be looking.
 pub async fn source_file(file: &Path) {
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args(["source-file", &file.display().to_string()])
         .output()
         .await;
@@ -108,7 +108,7 @@ pub async fn source_file(file: &Path) {
     }
     let text = String::from_utf8_lossy(&out.stderr);
     let first = text.lines().next().unwrap_or("source-file failed");
-    let _ = tokio::process::Command::new("tmux")
+    let _ = crate::tmux::command()
         .args(["display-message", &format!("tmux-companion: {first}")])
         .status()
         .await;

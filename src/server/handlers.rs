@@ -321,8 +321,38 @@ fn duration_from_secs(secs: f64) -> Duration {
     }
 }
 
-/// The whole right-hand status side in one response: `gst` + `net` + the tmux
-/// literal + `battery`, computed concurrently.
+/// Which segments a `status-right` render computes.
+///
+/// Exactly the ones `[status.right]` lists, which with no list in the config
+/// is the default side of git, net and battery, as `config dump` prints it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Computed {
+    pub git: bool,
+    pub net: bool,
+    pub battery: bool,
+    pub agents: bool,
+    pub health: bool,
+}
+
+/// [`Computed`] for a configured side.
+pub(crate) fn computed(right: &crate::config::StatusRight) -> Computed {
+    use crate::config::SegmentName;
+    Computed {
+        git: right.draws(SegmentName::Git),
+        net: right.draws(SegmentName::Net),
+        battery: right.draws(SegmentName::Battery),
+        agents: right.draws(SegmentName::Agents),
+        health: right.draws(SegmentName::Health),
+    }
+}
+
+/// `fut`'s output when `wanted`, and `None` without ever polling it.
+async fn when<T>(wanted: bool, fut: impl std::future::Future<Output = T>) -> Option<T> {
+    if wanted { Some(fut.await) } else { None }
+}
+
+/// The whole right-hand status side in one response: the configured
+/// segments, computed concurrently, and only those.
 ///
 /// The TTL is applied per segment, inside the individual renders — never to
 /// this assembled string.  Caching the assembly would freeze `net`, which is a
@@ -335,15 +365,17 @@ async fn render_right(
     // `state.lock().await` calls inside one expression deadlock: the first
     // guard is a temporary that lives until the end of the statement, so the
     // second waits on a mutex this same task is still holding.
-    let (parts, branch_types, bar_bg, branch_max_len) = {
+    let (parts, branch_types, bar_bg, branch_max_len, right) = {
         let s = state.lock().await;
         (
             s.config.git.parts.clone(),
             s.config.git.branch_types.clone(),
             s.config.bar.background.clone(),
             s.config.git.branch_max_len,
+            s.config.status.right.clone(),
         )
     };
+    let wanted = computed(&right);
     let opts = GstOptions {
         path: args.path.clone(),
         force: args.force,
@@ -362,22 +394,29 @@ async fn render_right(
         bar_bg,
     };
 
-    // All four run concurrently.  `net`'s expensive half is the counter read,
-    // which touches no shared state; its arithmetic needs `&mut ServerState`
-    // and is applied afterwards, so nothing here holds a lock across an await.
+    // Every segment on the side runs concurrently, and one that is not on it
+    // does not run at all: `when` never polls the future it is handed, so no
+    // `git status`, counter read or battery query happens for a segment
+    // nobody drew, and none of them can fail onto the health mark. `net`'s
+    // expensive half is the counter read, which touches no shared state; its
+    // arithmetic needs `&mut ServerState` and is applied afterwards, so
+    // nothing here holds a lock across an await.
     let (gst, battery, net_sample, agents, health) = tokio::join!(
-        segments::git::render(&opts, state),
-        battery(state),
-        segments::network::sample(),
-        agents(state),
-        health(state),
+        when(wanted.git, segments::git::render(&opts, state)),
+        when(wanted.battery, battery(state)),
+        when(wanted.net, segments::network::sample()),
+        when(wanted.agents, agents(state)),
+        when(wanted.health, health(state)),
     );
+    let agents = agents.unwrap_or_default();
+    let health = health.unwrap_or_default();
     // What failed on this pass, remembered once the locks below are done
     // with, so the health mark can say so.
     let mut failed: Vec<(String, String)> = Vec::new();
 
     let net = match net_sample {
-        Ok((rx, tx)) => {
+        None => String::new(),
+        Some(Ok((rx, tx))) => {
             let mut st = state.lock().await;
             let network = st.config.network.clone();
             let bar_bg = st.config.bar.background.clone();
@@ -396,7 +435,7 @@ async fn render_right(
                 &bar_bg,
             )
         }
-        Err(e) => {
+        Some(Err(e)) => {
             eprintln!("tmux-companion: net segment failed: {e}");
             failed.push(("net segment".to_string(), format!("net segment: {e}")));
             String::new()
@@ -408,13 +447,12 @@ async fn render_right(
     // indistinguishable from a directory that is not a repository.
     let gst = segment_or_empty("gst", gst, &mut failed);
     let battery = segment_or_empty("battery", battery, &mut failed);
-    let right = {
+    if !failed.is_empty() {
         let mut st = state.lock().await;
         for (source, what) in failed {
             st.note_failure(&source, what);
         }
-        st.config.status.right.clone()
-    };
+    }
     Ok(assemble_right_with(
         &right, &gst, &net, &battery, &agents, &health,
     ))
@@ -516,14 +554,19 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
     segments::agents::format_agents(sample, &bar_bg, style, show)
 }
 
+/// A segment's text, or nothing, with a failure noted for the health mark.
+///
+/// `None` is a segment that is not on the side and so was never computed:
+/// nothing to draw and nothing to report.
 fn segment_or_empty(
     name: &str,
-    result: anyhow::Result<String>,
+    result: Option<anyhow::Result<String>>,
     failed: &mut Vec<(String, String)>,
 ) -> String {
     match result {
-        Ok(s) => s,
-        Err(e) => {
+        None => String::new(),
+        Some(Ok(s)) => s,
+        Some(Err(e)) => {
             eprintln!("tmux-companion: {name} segment failed: {e}");
             failed.push((format!("{name} segment"), format!("{name} segment: {e}")));
             String::new()
@@ -1095,6 +1138,104 @@ mod tests {
             a.output.is_empty(),
             b.output.is_empty(),
             "a cold call and a warm one disagreed about whether anything rendered"
+        );
+    }
+
+    fn side(names: &[crate::config::SegmentName]) -> crate::config::StatusRight {
+        crate::config::StatusRight {
+            segments: names
+                .iter()
+                .map(|&name| crate::config::RightSegment {
+                    name,
+                    separator_before: String::new(),
+                    on_click: String::new(),
+                })
+                .collect(),
+            trailing_space: true,
+        }
+    }
+
+    #[test]
+    fn the_default_side_computes_git_net_and_battery_and_nothing_else() {
+        let c = computed(&crate::config::StatusRight::default());
+        assert_eq!(
+            c,
+            Computed {
+                git: true,
+                net: true,
+                battery: true,
+                agents: false,
+                health: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_side_computes_only_what_it_lists() {
+        use crate::config::SegmentName;
+        let c = computed(&side(&[SegmentName::Git, SegmentName::Health]));
+        assert_eq!(
+            c,
+            Computed {
+                git: true,
+                net: false,
+                battery: false,
+                agents: false,
+                health: true,
+            }
+        );
+        let none = computed(&side(&[]));
+        assert!(!(none.git || none.net || none.battery || none.agents || none.health));
+    }
+
+    #[tokio::test]
+    async fn a_segment_left_off_the_side_is_never_polled() {
+        let out = when(false, async {
+            panic!("an unlisted segment ran");
+            #[allow(unreachable_code)]
+            1
+        })
+        .await;
+        assert_eq!(out, None);
+        assert_eq!(when(true, async { 1 }).await, Some(1));
+    }
+
+    #[test]
+    fn a_segment_that_was_not_computed_reports_no_failure() {
+        let mut failed = Vec::new();
+        assert_eq!(segment_or_empty("battery", None, &mut failed), "");
+        assert!(failed.is_empty(), "{failed:?}");
+        segment_or_empty("battery", Some(Err(anyhow::anyhow!("no"))), &mut failed);
+        assert_eq!(failed.len(), 1, "a listed segment's failure still counts");
+    }
+
+    /// A side without battery or net: neither is read, so neither is cached
+    /// or sampled, and nothing reaches the health mark. Before, a battery
+    /// that could not be read raised `battery segment` on a bar that never
+    /// drew one.
+    #[tokio::test]
+    async fn status_right_leaves_unlisted_segments_alone_and_health_clean() {
+        let mut config = crate::config::Config::default();
+        config.status.right = side(&[crate::config::SegmentName::Git]);
+        let state = Arc::new(Mutex::new(ServerState::with_config(config)));
+        let dir = tempfile::tempdir().unwrap();
+        let r = dispatch(
+            Request::raw(
+                "status-right",
+                serde_json::json!({"path": dir.path().to_string_lossy()}),
+            ),
+            Arc::clone(&state),
+        )
+        .await;
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(r.output, " ", "only git is listed and it is not a repo");
+        let st = state.lock().await;
+        assert!(st.battery_cached().is_none(), "battery was computed");
+        assert!(st.net_previous.is_none(), "net was sampled");
+        assert!(
+            st.recent_failures().is_empty(),
+            "{:?}",
+            st.recent_failures()
         );
     }
 }

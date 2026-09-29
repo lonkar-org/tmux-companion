@@ -514,11 +514,7 @@ pub fn recommended(item: &Item, bindings: &[Bound]) -> Option<String> {
 
 /// One tmux call, or `None` when it failed.
 async fn tmux_out(args: &[&str]) -> Option<String> {
-    let out = tokio::process::Command::new("tmux")
-        .args(args)
-        .output()
-        .await
-        .ok()?;
+    let out = crate::tmux::command().args(args).output().await.ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())

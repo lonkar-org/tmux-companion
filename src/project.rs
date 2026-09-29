@@ -288,7 +288,7 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
 
 /// `tmux list-sessions`, with the fields the rows need.
 async fn tmux_sessions() -> String {
-    let out = tokio::process::Command::new("tmux")
+    let out = crate::tmux::command()
         .args(["list-sessions", "-F", SESSIONS_FORMAT])
         .output()
         .await;

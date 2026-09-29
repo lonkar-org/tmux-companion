@@ -234,7 +234,7 @@ pub async fn notify_loop(
     let mut watched: HashMap<String, Watched> = HashMap::new();
     loop {
         tokio::time::sleep(interval).await;
-        let listing = tokio::process::Command::new("tmux")
+        let listing = crate::tmux::command()
             .args(["list-panes", "-a", "-F", pane_format()])
             .stderr(std::process::Stdio::null())
             .output()

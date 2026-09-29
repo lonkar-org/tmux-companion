@@ -258,9 +258,7 @@ impl ServerState {
         self.config
             .status
             .right
-            .segments
-            .iter()
-            .any(|s| s.name == crate::config::SegmentName::Agents)
+            .draws(crate::config::SegmentName::Agents)
     }
 
     /// How long one read of the pane list is trusted.
@@ -352,9 +350,7 @@ impl ServerState {
         self.config
             .status
             .right
-            .segments
-            .iter()
-            .any(|s| s.name == crate::config::SegmentName::Health)
+            .draws(crate::config::SegmentName::Health)
     }
 
     /// The last check, if it is still fresh.
