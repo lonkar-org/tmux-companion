@@ -569,9 +569,12 @@ pub enum Cmd {
         clear: bool,
     },
 
-    /// A cheat sheet of the bindings you wrote, in four boxes
+    // @Yogesh(word): --help line for cheatsheet
+    /// A cheat sheet of the bindings you keep looking up, in four boxes
     Cheatsheet {
-        /// Print and exit instead of waiting for a keypress
+        // @Yogesh(word): --help line for cheatsheet --print
+        /// List the entries one per line, tab-separated, instead of drawing
+        /// the sheet
         #[arg(long, alias = "plain")]
         print: bool,
     },
@@ -1401,14 +1404,17 @@ async fn run_keys_unused(
 /// The picker rows for a set of bindings.
 fn key_items<'a>(rows: impl Iterator<Item = &'a crate::keys::KeyRow>) -> Vec<crate::picker::Item> {
     rows.map(|r| {
+        // A plugin's binding often has no note, and its command is the only
+        // description it has.
+        let described = crate::keys::described(r);
         crate::picker::Item::with_preview(
-            format!("{} {}", r.shown, r.note),
+            format!("{} {described}", r.shown),
             format!("{}\n\n{}", r.shown, r.command),
         )
         // Two columns rather than one padded string: the picker measures
         // them across every row, so the notes line up whatever the widest
         // chord turns out to be.
-        .in_columns(vec![r.shown.clone(), r.note.clone()])
+        .in_columns(vec![r.shown.clone(), described.to_string()])
     })
     .collect()
 }
@@ -1508,23 +1514,46 @@ async fn run_cheatsheet(print: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // With the log off it is not read at all, even when an old one is there:
+    // off means the sheet learns nothing, not that it learns from a file
+    // somebody stopped writing.
     let config = config_or_default();
-    let usage = std::fs::read_to_string(usage_path(&config))
-        .map(|t| crate::keys::usage_counts(&t))
-        .unwrap_or_default();
+    let (usage, learning) = if config.usage.enabled {
+        let usage = std::fs::read_to_string(usage_path(&config))
+            .map(|t| crate::keys::usage(&t))
+            .unwrap_or_default();
+        let learning = crate::cheatsheet::Learning::On {
+            now: crate::panes::now_secs(),
+            learned_after_days: config.usage.learned_after_days,
+        };
+        (usage, learning)
+    } else {
+        (Default::default(), crate::cheatsheet::Learning::Off)
+    };
+    let sheet = crate::cheatsheet::sheet(&rows, &usage, learning);
+    let footer = crate::cheatsheet::footer(&sheet);
+
+    if print {
+        // One row per line on stdout, the shape `keys --print` gives, and the
+        // footer on stderr so a script reading stdout never sees it.
+        print!("{}", crate::cheatsheet::tsv(&sheet));
+        if !footer.is_empty() {
+            eprintln!("{footer}");
+        }
+        return Ok(());
+    }
 
     let (cols, lines) = terminal_size();
-    print!(
-        "{}",
-        crate::cheatsheet::render(&crate::cheatsheet::boxes(&rows, &usage), cols, lines)
-    );
+    print!("{}", crate::cheatsheet::render(&sheet.boxes, cols, lines));
 
-    if !print {
-        use std::io::Write;
+    use std::io::Write;
+    if footer.is_empty() {
         print!("\n  any key to close ");
-        let _ = std::io::stdout().flush();
-        wait_for_a_key();
+    } else {
+        print!("\n  {footer}   any key to close ");
     }
+    let _ = std::io::stdout().flush();
+    wait_for_a_key();
     Ok(())
 }
 

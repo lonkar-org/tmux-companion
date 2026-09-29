@@ -566,7 +566,12 @@ It opens on the bindings whose note starts with
 which is what the shipped configs write with
 .Fl N ;
 .Fl -all
-opens on everything,
+opens on everything, including a
+.Ql prefix
+or
+.Ql root
+binding with no note, which a plugin's often is; its command stands in for
+the note,
 .Fl -query
 opens on something else,
 .Fl -refresh
@@ -586,10 +591,10 @@ Bound to
 narrows the opening set to the bindings the usage log has never recorded a
 press for, under the title
 .Ql "[ Keys never used ]" .
-The log holds no dates, so never means since the log began, and the line under
-the list says how many bindings that is out of how many, and how many presses
-the log holds; with no log yet it says so and lists every binding, which is
-the truth on a fresh machine.
+Never means since the log began, and the line under the list says how many
+bindings that is out of how many, and how many presses the log holds; with no
+log yet it says so and lists every binding, which is the truth on a fresh
+machine.
 With
 .Fl -print
 it writes one
@@ -599,13 +604,51 @@ It does not combine with
 .Fl -all :
 tmux's own bindings are nobody's to prune.
 .It Ic cheatsheet Op Fl -print
-The bindings written in
-.Pa tmux.conf ,
-in four boxes, most-used first.
-A box with fewer than three of its own is filled out from tmux's own noted
-bindings.
+.\" @Yogesh(gap): the cheatsheet paragraph; check it says what you want the sheet to be for
+The bindings you keep looking up, so you learn them and stop.
+A pick in the
+.Ic keys
+picker is a binding looked up rather than pressed, and with
+.Ic [usage] enabled
+on the log records each one with its time.
+A binding looked up within the last
+.Ic [usage] learned_after_days ,
+14 by default, is still being learned: it goes at the top of its box with a
+.Ql \[u25B8]
+and its count, most lookups first.
+One with lookups but none that recent has been learned and leaves the sheet;
+the line under it says how many did.
+0 days means nothing is ever learned.
+A pick logged before picks carried a time counts as learned until it is
+looked up again.
+.Pp
+Three boxes hold the bindings noted
+.Ql "companion: " ,
+by the word after it: panes, windows, sessions and projects; copy mode,
+opening and searching; config, help and anything else.
+The ones never looked up follow the marked ones, alphabetical.
+The fourth box, tmux and plugins, holds bindings without that note, and only
+ones looked up recently: tmux's own show tmux's note, and one with no note
+shows its command.
+A default nobody looked up is never listed.
+.Pp
+With the usage log off, every
+.Ql "companion: "
+binding is shown unranked, the fourth box is empty, and the line under the
+sheet says it learns only with the log on.
+.Pp
 .Fl -print
-prints the sheet and exits instead of waiting for a key;
+writes one line per entry instead of drawing the sheet:
+.Ar box state count table key shown note ,
+tab-separated, where
+.Ar box
+is 1 to 4 in reading order and
+.Ar state
+is
+.Ql learn
+or
+.Ql unused .
+The line under the sheet goes to standard error.
 .Fl -plain
 is the old spelling and still works.
 Without
@@ -1522,10 +1565,19 @@ themes, and the two files that apply them
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/
 saved per-project layouts
 .It Pa $XDG_STATE_HOME/tmux-companion/keys-usage.tsv
-which bindings the key picker ran, one line per pick until it passes five
-thousand lines, then one line per binding with a count under a
-.Ql #v1
-header
+which bindings the key picker ran, written only with
+.Ic [usage] enabled
+on: one
+.Ar table key @secs
+line per pick, the time in unix seconds, until it passes five thousand lines,
+then one
+.Ar table key count first last
+line per binding under a
+.Ql #v2
+header.
+A log written before picks had a time, raw or under
+.Ql #v1 ,
+is still read
 .It Pa $XDG_STATE_HOME/tmux-companion/VERSION
 the build that last started a daemon here, rewritten on every start
 .It Pa $XDG_STATE_HOME/tmux-companion/sessions/running

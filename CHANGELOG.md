@@ -15,6 +15,11 @@ entry per phase of the comrades port.
 
 ### Changed
 
+- The cheat sheet shows the bindings you keep looking up in `prefix ?`, most
+  lookups first, and drops one after `[usage] learned_after_days` (14) with
+  no lookup. Companion keys fill three boxes; the fourth holds the tmux and
+  plugin keys you've looked up. `cheatsheet --print` writes rows as TSV.
+  `docs/explanation/cheatsheet.md` says why.
 - Binding notes start `companion: ` rather than `custom: `. A note still
   written `custom: ` is read as `companion: ` for one release, so an older
   tmux.conf keeps its keys in the search and on the cheat sheet.

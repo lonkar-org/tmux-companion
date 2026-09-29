@@ -310,6 +310,11 @@ enabled = false
 # Where the log lives. Unset means $XDG_STATE_HOME/tmux-companion/.
 # path = "~/.local/state/tmux-companion/keys-usage.tsv"
 
+# @Yogesh(word): learned_after_days comment; placeholder wording, and is 14 the right default?
+# Days without a lookup after which the cheat sheet counts a binding as
+# learned and drops it. 0 means nothing is ever learned.
+learned_after_days = 14
+
 [project]
 # Which directory jumper the project picker and `new-window` list, by name.
 # One of:

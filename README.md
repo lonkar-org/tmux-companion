@@ -27,6 +27,7 @@ daemon that is already warm.
 
 ## What you get
 
+<!-- @Yogesh(word): the cheatsheet row says "the bindings you wrote, four boxes, most-used first"; it now shows the ones you keep looking up and drops what you've learned -->
 |                             |                                                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `status-right`              | git, bandwidth and battery in one call                                                                               |
@@ -214,6 +215,7 @@ painting, and none of that got cheaper. What halved is what it costs to do.
 | example      | [docs/config.example.toml](docs/config.example.toml)                               | every setting with its default                                                             |
 | explanation  | [docs/DESIGN.md](docs/DESIGN.md)                                                   | how the daemon and the protocol work                                                       |
 | explanation  | [docs/BENCHMARKS.md](docs/BENCHMARKS.md)                                           | what it costs, and how that was measured                                                   |
+| explanation  | [docs/explanation/cheatsheet.md](docs/explanation/cheatsheet.md)                   | why the cheat sheet forgets what you've learned                                            |
 | contributing | [CONTRIBUTING.md](CONTRIBUTING.md)                                                 | build, test, lint, and what a patch needs                                                  |
 | contributing | [CHANGELOG.md](CHANGELOG.md)                                                       | what changed                                                                               |
 

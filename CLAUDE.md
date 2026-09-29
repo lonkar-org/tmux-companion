@@ -68,7 +68,7 @@ description they had.
 | `src/autoreload.rs` | sourcing tmux's config when it changes |
 | `src/brief.rs` | one screen with the state of the server, for the moment you sit down |
 | `src/cache.rs` | in-memory TTL maps for the server's segment caches |
-| `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings somebody wrote rather than the ones tmux ships |
+| `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings you keep having to look up, so you learn them and stop looking |
 | `src/cli.rs` | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server |
 | `src/client.rs` | find the socket, start a server if nothing answers, send one JSON line and read one back |
 | `src/click.rs` | a mouse click on a segment of the bar |

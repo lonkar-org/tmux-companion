@@ -1,183 +1,251 @@
-//! The cheat sheet: four boxes in a 2x2 grid, showing the bindings somebody
-//! wrote rather than the ones tmux ships.
+//! The cheat sheet: four boxes in a 2x2 grid, showing the bindings you keep
+//! having to look up, so you learn them and stop looking.
 //!
 //! It reads the same rows the picker does, so a binding appears here the moment
 //! its note is written and the two can never disagree about what exists.
 //!
-//! Within a box, the keys actually reached for come first, counted from the
-//! usage log the picker appends to. A key never used sits at the bottom with no
-//! count, which makes the sheet a list of what is going unused as well as a
-//! list of what exists.
+//! The usage log counts picks made through the key search, which are bindings
+//! somebody looked up instead of pressing. A binding looked up recently is one
+//! still being learned, and goes at the top of its box with a mark. One with
+//! lookups but none for `[usage] learned_after_days` has been learned, and
+//! leaves the sheet. The bindings you wrote and never looked up follow the
+//! marked ones, alphabetical.
+//!
+//! Three boxes hold the bindings noted `companion: `, by the word after it.
+//! The fourth holds tmux's own and plugin bindings, and only the ones you have
+//! looked up: tmux ships about a hundred noted defaults, and a sheet listing
+//! them all is the man page again.
 //!
 //! Four boxes rather than four columns because a note like the copy-mode menu
 //! runs to 90 characters, and a quarter of the width would cut it in half.
 
 use std::collections::HashMap;
 
-use crate::keys::KeyRow;
+use crate::keys::{KeyRow, Use};
 
 /// The prefix every binding written by hand carries.
 pub const COMPANION: &str = "companion: ";
 
 /// The four box titles, in reading order.
 pub const TITLES: [&str; 4] = [
-    " Panes ",
-    " Windows, sessions, projects ",
+    " Panes, windows, sessions, projects ",
     " Copy mode, opening, searching ",
     " Config and help ",
+    " tmux and plugins ",
 ];
 
-/// Which box a note belongs in, from the word after `companion: `.
+/// The box that holds bindings without the `companion: ` note.
+pub const OTHERS: usize = 3;
+
+/// Which of the three companion boxes a note belongs in, from the word after
+/// `companion: `.
 ///
-/// Anything unrecognised goes in the last box rather than being dropped: a
-/// binding nobody categorised is still a binding, and an empty corner is a
-/// worse answer than a slightly crowded one.
+/// Anything unrecognised goes in the config-and-help box rather than being
+/// dropped: a binding nobody categorised is still a binding, and an empty
+/// corner is a worse answer than a slightly crowded one.
 pub fn box_for(note: &str) -> usize {
     let group = note.split_whitespace().next().unwrap_or("");
     match group {
-        "pane" => 0,
-        "window" | "session" | "project" | "go" => 1,
-        "copy" | "copy-mode" | "open" | "search" => 2,
-        _ => 3,
+        "pane" | "window" | "session" | "project" | "go" => 0,
+        "copy" | "copy-mode" | "open" | "search" => 1,
+        _ => 2,
+    }
+}
+
+/// Where a binding stands with the person reading the sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    /// Looked up within the learning window: still being learned.
+    Learn,
+    /// Never looked up, or the usage log is off.
+    Unused,
+    /// Looked up before, but not within the learning window.
+    Learned,
+}
+
+impl State {
+    /// The word `--print` writes for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            State::Learn => "learn",
+            State::Unused => "unused",
+            State::Learned => "learned",
+        }
+    }
+}
+
+/// Whether the sheet learns, and against what clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Learning {
+    /// The usage log is off: every binding is shown, none is ranked.
+    Off,
+    /// The log is on.
+    On {
+        /// Now, in unix seconds.
+        now: u64,
+        /// `[usage] learned_after_days`.
+        learned_after_days: u32,
+    },
+}
+
+/// Where one binding stands, from what the log says about it.
+///
+/// A binding whose picks carry no time, which is every pick written before
+/// the log had times, reads as learned: a count with no date is no evidence
+/// it is still being looked up, and the next lookup brings it back.
+pub fn state(u: Option<&Use>, learning: Learning) -> State {
+    let Learning::On {
+        now,
+        learned_after_days,
+    } = learning
+    else {
+        return State::Unused;
+    };
+    let Some(u) = u.filter(|u| u.count > 0) else {
+        return State::Unused;
+    };
+    if learned_after_days == 0 {
+        return State::Learn;
+    }
+    let window = u64::from(learned_after_days) * 86_400;
+    match u.last {
+        Some(t) if now.saturating_sub(t) < window => State::Learn,
+        _ => State::Learned,
     }
 }
 
 /// One line of a box.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
+    /// Which table the binding is in.
+    pub table: String,
+    /// The key, as tmux spells it.
+    pub key: String,
     /// How the chord is written.
     pub shown: String,
-    /// The note, with `companion: ` taken off.
+    /// The note, with `companion: ` taken off; the command when there is no
+    /// note.
     pub note: String,
-    /// How many times it has been picked.
+    /// How many times it has been looked up. Zero unless `state` is `Learn`.
     pub count: usize,
+    /// Where it stands.
+    pub state: State,
 }
 
-/// Sort the rows into boxes, most-used first.
+/// The sheet before it is drawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sheet {
+    /// The four boxes, in the order of [`TITLES`].
+    pub boxes: [Vec<Entry>; 4],
+    /// How many bindings were learned and left off.
+    pub learned: usize,
+    /// Whether the usage log is on.
+    pub learning: bool,
+}
+
+/// Sort the rows into boxes: the ones still being looked up first, most
+/// lookups first, then the ones never looked up, alphabetical.
 ///
 /// The group word stays in the note on purpose: "open the selection" and
 /// "search the line" lose their verb without it, and "pane focus down" only
 /// repeats its box title, which costs nothing.
-pub fn boxes(rows: &[KeyRow], usage: &HashMap<(String, String), usize>) -> [Vec<Entry>; 4] {
-    let mut out: [Vec<Entry>; 4] = Default::default();
+pub fn sheet(rows: &[KeyRow], usage: &HashMap<(String, String), Use>, learning: Learning) -> Sheet {
+    let mut boxes: [Vec<Entry>; 4] = Default::default();
+    let mut learned = 0;
     for row in rows {
-        let Some(note) = row.note.strip_prefix(COMPANION) else {
-            continue;
+        let u = usage.get(&(row.table.clone(), row.key.clone()));
+        let st = state(u, learning);
+        let companion = row.note.strip_prefix(COMPANION);
+        // Only a binding somebody wrote is worth listing unlooked-up. tmux's
+        // own and a plugin's get a line once they have been looked up.
+        let which = match (companion, st) {
+            (_, State::Learned) => {
+                learned += 1;
+                continue;
+            }
+            (Some(note), _) => box_for(note),
+            (None, State::Learn) => OTHERS,
+            (None, State::Unused) => continue,
         };
-        let count = usage
-            .get(&(row.table.clone(), row.key.clone()))
-            .copied()
-            .unwrap_or(0);
-        out[box_for(note)].push(Entry {
+        let note = companion.unwrap_or_else(|| crate::keys::described(row));
+        boxes[which].push(Entry {
+            table: row.table.clone(),
+            key: row.key.clone(),
             shown: row.shown.clone(),
             note: note.to_string(),
-            count,
+            count: if st == State::Learn {
+                u.map_or(0, |u| u.count)
+            } else {
+                0
+            },
+            state: st,
         });
     }
-    for entries in &mut out {
-        // Most used first, then alphabetical ignoring case. Case matters here:
-        // `open URL or file` and `open the selection` are neighbours a reader
-        // expects in that order, and byte order puts every capital letter
-        // first, which is how the sheet ends up looking sorted by nothing.
+    for entries in &mut boxes {
+        // Looked-up first, most lookups first, then alphabetical ignoring
+        // case. Case matters here: `open URL or file` and `open the
+        // selection` are neighbours a reader expects in that order, and byte
+        // order puts every capital letter first, which is how the sheet ends
+        // up looking sorted by nothing.
         entries.sort_by(|a, b| {
-            b.count
-                .cmp(&a.count)
+            (a.state != State::Learn)
+                .cmp(&(b.state != State::Learn))
+                .then_with(|| b.count.cmp(&a.count))
                 .then_with(|| a.note.to_lowercase().cmp(&b.note.to_lowercase()))
                 .then_with(|| a.note.cmp(&b.note))
         });
     }
+    Sheet {
+        boxes,
+        learned,
+        learning: matches!(learning, Learning::On { .. }),
+    }
+}
 
-    top_up(&mut out, rows);
+/// The line under the sheet: how many were learned, or that nothing is
+/// being learned at all. Empty when there is nothing to say.
+pub fn footer(sheet: &Sheet) -> String {
+    if !sheet.learning {
+        // @Yogesh(word): the line under the sheet when [usage] is off
+        return "usage log off: the sheet learns nothing until [usage] enabled = true".to_string();
+    }
+    if sheet.learned == 0 {
+        return String::new();
+    }
+    // @Yogesh(word): the footer count of bindings that dropped off as learned
+    format!("{} learned, off the sheet", sheet.learned)
+}
+
+/// `cheatsheet --print`: one tab-separated line per entry, box by box.
+///
+/// `box state count table key shown note`, where box is 1 to 4 in the order
+/// of [`TITLES`] and state is `learn` or `unused`. Learned bindings are not
+/// listed, the same as on the drawn sheet; the footer says how many.
+pub fn tsv(sheet: &Sheet) -> String {
+    let mut out = String::new();
+    for (i, entries) in sheet.boxes.iter().enumerate() {
+        for e in entries {
+            out.push_str(&format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                i + 1,
+                e.state.word(),
+                e.count,
+                e.table,
+                e.key,
+                e.shown,
+                e.note
+            ));
+        }
+    }
     out
 }
 
-/// The fewest entries a box should have before tmux's own bindings are used
-/// to fill it out.
-const MIN_PER_BOX: usize = 3;
-
-/// Fill a thin box with tmux's own noted bindings.
+/// The mark in front of a binding still being learned.
 ///
-/// A config that binds one pane key leaves the Panes box with one line in it
-/// and three quarters of the sheet blank, which reads as broken rather than as
-/// sparse. tmux ships notes for about a hundred of its own bindings, and the
-/// ones that belong in a thin box are better than the empty space.
-///
-/// Custom bindings keep their place at the top: they are the point of the
-/// sheet, and these are only what is left over.
-fn top_up(out: &mut [Vec<Entry>; 4], rows: &[KeyRow]) {
-    let mut spare: [Vec<Entry>; 4] = Default::default();
-    for row in rows {
-        if row.note.starts_with(COMPANION) {
-            continue;
-        }
-        let Some(box_index) = box_for_own(&row.note) else {
-            continue;
-        };
-        spare[box_index].push(Entry {
-            shown: row.shown.clone(),
-            note: row.note.clone(),
-            count: 0,
-        });
-    }
-    for (entries, mut extra) in out.iter_mut().zip(spare) {
-        if entries.len() >= MIN_PER_BOX {
-            continue;
-        }
-        // By how ordinary the binding is, then alphabetical. Straight
-        // alphabetical put "Break pane to a new window" and "Clear the marked
-        // pane" in the Panes box and left both splits out, which is the wrong
-        // three to show somebody learning tmux.
-        extra.sort_by_key(|e| (rank(&e.note), e.note.to_lowercase()));
-        extra.dedup_by(|a, b| a.note == b.note);
-        let room = MIN_PER_BOX.saturating_sub(entries.len());
-        entries.extend(extra.into_iter().take(room));
-    }
-}
-
-/// How ordinary one of tmux's own bindings is: lower is shown first.
-///
-/// An explicit order rather than a keyword test, because a test gets this
-/// wrong in ways that are hard to see: "Break pane to a new window" contains
-/// "new ", so a rule that promoted anything with "new" in it promoted exactly
-/// the binding it was written to demote.
-fn rank(note: &str) -> usize {
-    const ORDER: [&str; 8] = [
-        "split window",
-        "select pane",
-        "select window",
-        "resize",
-        "next window",
-        "previous window",
-        "new window",
-        "copy mode",
-    ];
-    let n = note.to_lowercase();
-    ORDER
-        .iter()
-        .position(|w| n.contains(w))
-        .unwrap_or(ORDER.len())
-}
-
-/// Which box one of tmux's own notes belongs in, or `None` when it is not
-/// clearly any of them.
-///
-/// tmux's notes are sentences rather than the `companion: group thing` shape, so
-/// this reads the words instead of the first one. Unmatched goes nowhere: the
-/// fourth box is for a binding somebody wrote and did not categorise, and
-/// filling it with tmux's leftovers would bury them.
-fn box_for_own(note: &str) -> Option<usize> {
-    let n = note.to_lowercase();
-    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
-    if has(&["pane", "split window", "layout", "zoom"]) {
-        Some(0)
-    } else if has(&["window", "session", "client"]) {
-        Some(1)
-    } else if has(&["copy", "search", "paste", "buffer"]) {
-        Some(2)
-    } else {
-        None
-    }
-}
+/// A glyph rather than bold or reverse video: the sheet pads every cell by
+/// counting characters, and an escape sequence would count as columns it does
+/// not take up.
+pub const LEARN_MARK: char = '▸';
 
 /// Pad or cut a string to exactly `width` columns.
 ///
@@ -193,17 +261,26 @@ fn pad(s: &str, width: usize) -> String {
     out
 }
 
-/// One entry line: the count when it has one, then the chord, then the note.
+/// One entry line: the mark and count when it is still being learned, then
+/// the chord, then the note.
 fn cell(entries: &[Entry], i: usize, width: usize) -> String {
     let Some(e) = entries.get(i) else {
         return pad("", width);
     };
-    let mark = if e.count > 0 {
-        format!("{:>3} ", e.count)
+    let mark = if e.state == State::Learn {
+        format!("{LEARN_MARK}{:>3} ", e.count)
     } else {
-        "    ".to_string()
+        "     ".to_string()
     };
     pad(&format!("{mark}{} {}", pad(&e.shown, 15), e.note), width)
+}
+
+/// A box's top rule with its title, cut to fit.
+fn top(title: &str, box_w: usize) -> String {
+    let inner = box_w.saturating_sub(2);
+    let title: String = title.chars().take(inner).collect();
+    let rule = "─".repeat(inner.saturating_sub(title.chars().count()));
+    format!("┌{title}{rule}┐")
 }
 
 /// Render the whole sheet for a terminal of this size.
@@ -218,11 +295,9 @@ pub fn render(boxes: &[Vec<Entry>; 4], cols: usize, lines: usize) -> String {
     for half in 0..2 {
         let (l, r) = (half * 2, half * 2 + 1);
         out.push_str(&format!(
-            "┌{}{}┐  ┌{}{}┐\n",
-            TITLES[l],
-            "─".repeat(box_w.saturating_sub(2 + TITLES[l].chars().count())),
-            TITLES[r],
-            "─".repeat(box_w.saturating_sub(2 + TITLES[r].chars().count())),
+            "{}  {}\n",
+            top(TITLES[l], box_w),
+            top(TITLES[r], box_w)
         ));
         for i in 0..rows {
             out.push_str(&format!(
@@ -244,6 +319,16 @@ pub fn render(boxes: &[Vec<Entry>; 4], cols: usize, lines: usize) -> String {
 mod tests {
     use super::*;
 
+    const DAY: u64 = 86_400;
+    const NOW: u64 = 1_790_000_000;
+
+    fn on() -> Learning {
+        Learning::On {
+            now: NOW,
+            learned_after_days: 14,
+        }
+    }
+
     fn row(table: &str, key: &str, shown: &str, note: &str) -> KeyRow {
         KeyRow {
             table: table.into(),
@@ -254,55 +339,209 @@ mod tests {
         }
     }
 
+    fn used(count: usize, days_ago: u64) -> Use {
+        Use {
+            count,
+            first: Some(NOW - days_ago * DAY),
+            last: Some(NOW - days_ago * DAY),
+        }
+    }
+
+    fn log(entries: &[(&str, &str, Use)]) -> HashMap<(String, String), Use> {
+        entries
+            .iter()
+            .map(|(t, k, u)| ((t.to_string(), k.to_string()), *u))
+            .collect()
+    }
+
+    fn notes(entries: &[Entry]) -> Vec<&str> {
+        entries.iter().map(|e| e.note.as_str()).collect()
+    }
+
     #[test]
     fn the_group_word_decides_the_box() {
         assert_eq!(box_for("pane focus down"), 0);
-        assert_eq!(box_for("window rename"), 1);
-        assert_eq!(box_for("session switch"), 1);
-        assert_eq!(box_for("copy the line"), 2);
-        assert_eq!(box_for("open the selection"), 2);
-        assert_eq!(box_for("config reload"), 3);
+        assert_eq!(box_for("window rename"), 0);
+        assert_eq!(box_for("session switch"), 0);
+        assert_eq!(box_for("project open"), 0);
+        assert_eq!(box_for("go home"), 0);
+        assert_eq!(box_for("copy the line"), 1);
+        assert_eq!(box_for("copy-mode enter"), 1);
+        assert_eq!(box_for("open the selection"), 1);
+        assert_eq!(box_for("search the line"), 1);
+        assert_eq!(box_for("config reload"), 2);
+        assert_eq!(box_for("help keys"), 2);
     }
 
     #[test]
-    fn an_unrecognised_group_lands_in_the_last_box_rather_than_vanishing() {
-        assert_eq!(box_for("frobnicate everything"), 3);
-        assert_eq!(box_for(""), 3);
+    fn an_unrecognised_group_lands_in_config_and_help_rather_than_vanishing() {
+        assert_eq!(box_for("frobnicate everything"), 2);
+        assert_eq!(box_for(""), 2);
     }
 
     #[test]
-    fn bindings_somebody_wrote_come_first_whatever_else_is_on_the_sheet() {
-        // This used to assert that tmux's own bindings never appear at all,
-        // which left a config with one pane binding showing one line and three
-        // empty boxes. They appear now, under the written ones and only where
-        // a box would otherwise be nearly empty.
+    fn a_lookup_inside_the_window_is_learn_and_at_the_boundary_is_learned() {
+        let s = |days_ago| state(Some(&used(3, days_ago)), on());
+        assert_eq!(s(0), State::Learn);
+        assert_eq!(s(13), State::Learn);
+        assert_eq!(
+            state(
+                Some(&Use {
+                    count: 1,
+                    first: Some(NOW - 14 * DAY + 1),
+                    last: Some(NOW - 14 * DAY + 1),
+                }),
+                on()
+            ),
+            State::Learn,
+            "one second inside fourteen days"
+        );
+        assert_eq!(s(14), State::Learned, "exactly fourteen days");
+        assert_eq!(s(30), State::Learned);
+        assert_eq!(state(None, on()), State::Unused);
+    }
+
+    #[test]
+    fn a_lookup_with_no_time_counts_as_learned() {
+        // What every pick written before the log had times reads as.
+        let old = Use {
+            count: 40,
+            first: None,
+            last: None,
+        };
+        assert_eq!(state(Some(&old), on()), State::Learned);
+    }
+
+    #[test]
+    fn zero_days_means_nothing_is_ever_learned() {
+        let never = Learning::On {
+            now: NOW,
+            learned_after_days: 0,
+        };
+        assert_eq!(state(Some(&used(1, 900)), never), State::Learn);
+        let old = Use {
+            count: 2,
+            first: None,
+            last: None,
+        };
+        assert_eq!(state(Some(&old), never), State::Learn);
+    }
+
+    #[test]
+    fn a_clock_behind_the_log_does_not_make_a_lookup_learned() {
+        let future = Use {
+            count: 1,
+            first: Some(NOW + DAY),
+            last: Some(NOW + DAY),
+        };
+        assert_eq!(state(Some(&future), on()), State::Learn);
+    }
+
+    #[test]
+    fn learn_these_come_first_most_lookups_first_then_the_unused_alphabetical() {
+        let rows = vec![
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
+            row("prefix", "b", "prefix b", "companion: pane bbb"),
+            row("prefix", "c", "prefix c", "companion: pane ccc"),
+            row("prefix", "d", "prefix d", "companion: pane ddd"),
+        ];
+        let usage = log(&[("prefix", "c", used(2, 1)), ("prefix", "d", used(9, 3))]);
+        let s = sheet(&rows, &usage, on());
+        assert_eq!(
+            notes(&s.boxes[0]),
+            vec!["pane ddd", "pane ccc", "pane aaa", "pane bbb"]
+        );
+        assert_eq!(s.boxes[0][0].state, State::Learn);
+        assert_eq!(s.boxes[0][0].count, 9);
+        assert_eq!(s.boxes[0][2].state, State::Unused);
+        assert_eq!(s.boxes[0][2].count, 0);
+    }
+
+    #[test]
+    fn a_learned_binding_leaves_the_sheet_and_is_counted() {
+        let rows = vec![
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
+            row("prefix", "b", "prefix b", "companion: pane bbb"),
+            row("prefix", "%", "prefix %", "Split window horizontally"),
+        ];
+        let usage = log(&[("prefix", "a", used(5, 20)), ("prefix", "%", used(3, 40))]);
+        let s = sheet(&rows, &usage, on());
+        assert_eq!(notes(&s.boxes[0]), vec!["pane bbb"]);
+        assert!(s.boxes[OTHERS].is_empty(), "{:?}", s.boxes[OTHERS]);
+        assert_eq!(s.learned, 2);
+        assert_eq!(footer(&s), "2 learned, off the sheet");
+    }
+
+    #[test]
+    fn a_looked_up_tmux_default_goes_in_the_fourth_box_with_its_own_note() {
         let rows = vec![
             row("prefix", "z", "prefix z", "companion: pane zoom"),
-            row("prefix", "!", "prefix !", "Break pane to a new window"),
+            row("prefix", "%", "prefix %", "Split window horizontally"),
         ];
-        let b = boxes(&rows, &HashMap::new());
-        assert_eq!(b[0][0].note, "pane zoom", "{:?}", b[0]);
-        assert!(b[0].len() > 1, "the box was not filled out: {:?}", b[0]);
+        let usage = log(&[("prefix", "%", used(4, 2))]);
+        let s = sheet(&rows, &usage, on());
+        assert_eq!(notes(&s.boxes[OTHERS]), vec!["Split window horizontally"]);
+        assert_eq!(s.boxes[OTHERS][0].state, State::Learn);
+        assert_eq!(notes(&s.boxes[0]), vec!["pane zoom"]);
+    }
+
+    #[test]
+    fn a_tmux_default_nobody_looked_up_never_appears() {
+        // The old sheet filled a thin box from tmux's own notes. That is
+        // the man page again, and it buried the point of the sheet.
+        let rows = vec![
+            row("prefix", "z", "prefix z", "companion: pane zoom"),
+            row("prefix", "%", "prefix %", "Split window horizontally"),
+            row("prefix", "\"", "prefix \"", "Split window vertically"),
+            row("prefix", "t", "prefix t", "Show a clock"),
+        ];
+        let s = sheet(&rows, &HashMap::new(), on());
+        let every: Vec<&str> = s.boxes.iter().flat_map(|b| notes(b)).collect();
+        assert_eq!(every, vec!["pane zoom"]);
+    }
+
+    #[test]
+    fn a_plugin_binding_with_no_note_shows_its_command() {
+        let mut plugin = row("prefix", "C-s", "prefix C-s", "");
+        plugin.command = "run-shell ~/.tmux/plugins/tmux-resurrect/scripts/save.sh".into();
+        let usage = log(&[("prefix", "C-s", used(1, 0))]);
+        let s = sheet(&[plugin], &usage, on());
+        assert_eq!(
+            notes(&s.boxes[OTHERS]),
+            vec!["run-shell ~/.tmux/plugins/tmux-resurrect/scripts/save.sh"]
+        );
+    }
+
+    #[test]
+    fn with_the_log_off_every_companion_binding_shows_unranked() {
+        let rows = vec![
+            row("prefix", "c", "prefix c", "companion: pane ccc"),
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
+            row("prefix", "o", "prefix o", "companion: open it"),
+            row("prefix", "%", "prefix %", "Split window horizontally"),
+        ];
+        // A log left over from when it was on is not read as anything.
+        let usage = log(&[("prefix", "c", used(9, 0)), ("prefix", "%", used(9, 0))]);
+        let s = sheet(&rows, &usage, Learning::Off);
+        assert_eq!(notes(&s.boxes[0]), vec!["pane aaa", "pane ccc"]);
+        assert_eq!(notes(&s.boxes[1]), vec!["open it"]);
+        assert!(s.boxes[OTHERS].is_empty());
+        assert!(s.boxes.iter().flatten().all(|e| e.state == State::Unused));
+        assert_eq!(s.learned, 0);
+        assert!(footer(&s).contains("[usage] enabled"), "{}", footer(&s));
+    }
+
+    #[test]
+    fn nothing_learned_says_nothing() {
+        let rows = vec![row("prefix", "a", "prefix a", "companion: pane aaa")];
+        assert_eq!(footer(&sheet(&rows, &HashMap::new(), on())), "");
     }
 
     #[test]
     fn the_custom_prefix_is_taken_off_the_note() {
         let rows = vec![row("prefix", "z", "prefix z", "companion: pane zoom")];
-        let b = boxes(&rows, &HashMap::new());
-        assert_eq!(b[0][0].note, "pane zoom");
-    }
-
-    #[test]
-    fn the_keys_you_reach_for_come_first() {
-        let rows = vec![
-            row("prefix", "a", "prefix a", "companion: pane aaa"),
-            row("prefix", "b", "prefix b", "companion: pane bbb"),
-        ];
-        let usage = HashMap::from([(("prefix".to_string(), "b".to_string()), 7)]);
-        let b = boxes(&rows, &usage);
-        assert_eq!(b[0][0].note, "pane bbb");
-        assert_eq!(b[0][0].count, 7);
-        assert_eq!(b[0][1].count, 0);
+        let s = sheet(&rows, &HashMap::new(), on());
+        assert_eq!(s.boxes[0][0].note, "pane zoom");
     }
 
     #[test]
@@ -323,44 +562,53 @@ mod tests {
                 "companion: open URL under the cursor",
             ),
         ];
-        let b = boxes(&rows, &HashMap::new());
-        assert_eq!(b[2][0].note, "open the selection");
-        assert_eq!(b[2][1].note, "open URL under the cursor");
-    }
-
-    #[test]
-    fn unused_keys_are_alphabetical_so_the_sheet_reads_as_a_list() {
-        let rows = vec![
-            row("prefix", "c", "prefix c", "companion: pane ccc"),
-            row("prefix", "a", "prefix a", "companion: pane aaa"),
-        ];
-        let b = boxes(&rows, &HashMap::new());
-        assert_eq!(b[0][0].note, "pane aaa");
-        assert_eq!(b[0][1].note, "pane ccc");
-    }
-
-    #[test]
-    fn a_used_key_shows_its_count_and_an_unused_one_shows_nothing() {
-        let entries = vec![
-            Entry {
-                shown: "prefix z".into(),
-                note: "pane zoom".into(),
-                count: 3,
-            },
-            Entry {
-                shown: "prefix x".into(),
-                note: "pane close".into(),
-                count: 0,
-            },
-        ];
-        let used = cell(&entries, 0, 40);
-        let unused = cell(&entries, 1, 40);
-        assert!(used.starts_with("  3 "), "{used:?}");
-        // The count column is four wide either way, so the chords line up
-        // whether or not a binding has ever been reached for.
-        assert!(unused.starts_with("    prefix"), "{unused:?}");
+        let s = sheet(&rows, &HashMap::new(), on());
         assert_eq!(
-            used.chars().position(|c| c == 'p'),
+            notes(&s.boxes[1]),
+            vec!["open the selection", "open URL under the cursor"]
+        );
+    }
+
+    #[test]
+    fn print_writes_one_line_per_entry_with_its_box_and_state() {
+        let rows = vec![
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
+            row("prefix", "%", "prefix %", "Split window horizontally"),
+        ];
+        let usage = log(&[("prefix", "%", used(2, 1))]);
+        let text = tsv(&sheet(&rows, &usage, on()));
+        assert_eq!(
+            text,
+            "1\tunused\t0\tprefix\ta\tprefix a\tpane aaa\n\
+             4\tlearn\t2\tprefix\t%\tprefix %\tSplit window horizontally\n"
+        );
+    }
+
+    fn entry(note: &str, count: usize, state: State) -> Entry {
+        Entry {
+            table: "prefix".into(),
+            key: "z".into(),
+            shown: "prefix z".into(),
+            note: note.into(),
+            count,
+            state,
+        }
+    }
+
+    #[test]
+    fn a_binding_being_learned_shows_the_mark_and_its_count() {
+        let entries = vec![
+            entry("pane zoom", 3, State::Learn),
+            entry("pane close", 0, State::Unused),
+        ];
+        let learn = cell(&entries, 0, 40);
+        let unused = cell(&entries, 1, 40);
+        assert!(learn.starts_with("▸  3 "), "{learn:?}");
+        // The mark column is five wide either way, so the chords line up
+        // whether or not a binding has been looked up.
+        assert!(unused.starts_with("     prefix"), "{unused:?}");
+        assert_eq!(
+            learn.chars().position(|c| c == 'p'),
             unused.chars().position(|c| c == 'p'),
             "chords must start in the same column"
         );
@@ -389,12 +637,15 @@ mod tests {
                 )
             })
             .collect();
-        let sheet = render(&boxes(&rows, &HashMap::new()), 120, 40);
-        let widths: Vec<usize> = sheet.lines().map(|l| l.chars().count()).collect();
-        assert!(
-            widths.windows(2).all(|w| w[0] == w[1]),
-            "ragged sheet: {widths:?}"
-        );
+        let usage = log(&[("prefix", "2", used(3, 1))]);
+        for cols in [120, 80, 50, 30] {
+            let sheet = render(&sheet(&rows, &usage, on()).boxes, cols, 40);
+            let widths: Vec<usize> = sheet.lines().map(|l| l.chars().count()).collect();
+            assert!(
+                widths.windows(2).all(|w| w[0] == w[1]),
+                "ragged sheet at {cols}: {widths:?}"
+            );
+        }
     }
 
     #[test]
@@ -415,7 +666,7 @@ mod tests {
             "prefix m",
             "companion: pane a note that runs on and on and on past any sensible width",
         )];
-        let sheet = render(&boxes(&rows, &HashMap::new()), 80, 30);
+        let sheet = render(&sheet(&rows, &HashMap::new(), on()).boxes, 80, 30);
         let widths: Vec<usize> = sheet.lines().map(|l| l.chars().count()).collect();
         assert!(widths.windows(2).all(|w| w[0] == w[1]), "{widths:?}");
     }
@@ -433,78 +684,5 @@ mod tests {
         for title in TITLES {
             assert!(sheet.contains(title.trim()), "{title} missing");
         }
-    }
-}
-
-#[cfg(test)]
-mod top_up_tests {
-    use super::*;
-
-    fn row(table: &str, key: &str, note: &str) -> KeyRow {
-        KeyRow {
-            shown: crate::keys::shown_for(table, key),
-            table: table.to_string(),
-            key: key.to_string(),
-            note: note.to_string(),
-            command: "whatever".to_string(),
-        }
-    }
-
-    #[test]
-    fn a_box_with_one_binding_is_filled_from_tmuxs_own() {
-        // The shipped config binds one pane key, so the Panes box held one
-        // line and three quarters of the sheet was blank, which reads as
-        // broken rather than as sparse.
-        let rows = vec![
-            row("prefix", "z", "companion: pane zoom this one"),
-            row("prefix", "%", "Split window horizontally"),
-            row("prefix", "\"", "Split window vertically"),
-            row("prefix", "!", "Break pane to a new window"),
-        ];
-        let boxes = boxes(&rows, &HashMap::new());
-        let notes: Vec<&str> = boxes[0].iter().map(|e| e.note.as_str()).collect();
-        assert_eq!(notes.len(), MIN_PER_BOX, "{notes:?}");
-        assert_eq!(
-            notes[0], "pane zoom this one",
-            "custom goes first: {notes:?}"
-        );
-        assert!(
-            notes.contains(&"Split window horizontally"),
-            "the splits are the two to show: {notes:?}"
-        );
-    }
-
-    #[test]
-    fn a_full_box_is_left_alone() {
-        let rows = vec![
-            row("prefix", "a", "companion: pane one"),
-            row("prefix", "b", "companion: pane two"),
-            row("prefix", "c", "companion: pane three"),
-            row("prefix", "%", "Split window horizontally"),
-        ];
-        let boxes = boxes(&rows, &HashMap::new());
-        assert_eq!(boxes[0].len(), 3);
-        assert!(boxes[0].iter().all(|e| !e.note.starts_with("Split")));
-    }
-
-    #[test]
-    fn a_new_window_does_not_outrank_a_split() {
-        // "Break pane to a new window" contains "new ", so the first attempt
-        // at this promoted exactly the binding it was written to demote.
-        assert!(rank("Split window horizontally") < rank("Break pane to a new window"));
-        assert!(rank("Select pane to the left") < rank("Clear the marked pane"));
-    }
-
-    #[test]
-    fn tmuxs_own_leftovers_do_not_fill_the_last_box() {
-        // The fourth box is for a binding somebody wrote and did not
-        // categorise. Filling it with tmux's unmatched notes would bury them.
-        let rows = vec![
-            row("prefix", "a", "companion: something uncategorised"),
-            row("prefix", "t", "Show a clock"),
-            row("prefix", "~", "Show messages"),
-        ];
-        let boxes = boxes(&rows, &HashMap::new());
-        assert_eq!(boxes[3].len(), 1, "{:?}", boxes[3]);
     }
 }

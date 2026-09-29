@@ -1122,8 +1122,9 @@ pub fn path_has_prefix(path: &str, prefix: &str, home: &str) -> bool {
     !prefix.is_empty() && path.starts_with(prefix)
 }
 
-/// The record of which bindings get used, which orders the cheat sheet.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+/// The record of which bindings get looked up, which is what the cheat sheet
+/// learns from.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Usage {
     /// Whether to record anything at all.
@@ -1133,6 +1134,21 @@ pub struct Usage {
     pub enabled: bool,
     /// Where the log lives. Empty means `$XDG_STATE_HOME/tmux-companion/`.
     pub path: Option<PathBuf>,
+    /// Days without a lookup after which a binding counts as learned and
+    /// leaves the cheat sheet. 0 means nothing is ever learned.
+    pub learned_after_days: u32,
+}
+
+impl Default for Usage {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: None,
+            // Two weeks: long enough that a key used on Mondays is not
+            // declared learned between Mondays.
+            learned_after_days: 14,
+        }
+    }
 }
 
 impl Usage {

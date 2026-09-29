@@ -153,13 +153,23 @@ and the number doesn't move fast enough to matter.
 [usage]
 enabled = true
 path = "~/.local/state/tmux-companion/keys-usage.tsv"
+learned_after_days = 14
 ```
 
-Which bindings get picked, so the cheat sheet can order each box by it and the
-keys you reach for float to the top of their group. It records what you press,
+<!-- @Yogesh(gap): first sentence of the usage log section; placeholder wording -->
+Which bindings you look up in the key search, and when, so the cheat sheet can
+show the ones you're still learning and drop the ones you've learned. It records what you press,
 which is your business and not the tool's, it's off by default so you can set it
 to false or remove the section.
 `path` unset means `$XDG_STATE_HOME/tmux-companion/`.
+
+<!-- @Yogesh(gap): learned_after_days paragraph; placeholder wording -->
+`learned_after_days` is how long a binding can go without a lookup before it
+counts as learned and leaves the sheet; 0 means never. Each pick is written as
+`table key @secs`, and once the file passes five thousand lines it's rewritten
+as `table key count first last` under a `#v2` header. A log from before picks
+had a time still reads, and its picks count as learned until you look the key
+up again. [Why the cheat sheet works this way](../explanation/cheatsheet.md).
 
 ## Glyphs, if your bar is a row of boxes
 

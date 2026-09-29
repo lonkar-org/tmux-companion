@@ -149,15 +149,24 @@ pub fn shown_for(table: &str, key: &str) -> String {
 
 /// Join one table's two listings into rows.
 ///
-/// A key with a command and no note is dropped: tmux ships notes for about a
-/// hundred of its own defaults and a row nobody described is a row nobody can
-/// search for.
+/// A key with a command and no note is kept in `prefix` and `root`, with an
+/// empty note, unless it is a mouse event. That is where a plugin binds and
+/// where a hand-written `bind r source-file` lands, and dropping them meant a
+/// plugin's key could not be looked up in `keys --all`, so the cheat sheet
+/// never heard it had been. The copy-mode tables are left as they were: tmux
+/// ships ninety-odd copy-mode keys with no note, and running one from a
+/// picker outside copy mode does nothing.
 pub fn rows_for_table(table: &str, notes: &str, commands: &str) -> Vec<KeyRow> {
     let notes = parse_notes(notes);
+    let keep_unnoted = matches!(table, "prefix" | "root");
     parse_commands(commands, table)
         .into_iter()
         .filter_map(|(key, command)| {
-            let note = notes.get(&key)?.clone();
+            let note = match notes.get(&key) {
+                Some(n) => n.clone(),
+                None if keep_unnoted && !is_mouse(&key) => String::new(),
+                None => return None,
+            };
             Some(KeyRow {
                 shown: shown_for(table, &key),
                 table: table.to_string(),
@@ -169,18 +178,33 @@ pub fn rows_for_table(table: &str, notes: &str, commands: &str) -> Vec<KeyRow> {
         .collect()
 }
 
+/// Whether a key is a mouse event rather than something a hand can type.
+fn is_mouse(key: &str) -> bool {
+    ["Mouse", "Wheel", "Click"].iter().any(|m| key.contains(m))
+}
+
+/// What a row does, in words: its note, or its command when nobody wrote one.
+pub fn described(row: &KeyRow) -> &str {
+    if row.note.is_empty() {
+        &row.command
+    } else {
+        &row.note
+    }
+}
+
 /// Sort by note and drop the second row for a table and key.
 ///
 /// Sorting by the note rather than the key is what makes the list read as a
 /// list of things you can do rather than a list of keystrokes.
 pub fn sort_and_dedupe(mut rows: Vec<KeyRow>) -> Vec<KeyRow> {
-    rows.sort_by(|a, b| a.note.cmp(&b.note));
+    rows.sort_by(|a, b| described(a).cmp(described(b)));
     let mut seen = std::collections::HashSet::new();
     rows.retain(|r| seen.insert((r.table.clone(), r.key.clone())));
     rows
 }
 
-/// The rows a query selects, by substring over the note and the chord.
+/// The rows a query selects, by substring over the note and the chord, and
+/// over the command for a row with no note.
 ///
 /// The default query is `companion: ` because every binding written in tmux.conf
 /// carries a note starting that way, and tmux's hundred noted defaults would
@@ -191,7 +215,7 @@ pub fn filter<'a>(rows: &'a [KeyRow], query: &str) -> Vec<&'a KeyRow> {
         return rows.iter().collect();
     }
     rows.iter()
-        .filter(|r| r.note.to_lowercase().contains(&q) || r.shown.to_lowercase().contains(&q))
+        .filter(|r| described(r).to_lowercase().contains(&q) || r.shown.to_lowercase().contains(&q))
         .collect()
 }
 
@@ -283,17 +307,71 @@ pub fn tmux_conf_in(home: &str, xdg_config: Option<&str>) -> std::path::PathBuf 
 /// under a millisecond, and a rewrite that often costs nothing anybody sees.
 pub const COMPACT_AFTER: usize = 5000;
 
-/// The first line of a compacted log, which is how a reader knows the third
-/// column is a count.
-pub const COMPACT_HEADER: &str = "#v1";
+/// The first line of a compacted log: `table key count first last`, the two
+/// times in unix seconds or `-` where the picks they cover carried none.
+pub const COMPACT_HEADER: &str = "#v2";
+
+/// The first line of a log compacted before picks carried a time, where the
+/// third column is a count and nothing says when.
+pub const COMPACT_HEADER_V1: &str = "#v1";
+
+/// What the log knows about one binding.
+///
+/// `first` and `last` are `None` when none of its picks carried a time, which
+/// is every pick written before the log had them. The cheat sheet reads a
+/// binding like that as learned rather than as looked up yesterday: a count
+/// with no date is no evidence the key is still being searched for, and the
+/// next lookup brings it back with a date on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Use {
+    /// How many times it has been picked.
+    pub count: usize,
+    /// The earliest pick with a time, in unix seconds.
+    pub first: Option<u64>,
+    /// The latest pick with a time, in unix seconds.
+    pub last: Option<u64>,
+}
+
+impl Use {
+    /// One pick at `secs`, or at no known time.
+    fn one(secs: Option<u64>) -> Self {
+        Self {
+            count: 1,
+            first: secs,
+            last: secs,
+        }
+    }
+
+    /// Fold another record of the same binding into this one.
+    fn add(&mut self, other: Use) {
+        self.count += other.count;
+        self.first = match (self.first, other.first) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        self.last = match (self.last, other.last) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+    }
+}
 
 /// Append a pick to the usage log, rewriting it compactly once it is long.
 ///
-/// The cheat sheet orders each box by this, so the keys somebody actually
-/// reaches for float to the top of their group. Failure is ignored on purpose:
-/// a status bar that stops working because a log file could not be written
-/// would be a poor trade.
+/// The cheat sheet reads this to tell a binding still being looked up from
+/// one that has been learned. Failure is ignored on purpose: a status bar
+/// that stops working because a log file could not be written would be a
+/// poor trade.
 pub fn record_use(path: &std::path::Path, table: &str, key: &str) {
+    record_use_at(path, table, key, crate::panes::now_secs());
+}
+
+/// [`record_use`] with the time given, so a test can say when.
+///
+/// A pick is `table\tkey\t@secs`. The `@` is what tells the time apart from
+/// the key in a file that has no header, where a third column used to be
+/// part of the key.
+pub fn record_use_at(path: &std::path::Path, table: &str, key: &str, secs: u64) {
     use std::io::Write;
 
     if let Some(dir) = path.parent() {
@@ -304,7 +382,7 @@ pub fn record_use(path: &std::path::Path, table: &str, key: &str) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(f, "{table}\t{key}");
+        let _ = writeln!(f, "{table}\t{key}\t@{secs}");
     }
     // Read back after the append, because the append is what may have taken
     // it over the line.
@@ -315,30 +393,40 @@ pub fn record_use(path: &std::path::Path, table: &str, key: &str) {
     }
 }
 
-/// The log rewritten as one `table\tkey\tcount` line per binding, under
-/// [`COMPACT_HEADER`].
+/// The log rewritten as one `table\tkey\tcount\tfirst\tlast` line per
+/// binding, under [`COMPACT_HEADER`].
 ///
 /// Sorted, so two compactions of the same picks write the same bytes and a
 /// diff of the file says something.
 pub fn compact(log: &str) -> String {
-    let mut rows: Vec<((String, String), usize)> = usage_counts(log).into_iter().collect();
-    rows.sort();
+    let mut rows: Vec<((String, String), Use)> = usage(log).into_iter().collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let time = |t: Option<u64>| t.map_or_else(|| "-".to_string(), |t| t.to_string());
     let mut out = format!("{COMPACT_HEADER}\n");
-    for ((table, key), count) in rows {
-        out.push_str(&format!("{table}\t{key}\t{count}\n"));
+    for ((table, key), u) in rows {
+        out.push_str(&format!(
+            "{table}\t{key}\t{}\t{}\t{}\n",
+            u.count,
+            time(u.first),
+            time(u.last)
+        ));
     }
     out
 }
 
-/// How many times each binding has been picked.
+/// Everything the log knows, per binding.
 ///
-/// Reads both shapes of the file: the raw log, one `table\tkey` line per
-/// pick, and the compacted one, where a third column carries the count.
-/// Picks appended after a compaction have no third column and count as one,
-/// which is what lets [`record_use`] keep appending to a compacted file.
-pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
-    let compacted = log.lines().next() == Some(COMPACT_HEADER);
-    let mut out: HashMap<(String, String), usize> = HashMap::new();
+/// Reads every shape the file has had. A raw pick is `table\tkey`, or
+/// `table\tkey\t@secs` since picks carry a time. Under `#v1` a last column
+/// that reads as a number is a count with no time; under `#v2` the last three
+/// are count, first and last. Picks appended after a compaction are raw lines
+/// and count as one each, which is what lets [`record_use`] keep appending to
+/// a compacted file.
+pub fn usage(log: &str) -> HashMap<(String, String), Use> {
+    let header = log.lines().next().unwrap_or("");
+    let v2 = header == COMPACT_HEADER;
+    let compacted = v2 || header == COMPACT_HEADER_V1;
+    let mut out: HashMap<(String, String), Use> = HashMap::new();
     for line in log.lines() {
         if line.starts_with('#') {
             continue;
@@ -346,18 +434,61 @@ pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
         let Some((table, rest)) = line.split_once('\t') else {
             continue;
         };
-        // Only a compacted file has counts, and only a last column that reads
-        // as a number is one; anything else is part of the key.
-        let (key, count) = match rest.rsplit_once('\t') {
-            Some((key, n)) if compacted => match n.parse::<usize>() {
-                Ok(n) => (key, n),
-                Err(_) => (rest, 1),
-            },
-            _ => (rest, 1),
-        };
-        *out.entry((table.to_string(), key.to_string())).or_default() += count;
+        let (key, u) = parse_use(rest, compacted, v2);
+        out.entry((table.to_string(), key.to_string()))
+            .or_default()
+            .add(u);
     }
     out
+}
+
+/// One line after its table: the key and what the line says about it.
+fn parse_use(rest: &str, compacted: bool, v2: bool) -> (&str, Use) {
+    if let Some((key, t)) = rest.rsplit_once('\t')
+        && let Some(secs) = t.strip_prefix('@').and_then(|s| s.parse::<u64>().ok())
+    {
+        return (key, Use::one(Some(secs)));
+    }
+    if v2 && let Some(parsed) = parse_v2(rest) {
+        return parsed;
+    }
+    // Only a compacted file has counts, and only a last column that reads as
+    // a number is one; anything else is part of the key.
+    if compacted
+        && let Some((key, n)) = rest.rsplit_once('\t')
+        && let Ok(count) = n.parse::<usize>()
+    {
+        return (
+            key,
+            Use {
+                count,
+                ..Use::default()
+            },
+        );
+    }
+    (rest, Use::one(None))
+}
+
+/// A `#v2` line after its table: key, count, first, last.
+fn parse_v2(rest: &str) -> Option<(&str, Use)> {
+    let time = |s: &str| -> Option<Option<u64>> {
+        if s == "-" {
+            Some(None)
+        } else {
+            s.parse().ok().map(Some)
+        }
+    };
+    let mut it = rest.rsplitn(4, '\t');
+    let last = time(it.next()?)?;
+    let first = time(it.next()?)?;
+    let count = it.next()?.parse().ok()?;
+    let key = it.next()?;
+    Some((key, Use { count, first, last }))
+}
+
+/// How many times each binding has been picked, and nothing about when.
+pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
+    usage(log).into_iter().map(|(k, u)| (k, u.count)).collect()
 }
 
 /// The rows the log has never recorded a press for, in the order given.
@@ -368,8 +499,8 @@ pub fn usage_counts(log: &str) -> HashMap<(String, String), usize> {
 /// spellings, because nothing writes to it but a pick of a row, so treating
 /// them as the same binding would only hide a row that was never pressed.
 ///
-/// The log carries no dates, so "never" means no press since the log began,
-/// and the caller says so next to the count.
+/// "Never" means no press since the log began, however old that is, and the
+/// caller says so next to the count.
 pub fn unused<'a>(
     rows: impl IntoIterator<Item = &'a KeyRow>,
     counts: &HashMap<(String, String), usize>,
@@ -495,11 +626,30 @@ bind-key    -T prefix M-x     display-popup -E something
     }
 
     #[test]
-    fn a_binding_with_no_note_does_not_become_a_row() {
-        // M-x has a command in the fixture and no note.
+    fn a_prefix_binding_with_no_note_is_a_row_described_by_its_command() {
+        // M-x has a command in the fixture and no note: a plugin's binding,
+        // or a hand-written one. It has to be a row for `keys --all` to find
+        // it, or a lookup of it could never reach the usage log.
         let rows = rows_for_table("prefix", NOTES_PREFIX, CMDS_PREFIX);
-        assert!(rows.iter().all(|r| r.key != "M-x"), "{rows:?}");
-        assert_eq!(rows.len(), 4);
+        let row = rows.iter().find(|r| r.key == "M-x").expect("M-x kept");
+        assert_eq!(row.note, "");
+        assert_eq!(described(row), "display-popup -E something");
+        assert_eq!(rows.len(), 5);
+        assert_eq!(filter(&rows, "popup").len(), 1, "the command is searched");
+    }
+
+    #[test]
+    fn mouse_events_and_unnoted_copy_mode_keys_are_still_dropped() {
+        let root = "bind-key -T root MouseDown1Pane select-pane\n\
+                    bind-key -T root WheelUpStatus previous-window\n\
+                    bind-key -T root DoubleClick1Pane select-pane\n\
+                    bind-key -T root M-h select-pane -L\n";
+        let rows = rows_for_table("root", "", root);
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["M-h"]);
+
+        let copy = "bind-key -T copy-mode-vi v send-keys -X begin-selection\n";
+        assert!(rows_for_table("copy-mode-vi", "", copy).is_empty());
     }
 
     #[test]
@@ -683,12 +833,62 @@ bind-key    -T prefix M-x     display-popup -E something
     fn a_compacted_log_counts_the_same_as_the_raw_one_it_replaced() {
         let raw = "prefix\t?\nprefix\t?\nroot\tM-s\nprefix\tSpace\n";
         let text = compact(raw);
-        assert!(text.starts_with("#v1\n"), "{text}");
+        assert!(text.starts_with("#v2\n"), "{text}");
         assert_eq!(text.lines().count(), 4, "{text}");
-        assert!(text.contains("prefix\t?\t2\n"), "{text}");
-        assert_eq!(usage_counts(&text), usage_counts(raw));
+        assert!(text.contains("prefix\t?\t2\t-\t-\n"), "{text}");
+        assert_eq!(usage(&text), usage(raw));
         // Compacting a compacted log changes nothing.
         assert_eq!(compact(&text), text);
+    }
+
+    #[test]
+    fn a_pick_carries_its_time_and_compaction_keeps_the_first_and_last() {
+        let raw = "prefix\t?\t@300\nprefix\t?\t@100\nprefix\t?\nprefix\t?\t@200\n";
+        let u = usage(raw)[&("prefix".to_string(), "?".to_string())];
+        assert_eq!(
+            u,
+            Use {
+                count: 4,
+                first: Some(100),
+                last: Some(300)
+            }
+        );
+        let text = compact(raw);
+        assert_eq!(text, "#v2\nprefix\t?\t4\t100\t300\n");
+        assert_eq!(usage(&text), usage(raw));
+        // A timed pick appended to the compacted file moves `last` on.
+        let more = format!("{text}prefix\t?\t@900\n");
+        let u = usage(&more)[&("prefix".to_string(), "?".to_string())];
+        assert_eq!((u.count, u.first, u.last), (5, Some(100), Some(900)));
+    }
+
+    #[test]
+    fn a_log_written_before_picks_had_a_time_still_reads() {
+        // The raw shape and the `#v1` compacted shape both predate the time
+        // column. Their picks count, and say nothing about when.
+        let raw = usage("prefix\t?\nprefix\t?\n");
+        let u = raw[&("prefix".to_string(), "?".to_string())];
+        assert_eq!((u.count, u.first, u.last), (2, None, None));
+
+        let v1 = usage("#v1\nprefix\t?\t7\nprefix\t?\t@500\n");
+        let u = v1[&("prefix".to_string(), "?".to_string())];
+        assert_eq!((u.count, u.first, u.last), (8, Some(500), Some(500)));
+    }
+
+    #[test]
+    fn a_key_that_is_an_at_sign_is_a_key_not_a_time() {
+        let u = usage("prefix\t@\nprefix\t@\t@42\n");
+        let at = u[&("prefix".to_string(), "@".to_string())];
+        assert_eq!((at.count, at.last), (2, Some(42)));
+    }
+
+    #[test]
+    fn a_pick_is_written_with_its_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("keys-usage.tsv");
+        record_use_at(&path, "prefix", "?", 1_790_000_000);
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(text, "prefix\t?\t@1790000000\n");
     }
 
     #[test]
@@ -724,7 +924,7 @@ bind-key    -T prefix M-x     display-popup -E something
         record_use(&path, "root", "M-s");
         let text = std::fs::read_to_string(&path).expect("read");
         assert!(
-            text.starts_with("#v1\n"),
+            text.starts_with("#v2\n"),
             "{}",
             text.lines().next().unwrap_or("")
         );
