@@ -11,6 +11,27 @@
 # without a terminal at all.
 set -euo pipefail
 
+# The seeded home lives in the image at /opt/playground/home, read-only, and
+# is copied in here on the first start. Copied rather than baked into
+# /home/play so the container can run with --read-only and a tmpfs on
+# /home/play; the Dockerfile says why. Before the `exec` below, so a command
+# given on the command line sees the same home the tour does.
+if [ ! -e "$HOME/.zshrc" ]; then
+  # --read-only without a writable home is the one way to get here wrong, and
+  # cp would answer it with one line per file.
+  if [ ! -w "$HOME" ]; then
+    echo "$HOME is not writable. With --read-only, give it a tmpfs:" >&2
+    echo "  --tmpfs /tmp --tmpfs $HOME:uid=$(id -u),gid=$(id -g)" >&2
+    exit 1
+  fi
+  # -R and not -p: busybox's cp -p tries to keep root as the owner, fails
+  # for every file, and says so for every file.
+  cp -R /opt/playground/home/. "$HOME/"
+  # seed.sh made it 600; the image's copy is root's and world-readable, so
+  # the copy comes out 644 without this.
+  chmod 600 "$HOME/.zsh_history"
+fi
+
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi

@@ -62,6 +62,8 @@ docker run --rm -it lonkarorg/tmux-companion:playground
 tmux, the binary, five fake projects and a guided tour through the bindings, in
 a container that goes away when you leave it. Nothing is mounted from your
 machine. [docs/how-to/playground.md](docs/how-to/playground.md).
+<!-- @Yogesh(check): one sentence pointing at the locked-down command, or leave README alone? -->
+It also runs read-only with no network; that page has the flags.
 
 ## Install
 

@@ -37,6 +37,9 @@ name: Release
 #
 # Without it the release still publishes and the job warns, so a missing key
 # costs a stale tap rather than a failed release.
+#
+# Each `uses:` is pinned to a commit SHA with its version in a trailing
+# comment, the same as playground.yml, which says why: this job holds that key.
 
 on:
   push:
@@ -60,7 +63,7 @@ jobs:
     env:
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -92,7 +95,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tmux
       - run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -131,7 +134,7 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -142,7 +145,7 @@ jobs:
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -174,7 +177,7 @@ jobs:
           tar -czf "$name" -C "$staging" .
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
           path: ${{ steps.package.outputs.name }}
@@ -190,11 +193,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: assets
           merge-multiple: true
@@ -265,7 +268,7 @@ jobs:
 
       # `ssh-key` rather than `token`, so checkout clones over SSH and leaves
       # the remote and the key configured for the push at the end of the job.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.token.outputs.have == 'true'
         with:
           repository: lonkar-org/homebrew-tap

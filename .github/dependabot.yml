@@ -1,0 +1,27 @@
+# Dependabot bumps what is pinned, so a pin is a decision that gets revisited
+# rather than a version that quietly rots.
+#
+#   docker          the two FROM lines in playground/Dockerfile, pinned by
+#                   digest; a new digest behind the same tag is a pull request
+#   github-actions  every `uses:` pinned to a commit SHA, with the version in a
+#                   trailing comment that Dependabot rewrites alongside it
+#
+# Weekly and grouped, so it is one pull request a week per ecosystem rather
+# than one per action. Cargo is not listed: this file exists for the pins.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /playground
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

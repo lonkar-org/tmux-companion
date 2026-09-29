@@ -19,6 +19,44 @@ scripts/playground.sh shell      # a shell in the image, no tour
 scripts/playground.sh smoke      # check the image is what the tour claims
 ```
 
+## Locked down
+
+<!-- @Yogesh(check): wording of this section, and whether README should link here -->
+The tour works the same with the container locked down: a read-only image, no
+network, no capabilities, and a cap on processes and memory. The home
+directory and `/tmp` become tmpfs, so nothing is written to disk at all.
+
+```sh
+docker run --rm -it \
+  --read-only --tmpfs /tmp --tmpfs /home/play:uid=1000,gid=1000 \
+  --network=none --cap-drop=ALL --security-opt=no-new-privileges \
+  --pids-limit=512 --memory=512m \
+  lonkarorg/tmux-companion:playground
+```
+
+`scripts/playground.sh` runs with these flags; `PLAIN=1 scripts/playground.sh`
+runs without them.
+
+## Checking the image
+
+<!-- @Yogesh(check): wording of this section -->
+Each published image is signed with [cosign](https://docs.sigstore.dev)
+by the workflow that built it, with no key: the signature names
+`.github/workflows/playground.yml` and the tag it ran at. To check one:
+
+```sh
+cosign verify lonkarorg/tmux-companion:playground \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/lonkar-org/tmux-companion/\.github/workflows/playground\.yml@'
+```
+
+The image also carries an SBOM and a build provenance attestation:
+
+```sh
+docker buildx imagetools inspect lonkarorg/tmux-companion:playground --format '{{ json .SBOM }}'
+docker buildx imagetools inspect lonkarorg/tmux-companion:playground --format '{{ json .Provenance }}'
+```
+
 ## Run it outside tmux
 
 If you start the container from inside a tmux session, `Ctrl-b` goes to that

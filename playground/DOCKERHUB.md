@@ -11,6 +11,17 @@ docker run --rm -it lonkarorg/tmux-companion:playground
 27 MB, amd64 and arm64. Nothing is mounted from your machine and nothing is
 published off it, so the whole thing goes away with the container.
 
+<!-- @Yogesh(check): wording, and whether Docker Hub needs the locked-down command at all -->
+The same, locked down: read-only, no network, no capabilities.
+
+```sh
+docker run --rm -it \
+  --read-only --tmpfs /tmp --tmpfs /home/play:uid=1000,gid=1000 \
+  --network=none --cap-drop=ALL --security-opt=no-new-privileges \
+  --pids-limit=512 --memory=512m \
+  lonkarorg/tmux-companion:playground
+```
+
 **Run it from a terminal that isn't already in tmux.** Start it from inside a
 tmux session and `Ctrl-b` goes to that server instead, so every binding in the
 tour looks broken. If you're nested anyway, press the prefix twice: `Ctrl-b

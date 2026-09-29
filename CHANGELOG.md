@@ -33,6 +33,22 @@ entry per phase of the comrades port.
 - `[journal]` and `[usage]` are off until turned on, like every other
   background task. `journal` says it's off rather than showing an empty day.
 - `DESIGN.md` and `BENCHMARKS.md` moved under `docs/`.
+- The playground image's two base images are pinned by digest, and
+  `.github/dependabot.yml` bumps them, and the workflow actions, weekly.
+- The workflows pin every action to a commit SHA, with the version in a
+  trailing comment.
+- The playground image runs as `USER 1000:1000`, strips any setuid or setgid
+  bit, and drops `man-pages`, `findutils`, `coreutils` and `grep` for
+  busybox's. Its seeded home lives read-only at `/opt/playground/home` and
+  the entrypoint copies it into `/home/play` on start.
+- `scripts/playground.sh` runs the playground read-only, with tmpfs for
+  `/tmp` and the home, no network, no capabilities, `no-new-privileges`, and
+  a pids and memory cap; `PLAIN=1` runs it bare. The workflow smokes the
+  image both ways, and `docs/how-to/playground.md` gives the command.
+- The playground build fails on a HIGH or CRITICAL vulnerability that has a
+  fix, scanned with Trivy. The published image carries an SBOM and a
+  `mode=max` provenance attestation, and is signed keyless with cosign;
+  `docs/how-to/playground.md` has the `cosign verify` line.
 
 ### Fixed
 

@@ -41,6 +41,9 @@ on:
 # later need a runner of at least 2.327.1, which GitHub-hosted runners have and
 # an old `act` image may not, so a local act run failing where CI passes is
 # worth checking against `just act-refresh` before believing.
+#
+# Each `uses:` is pinned to a commit SHA with its version in a trailing
+# comment, the same as playground.yml, which says why. Dependabot moves them.
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -50,7 +53,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain
         run: |
           if ! command -v rustup >/dev/null 2>&1; then
@@ -70,7 +73,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # tests/e2e.rs drives a real tmux on its own socket. Without one those
       # tests skip themselves, which is worse than failing: the suite that
@@ -106,7 +109,7 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -132,7 +135,7 @@ jobs:
     name: review markers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/check-review-marks.sh
 
   # Every other job runs the pinned toolchain, so `rust-version` in Cargo.toml
@@ -148,7 +151,7 @@ jobs:
       # pinned toolchain never sees.
       RUSTFLAGS: ''
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain
         run: |
           if ! command -v rustup >/dev/null 2>&1; then
@@ -163,7 +166,7 @@ jobs:
           rustup toolchain install "$msrv" --profile minimal --no-self-update
         id: msrv
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -188,7 +191,7 @@ jobs:
       # undocumented public item fail a pull request rather than pile up.
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain
         run: |
           if ! command -v rustup >/dev/null 2>&1; then
