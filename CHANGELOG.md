@@ -3,7 +3,31 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-<!-- @Yogesh(gap): unreleased fix needs an entry: an empty picker (sessions idle, inbox, ports, panes, journal, search, keys, cheatsheet) also says its stderr line on the tmux message line, so display-popup -E no longer takes it away; --print unchanged. -->
+## Unreleased
+
+### Added
+
+- `kill --ask` looks before it asks. A shell at its prompt is refused with
+  no question, and anything else gets tmux's confirmation naming the program
+  and its pid. The `K` binding in `docs/tmux.conf.full.example` uses it.
+- `docs/how-to/which-key.md`: every key in the full example, the question
+  it answers, its `--help` line, and the tmux default it replaces.
+
+### Changed
+
+- Binding notes start `companion: ` rather than `custom: `. A note still
+  written `custom: ` is read as `companion: ` for one release, so an older
+  tmux.conf keeps its keys in the search and on the cheat sheet.
+- `[journal]` and `[usage]` are off until turned on, like every other
+  background task. `journal` says it's off rather than showing an empty day.
+- `DESIGN.md` and `BENCHMARKS.md` moved under `docs/`.
+
+### Fixed
+
+- A picker with nothing to show (`sessions idle`, `inbox`, `ports`, `panes`,
+  `journal`, `search`, `keys`, `cheatsheet`) also puts its line on the tmux
+  message line, so `display-popup -E` closing doesn't take it away. `--print`
+  is unchanged.
 
 ## 0.5.2 - 2026-09-28
 
@@ -14,7 +38,7 @@ can be taken off the mark.
 ### Added
 
 - `health`: why the health mark is up, one reason a line or `ok`. `health
-  ack` forgets the timers and segments that failed and prints each one so
+ack` forgets the timers and segments that failed and prints each one so
   the mark comes down when you've read it and not an hour later. It leaves
   what's still true and lists it as `still on the mark`: an edited
   `config.toml`, a newer binary, quiet hours or a network that's gone.
@@ -79,7 +103,7 @@ checkout.
   `[[layout.window]]`, or `layout = "name"` naming one of the reader's own.
   Its commands run only under a path `[project] trusted` lists; anywhere
   else the window names count and every command is blanked, and `project
-  show` says which happened. `config check` inside the checkout reads it.
+show` says which happened. `config check` inside the checkout reads it.
 
 - `pocket`: a shell that slides out beside the pane you're in, goes away
   into a window called `_pocket` on the second press, and comes back on the
@@ -217,7 +241,7 @@ remembers.
 - A click on the bar. The `agents` and `health` segments carry a
   `range=user|NAME` mark, the way tmux marks its own window list, so
   `bind -T root MouseDown1StatusRight run-shell "tmux-companion click
-  '#{mouse_status_range}'"` reaches `click` with the segment's name: the
+'#{mouse_status_range}'"` reaches `click` with the segment's name: the
   inbox for the count, the brief for the mark, or whatever
   `[[status.right.segments]] on_click` says. The other segments carry no
   mark, so the default side's output is byte for byte what it was.
@@ -657,11 +681,11 @@ it by accident while chasing an `M-a` bug.
   job's conditions and is what found it.
 
 - A broken config reached the person as `Connection reset by peer (os error
-  104)` instead of the name of the key that was wrong, on a machine loaded
+104)` instead of the name of the key that was wrong, on a machine loaded
   enough to lose a race. The daemon bound its socket before it parsed the
   config, so it was reachable for as long as the parse took: a client that
   connected inside that window was accepted and then dropped when the daemon
-  gave up, and the client only consulted the recorded error when the *connect*
+  gave up, and the client only consulted the recorded error when the _connect_
   had failed. The daemon parses before it binds now, so a refusal leaves no
   socket at all, and a connection that dies mid-request is explained by the
   daemon's own last words wherever it left any.
@@ -699,13 +723,13 @@ it by accident while chasing an `M-a` bug.
   publishing waits on the `release` environment so an admin approves first.
 - [docs/how-to/install.md](docs/how-to/install.md), covering all three ways in
   and how to remove it again.
-- [BENCHMARKS.md](BENCHMARKS.md) and `just bench`, which measure from inside a
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md) and `just bench`, which measure from inside a
   real tmux against the zsh this replaced: a key is pressed, tmux runs the
   binding, and the clock stops when the first row reaches the terminal. The bar
   is 3.0% of a core against 34.4%, and the pickers cost half the CPU while
   opening no faster, which is the number the old socket-side measurements could
   not see. The port's own before and after numbers move to
-  [BENCHMARKS-before-port.md](BENCHMARKS-before-port.md).
+  [docs/BENCHMARKS-before-port.md](docs/BENCHMARKS-before-port.md).
 
 - Panes in a layout window. `[[layout.window.pane]]` with a command, a cwd and
   a focus flag, under a `layout` naming one of tmux's five presets or carrying
@@ -829,7 +853,6 @@ it by accident while chasing an `M-a` bug.
   `--pane`, and the shipped bindings pass `#{pane_id}`.
 - `new-window` created its window in whichever session the server had used
   last, for the same reason. It targets its own session now.
-
 
 - `TMUX_COMPANION_SOCK` that is empty or too long for a unix socket address now
   exits 2 instead of warning and connecting to the default socket, which meant

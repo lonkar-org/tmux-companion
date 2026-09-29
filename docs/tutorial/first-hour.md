@@ -75,11 +75,11 @@ thing you type instead of `tmux`.
 sheet, and both show only the bindings that carry a note:
 
 ```tmux
-bind -N "custom: window new one here, or at any directory" c \
+bind -N "companion: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
 ```
 
-The word after `custom:` picks the box on the cheat sheet, one of `pane`,
+The word after `companion:` picks the box on the cheat sheet, one of `pane`,
 `window`, `session`, `project`, `go`, `copy`, `open`, `search`, `config` and
 `help`, and the rest of the note is what the row says. A binding without the
 note still works as a key and is invisible to both, so when your own bindings

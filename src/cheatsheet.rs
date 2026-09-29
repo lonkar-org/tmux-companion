@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::keys::KeyRow;
 
 /// The prefix every binding written by hand carries.
-pub const CUSTOM: &str = "custom: ";
+pub const COMPANION: &str = "companion: ";
 
 /// The four box titles, in reading order.
 pub const TITLES: [&str; 4] = [
@@ -27,7 +27,7 @@ pub const TITLES: [&str; 4] = [
     " Config and help ",
 ];
 
-/// Which box a note belongs in, from the word after `custom: `.
+/// Which box a note belongs in, from the word after `companion: `.
 ///
 /// Anything unrecognised goes in the last box rather than being dropped: a
 /// binding nobody categorised is still a binding, and an empty corner is a
@@ -47,7 +47,7 @@ pub fn box_for(note: &str) -> usize {
 pub struct Entry {
     /// How the chord is written.
     pub shown: String,
-    /// The note, with `custom: ` taken off.
+    /// The note, with `companion: ` taken off.
     pub note: String,
     /// How many times it has been picked.
     pub count: usize,
@@ -61,7 +61,7 @@ pub struct Entry {
 pub fn boxes(rows: &[KeyRow], usage: &HashMap<(String, String), usize>) -> [Vec<Entry>; 4] {
     let mut out: [Vec<Entry>; 4] = Default::default();
     for row in rows {
-        let Some(note) = row.note.strip_prefix(CUSTOM) else {
+        let Some(note) = row.note.strip_prefix(COMPANION) else {
             continue;
         };
         let count = usage
@@ -107,7 +107,7 @@ const MIN_PER_BOX: usize = 3;
 fn top_up(out: &mut [Vec<Entry>; 4], rows: &[KeyRow]) {
     let mut spare: [Vec<Entry>; 4] = Default::default();
     for row in rows {
-        if row.note.starts_with(CUSTOM) {
+        if row.note.starts_with(COMPANION) {
             continue;
         }
         let Some(box_index) = box_for_own(&row.note) else {
@@ -161,7 +161,7 @@ fn rank(note: &str) -> usize {
 /// Which box one of tmux's own notes belongs in, or `None` when it is not
 /// clearly any of them.
 ///
-/// tmux's notes are sentences rather than the `custom: group thing` shape, so
+/// tmux's notes are sentences rather than the `companion: group thing` shape, so
 /// this reads the words instead of the first one. Unmatched goes nowhere: the
 /// fourth box is for a binding somebody wrote and did not categorise, and
 /// filling it with tmux's leftovers would bury them.
@@ -277,7 +277,7 @@ mod tests {
         // empty boxes. They appear now, under the written ones and only where
         // a box would otherwise be nearly empty.
         let rows = vec![
-            row("prefix", "z", "prefix z", "custom: pane zoom"),
+            row("prefix", "z", "prefix z", "companion: pane zoom"),
             row("prefix", "!", "prefix !", "Break pane to a new window"),
         ];
         let b = boxes(&rows, &HashMap::new());
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn the_custom_prefix_is_taken_off_the_note() {
-        let rows = vec![row("prefix", "z", "prefix z", "custom: pane zoom")];
+        let rows = vec![row("prefix", "z", "prefix z", "companion: pane zoom")];
         let b = boxes(&rows, &HashMap::new());
         assert_eq!(b[0][0].note, "pane zoom");
     }
@@ -295,8 +295,8 @@ mod tests {
     #[test]
     fn the_keys_you_reach_for_come_first() {
         let rows = vec![
-            row("prefix", "a", "prefix a", "custom: pane aaa"),
-            row("prefix", "b", "prefix b", "custom: pane bbb"),
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
+            row("prefix", "b", "prefix b", "companion: pane bbb"),
         ];
         let usage = HashMap::from([(("prefix".to_string(), "b".to_string()), 7)]);
         let b = boxes(&rows, &usage);
@@ -314,13 +314,13 @@ mod tests {
                 "my-keys",
                 "O",
                 "copy-mode  g O",
-                "custom: open the selection",
+                "companion: open the selection",
             ),
             row(
                 "my-keys",
                 "o",
                 "copy-mode  g o",
-                "custom: open URL under the cursor",
+                "companion: open URL under the cursor",
             ),
         ];
         let b = boxes(&rows, &HashMap::new());
@@ -331,8 +331,8 @@ mod tests {
     #[test]
     fn unused_keys_are_alphabetical_so_the_sheet_reads_as_a_list() {
         let rows = vec![
-            row("prefix", "c", "prefix c", "custom: pane ccc"),
-            row("prefix", "a", "prefix a", "custom: pane aaa"),
+            row("prefix", "c", "prefix c", "companion: pane ccc"),
+            row("prefix", "a", "prefix a", "companion: pane aaa"),
         ];
         let b = boxes(&rows, &HashMap::new());
         assert_eq!(b[0][0].note, "pane aaa");
@@ -385,7 +385,7 @@ mod tests {
                     "prefix",
                     &i.to_string(),
                     &format!("prefix {i}"),
-                    &format!("custom: pane number {i}"),
+                    &format!("companion: pane number {i}"),
                 )
             })
             .collect();
@@ -413,7 +413,7 @@ mod tests {
             "prefix",
             "m",
             "prefix m",
-            "custom: pane a note that runs on and on and on past any sensible width",
+            "companion: pane a note that runs on and on and on past any sensible width",
         )];
         let sheet = render(&boxes(&rows, &HashMap::new()), 80, 30);
         let widths: Vec<usize> = sheet.lines().map(|l| l.chars().count()).collect();
@@ -456,7 +456,7 @@ mod top_up_tests {
         // line and three quarters of the sheet was blank, which reads as
         // broken rather than as sparse.
         let rows = vec![
-            row("prefix", "z", "custom: pane zoom this one"),
+            row("prefix", "z", "companion: pane zoom this one"),
             row("prefix", "%", "Split window horizontally"),
             row("prefix", "\"", "Split window vertically"),
             row("prefix", "!", "Break pane to a new window"),
@@ -477,9 +477,9 @@ mod top_up_tests {
     #[test]
     fn a_full_box_is_left_alone() {
         let rows = vec![
-            row("prefix", "a", "custom: pane one"),
-            row("prefix", "b", "custom: pane two"),
-            row("prefix", "c", "custom: pane three"),
+            row("prefix", "a", "companion: pane one"),
+            row("prefix", "b", "companion: pane two"),
+            row("prefix", "c", "companion: pane three"),
             row("prefix", "%", "Split window horizontally"),
         ];
         let boxes = boxes(&rows, &HashMap::new());
@@ -500,7 +500,7 @@ mod top_up_tests {
         // The fourth box is for a binding somebody wrote and did not
         // categorise. Filling it with tmux's unmatched notes would bury them.
         let rows = vec![
-            row("prefix", "a", "custom: something uncategorised"),
+            row("prefix", "a", "companion: something uncategorised"),
             row("prefix", "t", "Show a clock"),
             row("prefix", "~", "Show messages"),
         ];

@@ -25,12 +25,33 @@ daemon that is already warm.
   <a href="https://asciinema.org/a/1266213">https://asciinema.org/a/1266213</a>
 </p>
 
-Twenty four seconds of it: the project picker, a window opened somewhere else,
-a command pulled out of shell history, and zen. The chords are in the right
-hand column and every one of them was really pressed, so those are the real
-popups. The full recording behind that link runs four minutes and covers the
-rest, and it is worth watching there rather than here because you can pause it
-and it has a marker on every chapter.
+## What you get
+
+|                             |                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `status-right`              | git, bandwidth and battery in one call                                                                               |
+| `keys`                      | fuzzy search every binding, press enter to run it                                                                    |
+| `cheatsheet`                | the bindings you wrote, four boxes, most-used first                                                                  |
+| `project`                   | one session per project, sessions and your directory jumper in one list                                              |
+| `project save`              | capture this session's panes as the layout it reopens with                                                           |
+| `inbox`, `brief`, `journal` | the agents waiting on you and what each asked, a nudge when one waits too long, and what happened today              |
+| `sessions`                  | every session saved on a timer, and `sessions resurrect` brings them back after a reboot                             |
+| `panes`, `search`, `ports`  | jump to any pane, any line of any scrollback, or whatever's listening on that port                                   |
+| `pocket`, `zen`, `kill`     | a shell that slides out and back, everything but this pane out of the way, a hung program stopped with the pane kept |
+| `promote`, `note`, `quiet`  | a pane into a session of its own, a note on a pane, an hour with nothing nagging                                     |
+| `run`                       | pick from shell history, run it in a pane that slides out                                                            |
+| `open`                      | open the URL or `file:line:col` under your cursor                                                                    |
+| `theme pick`                | your themes with a swatch each, applied on the spot; `theme init` writes six to start                                |
+| `shell-init`                | the prompt marks tmux's `next-prompt` has waited for since 3.3                                                       |
+| `sh-jobs`                   | what's suspended under this pane, with your icons                                                                    |
+| `doctor`                    | everything a bug report needs, in one screen                                                                         |
+
+Background tasks, all of them off till you turn them on: fetching your repositories so
+ahead and behind mean something, sourcing tmux's config when it changes, naming
+windows after what's running in them, and saying when a long command finished
+somewhere you weren't looking.
+
+Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Try it first
 
@@ -41,59 +62,6 @@ docker run --rm -it lonkarorg/tmux-companion:playground
 tmux, the binary, five fake projects and a guided tour through the bindings, in
 a container that goes away when you leave it. Nothing is mounted from your
 machine. [docs/how-to/playground.md](docs/how-to/playground.md).
-
-## What it costs
-
-Measured from inside tmux on one machine, against the zsh this replaced, with
-the method beside the numbers in [BENCHMARKS.md](./BENCHMARKS.md).
-
-| | |
-| --- | --- |
-| the bar | 29.71 ms/s, 3.0% of a core |
-| the zsh bar it replaced | 344.01 ms/s, 34.4% of a core |
-| a picker, keypress to first row | 86 ms, and the zsh took 82 |
-| a picker, CPU per press | 33.3 ms, against 66.7 for the zsh |
-| the whole right side, computed | 1.43 ms |
-| one fork and exec, as tmux runs it | 13.07 ms |
-
-The picker rows are the honest part. Opening one is not faster: what a person
-waits through is `display-popup` at 21 ms, a process starting and a terminal
-painting, and none of that got cheaper. What halved is what it costs to do.
-
-## Why
-
-My tmux config shelled out for everything. The bar spawned five processes a
-second. Every binding that needed to think ran a zsh script that started a
-shell, read some config, called `fzf`, and exited. I'd built it that way over
-years, a script at a time, and never added it up.
-
-So there's one process now. It holds its caches, answers over a unix socket, and
-everything my tmux used to shell out for talks to it instead.
-
-I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts/ten-years-of-tmux/).
-
-## What you get
-
-| | |
-| --- | --- |
-| `status-right` | git, bandwidth and battery in one call |
-| `keys` | fuzzy search every binding, press enter to run it |
-| `cheatsheet` | the bindings you wrote, four boxes, most-used first |
-| `project` | one session per project, sessions and your directory jumper in one list |
-| `project save` | capture this session's panes as the layout it reopens with |
-| `run` | pick from shell history, run it in a pane that slides out |
-| `open` | open the URL or `file:line:col` under your cursor |
-| `theme pick` | your themes with a swatch each, applied on the spot; `theme init` writes six to start |
-| `shell-init` | the prompt marks tmux's `next-prompt` has waited for since 3.3 |
-| `sh-jobs` | what's suspended under this pane, with your icons |
-| `doctor` | everything a bug report needs, in one screen |
-
-Background tasks, all of them off till you turn them on: fetching your repositories so
-ahead and behind mean something, sourcing tmux's config when it changes, naming
-windows after what's running in them, and saying when a long command finished
-somewhere you weren't looking.
-
-Every flag: [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Install
 
@@ -133,6 +101,7 @@ All four paths, with the flags and how to remove it again, are in
 Then the way in, from a shell that is not in tmux yet:
 
 ```sh
+tmux-companion setup
 tmux-companion start
 ```
 
@@ -141,12 +110,6 @@ your jumper knows, and attaches to what you choose. `tmux` on its own leaves you
 a session called `0` with one bare shell, which is the thing this replaces.
 `start --last` goes back to whatever you were in without asking, and
 `start ~/src/thing` skips the picker.
-
-The jumper is zoxide by default and is not a requirement: `[project]
-dirs_source` also takes `z`, `cdr`, `ghq` or `none`, `dirs_command` takes
-anything else that prints paths, and with nothing installed at all you get live
-sessions and whatever you type. [docs/reference/configuration.md](docs/reference/configuration.md#where-the-directory-list-comes-from)
-has the table.
 
 One line in `tmux.conf` gets you the bar:
 
@@ -157,10 +120,10 @@ set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_cu
 That plus `set -g status-style bg=colour233,fg=colour251`, which the segments
 draw against. The file to copy first is
 [docs/tmux.conf.starter.example](docs/tmux.conf.starter.example): the bar and
-the eight bindings worth having on day one. The bar alone, as I run it, with the
-measurements behind each line, is [docs/tmux.conf.example](docs/tmux.conf.example),
-and every feature on, with what each costs, is
-[docs/tmux.conf.full.example](docs/tmux.conf.full.example).
+the eight bindings worth having on day one.
+
+Then [docs/tutorial/first-hour.md](docs/tutorial/first-hour.md) takes it from
+there, one step at a time.
 
 ## Configuration
 
@@ -201,27 +164,58 @@ Every setting with its default is in
   you want to scroll, down to the original eighteen. After that the palette is
   yours; it doesn't compete with catppuccin or rose-pine.
 
+## Why
+
+My tmux config shelled out for everything. The bar spawned five processes a
+second. Every binding that needed to think ran a zsh script that started a
+shell, read some config, called `fzf`, and exited. I'd built it that way over
+years, a script at a time, and never added it up.
+
+So there's one process now. It holds its caches, answers over a unix socket, and
+everything my tmux used to shell out for talks to it instead.
+
+I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts/ten-years-of-tmux/).
+
+## What it costs
+
+Measured from inside tmux on one machine, against the zsh this replaced, with
+the method beside the numbers in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+|                                    |                                   |
+| ---------------------------------- | --------------------------------- |
+| the bar                            | 29.71 ms/s, 3.0% of a core        |
+| the zsh bar it replaced            | 344.01 ms/s, 34.4% of a core      |
+| a picker, keypress to first row    | 86 ms, and the zsh took 82        |
+| a picker, CPU per press            | 33.3 ms, against 66.7 for the zsh |
+| the whole right side, computed     | 1.43 ms                           |
+| one fork and exec, as tmux runs it | 13.07 ms                          |
+
+The picker rows are the honest part. Opening one is not faster: what a person
+waits through is `display-popup` at 21 ms, a process starting and a terminal
+painting, and none of that got cheaper. What halved is what it costs to do.
+
 ## Documentation
 
-| | |
-| --- | --- |
-| [docs/reference/cli.md](docs/reference/cli.md) | every subcommand and flag |
-| [docs/reference/configuration.md](docs/reference/configuration.md) | the config file, and what it changes |
-| [docs/config.example.toml](docs/config.example.toml) | every setting with its default |
-| [docs/tmux.conf.example](docs/tmux.conf.example) | the bar I actually run |
-| [docs/tmux.conf.full.example](docs/tmux.conf.full.example) | every feature on, with what each costs |
-| [docs/how-to/playground.md](docs/how-to/playground.md) | a container to try it in, and the tour inside it |
-| [docs/how-to/install.md](docs/how-to/install.md) | the four ways in, and how to remove it |
-| [docs/how-to/themes.md](docs/how-to/themes.md) | where themes live, what one is, and the contrast they clear |
-| [docs/how-to/agents.md](docs/how-to/agents.md) | the skill that teaches a coding agent to share your tmux server |
-<!-- @Yogesh(gap): description for the which-key.md row, same shape as the rows around it -->
-| [docs/how-to/which-key.md](docs/how-to/which-key.md) | |
-| [docs/how-to/things-tmux-already-does.md](docs/how-to/things-tmux-already-does.md) | logging, menus, moving panes, one config across versions: tmux does these without a plugin |
-| [docs/reference/requirements.md](docs/reference/requirements.md) | tmux, fonts, platforms, Rust |
-| [DESIGN.md](DESIGN.md) | how the daemon and the protocol work |
-| [BENCHMARKS.md](BENCHMARKS.md) | what it costs, and how that was measured |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | build, test, lint, and what a patch needs |
-| [CHANGELOG.md](CHANGELOG.md) | what changed |
+|              |                                                                                    |                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| tutorial     | [docs/tutorial/first-hour.md](docs/tutorial/first-hour.md)                         | from nothing installed to a bar you can see and a picker you've pressed                    |
+| how-to       | [docs/how-to/playground.md](docs/how-to/playground.md)                             | a container to try it in, and the tour inside it                                           |
+| how-to       | [docs/how-to/install.md](docs/how-to/install.md)                                   | the four ways in, and how to remove it                                                     |
+| how-to       | [docs/how-to/themes.md](docs/how-to/themes.md)                                     | where themes live, what one is, and the contrast they clear                                |
+| how-to       | [docs/how-to/agents.md](docs/how-to/agents.md)                                     | the skill that teaches a coding agent to share your tmux server                            |
+| how-to       | [docs/how-to/which-key.md](docs/how-to/which-key.md)                               | list of key bindings that you could setup and what it could do for you                     |
+| how-to       | [docs/how-to/things-tmux-already-does.md](docs/how-to/things-tmux-already-does.md) | logging, menus, moving panes, one config across versions: tmux does these without a plugin |
+| reference    | [docs/reference/cli.md](docs/reference/cli.md)                                     | every subcommand and flag                                                                  |
+| reference    | [docs/reference/configuration.md](docs/reference/configuration.md)                 | the config file, and what it changes                                                       |
+| reference    | [docs/reference/requirements.md](docs/reference/requirements.md)                   | tmux, fonts, platforms, Rust                                                               |
+| example      | [docs/tmux.conf.starter.example](docs/tmux.conf.starter.example)                   | the bar and the eight bindings worth having on day one                                     |
+| example      | [docs/tmux.conf.example](docs/tmux.conf.example)                                   | the bar I actually run                                                                     |
+| example      | [docs/tmux.conf.full.example](docs/tmux.conf.full.example)                         | every feature on, with what each costs                                                     |
+| example      | [docs/config.example.toml](docs/config.example.toml)                               | every setting with its default                                                             |
+| explanation  | [docs/DESIGN.md](docs/DESIGN.md)                                                   | how the daemon and the protocol work                                                       |
+| explanation  | [docs/BENCHMARKS.md](docs/BENCHMARKS.md)                                           | what it costs, and how that was measured                                                   |
+| contributing | [CONTRIBUTING.md](CONTRIBUTING.md)                                                 | build, test, lint, and what a patch needs                                                  |
+| contributing | [CHANGELOG.md](CHANGELOG.md)                                                       | what changed                                                                               |
 
 ## Building
 
@@ -230,7 +224,7 @@ libraries.
 
 ```sh
 cargo build --release      # target/release/tmux-companion, about 4 MB
-cargo test                 # 639 unit, 22 integration, 5 end-to-end against a real tmux
+cargo test                 # 1179 unit, 32 integration, 45 end-to-end against a real tmux
 
 # on a machine somebody is using, keep off every core
 nice -n 15 cargo build --release -j 4

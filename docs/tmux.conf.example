@@ -7,7 +7,7 @@
 # jobs in), while the entire server-side computation for the whole right side is
 # under 10 ms.  Collapsing five calls into one is therefore the whole game.
 #
-# See BENCHMARKS.md for the measurements behind every claim here.
+# See docs/BENCHMARKS.md for the measurements behind every claim here.
 #
 # This is the bar as one laptop runs it, with the measurements behind each
 # line. It binds no keys. tmux.conf.starter.example is the one to copy first:

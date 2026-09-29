@@ -1123,13 +1123,13 @@ pub fn path_has_prefix(path: &str, prefix: &str, home: &str) -> bool {
 }
 
 /// The record of which bindings get used, which orders the cheat sheet.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct Usage {
     /// Whether to record anything at all.
     ///
-    /// It records what somebody presses, which is their business and not the
-    /// tool's, so turning it off is one line and nothing else changes.
+    /// Off until somebody turns it on: it records what they press, which is
+    /// their business and not the tool's.
     pub enabled: bool,
     /// Where the log lives. Empty means `$XDG_STATE_HOME/tmux-companion/`.
     pub path: Option<PathBuf>,
@@ -1185,15 +1185,6 @@ impl Default for Config {
             bar: Bar::default(),
             picker: PickerLayout::default(),
             open: Open::default(),
-        }
-    }
-}
-
-impl Default for Usage {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            path: None,
         }
     }
 }
@@ -1709,7 +1700,8 @@ impl AgentsShow {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Journal {
-    /// Whether the daemon writes it. One `list-panes` per `interval_secs`.
+    /// Whether the daemon writes it, off until turned on. One `list-panes`
+    /// per `interval_secs`.
     pub enabled: bool,
     /// Seconds between two looks at the pane list.
     pub interval_secs: u64,
@@ -1727,7 +1719,7 @@ pub struct Journal {
 impl Default for Journal {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             interval_secs: 5,
             min_secs: 60,
             agent_min_secs: 300,

@@ -201,7 +201,7 @@ pub enum Cmd {
         #[arg(long)]
         all: bool,
         /// Only bindings whose note or chord contains this
-        #[arg(long, default_value = "custom: ")]
+        #[arg(long, default_value = "companion: ")]
         query: String,
         /// Rebuild from tmux rather than using what the daemon holds
         #[arg(long)]
@@ -473,7 +473,6 @@ pub enum Cmd {
         /// The seconds between TERM and KILL
         #[arg(long, value_name = "SECS", default_value_t = crate::kill::DEFAULT_GRACE_SECS)]
         grace: u64,
-        // @Yogesh(word): --help line for kill --ask; the placeholder only says what it does
         /// Confirm in tmux by name and pid first
         #[arg(long)]
         ask: bool,
@@ -1339,7 +1338,7 @@ async fn run_keys(
 
 /// `keys --unused`: the bindings somebody wrote that the log has never seen.
 ///
-/// The scope is what the opening query selects, `custom: ` unless `--query`
+/// The scope is what the opening query selects, `companion: ` unless `--query`
 /// said otherwise, because a binding tmux ships is not one anybody wrote and
 /// so not one anybody would prune. That is also why the picker opens with no
 /// query and no ctrl-a hint: the rows it holds are already the whole answer.
@@ -1436,17 +1435,17 @@ async fn run_binding(
 /// Say so when no binding carries the note the pickers key on, and return
 /// whether that was the case.
 ///
-/// `keys` opens on `custom: ` and `cheatsheet` shows only rows with that
-/// prefix, so a tmux.conf whose bindings have no `-N "custom: ..."` note gets
+/// `keys` opens on `companion: ` and `cheatsheet` shows only rows with that
+/// prefix, so a tmux.conf whose bindings have no `-N "companion: ..."` note gets
 /// an empty picker or four empty boxes, and both look like the tool is broken
 /// rather than like the config is missing a word. One hint on stderr and exit
 /// 0: nothing failed, there is just nothing to show yet.
 async fn nothing_noted(rows: &[crate::keys::KeyRow], print: bool) -> bool {
-    if !crate::keys::filter(rows, "custom: ").is_empty() {
+    if !crate::keys::filter(rows, "companion: ").is_empty() {
         return false;
     }
     crate::picker::say_nothing_to_show(
-        "no bindings carry a -N \"custom: ...\" note; keys and cheatsheet list only those. \
+        "no bindings carry a -N \"companion: ...\" note; keys and cheatsheet list only those. \
          See docs/tmux.conf.starter.example",
         print,
     )

@@ -45,9 +45,9 @@ set -g window-status-separator       " "
 
 # ── Bindings ────────────────────────────────────────────────────────────────
 #
-# The `-N "custom: <group> ..."` note on each one is not decoration. `keys`
+# The `-N "companion: <group> ..."` note on each one is not decoration. `keys`
 # (the searchable key list) and `cheatsheet` show the bindings that carry it
-# and nothing else, and the word after `custom:` picks the cheat sheet box:
+# and nothing else, and the word after `companion:` picks the cheat sheet box:
 # pane, window, session, project, go, copy, open, search, config, help.
 # A binding without the note works as a key and is invisible to both.
 #
@@ -58,42 +58,42 @@ set -g window-status-separator       " "
 # Which project. Live sessions first, then the directories zoxide (or
 # `[project] dirs_source`) knows. Picking a directory builds its session from
 # `[[layout]]` in config.toml, or a plain shell when there is none.
-bind -N "custom: project pick a project" -n M-s \
+bind -N "companion: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
 
 # The next window in this session, wrapping at the end.
-bind -N "custom: project toggle the windows in this session" -n M-a \
+bind -N "companion: project toggle the windows in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
 # The flip between the two most recent windows, for a session with more than two.
-bind -N "custom: project flip to the last window" -n M-A \
+bind -N "companion: project flip to the last window" -n M-A \
   run-shell "tmux-companion toggle --last '#{session_name}'"
 
 # Every binding, searchable, and the same list as a cheat sheet.
-bind -N "custom: help search every key binding" ? \
+bind -N "companion: help search every key binding" ? \
   display-popup -E -w 80% -h 60% "tmux-companion keys"
-bind -N "custom: help cheat sheet of my bindings" C-c \
+bind -N "companion: help cheat sheet of my bindings" C-c \
   display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
 
 # tmux's own prefix+c, with a say in the directory: the query starts on this
 # pane's directory, so Enter is what prefix+c always did.
-bind -N "custom: window new one here, or at any directory" c \
+bind -N "companion: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
 
 # A command from shell history, run in a pane beside this one.
-bind -N "custom: window run a command from history" e \
+bind -N "companion: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
 
 # Every pane on the server, with what it runs and whether it has gone quiet;
 # enter jumps there. `--agents` narrows it to the coding agents.
-bind -N "custom: window jump to any pane" g \
+bind -N "companion: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
 # What the agents stopped to ask, oldest first; enter jumps to the one picked.
-bind -N "custom: project the agents waiting on you" M-g \
+bind -N "companion: project the agents waiting on you" M-g \
   display-popup -E -w 80% -h 70% "tmux-companion inbox"
 # One screen of what needs you: the waiting agents, the health reasons, the
 # idle sessions, the numbers. The same screen opens by itself on attach when
 # there is news, through the client-attached hook below.
-bind -N "custom: help what needs me" b \
+bind -N "companion: help what needs me" b \
   display-popup -E -w 70% -h 60% "tmux-companion brief"
 # A click on the right side of the bar: the agent count opens the inbox, the
 # health mark the brief. Needs `set -g mouse on`.
@@ -101,21 +101,21 @@ bind -T root MouseDown1StatusRight \
   run-shell "tmux-companion click '#{mouse_status_range}'"
 # What happened in each project today, newest first: what ran long, what the
 # agents asked, what opened and closed.
-bind -N "custom: help what happened today" J \
+bind -N "companion: help what happened today" J \
   display-popup -E -w 80% -h 70% "tmux-companion journal"
 # Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
 # `quiet` while it lasts.
-bind -N "custom: config quiet hours, no nagging for a while" Q \
+bind -N "companion: config quiet hours, no nagging for a while" Q \
   command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""
 
 # Everything but this pane goes: a zoom with other panes open, the status bar
 # with none.
-bind -N "custom: pane zen, everything but this one goes" z \
+bind -N "companion: pane zen, everything but this one goes" z \
   run-shell "tmux-companion zen --pane '#{pane_id}'"
 
 # Close this project cleanly, capturing its layout on the way out so it opens
 # with the same windows next time.
-bind -N "custom: session close this project cleanly" X \
+bind -N "companion: session close this project cleanly" X \
   confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion project close'"
 
 # ── Later ───────────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ bind -N "custom: session close this project cleanly" X \
 # per project, and this hook paints a new session in its project's colour.
 # With no themes on disk it does nothing and says nothing.
 #
-#   bind -N "custom: config pick a colour theme" C-t \
+#   bind -N "companion: config pick a colour theme" C-t \
 #     display-popup -E -w 70% -h 70% "tmux-companion theme pick"
 #   set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'"
 #

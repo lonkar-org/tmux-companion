@@ -1,54 +1,52 @@
-<!-- @Yogesh(gap): page title; the page maps each key to the question you'd press it for -->
-#
+# Keys for your answers
 
-<!-- @Yogesh(gap): opening, one or two lines: when a reader opens this page (several keys look alike: g, G, M-g and b all list things to jump to) -->
+This page recommends multiple key mappings that you can customise as per your liking.
+Some of them override default tmux bindings.
+If you think there are better alternatives for recommended keys happy to understand how.
 
-<!-- @Yogesh(gap): one line saying the keys are the ones docs/tmux.conf.full.example binds, and that "Help says" is the command's --help line -->
+All the keys are the ones that are in [docs/tmux.conf.full.example](../tmux.conf.full.example) bindings. The "Help says" is what you get on CLI with `--help` flag. You can use it with "companion: ..." in your bindings for easy search.
 
-<!-- @claude(note): the question cells are empty until you fill them; the table renders broken while the markers sit between rows, they come out with the answers -->
+| Key                   | Answers                                                                                                   | Description                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `prefix g`            | Which pane had the output I was looking at?                                                               | runs: `panes`<br>Every pane on the server, with what it runs and whether it has gone quiet; enter jumps there                                          |
+| `prefix G`            | Where's the agent working on X?                                                                           | runs: `panes --agents`<br>`--agents`: Only the panes running one of `[agents] programs`                                                                |
+| `prefix M-g`          | Which agents needs an answer from me?                                                                     | runs: `inbox`<br>The agents waiting on you, each with the question it asked; enter jumps there                                                         |
+| `prefix b`            | What's today's brief across projects?                                                                     | runs: `brief`<br>What needs you, on one screen: the agents waiting and what they asked, the health reasons, the sessions idle for days, the numbers    |
+| `prefix J`            | What did I do in the project day before yesterday?                                                        | runs: `journal`<br>What happened in each project: the commands that ran long, the questions the agents asked, the sessions opened and closed           |
+| `prefix /` \*         | Where did I saw "Hello World!"?                                                                           | runs: `search`<br>Every line of every pane's scrollback in every active session, newest first; enter goes to the pane and the line                     |
+| `prefix P`            | What was that lsof command again?                                                                         | runs: `ports`<br>The ports something is listening on and the pane that started each; enter jumps there                                                 |
+| `M-s`                 | Should I open a new window or session, technically its related to this project right?                     | runs: `project`<br>Switch to a project, or start one                                                                                                   |
+| `prefix c` \*         | I don't need session for this, I think a window is enough for now?                                        | runs: `new-window`<br>Open a new window, here or at any directory, from the directory picker                                                           |
+| `prefix @`            | Ah, Why didn't I move this to separate session?                                                           | runs: `promote`<br>Give a pane a session of its own, named for the directory it is in                                                                  |
+| `prefix e`            | Can I quickly run a command while editing file with less keystrokes as possible?                          | runs: `run`<br>Run a new or previous command from history in a pane beside this one                                                                    |
+| `prefix ?` \*         | What was that keymap again?                                                                               | runs: `keys`<br>Searchable key bindings                                                                                                                |
+| `prefix C-c`          | So which keys I have not yet CRISPR in my DNA?                                                            | runs: `cheatsheet`<br>A cheat sheet of the bindings you wrote, in four boxes                                                                           |
+| `prefix z` \*         | I have to focus here, how do I de clutter?                                                                | runs: `zen`<br>Clear everything but the pane you are working in                                                                                        |
+| ``prefix ` ``         | Do I have foldable pane?                                                                                  | runs: `pocket`<br>A shell that slides out beside this pane and is put away, process and scrollback kept, if you use the same key                       |
+| `prefix K`            | What's the PID for this, how do I stop it right now?                                                      | runs: `kill --ask`<br>Stop what runs in front in a pane: TERM, and KILL if it is still there after the grace                                           |
+| `prefix X`            | Done for the day, can all panes and windows in session be closed gracefully without lingering swap files? | runs: `project close`<br>Close this project by letting every window exit                                                                               |
+| `prefix S`            | Can it remember layout and sizes of the project?                                                          | runs: `project save`<br>Capture this session's windows and panes as this project's layout                                                              |
+| `prefix M-S`          | Will it can but can it forget it now?                                                                     | runs: `project forget`<br>Delete this project's saved layout and fall back to the config                                                               |
+| `prefix M-s`          | Maybe I need to save all sessions before running this?                                                    | runs: `sessions save`<br>Capture every session now, as a new generation                                                                                |
+| `prefix Q`            | Can the AI keep it quiet for sometime?                                                                    | runs: `quiet`<br>Quiet hours: no notifications, no nudges and no agent count on the bar for a while; the health mark says `quiet` instead              |
+| copy mode `o` \*      | IDEs do it with easy but can my terminal do it better?                                                    | runs: `open`<br>Open a URL or file found in text                                                                                                       |
+| copy mode `y`         | pbcopy or xclip?                                                                                          | runs: `clipboard`<br>Copy to the system clipboard, whatever this platform calls it                                                                     |
+| copy mode `C-p` `C-n` | Is there easy way to jump back terminal history?                                                          | runs: tmux's `previous-prompt` `next-prompt`<br>Needs `shell-init` in your shell: Print the shell code that emits the OSC 133 prompt marks             |
+| copy mode `g` \*      | I'm in copy mode, what can I do with this line?                                                           | runs: tmux's `display-menu`<br>A menu over `open` (o, O), `open -i` searches (s, S) and history top (g)                                                |
+| `M-a`                 | Can I hop between the editor and the agent without the prefix?                                            | runs: `toggle`<br>Move to the next window in this session, wrapping at the end                                                                         |
+| `M-A`                 | Which window was I just in?                                                                               | runs: `toggle --last`<br>Flip to the window this session was on before, tmux's own last-window, instead of the next one by index                       |
+| `prefix C-t`          | Can this project look different from the others at a glance?                                              | runs: `theme pick`<br>Pick a theme and apply it                                                                                                        |
+| click on the bar      | Can I just click the agent count instead of remembering a key?                                            | runs: `click`<br>What a mouse click on a segment of the bar does: bound to `MouseDown1StatusRight` with `#{mouse_status_range}`                        |
+| `prefix N`            | What was I doing in this pane again?                                                                      | runs: `note`<br>Leave a one-line note on a pane, shown by `panes` and in the pane border; with nothing to say it prints the note that is there         |
+| `prefix C-r`          | Laptop rebooted, where did all my sessions go?                                                            | runs: `sessions resurrect --merge`<br>Rebuild a server from a snapshot; `--merge`: Add the sessions that are missing instead of refusing a busy server |
+| `prefix C-i`          | Which sessions haven't I touched in days?                                                                 | runs: `sessions idle`<br>Sessions nobody is attached to that have been quiet for days; picking one runs `project close` on it                          |
+| `prefix M-/`          | Is there a tmux key for that already?                                                                     | runs: `keys --all`<br>Show every binding, including the ones tmux ships                                                                                |
 
-| Key | Runs | Help says | Answers |
-| --- | --- | --- | --- |
-<!-- @Yogesh(gap): question for g; it lists every pane, agents or not, with the last lines of each screen -->
-| `prefix g` | `panes` | Every pane on the server, with what it runs and whether it has gone quiet; enter jumps there | |
-<!-- @Yogesh(keep): question for G; in chat you picked "Where's the agent working on X?" -->
-| `prefix G` | `panes --agents` | `--agents`: Only the panes running one of `[agents] programs` | |
-<!-- @Yogesh(keep): question for M-g; in chat you picked "Who needs an answer from me?" -->
-| `prefix M-g` | `inbox` | The agents waiting on you, each with the question it asked; enter jumps there | |
-<!-- @Yogesh(gap): question for b; it's the inbox plus health reasons, idle sessions and numbers, and it opens itself on attach when there's news -->
-| `prefix b` | `brief` | What needs you, on one screen: the agents waiting and what they asked, the health reasons, the sessions idle for days, the numbers | |
-<!-- @Yogesh(gap): question for J; it looks back over the day rather than at now -->
-| `prefix J` | `journal` | What happened in each project: the commands that ran long, the questions the agents asked, the sessions opened and closed | |
-<!-- @Yogesh(gap): question for /; it searches every pane, where tmux's own copy-mode search stays in one -->
-| `prefix /` | `search` | Every line of every pane's scrollback, newest first; enter goes to the pane and the line | |
-<!-- @Yogesh(gap): question for P; the "address already in use" moment -->
-| `prefix P` | `ports` | The ports something is listening on and the pane that started each; enter jumps there | |
-<!-- @Yogesh(gap): question for M-s; a whole project session, against c which is one window -->
-| `M-s` | `project` | Switch to a project, or start one | |
-<!-- @Yogesh(gap): question for c; a window in this session at any directory -->
-| `prefix c` | `new-window` | Open a new window, here or at any directory, from the directory picker | |
-<!-- @Yogesh(gap): question for e -->
-| `prefix e` | `run` | Run a command from history in a pane beside this one | |
-<!-- @Yogesh(gap): question for ?; it searches and runs, against C-c which only shows -->
-| `prefix ?` | `keys` | Searchable key bindings | |
-<!-- @Yogesh(gap): question for C-c -->
-| `prefix C-c` | `cheatsheet` | A cheat sheet of the bindings you wrote, in four boxes | |
-<!-- @Yogesh(gap): question for z; zoom with other panes, the status bar when alone -->
-| `prefix z` | `zen` | Clear everything but the pane you are working in | |
-<!-- @Yogesh(gap): question for `; the pane comes back with its process and scrollback -->
-| ``prefix ` `` | `pocket` | A shell that slides out beside this pane and is put away, process and scrollback kept, by the same key | |
-<!-- @Yogesh(gap): question for @; refused when the pane's directory names the session it's already in, which is the message you hit today -->
-| `prefix @` | `promote` | Give a pane a session of its own, named for the directory it is in | |
-<!-- @Yogesh(gap): question for K; against tmux's kill-pane on x, the scrollback stays -->
-| `prefix K` | `kill` | Stop what runs in front in a pane: TERM, and KILL if it is still there after the grace | |
-<!-- @Yogesh(gap): question for X; quits nvim properly so no swap files are left -->
-| `prefix X` | `project close` | Close this project by letting every window exit | |
-<!-- @Yogesh(gap): question for S and M-S together? S pins this session's shape as the project's layout, M-S puts [[layout]] back in charge -->
-| `prefix S` | `project save` | Capture this session's windows and panes as this project's layout | |
-| `prefix M-S` | `project forget` | Delete this project's saved layout and fall back to the config | |
-<!-- @Yogesh(gap): question for prefix M-s; every session on the server, where S is one project's shape -->
-| `prefix M-s` | `sessions save` | Capture every session now, as a new generation | |
-<!-- @Yogesh(gap): question for Q -->
-| `prefix Q` | `quiet` | Quiet hours: no notifications, no nudges and no agent count on the bar for a while; the health mark says `quiet` instead | |
-<!-- @Yogesh(gap): question for copy-mode o -->
-| copy mode `o` | `open` | Open a URL or file found in text | |
+\* replaces a tmux default:
+
+- `prefix /`: describe a key (`list-keys -1N`)
+- `prefix c`: `new-window`
+- `prefix ?`: `list-keys -N`
+- `prefix z`: zoom (`resize-pane -Z`)
+- copy mode `o`: `other-end` of the selection
+- copy mode `g`: `history-top`, which the menu's own `g` still does

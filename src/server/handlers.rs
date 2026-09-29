@@ -165,7 +165,7 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         }
         // Diagnostics.  Not clap subcommands users are expected to reach for;
         // `noop` prices a bare client round trip and `__rusage` is how
-        // BENCHMARKS.md measures per-call server CPU.
+        // docs/BENCHMARKS.md measures per-call server CPU.
         "keys" => match req.parse_args::<crate::proto::KeysArgs>() {
             Ok(a) => keys(&a, &state).await,
             Err(e) => Err(e),
@@ -565,7 +565,7 @@ async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
 /// This exists because nothing outside the process can measure per-call server
 /// CPU at the resolution the question needs: `top` quantises to 10 ms and `ps`
 /// to a whole second, while a status bar segment costs single-digit
-/// milliseconds.  See BENCHMARKS.md.
+/// milliseconds.  See docs/BENCHMARKS.md.
 fn rusage_line() -> anyhow::Result<String> {
     use nix::sys::resource::{UsageWho, getrusage};
 

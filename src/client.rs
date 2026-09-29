@@ -15,7 +15,7 @@ const SUN_PATH_MAX: usize = 103;
 /// that exits.
 pub fn resolve_sock_path(override_: Option<&std::ffi::OsStr>, uid: u32) -> Result<PathBuf, String> {
     // `TMUX_COMPANION_SOCK` puts a server beside the live one -- what the
-    // measurements in BENCHMARKS.md use, so a benchmark run never touches the
+    // measurements in docs/BENCHMARKS.md use, so a benchmark run never touches the
     // status bar the user is actually looking at.
     if let Some(p) = override_ {
         if p.is_empty() {

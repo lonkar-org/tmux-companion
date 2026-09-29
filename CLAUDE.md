@@ -251,6 +251,14 @@ just plugin-check              # is the skill ahead of its last tag?
 just plugin-release 0.3.0      # bump both manifests, validate, commit, tag, push
 ```
 
+## The changelog
+
+`CHANGELOG.md` has an `## Unreleased` section at the top, and a change adds
+its line there in the same commit, under Added, Changed or Fixed. When a
+release is cut the section becomes `## x.y.z - date` and gets a prelude first:
+a line or two on what matters in it, not a list of everything, so somebody who
+reads only that knows whether to upgrade.
+
 ## Adding a new command
 
 A command is not a segment: it does something to tmux rather than returning

@@ -247,12 +247,9 @@ pub async fn stop_process(pid: u32, name: &str, grace: Duration, pane: Option<&s
 fn refusal(verdict: &Verdict, id: &str) -> Option<String> {
     match verdict {
         Verdict::Nothing => Some(format!("nothing is running in {id}")),
-        Verdict::OnlyTheShell(shell) => {
-            // @Yogesh(word): message when --ask finds only the shell at its prompt; has {shell} and {id}
-            Some(format!(
-                "only {shell} is running in {id}, and kill-pane is the key for that"
-            ))
-        }
+        Verdict::OnlyTheShell(shell) => Some(format!(
+            "only {shell} is running in {id}, and kill-pane is the key for that"
+        )),
         Verdict::Group { .. } => None,
     }
 }
@@ -297,7 +294,6 @@ pub fn ask(verdict: &Verdict, id: &str) -> Ask {
 /// doubled so tmux prints it rather than reading a format from it.
 pub fn confirm_prompt(name: &str, pid: i32) -> String {
     let name = escape_format(name);
-    // @Yogesh(word): confirm prompt text for --ask; has {name} and {pid}
     format!("{name} {pid} (y/n)")
 }
 

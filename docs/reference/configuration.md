@@ -59,34 +59,34 @@ setting can't exist without being written down.
 The top-level tables, in the order the example file has them, and where each
 one is explained on this page:
 
-| Table | Decides | Section |
-| --- | --- | --- |
-| `[general]` | where the daemon's log goes | [The daemon's log](#the-daemons-log) |
-| `[dirs.aliases]` | a label for a long path in the window segment | [Labels for long paths](#labels-for-long-paths) |
-| `[git]`, `[[git.branch_types]]`, `[git.autofetch]` | what the git segment shows, the glyph per branch prefix, fetching | [Choosing what the git segment shows](#choosing-what-the-git-segment-shows) |
-| `[network]` | the bandwidth segment's threshold and colours | [Bandwidth and battery](#bandwidth-and-battery) |
-| `[battery]` | how long a battery reading stays fresh | [Bandwidth and battery](#bandwidth-and-battery) |
-| `[glyphs]`, `[glyphs.icons]` | the icon preset and single-icon overrides | [Glyphs](#glyphs-if-your-bar-is-a-row-of-boxes) |
-| `[status.right]`, `[[status.right.segments]]` | which segments the right side draws, and the separators | [Building the right-hand side](#building-the-right-hand-side) |
-| `[sh_jobs]`, `[[sh_jobs.job]]` | the icon per process under a pane, and its window name | [Jobs under a pane](#jobs-under-a-pane) |
-| `[usage]` | whether picked bindings are recorded | [The usage log](#the-usage-log) |
-| `[project]`, `[[project.override]]` | the directory source, the visit command, which layout | [Where the directory list comes from](#where-the-directory-list-comes-from) |
-| `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with | [What a new project session starts with](#what-a-new-project-session-starts-with) |
-| `[notify]` | announcing a long command that finished out of sight | [Saying a long command finished](#saying-a-long-command-finished) |
-| `[journal]` | what ran long, what the agents asked, what opened and closed | [The journal](#the-journal) |
-| `[online]` | asking whether the network is there, for the health mark | [Saying the network is gone](#saying-the-network-is-gone) |
-| `[agents]` | which programs are coding agents, and when one counts as waiting | [Which programs are agents](#which-programs-are-agents) |
-| `[window_names]` | naming a window after what runs in it | [Naming windows after what is running](#naming-windows-after-what-is-running) |
-| `[autoreload]` | sourcing tmux's config when it changes | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
-| `[autosave]` | deprecated; the older, narrower `[sessions]` | [Saving every session](#saving-every-session) |
-| `[sessions]` | snapshots of the whole server, kept in generations | [Saving every session](#saving-every-session) |
-| `[[restore.program]]` | what a restore is allowed to run in a pane | [What a restore may run](#what-a-restore-may-run) |
-| `[run]` | where `run` reads history from, and the pane it opens | [The pane a command runs in](#the-pane-a-command-runs-in) |
-| `[clipboard]` | the command a copy is piped into | [Copying to the clipboard](#copying-to-the-clipboard) |
-| `[theme]`, `[theme.namespace]` | the theme a session gets before anybody picked one | [The theme a session gets](#the-theme-a-session-gets) |
-| `[bar]` | the background the segments draw against | [The bar's own background](#the-bars-own-background) |
-| `[picker]`, `[picker.<name>]` | how every picker is laid out, and one picker's exceptions | [How the pickers are drawn](#how-the-pickers-are-drawn) |
-| `[open]`, `[[open.application]]` | what `open` does with a file, and what `open --choose` offers | [What open does with a file](#what-open-does-with-a-file) |
+| Table                                                       | Decides                                                           | Section                                                                            |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `[general]`                                                 | where the daemon's log goes                                       | [The daemon's log](#the-daemons-log)                                               |
+| `[dirs.aliases]`                                            | a label for a long path in the window segment                     | [Labels for long paths](#labels-for-long-paths)                                    |
+| `[git]`, `[[git.branch_types]]`, `[git.autofetch]`          | what the git segment shows, the glyph per branch prefix, fetching | [Choosing what the git segment shows](#choosing-what-the-git-segment-shows)        |
+| `[network]`                                                 | the bandwidth segment's threshold and colours                     | [Bandwidth and battery](#bandwidth-and-battery)                                    |
+| `[battery]`                                                 | how long a battery reading stays fresh                            | [Bandwidth and battery](#bandwidth-and-battery)                                    |
+| `[glyphs]`, `[glyphs.icons]`                                | the icon preset and single-icon overrides                         | [Glyphs](#glyphs-if-your-bar-is-a-row-of-boxes)                                    |
+| `[status.right]`, `[[status.right.segments]]`               | which segments the right side draws, and the separators           | [Building the right-hand side](#building-the-right-hand-side)                      |
+| `[sh_jobs]`, `[[sh_jobs.job]]`                              | the icon per process under a pane, and its window name            | [Jobs under a pane](#jobs-under-a-pane)                                            |
+| `[usage]`                                                   | whether picked bindings are recorded                              | [The usage log](#the-usage-log)                                                    |
+| `[project]`, `[[project.override]]`                         | the directory source, the visit command, which layout             | [Where the directory list comes from](#where-the-directory-list-comes-from)        |
+| `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with                     | [What a new project session starts with](#what-a-new-project-session-starts-with)  |
+| `[notify]`                                                  | announcing a long command that finished out of sight              | [Saying a long command finished](#saying-a-long-command-finished)                  |
+| `[journal]`                                                 | what ran long, what the agents asked, what opened and closed      | [The journal](#the-journal)                                                        |
+| `[online]`                                                  | asking whether the network is there, for the health mark          | [Saying the network is gone](#saying-the-network-is-gone)                          |
+| `[agents]`                                                  | which programs are coding agents, and when one counts as waiting  | [Which programs are agents](#which-programs-are-agents)                            |
+| `[window_names]`                                            | naming a window after what runs in it                             | [Naming windows after what is running](#naming-windows-after-what-is-running)      |
+| `[autoreload]`                                              | sourcing tmux's config when it changes                            | [Reloading tmux's config when it changes](#reloading-tmuxs-config-when-it-changes) |
+| `[autosave]`                                                | deprecated; the older, narrower `[sessions]`                      | [Saving every session](#saving-every-session)                                      |
+| `[sessions]`                                                | snapshots of the whole server, kept in generations                | [Saving every session](#saving-every-session)                                      |
+| `[[restore.program]]`                                       | what a restore is allowed to run in a pane                        | [What a restore may run](#what-a-restore-may-run)                                  |
+| `[run]`                                                     | where `run` reads history from, and the pane it opens             | [The pane a command runs in](#the-pane-a-command-runs-in)                          |
+| `[clipboard]`                                               | the command a copy is piped into                                  | [Copying to the clipboard](#copying-to-the-clipboard)                              |
+| `[theme]`, `[theme.namespace]`                              | the theme a session gets before anybody picked one                | [The theme a session gets](#the-theme-a-session-gets)                              |
+| `[bar]`                                                     | the background the segments draw against                          | [The bar's own background](#the-bars-own-background)                               |
+| `[picker]`, `[picker.<name>]`                               | how every picker is laid out, and one picker's exceptions         | [How the pickers are drawn](#how-the-pickers-are-drawn)                            |
+| `[open]`, `[[open.application]]`                            | what `open` does with a file, and what `open --choose` offers     | [What open does with a file](#what-open-does-with-a-file)                          |
 
 There are no tmux user options. A mapping of this tree onto `@` options would
 cost a `show-options` round trip per option per render, and would produce
@@ -157,8 +157,9 @@ path = "~/.local/state/tmux-companion/keys-usage.tsv"
 
 Which bindings get picked, so the cheat sheet can order each box by it and the
 keys you reach for float to the top of their group. It records what you press,
-which is your business and not the tool's, so turning it off is one line and
-nothing else changes. `path` unset means `$XDG_STATE_HOME/tmux-companion/`.
+which is your business and not the tool's, it's off by default so you can set it
+to false or remove the section.
+`path` unset means `$XDG_STATE_HOME/tmux-companion/`.
 
 ## Glyphs, if your bar is a row of boxes
 
@@ -317,7 +318,7 @@ one pid means enumerating the whole process table, which measured 16.25 ms of
 server CPU per call. Bind it to a key, or put it on the bar knowing what it
 costs.
 
-### Fetching in the background
+## Fetching in the background
 
 The ahead and behind counts are only as fresh as your last fetch, and a bar
 saying "up to date" because nothing has fetched in a week is worse than a bar
@@ -349,7 +350,7 @@ The plugin this comes from is
 [thepante/tmux-git-autofetch](https://github.com/thepante/tmux-git-autofetch).
 It's alive and it's worth installing if you aren't running this.
 
-### Saying a long command finished
+## Saying a long command finished
 
 ```toml
 [notify]
@@ -392,7 +393,7 @@ long any of it had already been going.
 The plugin this comes from is
 [rickstaa/tmux-notify](https://github.com/rickstaa/tmux-notify).
 
-### The journal
+## The journal
 
 ```toml
 [journal]
@@ -401,6 +402,9 @@ interval_secs = 5
 min_secs = 60
 agent_min_secs = 300
 ```
+
+The journal is off by default it needs to be explicitly turned on by setting
+enabled to true.
 
 The daemon writes down what it sees: a command that ran past `min_secs` and
 finished, with how long it took; an agent that stopped and what it asked; an
@@ -411,7 +415,7 @@ through its hooks ever says; a project opened or closed. `tmux-companion journal
 in `journal.tsv` in the state directory and rotates past a megabyte. Programs
 in `[notify] ignore` aren't runs worth a line either.
 
-### Saying the network is gone
+## Saying the network is gone
 
 ```toml
 [online]
@@ -444,7 +448,7 @@ The plugin this comes from is
 [tmux-plugins/tmux-online-status](https://github.com/tmux-plugins/tmux-online-status),
 which ran `ping` from a `#()` and was last pushed in September 2023.
 
-### Which programs are agents
+## Which programs are agents
 
 ```toml
 [agents]
@@ -543,7 +547,7 @@ separator_before = " "
 That draws `4 agents · 1 waiting`, with the second half coloured, and nothing
 when no agent is running, so the separator goes with it.
 
-### Naming windows after what is running
+## Naming windows after what is running
 
 ```toml
 [window_names]
@@ -575,7 +579,7 @@ which is a Python daemon, and
 [joshmedeski/tmux-nerd-font-window-name](https://github.com/joshmedeski/tmux-nerd-font-window-name)
 for the icon half.
 
-### Reloading tmux's config when it changes
+## Reloading tmux's config when it changes
 
 ```toml
 [autoreload]
@@ -743,13 +747,13 @@ and then repaints, and that looks broken on every single session start.
 The project picker lists live sessions and then directories, and zoxide is the
 default source rather than a requirement. `[project] dirs_source` picks another:
 
-| Name | What it reads | Order |
-| --- | --- | --- |
-| `zoxide` | `zoxide query -l` | frecency, zoxide's own |
-| `z` | the `~/.z` database, honouring `$_Z_DATA` | rank, highest first |
-| `cdr` | zsh's `~/.chpwd-recent-dirs`, honouring `$ZDOTDIR` | most recent first |
-| `ghq` | `ghq list -p` | ghq's own |
-| `none` | nothing | none |
+| Name     | What it reads                                      | Order                  |
+| -------- | -------------------------------------------------- | ---------------------- |
+| `zoxide` | `zoxide query -l`                                  | frecency, zoxide's own |
+| `z`      | the `~/.z` database, honouring `$_Z_DATA`          | rank, highest first    |
+| `cdr`    | zsh's `~/.chpwd-recent-dirs`, honouring `$ZDOTDIR` | most recent first      |
+| `ghq`    | `ghq list -p`                                      | ghq's own              |
+| `none`   | nothing                                            | none                   |
 
 `z` and `cdr` are read as files rather than run as commands, because both are
 shell functions. Spawning `zsh -ic 'z -l'` to reach one sources a whole
@@ -841,12 +845,12 @@ instead of hidden behind a word.
 What it costs, measured on one laptop with 7 sessions and 14 panes, with the
 40-pane column extrapolated from that rate rather than measured:
 
-| `interval_secs` | 14 panes | 40 panes | what `keep = 20` spans |
-| --- | --- | --- | --- |
-| 900, the default | 0.015% | 0.04% | 5 hours |
-| 60 | 0.2% | 0.6% | 20 minutes |
-| 10 | 1.3% | 3.7% | 200 seconds |
-| 10, no history | 0.01% | 0.03% | 200 seconds |
+| `interval_secs`  | 14 panes | 40 panes | what `keep = 20` spans |
+| ---------------- | -------- | -------- | ---------------------- |
+| 900, the default | 0.015%   | 0.04%    | 5 hours                |
+| 60               | 0.2%     | 0.6%     | 20 minutes             |
+| 10               | 1.3%     | 3.7%     | 200 seconds            |
+| 10, no history   | 0.01%    | 0.03%    | 200 seconds            |
 
 That last column is the one nobody expects. Generations are counted, not
 timed, so a ten-second interval with the default `keep` holds under four

@@ -251,6 +251,13 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
     let all = read_all();
     let mut events = select(&all, since, project.as_deref());
     events.reverse();
+    if events.is_empty() && !config.journal.enabled {
+        // Off by default, so an empty list on a fresh install is this and not
+        // a quiet day.
+        let text = "the journal is off: [journal] enabled = true turns it on";
+        crate::picker::say_nothing_to_show(text, print).await;
+        return Ok(());
+    }
     if events.is_empty() {
         let text = format!(
             "nothing in the journal for the last {} day{}{}",

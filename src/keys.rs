@@ -41,6 +41,18 @@ pub struct KeyRow {
     pub command: String,
 }
 
+/// The prefix notes carried before `companion: `, read for one release.
+pub const OLD_PREFIX: &str = "custom: ";
+
+/// A note in the old `custom: ` shape, read as `companion: ` so a tmux.conf
+/// written before the rename still fills the key search and the cheat sheet.
+pub fn with_current_prefix(note: &str) -> String {
+    match note.strip_prefix(OLD_PREFIX) {
+        Some(rest) => format!("{}{rest}", crate::cheatsheet::COMPANION),
+        None => note.to_string(),
+    }
+}
+
 /// Parse a `list-keys -N -T <table>` listing into key-to-note.
 ///
 /// Two shapes come back. The prefix table is padded into columns, so the note
@@ -59,7 +71,7 @@ pub fn parse_notes(listing: &str) -> HashMap<String, String> {
             if let Some(key) = chord.split_whitespace().next_back()
                 && !note.is_empty()
             {
-                out.insert(key.to_string(), note.to_string());
+                out.insert(key.to_string(), with_current_prefix(note));
             }
             continue;
         }
@@ -69,7 +81,7 @@ pub fn parse_notes(listing: &str) -> HashMap<String, String> {
         if let Some(key) = key
             && !note.is_empty()
         {
-            out.insert(key.to_string(), note.join(" "));
+            out.insert(key.to_string(), with_current_prefix(&note.join(" ")));
         }
     }
     out
@@ -170,7 +182,7 @@ pub fn sort_and_dedupe(mut rows: Vec<KeyRow>) -> Vec<KeyRow> {
 
 /// The rows a query selects, by substring over the note and the chord.
 ///
-/// The default query is `custom: ` because every binding written in tmux.conf
+/// The default query is `companion: ` because every binding written in tmux.conf
 /// carries a note starting that way, and tmux's hundred noted defaults would
 /// otherwise bury the thirty-six that are somebody's own.
 pub fn filter<'a>(rows: &'a [KeyRow], query: &str) -> Vec<&'a KeyRow> {
@@ -396,7 +408,7 @@ mod tests {
 C-b Space   Select next layout
 C-b !       Break pane to a new window
 C-b \"       Split window vertically
-C-b ?       custom: search key bindings
+C-b ?       companion: search key bindings
 ";
 
     /// Real `list-keys -T prefix` output.
@@ -409,6 +421,27 @@ bind-key    -T prefix M-x     display-popup -E something
 ";
 
     #[test]
+    fn a_note_in_the_old_shape_reads_as_companion() {
+        assert_eq!(
+            with_current_prefix("custom: pane zoom"),
+            "companion: pane zoom"
+        );
+        assert_eq!(
+            with_current_prefix("companion: pane zoom"),
+            "companion: pane zoom"
+        );
+        assert_eq!(
+            with_current_prefix("Select the next pane"),
+            "Select the next pane"
+        );
+        let notes = parse_notes("C-b z       custom: pane zoom\n");
+        assert_eq!(
+            notes.get("z").map(String::as_str),
+            Some("companion: pane zoom")
+        );
+    }
+
+    #[test]
     fn a_padded_note_listing_gives_the_last_word_of_the_chord() {
         let notes = parse_notes(NOTES_PREFIX);
         assert_eq!(
@@ -417,7 +450,7 @@ bind-key    -T prefix M-x     display-popup -E something
         );
         assert_eq!(
             notes.get("?").map(String::as_str),
-            Some("custom: search key bindings")
+            Some("companion: search key bindings")
         );
     }
 
@@ -478,7 +511,7 @@ bind-key    -T prefix M-x     display-popup -E something
             .expect("the keys binding");
         assert_eq!(row.command, "run-shell -b keys.zsh");
         assert_eq!(row.shown, "prefix ?");
-        assert_eq!(row.note, "custom: search key bindings");
+        assert_eq!(row.note, "companion: search key bindings");
     }
 
     #[test]
@@ -502,17 +535,17 @@ bind-key    -T prefix M-x     display-popup -E something
     #[test]
     fn rows_are_ordered_by_what_they_do_not_by_which_key() {
         let rows = sort_and_dedupe(vec![
-            row("prefix", "z", "custom: zoom"),
-            row("prefix", "a", "custom: attach"),
+            row("prefix", "z", "companion: zoom"),
+            row("prefix", "a", "companion: attach"),
         ]);
-        assert_eq!(rows[0].note, "custom: attach");
+        assert_eq!(rows[0].note, "companion: attach");
     }
 
     #[test]
     fn the_same_key_in_the_same_table_appears_once() {
         let rows = sort_and_dedupe(vec![
-            row("prefix", "a", "custom: attach"),
-            row("prefix", "a", "custom: attach again"),
+            row("prefix", "a", "companion: attach"),
+            row("prefix", "a", "companion: attach again"),
         ]);
         assert_eq!(rows.len(), 1);
     }
@@ -520,8 +553,8 @@ bind-key    -T prefix M-x     display-popup -E something
     #[test]
     fn the_same_key_in_two_tables_is_two_rows() {
         let rows = sort_and_dedupe(vec![
-            row("prefix", "a", "custom: one"),
-            row("root", "a", "custom: two"),
+            row("prefix", "a", "companion: one"),
+            row("root", "a", "companion: two"),
         ]);
         assert_eq!(rows.len(), 2);
     }
@@ -529,10 +562,10 @@ bind-key    -T prefix M-x     display-popup -E something
     #[test]
     fn the_default_query_keeps_only_the_bindings_somebody_wrote() {
         let rows = vec![
-            row("prefix", "a", "custom: attach"),
+            row("prefix", "a", "companion: attach"),
             row("prefix", "b", "Break pane to a new window"),
         ];
-        let found = filter(&rows, "custom: ");
+        let found = filter(&rows, "companion: ");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "a");
     }
@@ -540,7 +573,7 @@ bind-key    -T prefix M-x     display-popup -E something
     #[test]
     fn an_empty_query_shows_tmuxs_own_bindings_too() {
         let rows = vec![
-            row("prefix", "a", "custom: attach"),
+            row("prefix", "a", "companion: attach"),
             row("prefix", "b", "Break pane to a new window"),
         ];
         assert_eq!(filter(&rows, "").len(), 2);
@@ -563,9 +596,9 @@ bind-key    -T prefix M-x     display-popup -E something
     #[test]
     fn unused_keeps_the_rows_with_no_press_in_the_order_given() {
         let rows = vec![
-            row("prefix", "z", "custom: zoom"),
-            row("prefix", "a", "custom: attach"),
-            row("root", "M-s", "custom: sessions"),
+            row("prefix", "z", "companion: zoom"),
+            row("prefix", "a", "companion: attach"),
+            row("root", "M-s", "companion: sessions"),
         ];
         let counts = usage_counts("prefix\ta\nprefix\ta\n");
         let never: Vec<&str> = unused(&rows, &counts)
@@ -577,7 +610,7 @@ bind-key    -T prefix M-x     display-popup -E something
 
     #[test]
     fn unused_with_no_log_is_every_row() {
-        let rows = vec![row("prefix", "a", "custom: attach")];
+        let rows = vec![row("prefix", "a", "companion: attach")];
         assert_eq!(unused(&rows, &HashMap::new()).len(), 1);
     }
 
@@ -586,8 +619,8 @@ bind-key    -T prefix M-x     display-popup -E something
         // The same key bound in two tables is two bindings, and the log says
         // which one was picked.
         let rows = vec![
-            row("prefix", "a", "custom: one"),
-            row("root", "a", "custom: two"),
+            row("prefix", "a", "companion: one"),
+            row("root", "a", "companion: two"),
         ];
         let counts = usage_counts("root\ta\n");
         let never = unused(&rows, &counts);
@@ -601,7 +634,7 @@ bind-key    -T prefix M-x     display-popup -E something
         // held `C-A` or `^a` for a row spelled `C-a`. A line like that is not
         // evidence the binding was pressed, and folding it in would hide the
         // one row this listing exists to show.
-        let rows = vec![row("root", "C-a", "custom: last window")];
+        let rows = vec![row("root", "C-a", "companion: last window")];
         for spelling in ["C-A", "^a", "c-a"] {
             let counts = usage_counts(&format!("root\t{spelling}\n"));
             assert_eq!(

@@ -6,8 +6,8 @@
 # costs, so you're choosing with the number in front of you rather than after
 # your fans come on.
 #
-# Measurements are from BENCHMARKS.md, and the five-call figure from
-# BENCHMARKS-before-port.md, both taken on one machine. Yours won't match the
+# Measurements are from docs/BENCHMARKS.md, and the five-call figure from
+# docs/BENCHMARKS-before-port.md, both taken on one machine. Yours won't match the
 # absolute numbers and will match the shape.
 #
 #   each extra #() on the bar        14.6 ms of CPU per second per client
@@ -25,6 +25,8 @@
 #   prefix z         zoom this pane   -> zen
 #   prefix ?         list-keys        -> the keys picker
 #   copy-mode-vi o   other-end        -> open what is under the cursor
+#   copy-mode-vi g   history-top      -> a menu of open and search, whose own g
+#                                        still goes to the top
 #
 # Three keys sit in the root table (`-n`), so they fire without the prefix and
 # take Alt-s, Alt-a and Alt-A away from every program in the pane, including
@@ -136,16 +138,20 @@ set -g window-status-current-format "#(tmux-companion window -c -i #I -n '#W' -w
 #
 # These cost nothing until they're pressed. display-popup is tmux's own 33 ms,
 # and the picker inside it replaces fzf, which was 50 ms of the old 93 ms.
-bind -N "custom: help search every key binding" ? \
+bind -N "companion: help search every key binding" ? \
   display-popup -E -w 80% -h 60% "tmux-companion keys"
-bind -N "custom: help cheat sheet of my bindings" C-c \
+bind -N "companion: help cheat sheet of my bindings" C-c \
   display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
+# The same search over tmux's own bindings as well, for when the answer is one
+# of the hundred defaults rather than one of yours.
+bind -N "companion: help search every key binding, tmux's own too" M-/ \
+  display-popup -E -w 80% -h 60% "tmux-companion keys --all"
 # tmux's own prefix+c opens a window in the pane's directory and gives you no
 # say in it. This keeps that as the zero-keystroke case, since the query starts
 # on that directory, and adds the frecency list and any path typed in full.
-bind -N "custom: window new one here, or at any directory" c \
+bind -N "companion: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
-bind -N "custom: project pick a project" -n M-s \
+bind -N "companion: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
 # No --pane here, unlike the copy-mode `o` binding below, and the reason is
 # worth writing down: tmux expands #{pane_id} in a run-shell command and does
@@ -156,33 +162,33 @@ bind -N "custom: project pick a project" -n M-s \
 # just switched away from is worse than not asking. Given no pane, `run` puts
 # the side pane in the session an attached client is looking at, which is the
 # one whose key you pressed.
-bind -N "custom: window run a command from history" e \
+bind -N "companion: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
-bind -N "custom: config pick a colour theme" C-t \
+bind -N "companion: config pick a colour theme" C-t \
   display-popup -E -w 70% -h 70% "tmux-companion theme pick"
 # Every pane on the server, with what it runs, whether it has gone quiet and
 # the last lines of its screen; enter jumps there. `g` and `G` are free in
 # tmux's own prefix table. The second one keeps only the agents, which is the
 # list to reach for when the bar says one of them is waiting.
-bind -N "custom: window jump to any pane" g \
+bind -N "companion: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
 # What the agents stopped to ask, oldest first; enter jumps to the one picked.
 # Where did I see that: every line of every pane's scrollback in one list,
 # and enter lands on the line in copy mode. `--pane '#{pane_id}'` on the end
 # keeps it to the pane the key was pressed in. tmux's own prefix+/ describes
 # a key, which the key search on prefix+? already does.
-bind -N "custom: copy search every pane's scrollback" / \
+bind -N "companion: copy search every pane's scrollback" / \
   display-popup -E -w 90% -h 80% "tmux-companion search"
 # "address already in use": which pane is listening on what. Enter goes to
 # the pane. tmux has nothing on prefix+P.
-bind -N "custom: window which pane listens on which port" P \
+bind -N "companion: window which pane listens on which port" P \
   display-popup -E -w 80% -h 70% "tmux-companion ports"
-bind -N "custom: project the agents waiting on you" M-g \
+bind -N "companion: project the agents waiting on you" M-g \
   display-popup -E -w 80% -h 70% "tmux-companion inbox"
 # One screen of what needs you: the waiting agents, the health reasons, the
 # idle sessions, the numbers. The same screen opens by itself on attach when
 # there is news, through the client-attached hook below.
-bind -N "custom: help what needs me" b \
+bind -N "companion: help what needs me" b \
   display-popup -E -w 70% -h 60% "tmux-companion brief"
 # A click on the right side of the bar: the agent count opens the inbox, the
 # health mark the brief. Needs `set -g mouse on`.
@@ -190,23 +196,23 @@ bind -T root MouseDown1StatusRight \
   run-shell "tmux-companion click '#{mouse_status_range}'"
 # What happened in each project today, newest first: what ran long, what the
 # agents asked, what opened and closed.
-bind -N "custom: help what happened today" J \
+bind -N "companion: help what happened today" J \
   display-popup -E -w 80% -h 70% "tmux-companion journal"
 # Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
 # `quiet` while it lasts.
-bind -N "custom: config quiet hours, no nagging for a while" Q \
+bind -N "companion: config quiet hours, no nagging for a while" Q \
   command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""
-bind -N "custom: window jump to an agent" G \
+bind -N "companion: window jump to an agent" G \
   display-popup -E -w 80% -h 70% "tmux-companion panes --agents"
-bind -N "custom: project toggle the tools in this session" -n M-a \
+bind -N "companion: project toggle the tools in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
 # The flip between the two most recent windows, for a session with more than two.
-bind -N "custom: project flip to the last window" -n M-A \
+bind -N "companion: project flip to the last window" -n M-A \
   run-shell "tmux-companion toggle --last '#{session_name}'"
 # Closing captures the layout on the way out, before anything is asked to quit,
 # so the project comes back next time with the windows and panes it had. Add
 # --no-save to close without touching the saved layout.
-bind -N "custom: session close this project cleanly" X \
+bind -N "companion: session close this project cleanly" X \
   confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion project close'"
 
 # Capture this session's windows and panes as the layout this project opens
@@ -216,9 +222,9 @@ bind -N "custom: session close this project cleanly" X \
 # Costs nothing until pressed: two tmux calls and a file write. Bind it rather
 # than typing it, because a pane you type it into is running tmux-companion at
 # the moment it looks and that is the command it records for that pane.
-bind -N "custom: project save this layout for this project" S \
+bind -N "companion: project save this layout for this project" S \
   run-shell 'tmux-companion project save'
-bind -N "custom: project forget this project's saved layout" M-S \
+bind -N "companion: project forget this project's saved layout" M-S \
   run-shell 'tmux-companion project forget'
 
 # ── Prompt marks, which tmux has had since 3.3 and nobody turned on ─────────
@@ -231,9 +237,9 @@ bind -N "custom: project forget this project's saved layout" M-S \
 #
 # Then jumping between prompts in copy mode costs nothing at all, because tmux
 # is doing it. C-p and C-n are a suggestion; pick whatever is free for you.
-bind -N "custom: copy jump to the previous prompt" -T copy-mode-vi C-p \
+bind -N "companion: copy jump to the previous prompt" -T copy-mode-vi C-p \
   send-keys -X previous-prompt
-bind -N "custom: copy jump to the next prompt" -T copy-mode-vi C-n \
+bind -N "companion: copy jump to the next prompt" -T copy-mode-vi C-n \
   send-keys -X next-prompt
 
 # ── Copy mode, opening what is under the cursor ─────────────────────────────
@@ -241,8 +247,22 @@ bind -N "custom: copy jump to the next prompt" -T copy-mode-vi C-n \
 # is the line under it and `#{copy_cursor_x}` the column, so a line naming two
 # paths opens the one you are actually on. `#{q:...}` shell-quotes the line,
 # which matters the first time a log line contains an apostrophe.
-bind -N "custom: copy open what is under the cursor" -T copy-mode-vi o \
+bind -N "companion: copy open what is under the cursor" -T copy-mode-vi o \
   run-shell "tmux-companion open --pane '#{pane_id}' --cursor-x '#{copy_cursor_x}' -- #{q:copy_cursor_line}"
+# The same and more behind one key, as a menu at the cursor: open the thing
+# under it or the selection, search the line or the selection, or go to the
+# top, which is what tmux had on g. The menu expands its commands as formats
+# once and run-shell does it again, hence ##{...} for the second pass. O and S
+# are dimmed with no selection.
+bind -N "companion: copy menu of open and search, g again for the top" -T copy-mode-vi g \
+  display-menu -x '#{e|+:#{popup_pane_left},#{copy_cursor_x}}' -y '#{e|+:#{popup_pane_top},#{e|+:#{copy_cursor_y},1}}' \
+  "open URL or file under the cursor" o { run-shell "tmux-companion open --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}" } \
+  "#{?selection_present,,-}open the selection" O { send-keys -X copy-selection-no-clear ; run-shell "tmux-companion open --pane '##{pane_id}' -s" } \
+  "" \
+  "search the line, in a popup" s { run-shell -C "display-popup -h 65% -w 65% -B -E \"tmux-companion open -i --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}\"" } \
+  "#{?selection_present,,-}search the selection, in a popup" S { send-keys -X copy-selection-no-clear ; run-shell -C "display-popup -h 65% -w 65% -B -E 'tmux-companion open -i -s'" } \
+  "" \
+  "jump to the top of history" g { send-keys -X history-top }
 # Picking the thing by a hint instead of moving the cursor to it is
 # tmux-fingers, which is alive and does it well, so there is no fourth
 # implementation of it here. It pipes the match to a command, and `open`
@@ -255,7 +275,7 @@ bind -N "custom: copy open what is under the cursor" -T copy-mode-vi o \
 # `open` resolves a relative path against the directory of the pane tmux
 # calls current. These two lines have not been run against an installed
 # fingers, so treat a relative path as the part to check first.
-bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
+bind -N "companion: copy yank to the system clipboard" -T copy-mode-vi y \
   send-keys -X copy-selection-no-clear \; \
   run-shell "tmux-companion clipboard"
 
@@ -267,28 +287,35 @@ bind -N "custom: copy yank to the system clipboard" -T copy-mode-vi y \
 # Zen: everything but this pane goes. With other panes open that is a zoom;
 # with none it is the status bar, because a lone pane already fills the window
 # and tmux's own `prefix z` does nothing there.
-bind -N "custom: pane zen, everything but this one goes" z \
+bind -N "companion: pane zen, everything but this one goes" z \
   run-shell "tmux-companion zen --pane '#{pane_id}'"
 
 # The pane that started as a look at another repository and became the work:
 # it moves to a session of its own, named for its directory the way `project`
 # names one, with its process and scrollback. tmux has nothing on prefix+@.
-bind -N "custom: session give this pane a session of its own" @ \
+bind -N "companion: session give this pane a session of its own" @ \
   run-shell "tmux-companion promote --pane '#{pane_id}'"
 
 # For a program that stopped answering C-c: TERM to what is in front in this
 # pane, KILL three seconds later if it is still there. The scrollback stays,
 # which kill-pane on prefix+x can't say. A shell at its prompt is refused.
-# @Yogesh(gap): the comment doesn't say the key now looks first and asks by program name and pid; add a line?
-bind -N "custom: pane stop what hangs in it" K \
+# --ask looks first, so the confirmation names the program and its pid, and a
+# bare prompt gets no question at all.
+bind -N "companion: pane stop what hangs in it" K \
   run-shell "tmux-companion kill --ask --pane '#{pane_id}'"
 
 # The pocket: a shell that slides out beside this pane on the first press,
 # goes away into a window called `_pocket` on the second, and comes back,
 # process and scrollback kept, on the third. `pocket logs` is a second one
 # under its own name, for a key of its own.
-bind -N "custom: pane the pocket shell, out and away" ` \
+bind -N "companion: pane the pocket shell, out and away" ` \
   run-shell "tmux-companion pocket --pane '#{pane_id}'"
+
+# A one-line note on this pane: tmux's pane title, which `panes` shows beside
+# the program. An empty answer takes it off. %1 rather than %%, because
+# command-prompt replaces only the first %% in a template.
+bind -N "companion: pane note what this pane is doing" N \
+  command-prompt -p "note (empty clears):" "run-shell \"tmux-companion note --pane '#{pane_id}' -- '%1'\""
 
 # ── Every session, kept in generations ──────────────────────────────────────
 #
@@ -300,15 +327,27 @@ bind -N "custom: pane the pocket shell, out and away" ` \
 # The timer lives in the daemon and `[sessions] autosave` turns it on. These are
 # the keys for taking one by hand and for the cycle that picks up a new binary,
 # a freshly sourced config and a rebuilt daemon in one go.
-bind -N "custom: sessions save every session now" M-s \
+bind -N "companion: sessions save every session now" M-s \
   run-shell "tmux-companion sessions save"
+# Bring back the sessions a snapshot has and this server doesn't, after a crash
+# took some of them. --merge because plain resurrect refuses a server that is
+# running, and from in here the server is always running.
+bind -N "companion: sessions bring back the ones that are missing" C-r \
+  display-popup -E -w 85% -h 75% "tmux-companion sessions resurrect --merge"
+# Sessions nobody has attached to or touched in three days; enter closes the
+# one picked the way prefix X would. C-i is Tab in most terminals, so drop it if
+# that clashes with something.
+bind -N "companion: sessions list the idle ones, enter closes it" C-i \
+  display-popup -E -w 85% -h 65% "tmux-companion sessions idle"
 
 # Not bound to a key, because it stops the server this binding would be typed
 # into and refuses to run from in here at all:
 #
 #   tmux-companion sessions shutdown     save everything, then stop the server
 #   tmux-companion sessions restart      the same, then bring it back
-#   tmux-companion sessions resurrect    bring back what was saved
+#   tmux-companion sessions resurrect    bring back what was saved, onto an
+#                                        empty server (prefix C-r above is the
+#                                        --merge one that works from in here)
 #
 # `restart` bounces the daemon by default, which is how config.toml is reread.
 

@@ -537,7 +537,10 @@ on it, layout capture and all, so a session shut from here opens again from the
 project picker as it was.
 .Fl -print
 lists the rows as tab-separated columns and exits.
-.\" @Yogesh(gap): inside tmux and without --print, an empty sessions idle now also puts its line on the tmux message line. Say so here?
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 No such session is one line on stderr and exit 0, not an error.
 .It Ic shutdown
 Stop the tmux-companion daemon, and only that.
@@ -559,7 +562,7 @@ refuses looks like; the reason is in the daemon log.
 Every binding tmux knows, searchable, with what it runs in the preview.
 Enter runs the binding.
 It opens on the bindings whose note starts with
-.Ql "custom: " ,
+.Ql "companion: " ,
 which is what the shipped configs write with
 .Fl N ;
 .Fl -all
@@ -570,7 +573,10 @@ opens on something else,
 rebuilds the list from tmux rather than using what the daemon holds, and
 .Fl -print
 lists the rows and exits.
-.\" @Yogesh(gap): inside tmux and without --print, keys and cheatsheet now also put this hint on the tmux message line. Say so here?
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 When no binding carries the note there is nothing to show, and it says so on
 standard error and exits 0 rather than drawing an empty picker.
 Bound to
@@ -602,6 +608,10 @@ bindings.
 prints the sheet and exits instead of waiting for a key;
 .Fl -plain
 is the old spelling and still works.
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 The same hint as
 .Ic keys
 when no binding carries the note.
@@ -682,6 +692,10 @@ Enter switches the attached client to that pane.
 .Fl -print
 writes where, program, state and how long, the question and the pane id as
 tab-separated columns.
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 The question is the last line of the screen that is something the agent
 said: the input box at the foot of the screen and whatever is under it are
 cut, and then every line matching one of
@@ -731,7 +745,10 @@ keeps only the agent rows,
 only one session's, and
 .Fl -print
 writes the rows as tab-separated columns with the pane id last, and exits.
-.\" @Yogesh(gap): inside tmux and without --print, panes (and inbox, ports, journal, search) now also say it on the tmux message line. Say so here and in their paragraphs?
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 With nothing to show it says so on standard error and exits 0.
 Bound to
 .Ql prefix g ,
@@ -775,6 +792,10 @@ at 20000 rows.
 writes the rows as tab-separated columns and exits: where, the pane id, the
 line's number as tmux counts it, with 0 the top row of the screen and the
 history below zero, and the line.
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 .Fl -first
 goes to the newest match without showing the list, and needs a pattern or a
 kind.
@@ -820,6 +841,10 @@ keeps one session's, and
 .Fl -print
 writes the rows as tab-separated columns and exits: port, protocol, address,
 program, pid, where, and the pane id.
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 With
 .Fl -kill
 enter stops the program where it would have gone to the pane: TERM to the
@@ -926,9 +951,14 @@ keeps one session and
 reaches further back than the last day.
 .Fl -print
 writes the rows as tab-separated columns.
+Without
+.Fl -print ,
+inside tmux, the line saying there is nothing to show also goes to the tmux
+message line, so a popup that closes does not take it with it.
 The daemon writes it to
 .Pa journal.tsv
 in the state directory as it happens.
+It is off by default.
 .It Ic toggle Oo Ar session Oc Op Fl -last
 Move to the next window in this session, in index order, wrapping from the
 last to the first.
@@ -1054,15 +1084,18 @@ that closes the pane and tmux has
 for it.
 .Fl -pane
 is the pane the key was pressed in, which the binding passes.
-.\" @Yogesh(gap): describe --ask
 .Fl -ask
+looks before it asks: a shell at its prompt is refused with no question, and
+anything else gets tmux's own confirmation naming the program and its pid,
+whose yes runs the stop.
 .Lk https://github.com/tmux-plugins/tmux-cowboy tmux-cowboy
 was the one key for this, sending KILL with no TERM before it, and was last
 pushed in May 2021.
 Bound to
-.\" @Yogesh(check): still "behind a confirmation" now the binding is kill --ask and the confirmation names what it stops?
 .Ql prefix K
-behind a confirmation.
+with
+.Fl -ask ,
+so the confirmation names what it stops.
 .It Ic zen Op Fl -pane Ar id
 Clear everything but the pane you are working in.
 With other panes open that is tmux's own zoom: this pane fills the window, the

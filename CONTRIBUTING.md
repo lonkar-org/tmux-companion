@@ -37,7 +37,7 @@ the first command will tell you before CI does.
   sockets and diffs what they draw. If your change moves a byte, say so in the
   commit message and say why, because somebody's bar is going to shift and
   they'll want to know it was deliberate.
-- **A measurement, for anything performance-shaped.** `BENCHMARKS.md` explains
+- **A measurement, for anything performance-shaped.** `docs/BENCHMARKS.md` explains
   how the numbers were taken and `just bench` is the instrument: it drives a
   real tmux with a real key press and measures both the wait and the CPU. A
   claim that something's faster wants a number beside it, and the pickers are

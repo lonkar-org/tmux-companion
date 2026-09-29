@@ -7,31 +7,31 @@ commit that does the work. `blocked` carries the reason on the same line.
 
 ## Phase 0
 
-| # | Item | Status |
-| --- | --- | --- |
-| 0 | transfer the repository to `lonkar-org` | done — 2026-09-22, badge added, `origin` and the crates.io `repository` field point at the new path |
-| 1 | `cargo fmt`, the two clippy lints, `rust-toolchain.toml` | done |
-| 2 | GitHub Actions: `fmt --check`, `clippy -D warnings`, `test` | done — badge in the README; unverified until somebody pushes |
-| 3 | `src/lib.rs`, `main.rs` down to argument parsing, `tests/` | done — main.rs 287 lines to 32 |
-| 4 | one typed args struct per command | done — output byte-identical, checked with compare-output.sh |
-| 5 | integration test over the real socket, plus the singleton | done — 9 tests in tests/socket_round_trip.rs |
-| 6 | `//!` and `///` everywhere, `#![warn(missing_docs)]` | done — 197 items documented, rustdoc job in CI |
-| 7 | `LICENSE`, `CONTRIBUTING.md`, "Adding a command", test-count sentence | done — plus crates.io metadata, docs/ skeleton, requirements.md |
-| 8 | the config loader and its tables | done (loader, errors, `config` subcommand, `[general]`, `[dirs]`, `[git]`, `[network]`, `[battery]`, `[glyphs]` with nerd-font-v3 and ascii, `[git] parts`, `[status.right]`); `[[layout]]` waits for `project` in phase 3 |
-| 9 | `vim-bg` becomes `sh-jobs` with a job table | done — `vim-bg` hidden alias for one release |
-| 10 | wire version, socket 0600, `doctor` | done — build stamp from build.rs, owner check, `__shutdown` |
+| #   | Item                                                                  | Status                                                                                                                                                                                                                     |
+| --- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | transfer the repository to `lonkar-org`                               | done — 2026-09-22, badge added, `origin` and the crates.io `repository` field point at the new path                                                                                                                        |
+| 1   | `cargo fmt`, the two clippy lints, `rust-toolchain.toml`              | done                                                                                                                                                                                                                       |
+| 2   | GitHub Actions: `fmt --check`, `clippy -D warnings`, `test`           | done — badge in the README; unverified until somebody pushes                                                                                                                                                               |
+| 3   | `src/lib.rs`, `main.rs` down to argument parsing, `tests/`            | done — main.rs 287 lines to 32                                                                                                                                                                                             |
+| 4   | one typed args struct per command                                     | done — output byte-identical, checked with compare-output.sh                                                                                                                                                               |
+| 5   | integration test over the real socket, plus the singleton             | done — 9 tests in tests/socket_round_trip.rs                                                                                                                                                                               |
+| 6   | `//!` and `///` everywhere, `#![warn(missing_docs)]`                  | done — 197 items documented, rustdoc job in CI                                                                                                                                                                             |
+| 7   | `LICENSE`, `CONTRIBUTING.md`, "Adding a command", test-count sentence | done — plus crates.io metadata, docs/ skeleton, requirements.md                                                                                                                                                            |
+| 8   | the config loader and its tables                                      | done (loader, errors, `config` subcommand, `[general]`, `[dirs]`, `[git]`, `[network]`, `[battery]`, `[glyphs]` with nerd-font-v3 and ascii, `[git] parts`, `[status.right]`); `[[layout]]` waits for `project` in phase 3 |
+| 9   | `vim-bg` becomes `sh-jobs` with a job table                           | done — `vim-bg` hidden alias for one release                                                                                                                                                                               |
+| 10  | wire version, socket 0600, `doctor`                                   | done — build stamp from build.rs, owner check, `__shutdown`                                                                                                                                                                |
 
 ## The port, in order
 
-| # | Item | Status |
-| --- | --- | --- |
-| 1 | `theme gen` | done — report matches the python on all 76 themes |
-| 2 | `keys`, `cheatsheet` | done — both render what the zsh did, bar the two bindings tmux stopped reporting |
-| 3 | `project` | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows |
-| 4 | `autosave`, `toggle` | done — autosave is a daemon task, toggle cycles the session's windows by index |
-| 5 | `theme`, `run` | done — run's history is byte-identical to `fc -ln` over 1127 commands |
-| 6 | `open`, `close-project`, the probes, the tmux.conf logic | done — plus `clipboard` and `zoom`, and docs/tmux.conf.full.example |
-| 7 | `panes`, and the `agents` segment | done — one `list-panes -a` shared by the picker and the bar, `[agents]` is the one list of what an agent is, and the restore headline reads it too |
+| #   | Item                                                     | Status                                                                                                                                             |
+| --- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `theme gen`                                              | done — report matches the python on all 76 themes                                                                                                  |
+| 2   | `keys`, `cheatsheet`                                     | done — both render what the zsh did, bar the two bindings tmux stopped reporting                                                                   |
+| 3   | `project`                                                | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows                                                                  |
+| 4   | `autosave`, `toggle`                                     | done — autosave is a daemon task, toggle cycles the session's windows by index                                                                     |
+| 5   | `theme`, `run`                                           | done — run's history is byte-identical to `fc -ln` over 1127 commands                                                                              |
+| 6   | `open`, `close-project`, the probes, the tmux.conf logic | done — plus `clipboard` and `zoom`, and docs/tmux.conf.full.example                                                                                |
+| 7   | `panes`, and the `agents` segment                        | done — one `list-panes -a` shared by the picker and the bar, `[agents]` is the one list of what an agent is, and the restore headline reads it too |
 
 Each row also carries its documentation row from the table in
 `comrades-port.md`, its config row, and its before and after numbers in
@@ -41,21 +41,21 @@ Each row also carries its documentation row from the table in
 
 The design is `docs/dev/tmux-resurrect-port.md`. One row per step.
 
-| # | Item | Status |
-| --- | --- | --- |
-| 0 | `command_for` and the `default-command` wrapper | done — every pane on a macOS server was graded `Exact` while holding a command that opens a shell inside a shell |
-| 1 | the snapshot file and its generations | done — atomic write, a pointer that moves last, `prune` pure over stamps and times |
-| 2 | `[sessions]` config, with a floor of 10 under the interval | done — three modes, and the cost of a short one written down in the example config |
-| 3 | whole-server capture | done — three listings in, one snapshot out, tested against this laptop's own output |
-| 4 | `sessions save`, `list`, `show` | done — pane history is a directory per generation, no new dependency |
-| 5 | the restore table | done — matches the whole command, default deny, ten shipped rows |
-| 6 | restore, non-interactive | done — refuses a live server, `--merge` adds what is missing, `--dry-run` prints the real command list |
-| 7 | waiting for the prompt mark before sending keys | done — `capture-pane -F` marks a prompt line, 2s ceiling for a shell that never will |
-| 8 | the summary screen | done — opens on what the restore does not know, never on a pane count |
-| 9 | `shutdown` and `restart`, for the daemon and for the server | done — both refuse from inside tmux, and `sessions restart` bounces the daemon by default so config.toml is reread |
-| 10 | the autosave timer and the crash marker | done — the shared poll was dropped: measuring it after `aggressive` was cut left it saving a rounding error |
-| 11 | importing the old format | done — two passes, because the file writes every pane before every window |
-| 12 | `project close`, and the cutover | done — `close-project` hidden for one release, `[autosave]` deprecated and off by default |
+| #   | Item                                                        | Status                                                                                                             |
+| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 0   | `command_for` and the `default-command` wrapper             | done — every pane on a macOS server was graded `Exact` while holding a command that opens a shell inside a shell   |
+| 1   | the snapshot file and its generations                       | done — atomic write, a pointer that moves last, `prune` pure over stamps and times                                 |
+| 2   | `[sessions]` config, with a floor of 10 under the interval  | done — three modes, and the cost of a short one written down in the example config                                 |
+| 3   | whole-server capture                                        | done — three listings in, one snapshot out, tested against this laptop's own output                                |
+| 4   | `sessions save`, `list`, `show`                             | done — pane history is a directory per generation, no new dependency                                               |
+| 5   | the restore table                                           | done — matches the whole command, default deny, ten shipped rows                                                   |
+| 6   | restore, non-interactive                                    | done — refuses a live server, `--merge` adds what is missing, `--dry-run` prints the real command list             |
+| 7   | waiting for the prompt mark before sending keys             | done — `capture-pane -F` marks a prompt line, 2s ceiling for a shell that never will                               |
+| 8   | the summary screen                                          | done — opens on what the restore does not know, never on a pane count                                              |
+| 9   | `shutdown` and `restart`, for the daemon and for the server | done — both refuse from inside tmux, and `sessions restart` bounces the daemon by default so config.toml is reread |
+| 10  | the autosave timer and the crash marker                     | done — the shared poll was dropped: measuring it after `aggressive` was cut left it saving a rounding error        |
+| 11  | importing the old format                                    | done — two passes, because the file writes every pane before every window                                          |
+| 12  | `project close`, and the cutover                            | done — `close-project` hidden for one release, `[autosave]` deprecated and off by default                          |
 
 ## What is left
 
@@ -96,7 +96,7 @@ Said plainly rather than left to be discovered.
 - `.tmux-companion.toml` in a checkout is the held item 4 from
   `after-port-checklist.md`, built as option 1 of
   `design-project-local-config.md`: the full layout behind `[project]
-  trusted`, with names-only as the untrusted fallback.
+trusted`, with names-only as the untrusted fallback.
 - `pocket` is `nickdiego/tmux-pocket-pane` as option 1 of
   `design-pocket-pane.md`: the pane is parked with `join-pane` into a window
   called `_pocket` and brought back the same way, marked by a pane option.
@@ -107,11 +107,11 @@ Said plainly rather than left to be discovered.
 - `ports` is new. `jrmoulton/tmux-port` did it as a plugin and its
   repository is gone, so there's nobody to credit with a link that works.
 - `kill` is `tmux-plugins/tmux-cowboy` with TERM sent first and the group
-  taken from the terminal rather than from the shell's children, so a
-  background job survives it. `ports --kill` is the same escalation on one
-  pid.
-<!-- @Yogesh(gap): describe --ask -->
-- `kill --ask`
+taken from the terminal rather than from the shell's children, so a
+background job survives it. `ports --kill` is the same escalation on one
+pid.
+- `kill --ask` looks before it asks: a shell at its prompt is refused with no
+  question, anything else gets tmux's confirmation naming the program and pid.
 - `doctor` reads tmux's options and says which cost something, where
   `tmux-plugins/tmux-sensible` set them for you. It sets nothing, so a
   tmux.conf stays the only place an option comes from.

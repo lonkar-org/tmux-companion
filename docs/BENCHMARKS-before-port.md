@@ -34,7 +34,7 @@ process itself cheaper to start.
 
 ## Method
 
-Two independent measurements, both in [`scripts/bench-cpu.py`](./scripts/bench-cpu.py).
+Two independent measurements, both in [`scripts/bench-cpu.py`](../scripts/bench-cpu.py).
 
 **Server CPU** comes from the server's own `getrusage(2)`, exposed on the socket
 as the `__rusage` command: `utime stime cutime cstime request_count`, in
