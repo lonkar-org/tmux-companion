@@ -160,11 +160,12 @@ demo-record REEL="usage":
 # The ubuntu job's conditions, here: tmux 3.4 and four cores in a throwaway
 # container, in a loop. A laptop with sixteen cores cannot lose the races a
 # four-core runner loses, so a test that fails only on CI needs this rather
-# than another twenty local reruns.
+# than another twenty local reruns. `just repro-ci 30 0-15 16` is act's shape
+# instead: every core, sixteen test threads.
 
 # Run the suite under CI's conditions, repeatedly.
-repro-ci RUNS="12":
-    RUNS={{RUNS}} ./scripts/repro-ci.sh
+repro-ci RUNS="12" CPUS="0-3" THREADS="":
+    RUNS={{RUNS}} CPUS={{CPUS}} THREADS={{THREADS}} ./scripts/repro-ci.sh
 
 # A marker is a question left in a file for the owner, in the comment syntax
 # of that file, and a tree that still holds one has a hole in it. This lists

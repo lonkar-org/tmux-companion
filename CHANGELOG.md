@@ -71,6 +71,12 @@ entry per phase of the comrades port.
   segment` on the health mark. The daemon no longer warms the battery at
   start either unless the bar draws it. `gst`, `net` and `battery` by hand
   compute as before.
+- The end-to-end suite's occasional "the fixture never started" under act
+  was the tmux shim failing to exec with "Text file busy": written in the
+  test process while other threads forked, and the error was thrown away.
+  The shim is written by `sh` now, and a setup command that tmux refuses
+  fails the test with tmux's own words. `just repro-ci` takes CPUS and
+  THREADS, and counts failures per test.
 
 ## 0.5.2 - 2026-09-28
 

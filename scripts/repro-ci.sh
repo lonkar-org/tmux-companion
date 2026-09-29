@@ -6,6 +6,18 @@
 #   scripts/repro-ci.sh                     12 runs of e2e and config_file
 #   RUNS=30 scripts/repro-ci.sh             more of them
 #   TESTS="--test e2e" scripts/repro-ci.sh  one suite
+#   CPUS=0-15 THREADS=16 scripts/repro-ci.sh  act's shape: every core, 16 threads
+#   REF=main scripts/repro-ci.sh            a commit rather than the working tree
+#
+# The end of the output counts the failures per test, not only per run, so a
+# flake that hits one test in thirty runs shows up by name. The first failure
+# prints its panic in full.
+#
+# THREADS sets RUST_TEST_THREADS in the container. The default is one thread
+# per visible core, which on the four-core cpuset is four. `just act-check`
+# runs with no cpuset, so sixteen threads, and runs both matrix legs at once;
+# the fixture flake of 2026-09 was seen only there, so four threads on four
+# cores is not the only shape worth looping.
 #
 # Needs Docker. Everything happens in a throwaway Ubuntu 24.04 container, which
 # is what `ubuntu-latest` is: tmux 3.4 rather than the 3.7 a Mac has, four
@@ -29,6 +41,8 @@ REPO=$(cd "$HERE/.." && pwd)
 RUNS=${RUNS:-12}
 TESTS=${TESTS:---test e2e --test config_file}
 CPUS=${CPUS:-0-3}
+THREADS=${THREADS:-}
+REF=${REF:-}
 
 command -v docker >/dev/null || { echo "docker is not installed" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "docker is not running" >&2; exit 1; }
@@ -37,7 +51,13 @@ tar=$(mktemp -t tcrepro).tar
 trap 'rm -f "$tar"' EXIT
 # The tracked files and nothing else: target/ is gigabytes of the wrong
 # platform's objects, and demo/ and the recordings are not in git anyway.
-git -C "$REPO" ls-files -z | (cd "$REPO" && xargs -0 tar -cf "$tar")
+# REF runs a commit instead of the working tree, for a before-and-after of a
+# fix without stashing it.
+if [ -n "$REF" ]; then
+  git -C "$REPO" archive --format=tar -o "$tar" "$REF"
+else
+  git -C "$REPO" ls-files -z | (cd "$REPO" && xargs -0 tar -cf "$tar")
+fi
 
 inner=$(mktemp -t tcinner).sh
 trap 'rm -f "$tar" "$inner"' EXIT
@@ -68,7 +88,13 @@ echo "=== building ==="
 cargo test --no-run $TESTS >/dev/null 2>&1
 echo "built"
 
+if [ -n "${THREADS:-}" ]; then
+  export RUST_TEST_THREADS=$THREADS
+fi
+echo "test threads: ${RUST_TEST_THREADS:-one per core}"
+
 fail=0
+: > /tmp/failed-tests
 for i in $(seq 1 "$RUNS"); do
   # shellcheck disable=SC2086
   if out=$(cargo test $TESTS --no-fail-fast 2>&1); then
@@ -76,17 +102,27 @@ for i in $(seq 1 "$RUNS"); do
   else
     printf F
     fail=$((fail + 1))
+    echo "$out" | sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' >> /tmp/failed-tests
     if [ "$fail" = 1 ]; then
       printf '\n=== first failure, run %s ===\n' "$i"
       echo "$out" | grep -E "FAILED|panicked at|^ +[a-z_ ]+:" -A 2 | head -40
+    else
+      # Every later one gets its panic too: a flake that fails two ways is
+      # two findings, and only the first used to be printed.
+      printf '\n=== run %s ===\n' "$i"
+      echo "$out" | grep -E "panicked at" -A 3 | head -20
     fi
   fi
 done
 printf '\n=== %s of %s runs failed ===\n' "$fail" "$RUNS"
+if [ -s /tmp/failed-tests ]; then
+  echo "failures per test:"
+  sort /tmp/failed-tests | uniq -c | sort -rn
+fi
 INNER
 
 echo "running $RUNS times on cpuset $CPUS"
 docker run --rm --cpuset-cpus="$CPUS" --memory=8g \
-  -e "RUNS=$RUNS" -e "TESTS=$TESTS" \
+  -e "RUNS=$RUNS" -e "TESTS=$TESTS" -e "THREADS=$THREADS" \
   -v "$tar":/repo.tar:ro -v "$inner":/repro.sh:ro \
   ubuntu:24.04 bash /repro.sh

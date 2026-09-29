@@ -70,7 +70,9 @@ impl Tmux {
         }
         // On PATH under its own name, because the example config calls
         // `tmux-companion` and that is the thing under test.
-        let _ = std::os::unix::fs::symlink(&binary, sandbox.join("bin/tmux-companion"));
+        let link = sandbox.join("bin/tmux-companion");
+        std::os::unix::fs::symlink(&binary, &link)
+            .unwrap_or_else(|e| panic!("cannot link {}: {e}", link.display()));
 
         // Short, and not built from `name`: a socket address holds about a
         // hundred bytes and these test names run to sixty.
@@ -97,23 +99,22 @@ impl Tmux {
     ///
     /// `-L` is added only when the caller did not pass one, so [`Tmux::tmux`],
     /// which passes its own, goes through unchanged.
+    ///
+    /// A shim that cannot be written fails the test. Without it a bare `tmux`
+    /// finds whatever server `$TMUX` or the default socket names, which is the
+    /// accident the shim exists to prevent.
     fn write_tmux_shim(&self) {
-        let Ok(real) = Command::new("sh").args(["-c", "command -v tmux"]).output() else {
-            return;
-        };
+        let real = Command::new("sh")
+            .args(["-c", "command -v tmux"])
+            .output()
+            .expect("sh runs");
         let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
-        if real.is_empty() {
-            return;
-        }
-        let shim = self.sandbox.join("bin/tmux");
+        assert!(!real.is_empty(), "tmux -V answered but no tmux is on PATH");
         let script = format!(
             "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -L ] && exec {real} \"$@\"; done\nexec {real} -L {} \"$@\"\n",
             self.socket
         );
-        if std::fs::write(&shim, script).is_ok() {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755));
-        }
+        write_executable(&self.sandbox.join("bin/tmux"), &script);
     }
 
     /// The binary, as if run from a terminal that is not inside tmux.
@@ -218,14 +219,57 @@ impl Tmux {
     }
 
     /// One tmux command against this server.
+    ///
+    /// A question: a command tmux refuses answers an empty string, which is
+    /// what the polling in [`Tmux::until`] wants. Setup goes through
+    /// [`Tmux::must`] instead, which says why.
+    ///
+    /// A tmux that could not be run at all is not an answer, and fails the
+    /// test. This used to read as empty too, and that is how a "Text file
+    /// busy" on the shim hid behind "the fixture never started" (see
+    /// [`write_executable`]).
     fn tmux(&self, args: &[&str]) -> String {
         let mut cmd = Command::new("tmux");
         cmd.arg("-L").arg(&self.socket).args(args);
         self.env(&mut cmd);
-        match cmd.output() {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).trim_end().to_string(),
-            Err(_) => String::new(),
-        }
+        let o = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("tmux {} did not run: {e}", args.join(" ")));
+        String::from_utf8_lossy(&o.stdout).trim_end().to_string()
+    }
+
+    /// One tmux command that sets something up, and fails the test when tmux
+    /// refuses it, with tmux's own words.
+    ///
+    /// Setup used to go through [`Tmux::tmux`], which throws the exit status
+    /// and stderr away. A session that was never made then surfaced forty
+    /// seconds later as "the fixture never started" with a pane list that did
+    /// not have it, and nothing said which command had failed or why.
+    fn must(&self, args: &[&str]) -> String {
+        let mut cmd = Command::new("tmux");
+        cmd.arg("-L").arg(&self.socket).args(args);
+        self.env(&mut cmd);
+        let o = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("tmux {} did not run: {e}", args.join(" ")));
+        assert!(
+            o.status.success(),
+            "tmux {} failed ({}): {}\nsessions now: {:?}",
+            args.join(" "),
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim_end(),
+            self.sessions()
+        );
+        String::from_utf8_lossy(&o.stdout).trim_end().to_string()
+    }
+
+    /// The pid of this test's tmux server, or `None` when none is running.
+    ///
+    /// Two reads that differ mean the server went away in between and a later
+    /// command started a fresh one, which the `-L` socket does without a word.
+    fn server_pid(&self) -> Option<String> {
+        let pid = self.tmux(&["list-sessions", "-F", "#{pid}"]);
+        pid.lines().next().map(str::to_string)
     }
 
     /// The binary itself, outside tmux.
@@ -259,9 +303,14 @@ impl Tmux {
     }
 
     /// Create a session running the shipped example config.
+    ///
+    /// Fails the test, with tmux's stderr, when the session is not there
+    /// afterwards: every test that calls this goes on to address the session
+    /// by name, and a missing one otherwise reads as whatever that test was
+    /// checking going wrong.
     fn session(&self, name: &str, dir: &Path) {
         let conf = repo_root().join("docs/tmux.conf.full.example");
-        self.tmux(&[
+        self.must(&[
             "-f",
             &conf.display().to_string(),
             "new-session",
@@ -275,6 +324,21 @@ impl Tmux {
             "-y",
             "32",
         ]);
+        let target = format!("={name}");
+        assert!(
+            self.tmux_ok(&["has-session", "-t", &target]),
+            "new-session -s {name} succeeded and the session is already gone; sessions now: {:?}",
+            self.sessions()
+        );
+    }
+
+    /// Whether a tmux command succeeded, for a question whose answer is the
+    /// exit status, such as `has-session`.
+    fn tmux_ok(&self, args: &[&str]) -> bool {
+        let mut cmd = Command::new("tmux");
+        cmd.arg("-L").arg(&self.socket).args(args);
+        self.env(&mut cmd);
+        cmd.output().is_ok_and(|o| o.status.success())
     }
 
     /// What a pane currently shows.
@@ -298,7 +362,9 @@ impl Tmux {
 
 impl Drop for Tmux {
     fn drop(&mut self) {
-        self.tmux(&["kill-server"]);
+        // `tmux_ok`, which never panics: a panic in a drop that runs while a
+        // failed test unwinds aborts the whole binary.
+        self.tmux_ok(&["kill-server"]);
         let mut cmd = Command::new(&self.binary);
         cmd.arg("__shutdown");
         self.env(&mut cmd);
@@ -310,6 +376,49 @@ impl Drop for Tmux {
         let _ = std::fs::remove_file(&self.daemon_sock);
         let _ = std::fs::remove_dir_all(&self.sandbox);
     }
+}
+
+/// Write a script a test will run, without ever holding it open for writing
+/// in this process.
+///
+/// `std::fs::write` followed by an exec is a race on Linux when tests run in
+/// parallel. While one thread has the file open to write it, another thread's
+/// `Command` forks, and the child holds a copy of that descriptor until it
+/// reaches its own exec. Exec of a file some process has open for writing
+/// fails with ETXTBSY, so the first command that ran the new file failed with
+/// "Text file busy". The tmux shim is that file: every tmux call a test makes
+/// goes through it, and `Tmux::tmux` turned the error into an empty answer,
+/// so a fixture's first `new-session` was lost without a word and the test
+/// failed forty seconds later with "the fixture never started". Seen only
+/// under act and under `just repro-ci 30 0-15 16`, never on four threads or
+/// on the laptop.
+///
+/// `sh` writes it instead, so the descriptor only ever exists in that child,
+/// which no other thread here can fork from.
+fn write_executable(path: &Path, content: &str) {
+    use std::io::Write;
+    let mut child = Command::new("sh")
+        .args([
+            "-c",
+            "cat > \"$1.tmp\" && chmod 755 \"$1.tmp\" && mv \"$1.tmp\" \"$1\"",
+            "sh",
+        ])
+        .arg(path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("sh runs");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(content.as_bytes())
+        .unwrap_or_else(|e| panic!("cannot write {}: {e}", path.display()));
+    let status = child.wait().expect("sh finishes");
+    assert!(
+        status.success(),
+        "cannot write {}: {status}",
+        path.display()
+    );
 }
 
 fn repo_root() -> PathBuf {
@@ -349,8 +458,21 @@ fn skipping(name: &str, why: &str) {
 fn repo_with_changes(root: &Path) -> PathBuf {
     let dir = root.join("acme-api");
     std::fs::create_dir_all(dir.join("src")).unwrap();
+    // A repository that failed to become one draws nothing on the bar, and a
+    // test asserting the bar drew something then fails for a reason that has
+    // nothing to do with it, so git's own error is the failure.
     let git = |args: &[&str]| {
-        let _ = Command::new("git").args(args).current_dir(&dir).output();
+        let o = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap_or_else(|e| panic!("git {} did not run: {e}", args.join(" ")));
+        assert!(
+            o.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&o.stderr).trim_end()
+        );
     };
     git(&["init", "-q"]);
     git(&["config", "user.email", "demo@example.com"]);
@@ -456,7 +578,7 @@ fn both_example_configs_set_the_background_the_segments_draw_against() {
         "docs/tmux.conf.full.example",
     ] {
         let conf = repo_root().join(name);
-        t.tmux(&[
+        t.must(&[
             "-f",
             &conf.display().to_string(),
             "new-session",
@@ -469,7 +591,7 @@ fn both_example_configs_set_the_background_the_segments_draw_against() {
             style.contains("233"),
             "{name} leaves the bar at {style:?}, and the segments draw against colour233"
         );
-        t.tmux(&["kill-session", "-t", "style"]);
+        t.must(&["kill-session", "-t", "style"]);
     }
 }
 
@@ -538,7 +660,7 @@ fn the_run_pane_waits_for_an_answer_instead_of_closing_itself() {
     t.session("dialog", &dir);
 
     let exe = t.binary.display().to_string();
-    t.tmux(&[
+    t.must(&[
         "split-window",
         "-d",
         "-t",
@@ -578,7 +700,7 @@ fn a_new_window_opens_where_the_pane_was() {
     t.session("newwin", &dir);
 
     let exe = t.binary.display().to_string();
-    t.tmux(&[
+    t.must(&[
         "split-window",
         "-d",
         "-t",
@@ -601,7 +723,7 @@ fn a_new_window_opens_where_the_pane_was() {
         .last()
         .unwrap_or_default()
         .to_string();
-    t.tmux(&["send-keys", "-t", &pane, "Enter"]);
+    t.must(&["send-keys", "-t", &pane, "Enter"]);
 
     assert!(
         t.until(10, |t| t
@@ -641,7 +763,7 @@ fn project_builds_the_windows_the_layout_asks_for() {
     let other = t.sandbox.join("payments-api");
     std::fs::create_dir_all(&other).unwrap();
     let exe = t.binary.display().to_string();
-    t.tmux(&[
+    t.must(&[
         "send-keys",
         "-t",
         "layout:0",
@@ -803,7 +925,7 @@ fn a_checkout_file_shapes_the_session_and_runs_commands_only_where_trusted() {
     let dir = repo_with_changes(&t.sandbox);
     t.session("home", &dir);
     let exe = t.binary.display().to_string();
-    t.tmux(&[
+    t.must(&[
         "send-keys",
         "-t",
         "home:0",
@@ -863,7 +985,7 @@ fn a_checkout_file_shapes_the_session_and_runs_commands_only_where_trusted() {
     );
 
     // And the untrusted one opens as shells with the right names.
-    t.tmux(&[
+    t.must(&[
         "send-keys",
         "-t",
         "home:0",
@@ -960,7 +1082,7 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
     // 3.5, has to mean the session that was named rather than whichever one
     // happens to be current. Under 3.5 the hook painted the wrong session and
     // left the new one bare.
-    t.tmux(&[
+    t.must(&[
         "new-session",
         "-d",
         "-s",
@@ -1081,7 +1203,7 @@ fn the_left_side_shows_a_whole_session_name_and_what_follows_it() {
 
     // Long enough to be cut by the default of 10, so the test fails on the
     // actual symptom rather than on the setting behind it.
-    t.tmux(&["rename-session", "-t", "leftside", "a-long-session-name"]);
+    t.must(&["rename-session", "-t", "leftside", "a-long-session-name"]);
     let rendered = t.tmux(&[
         "display-message",
         "-t",
@@ -1115,7 +1237,7 @@ fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
     // A marker instead of a popup: a popup needs a client and cannot be
     // captured, and what is being tested is which sessions reach it.
     let marker = t.sandbox.join("fired");
-    t.tmux(&[
+    t.must(&[
         "new-session",
         "-d",
         "-s",
@@ -1123,7 +1245,7 @@ fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
         "-c",
         &dir.display().to_string(),
     ]);
-    t.tmux(&[
+    t.must(&[
         "new-session",
         "-d",
         "-s",
@@ -1131,7 +1253,7 @@ fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
         "-c",
         &dir.display().to_string(),
     ]);
-    t.tmux(&[
+    t.must(&[
         "new-session",
         "-d",
         "-s",
@@ -1139,7 +1261,7 @@ fn the_attach_hook_offers_the_picker_only_for_a_session_tmux_named_itself() {
         "-c",
         &dir.display().to_string(),
     ]);
-    t.tmux(&["split-window", "-t", "=1:"]);
+    t.must(&["split-window", "-t", "=1:"]);
 
     // `=name:` and not a bare name. Two of these sessions are called "0" and
     // "1", and a bare number as a target is ambiguous: tmux can read it as a
@@ -1172,7 +1294,7 @@ fn start_last_picks_the_session_used_most_recently() {
     };
     let dir = repo_with_changes(&t.sandbox);
     for name in ["first", "second", "third"] {
-        t.tmux(&[
+        t.must(&[
             "new-session",
             "-d",
             "-s",
@@ -1412,7 +1534,7 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
     t.session("beta", &dir);
     assert!(
         t.until(20, |t| {
-            t.tmux(&[
+            t.must(&[
                 "send-keys",
                 "-t",
                 "=alpha:",
@@ -1489,7 +1611,7 @@ fn an_empty_picker_says_so_on_the_message_line() {
     let dir = repo_with_changes(&t.sandbox);
     t.session("fresh", &dir);
     // `env -u TMUX`, since tmux refuses to attach from inside itself.
-    t.tmux(&[
+    t.must(&[
         "new-session",
         "-d",
         "-s",
@@ -1644,7 +1766,7 @@ fn ports_names_the_pane_that_started_the_listener() {
     assert!(
         t.until(30, |t| {
             if tries % 20 == 0 {
-                t.tmux(&["send-keys", "-t", "=alpha:", serve, "C-m"]);
+                t.must(&["send-keys", "-t", "=alpha:", serve, "C-m"]);
             }
             tries += 1;
             let (out, err, _) = t.run(&["ports", "--print"]);
@@ -1761,12 +1883,12 @@ fn doctor_says_which_tmux_options_cost_something() {
         );
     }
 
-    t.tmux(&["set-option", "-s", "escape-time", "500"]);
+    t.must(&["set-option", "-s", "escape-time", "500"]);
     let slow = section(&t);
     assert!(slow.contains("escape-time 500"), "{slow}");
     assert!(slow.contains("set -s escape-time 10"), "{slow}");
 
-    t.tmux(&["set-option", "-s", "escape-time", "10"]);
+    t.must(&["set-option", "-s", "escape-time", "10"]);
     assert!(!section(&t).contains("escape-time"));
 }
 
@@ -1781,7 +1903,7 @@ fn promote_gives_a_pane_the_session_its_directory_names() {
     let other = t.sandbox.join("web.site");
     std::fs::create_dir_all(&other).unwrap();
     t.session("alpha", &dir);
-    t.tmux(&[
+    t.must(&[
         "split-window",
         "-t",
         "=alpha:",
@@ -2358,12 +2480,22 @@ fn the_health_mark_appears_when_the_config_changes_under_a_running_daemon() {
 /// silently hit nothing.
 fn a_server_worth_saving(t: &Tmux, dir: &Path) {
     t.session("alpha", dir);
-    t.tmux(&["rename-window", "-t", "=alpha:", "edit"]);
-    t.tmux(&["new-window", "-d", "-t", "=alpha:", "-n", "watch"]);
+    let server = t.server_pid();
+    t.must(&["rename-window", "-t", "=alpha:", "edit"]);
+    t.must(&["new-window", "-d", "-t", "=alpha:", "-n", "watch"]);
     // `tail` is in the shipped restore table, and it stays running, so the
     // pane's command is the same before and after.
     send_when_ready(t, "=alpha:watch", "tail -f /dev/null");
     t.session("beta", dir);
+    // `-L` starts a server for any command that finds none, so a server that
+    // died under alpha comes back for beta's `new-session` and the only trace
+    // is a different pid.
+    assert_eq!(
+        t.server_pid(),
+        server,
+        "the tmux server alpha was made on went away before beta; sessions now: {:?}",
+        t.sessions()
+    );
     assert!(
         t.until(10, |t| t.panes().iter().any(|p| p.contains("tail"))),
         "the fixture never started: {:?}",
@@ -2379,7 +2511,9 @@ fn a_server_worth_saving(t: &Tmux, dir: &Path) {
 fn send_when_ready(t: &Tmux, target: &str, command: &str) {
     let first = command.split_whitespace().next().unwrap_or(command);
     for _ in 0..40 {
-        t.tmux(&["send-keys", "-t", target, command, "C-m"]);
+        // `must`, so a target that does not exist fails here with tmux's
+        // reason, rather than after forty silent seconds of sending to it.
+        t.must(&["send-keys", "-t", target, command, "C-m"]);
         if t.until(1, |t| {
             t.tmux(&[
                 "display-message",
@@ -2495,7 +2629,7 @@ fn a_merge_brings_back_only_what_is_missing() {
     assert!(ok);
 
     let beta_created = t.tmux(&["display-message", "-p", "-t", "=beta", "#{session_created}"]);
-    t.tmux(&["kill-session", "-t", "=alpha"]);
+    t.must(&["kill-session", "-t", "=alpha"]);
     assert_eq!(t.sessions(), vec!["beta"]);
 
     let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--merge"]);
@@ -2524,7 +2658,7 @@ fn a_dry_run_prints_the_commands_and_touches_nothing() {
 
     // Something to restore, so the listing has content, and something live, so
     // there is state a dry run could damage.
-    t.tmux(&["kill-session", "-t", "=alpha"]);
+    t.must(&["kill-session", "-t", "=alpha"]);
     let before = t.panes();
     let (out, err, ok) = t.run_outside(&["sessions", "resurrect", "--merge", "--dry-run"]);
     assert!(ok, "{out} {err}");
@@ -2613,6 +2747,7 @@ fn a_command_nothing_claims_opens_its_pane_and_is_not_run() {
     };
     let dir = t.sandbox.clone();
     t.session("gamma", &dir);
+    let server = t.server_pid();
     // Nothing in the shipped restore table claims this, so the restore must
     // open the pane and leave it at a prompt rather than running it again.
     let flag = t.sandbox.join("it-ran");
@@ -2623,7 +2758,10 @@ fn a_command_nothing_claims_opens_its_pane_and_is_not_run() {
     );
     assert!(
         t.until(10, |_| flag.exists()),
-        "the command never ran at all"
+        "the command never ran at all; server {server:?} then {:?}, sessions {:?}, the pane:\n{}",
+        t.server_pid(),
+        t.sessions(),
+        t.capture("=gamma:")
     );
 
     let (_, _, ok) = t.run(&["sessions", "save"]);
@@ -2708,7 +2846,7 @@ fn bare_session(t: &Tmux, conf: &Path, name: &str, command: Option<&str>) {
     if let Some(c) = command {
         args.push(c);
     }
-    t.tmux(&args);
+    t.must(&args);
 }
 
 /// `setup --print`, as id to (state, key).
@@ -2748,14 +2886,14 @@ fn setup_finds_a_bare_tmux_open_and_a_binding_made_by_hand_on() {
     assert_eq!(rows["panes"].1, "prefix g");
     assert_eq!(rows["new-window"].1, "prefix N");
 
-    t.tmux(&[
+    t.must(&[
         "bind",
         "j",
         "display-popup",
         "-E",
         "tmux-companion panes --agents",
     ]);
-    t.tmux(&[
+    t.must(&[
         "set-hook",
         "-g",
         "client-attached[7]",
@@ -2769,7 +2907,7 @@ fn setup_finds_a_bare_tmux_open_and_a_binding_made_by_hand_on() {
 
     // What a shell with the marks says on its first prompt.
     let pane = t.tmux(&["display-message", "-p", "-t", "bare", "#{pane_id}"]);
-    t.tmux(&["set", "-p", "-t", &pane, "@tmux-companion-marks", "1"]);
+    t.must(&["set", "-p", "-t", &pane, "@tmux-companion-marks", "1"]);
     assert_eq!(setup_rows(&t)["shell-init"].0, "on");
 
     // A config written off is a decision, not a gap.
@@ -2807,11 +2945,11 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
     // The clipboard is a file, so nothing reaches the machine's own.
     let clip = t.sandbox.join("bin/clip");
     let clipped = t.sandbox.join("clipboard");
-    std::fs::write(&clip, format!("#!/bin/sh\ncat > '{}'\n", clipped.display())).unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&clip, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    // Through `write_executable`, which says why a plain write is a race.
+    write_executable(
+        &clip,
+        &format!("#!/bin/sh\ncat > '{}'\n", clipped.display()),
+    );
     let config = t.sandbox.join("config/tmux-companion/config.toml");
     std::fs::write(
         &config,
@@ -2832,14 +2970,14 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
     );
 
     // Enter on the inbox row, and yes to writing it.
-    t.tmux(&["send-keys", "-t", "write", "-l", "inbox"]);
-    t.tmux(&["send-keys", "-t", "write", "Enter"]);
+    t.must(&["send-keys", "-t", "write", "-l", "inbox"]);
+    t.must(&["send-keys", "-t", "write", "Enter"]);
     assert!(
         t.until(10, |t| screen(t).contains("[y/N]")),
         "no question:\n{}",
         screen(&t)
     );
-    t.tmux(&["send-keys", "-t", "write", "y", "Enter"]);
+    t.must(&["send-keys", "-t", "write", "y", "Enter"]);
     assert!(
         // The whole table rather than `list-keys -T prefix M-g`, which
         // answers for some keys and not others (see src/keys.rs).
@@ -2876,14 +3014,14 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
         "the picker did not come back:\n{}",
         screen(&t)
     );
-    t.tmux(&["send-keys", "-t", "write", "-l", "window-names"]);
-    t.tmux(&["send-keys", "-t", "write", "Enter"]);
+    t.must(&["send-keys", "-t", "write", "-l", "window-names"]);
+    t.must(&["send-keys", "-t", "write", "Enter"]);
     assert!(
         t.until(10, |t| screen(t).contains("config.toml? [y/N]")),
         "no question for the config:\n{}",
         screen(&t)
     );
-    t.tmux(&["send-keys", "-t", "write", "y", "Enter"]);
+    t.must(&["send-keys", "-t", "write", "y", "Enter"]);
     assert!(
         t.until(15, |_| std::fs::read_to_string(&config)
             .unwrap_or_default()
@@ -2896,7 +3034,7 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
         text.starts_with("# my config, keep this comment\n"),
         "{text}"
     );
-    t.tmux(&["send-keys", "-t", "write", "Escape"]);
+    t.must(&["send-keys", "-t", "write", "Escape"]);
 
     let rows = setup_rows(&t);
     assert_eq!(rows["inbox"].0, "on");
