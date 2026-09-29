@@ -32,6 +32,7 @@ battery     = "0.7"
 toml = "1.1"
 ratatui = "0.30.0"
 nucleo-matcher = "0.3.1"
+toml_edit = "0.25.15"
 
 [dev-dependencies]
 tempfile = "3.12"

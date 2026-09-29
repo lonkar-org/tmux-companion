@@ -1,0 +1,702 @@
+# What `tmux-companion setup` lists: everything the tool offers that has to be
+# turned on somewhere, how to tell whether it is, and the lines that turn it on.
+#
+# Data rather than code, so adding an item is adding a table here. The tests in
+# src/setup/catalog.rs hold this file to two others: every command a snippet
+# runs has to be one clap knows, and every binding has to be the binding
+# docs/tmux.conf.full.example writes, key and all, so the two cannot drift.
+#
+# Fields:
+#
+#   id        a name for the item, stable, used in the skip file and the block
+#   group     Keys, Hooks, Bar, Config or Outside tmux
+#   kind      binding, hook, option, config or outside
+#   line      what it is for, as the question it answers
+#   command   for binding, hook and option: the tmux-companion words it runs,
+#             subcommand first, then the flags that tell it from a sibling
+#   key       for binding: the key the full example binds
+#   table     for binding: prefix, root or copy-mode-vi
+#   fallback  for binding: keys to offer when that one is taken
+#   hook      for hook: the tmux hook name
+#   option    for option: the tmux option
+#   setting   for config: the dotted path in config.toml that turns it on
+#   contains  for config: an array of tables that has to hold an entry of this
+#             name, rather than a value that has to be set
+#   seed      for config: when the array is not in the file, write what is in
+#             force first, so adding one entry does not drop the defaults
+#   check     for outside: marks, claude-hooks, zoxide, nerd-font or clipboard
+#   write     false keeps it to the clipboard: the snippet needs editing first
+#   snippet   what gets copied, and written; {key} is the key chosen
+#   goes      the file it goes in, for the preview
+
+# ── Keys: panes ──────────────────────────────────────────────────────────────
+
+[[item]]
+id = "zen"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for zen
+line = "Can I get everything but this pane out of the way?"
+command = "zen"
+key = "z"
+table = "prefix"
+fallback = ["Z", "M-z"]
+snippet = '''bind -N "companion: pane zen, everything but this one goes" {key} run-shell "tmux-companion zen --pane '#{pane_id}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "kill"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for kill
+line = "What do I do when C-c doesn't stop it?"
+command = "kill"
+key = "K"
+table = "prefix"
+fallback = ["M-k"]
+snippet = '''bind -N "companion: pane stop what hangs in it" {key} run-shell "tmux-companion kill --ask --pane '#{pane_id}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "pocket"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for pocket
+line = "Can I have a shell beside the editor and put it away again?"
+command = "pocket"
+key = "`"
+table = "prefix"
+fallback = ["|", "M-`"]
+snippet = '''bind -N "companion: pane the pocket shell, out and away" {key} run-shell "tmux-companion pocket --pane '#{pane_id}'"'''
+goes = "tmux.conf"
+
+# ── Keys: windows, sessions, projects ────────────────────────────────────────
+
+[[item]]
+id = "project"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for project
+line = "Can I get to that project without typing its path?"
+command = "project"
+key = "M-s"
+table = "root"
+fallback = ["M-p", "M-j"]
+snippet = '''bind -N "companion: project pick a project" -n {key} display-popup -E -w 80% -h 70% "tmux-companion project"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "new-window"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for new-window
+line = "Can I open a window somewhere other than here?"
+command = "new-window"
+key = "c"
+table = "prefix"
+fallback = ["N", "M-c"]
+snippet = '''bind -N "companion: window new one here, or at any directory" {key} display-popup -E -w 65% -h 65% "tmux-companion new-window"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "panes"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for panes
+line = "Which pane was that in?"
+command = "panes"
+key = "g"
+table = "prefix"
+fallback = ["j", "M-j"]
+snippet = '''bind -N "companion: window jump to any pane" {key} display-popup -E -w 80% -h 70% "tmux-companion panes"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "panes-agents"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for panes-agents
+line = "Where's the agent working on X?"
+command = "panes --agents"
+key = "G"
+table = "prefix"
+fallback = ["A", "M-G"]
+snippet = '''bind -N "companion: window jump to an agent" {key} display-popup -E -w 80% -h 70% "tmux-companion panes --agents"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "inbox"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for inbox
+line = "Who needs an answer from me?"
+command = "inbox"
+key = "M-g"
+table = "prefix"
+fallback = ["I", "M-i"]
+snippet = '''bind -N "companion: project the agents waiting on you" {key} display-popup -E -w 80% -h 70% "tmux-companion inbox"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "run"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for run
+line = "What was that command I ran yesterday?"
+command = "run"
+key = "e"
+table = "prefix"
+fallback = ["R", "M-e"]
+snippet = '''bind -N "companion: window run a command from history" {key} display-popup -E -w 70% -h 60% "tmux-companion run"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "ports"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for ports
+line = "What's already listening on that port?"
+command = "ports"
+key = "P"
+table = "prefix"
+fallback = ["O", "M-P"]
+snippet = '''bind -N "companion: window which pane listens on which port" {key} display-popup -E -w 80% -h 70% "tmux-companion ports"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "toggle"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for toggle
+line = "Next window, without the prefix?"
+command = "toggle"
+key = "M-a"
+table = "root"
+fallback = ["M-w"]
+snippet = '''bind -N "companion: project toggle the tools in this session" -n {key} run-shell "tmux-companion toggle '#{session_name}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "toggle-last"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for toggle-last
+line = "Back to the window I was just in?"
+command = "toggle --last"
+key = "M-A"
+table = "root"
+fallback = ["M-W"]
+snippet = '''bind -N "companion: project flip to the last window" -n {key} run-shell "tmux-companion toggle --last '#{session_name}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "promote"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for promote
+line = "Can this pane become a project of its own?"
+command = "promote"
+key = "@"
+table = "prefix"
+fallback = ["^"]
+snippet = '''bind -N "companion: session give this pane a session of its own" {key} run-shell "tmux-companion promote --pane '#{pane_id}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "project-close"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for project-close
+line = "Can I close this project and have it come back the same?"
+command = "project close"
+key = "X"
+table = "prefix"
+fallback = ["M-x", "M-X"]
+snippet = '''bind -N "companion: session close this project cleanly" {key} confirm-before -p "close #{session_name}? (y/n)" "run-shell 'tmux-companion project close'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "project-save"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for project-save
+line = "Can this project open like this next time?"
+command = "project save"
+key = "S"
+table = "prefix"
+fallback = ["W"]
+snippet = '''bind -N "companion: project save this layout for this project" {key} run-shell 'tmux-companion project save''''
+goes = "tmux.conf"
+
+[[item]]
+id = "project-forget"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for project-forget
+line = "Can this project forget the layout I saved?"
+command = "project forget"
+key = "M-S"
+table = "prefix"
+fallback = ["M-W"]
+snippet = '''bind -N "companion: project forget this project's saved layout" {key} run-shell 'tmux-companion project forget''''
+goes = "tmux.conf"
+
+[[item]]
+id = "sessions-save"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for sessions-save
+line = "Can I save every session right now?"
+command = "sessions save"
+key = "M-s"
+table = "prefix"
+fallback = ["M-v"]
+snippet = '''bind -N "companion: sessions save every session now" {key} run-shell "tmux-companion sessions save"'''
+goes = "tmux.conf"
+
+# ── Keys: copy mode, opening, searching ──────────────────────────────────────
+
+[[item]]
+id = "search"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for search
+line = "Where did I see that line?"
+command = "search"
+key = "/"
+table = "prefix"
+fallback = ["F", "M-/"]
+snippet = '''bind -N "companion: copy search every pane's scrollback" {key} display-popup -E -w 90% -h 80% "tmux-companion search"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "open"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for open
+line = "Can I open the file or link under the cursor?"
+command = "open"
+key = "o"
+table = "copy-mode-vi"
+fallback = ["O"]
+snippet = '''bind -N "companion: copy open what is under the cursor" -T copy-mode-vi {key} run-shell "tmux-companion open --pane '#{pane_id}' --cursor-x '#{copy_cursor_x}' -- #{q:copy_cursor_line}"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "clipboard"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for clipboard
+line = "Can what I copy reach the system clipboard?"
+command = "clipboard"
+key = "y"
+table = "copy-mode-vi"
+fallback = ["Y"]
+snippet = '''bind -N "companion: copy yank to the system clipboard" -T copy-mode-vi {key} send-keys -X copy-selection-no-clear \; run-shell "tmux-companion clipboard"'''
+goes = "tmux.conf"
+
+# ── Keys: config and help ────────────────────────────────────────────────────
+
+[[item]]
+id = "keys"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for keys
+line = "What does that key do again?"
+command = "keys"
+key = "?"
+table = "prefix"
+fallback = ["h", "F1"]
+snippet = '''bind -N "companion: help search every key binding" {key} display-popup -E -w 80% -h 60% "tmux-companion keys"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "cheatsheet"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for cheatsheet
+line = "Which keys did I set up, all on one screen?"
+command = "cheatsheet"
+key = "C-c"
+table = "prefix"
+fallback = ["H", "C-h"]
+snippet = '''bind -N "companion: help cheat sheet of my bindings" {key} display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "brief"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for brief
+line = "What needs me right now?"
+command = "brief"
+key = "b"
+table = "prefix"
+fallback = ["B", "M-b"]
+snippet = '''bind -N "companion: help what needs me" {key} display-popup -E -w 70% -h 60% "tmux-companion brief"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "journal"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for journal
+line = "What did I actually get done today?"
+command = "journal"
+key = "J"
+table = "prefix"
+fallback = ["Y", "M-J"]
+snippet = '''bind -N "companion: help what happened today" {key} display-popup -E -w 80% -h 70% "tmux-companion journal"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "theme-pick"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for theme-pick
+line = "Can this session look different from that one?"
+command = "theme pick"
+key = "C-t"
+table = "prefix"
+fallback = ["T", "M-t"]
+snippet = '''bind -N "companion: config pick a colour theme" {key} display-popup -E -w 70% -h 70% "tmux-companion theme pick"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "quiet"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for quiet
+line = "Can everything stop nagging me for an hour?"
+command = "quiet"
+key = "Q"
+table = "prefix"
+fallback = ["U", "M-q"]
+snippet = '''bind -N "companion: config quiet hours, no nagging for a while" {key} command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""'''
+goes = "tmux.conf"
+
+# ── Hooks ────────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "keys-all"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for keys-all
+line = "Is there a tmux key for that already?"
+command = "keys --all"
+key = "M-/"
+table = "prefix"
+fallback = ["C-_", "M-?"]
+snippet = '''bind -N "companion: help search every key binding, tmux's own too" {key} display-popup -E -w 80% -h 60% "tmux-companion keys --all"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "note"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for note
+line = "What was I doing in this pane again?"
+command = "note"
+key = "N"
+table = "prefix"
+fallback = ["M-n", "C-y"]
+snippet = '''bind -N "companion: pane note what this pane is doing" {key} command-prompt -p "note (empty clears):" "run-shell \"tmux-companion note --pane '#{pane_id}' -- '%1'\""'''
+goes = "tmux.conf"
+
+[[item]]
+id = "sessions-resurrect"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for sessions-resurrect
+line = "Laptop rebooted, where did all my sessions go?"
+command = "sessions resurrect --merge"
+key = "C-r"
+table = "prefix"
+fallback = ["M-r", "C-u"]
+snippet = '''bind -N "companion: sessions bring back the ones that are missing" {key} display-popup -E -w 85% -h 75% "tmux-companion sessions resurrect --merge"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "sessions-idle"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for sessions-idle
+line = "Which sessions haven't I touched in days?"
+command = "sessions idle"
+key = "C-i"
+table = "prefix"
+fallback = ["M-i", "C-j"]
+snippet = '''bind -N "companion: sessions list the idle ones, enter closes it" {key} display-popup -E -w 85% -h 65% "tmux-companion sessions idle"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "copy-menu"
+group = "Keys"
+kind = "binding"
+# @Yogesh(check): one-liner for copy-menu
+line = "I'm in copy mode, what can I do with this line?"
+command = "open --choose"
+key = "g"
+table = "copy-mode-vi"
+fallback = ["m", "M"]
+snippet = '''bind -N "companion: copy menu of open and search, g again for the top" -T copy-mode-vi {key} display-menu -x '#{e|+:#{popup_pane_left},#{copy_cursor_x}}' -y '#{e|+:#{popup_pane_top},#{e|+:#{copy_cursor_y},1}}' "open URL or file under the cursor" o { run-shell "tmux-companion open --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}" } "#{?selection_present,,-}open the selection" O { send-keys -X copy-selection-no-clear ; run-shell "tmux-companion open --pane '##{pane_id}' -s" } "" "search the line, in a popup" s { run-shell -C "display-popup -h 65% -w 65% -B -E \"tmux-companion open --choose --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}\"" } "#{?selection_present,,-}search the selection, in a popup" S { send-keys -X copy-selection-no-clear ; run-shell -C "display-popup -h 65% -w 65% -B -E 'tmux-companion open --choose -s'" } "" "jump to the top of history" g { send-keys -X history-top }'''
+goes = "tmux.conf"
+
+[[item]]
+id = "usage"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for usage
+line = "Can the cheat sheet show the keys I keep looking up?"
+setting = "usage.enabled"
+snippet = '''[usage]
+enabled = true'''
+goes = "config.toml"
+
+[[item]]
+id = "click"
+group = "Hooks"
+kind = "binding"
+# @Yogesh(check): one-liner for click
+line = "Can I click the agent count to see who's waiting?"
+command = "click"
+key = "MouseDown1StatusRight"
+table = "root"
+fallback = []
+snippet = '''bind -T root {key} run-shell "tmux-companion click '#{mouse_status_range}'"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "start-hook"
+group = "Hooks"
+kind = "hook"
+# @Yogesh(check): one-liner for start-hook
+line = "Can typing plain tmux land me in a project?"
+command = "start --hook"
+hook = "client-attached"
+snippet = '''set-hook -g client-attached[40] 'run-shell "tmux-companion start --hook"''''
+goes = "tmux.conf"
+
+[[item]]
+id = "brief-hook"
+group = "Hooks"
+kind = "hook"
+# @Yogesh(check): one-liner for brief-hook
+line = "Can attaching tell me what's waiting, and only when something is?"
+command = "brief --hook"
+hook = "client-attached"
+snippet = '''set-hook -g client-attached[41] 'run-shell "tmux-companion brief --hook"''''
+goes = "tmux.conf"
+
+[[item]]
+id = "theme-hook"
+group = "Hooks"
+kind = "hook"
+# @Yogesh(check): one-liner for theme-hook
+line = "Can each new session get its colours without me picking?"
+command = "theme apply"
+hook = "session-created"
+snippet = '''set-hook -g session-created[40] "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'"'''
+goes = "tmux.conf"
+
+# ── Bar ──────────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "status-right"
+group = "Bar"
+kind = "option"
+# @Yogesh(check): one-liner for status-right
+line = "Can the bar show the branch, the network and the battery?"
+command = "status-right"
+option = "status-right"
+snippet = '''set -g status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+set -g status-right-length 150'''
+goes = "tmux.conf"
+
+[[item]]
+id = "segment-agents"
+group = "Bar"
+kind = "config"
+# @Yogesh(check): one-liner for segment-agents
+line = "How many agents are running, and is one waiting on me?"
+setting = "status.right.segments"
+contains = "agents"
+seed = true
+snippet = '''[[status.right.segments]]
+name = "agents"'''
+goes = "config.toml"
+
+[[item]]
+id = "segment-health"
+group = "Bar"
+kind = "config"
+# @Yogesh(check): one-liner for segment-health
+line = "Is something wrong that I haven't noticed?"
+setting = "status.right.segments"
+contains = "health"
+seed = true
+snippet = '''[[status.right.segments]]
+name = "health"'''
+goes = "config.toml"
+
+# ── Config ───────────────────────────────────────────────────────────────────
+
+[[item]]
+id = "sessions-autosave"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for sessions-autosave
+line = "Will my sessions come back after a reboot?"
+setting = "sessions.autosave"
+snippet = '''[sessions]
+autosave = "interval"'''
+goes = "config.toml"
+
+[[item]]
+id = "layout"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for layout
+line = "Can every project open with the same windows?"
+setting = "layout"
+snippet = '''[[layout]]
+name = "default"
+
+[[layout.window]]
+name = "edit"
+command = "nvim"
+
+[[layout.window]]
+name = "ai"
+command = "claude"'''
+goes = "config.toml"
+
+[[item]]
+id = "trusted"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for trusted
+line = "Can a checkout's own layout run its commands?"
+setting = "project.trusted"
+write = false
+snippet = '''[project]
+trusted = ["~/src"]'''
+goes = "config.toml"
+
+[[item]]
+id = "nudge"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for nudge
+line = "Can an agent that's been waiting a while remind me?"
+setting = "agents.nudge_after_secs"
+snippet = '''[agents]
+nudge_after_secs = 300'''
+goes = "config.toml"
+
+[[item]]
+id = "notify"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for notify
+line = "Did that long build finish while I was looking elsewhere?"
+setting = "notify.enabled"
+snippet = '''[notify]
+enabled = true'''
+goes = "config.toml"
+
+[[item]]
+id = "journal-config"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for journal-config
+line = "Can the day get written down as it happens?"
+setting = "journal.enabled"
+snippet = '''[journal]
+enabled = true'''
+goes = "config.toml"
+
+[[item]]
+id = "autofetch"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for autofetch
+line = "Am I behind the remote, without fetching by hand?"
+setting = "git.autofetch.enabled"
+snippet = '''[git.autofetch]
+enabled = true'''
+goes = "config.toml"
+
+[[item]]
+id = "window-names"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for window-names
+line = "Can a window be named after what runs in it?"
+setting = "window_names.enabled"
+snippet = '''[window_names]
+enabled = true'''
+goes = "config.toml"
+
+[[item]]
+id = "online"
+group = "Config"
+kind = "config"
+# @Yogesh(check): one-liner for online
+line = "Is it me or the network?"
+setting = "online.enabled"
+snippet = '''[online]
+enabled = true'''
+goes = "config.toml"
+
+# ── Outside tmux ─────────────────────────────────────────────────────────────
+
+[[item]]
+id = "shell-init"
+group = "Outside tmux"
+kind = "outside"
+# @Yogesh(check): one-liner for shell-init
+line = "Can I jump from prompt to prompt in copy mode?"
+check = "marks"
+snippet = '''eval "$(tmux-companion shell-init zsh)"'''
+goes = "~/.zshrc"
+
+[[item]]
+id = "claude-hooks"
+group = "Outside tmux"
+kind = "outside"
+# @Yogesh(check): one-liner for claude-hooks
+line = "Can the bar tell an agent that's busy from one that's stuck?"
+check = "claude-hooks"
+snippet = '''tmux-companion agent hooks claude'''
+goes = "~/.claude/settings.json"
+
+[[item]]
+id = "zoxide"
+group = "Outside tmux"
+kind = "outside"
+# @Yogesh(check): one-liner for zoxide
+line = "Can the project picker list where I've been?"
+check = "zoxide"
+snippet = '''brew install zoxide'''
+goes = "PATH"
+
+[[item]]
+id = "nerd-font"
+group = "Outside tmux"
+kind = "outside"
+# @Yogesh(check): one-liner for nerd-font
+line = "Do the icons on the bar draw as icons?"
+check = "nerd-font"
+snippet = '''brew install --cask font-jetbrains-mono-nerd-font'''
+goes = "the terminal's font"
+
+[[item]]
+id = "clipboard-tool"
+group = "Outside tmux"
+kind = "outside"
+# @Yogesh(check): one-liner for clipboard-tool
+line = "Is there a clipboard program for a copy to go to?"
+check = "clipboard"
+snippet = '''sudo apt install wl-clipboard'''
+goes = "PATH"

@@ -124,6 +124,27 @@ is for the
 .Ic client-attached
 hook: it opens the popup only when something is waiting or wrong, and says
 nothing when the server is quiet.
+.\" @Yogesh(gap): the brief's setup line: shown for the week after a build first runs, only when setup has items open, and never a reason to open the popup on attach
+In the week after a build first runs, a line counts the
+.Ic setup
+items still open, when there are any.
+.\" @Yogesh(gap): the paragraph for setup: what it lists and why, the five states, enter (copy, then ask before writing; outside-tmux rows are only copied), ctrl-x, ctrl-e and the key it offers, where it writes (a fenced block in the tmux.conf tmux loaded, written through a symlink and sourced; config.toml with its comments kept, checked, then the daemon restarted), and --print
+.It Ic setup Op Fl -print
+Lists what the tool offers and the state of each:
+.Ql on ,
+.Ql open ,
+.Ql off-by-choice ,
+.Ql skipped
+or
+.Ql cant-tell .
+Enter copies the lines to the clipboard and asks before adding them to
+.Pa tmux.conf
+or
+.Pa config.toml .
+Ctrl-x skips a row.
+Ctrl-e sets a binding's key.
+.Fl -print
+prints id, group, state, key and line, tab-separated.
 .El
 .Sh STATUS LINE COMMANDS
 These print tmux format strings on standard output and are meant for
@@ -1222,6 +1243,10 @@ since 3.3 and they do nothing until the shell says where a prompt begins.
 eval "$(tmux-companion shell-init zsh)"     # or bash
 tmux-companion shell-init fish | source
 .Ed
+.\" @Yogesh(gap): the pane option the first prompt sets, and that setup reads it
+On its first prompt the shell sets the pane option
+.Ql @tmux-companion-marks
+to 1, once, inside tmux only.
 .El
 .Sh THEMES
 A theme is a file of tmux options that
@@ -1377,9 +1402,9 @@ The rest of that section is what a picker looks like rather than what it holds:
 and the preview's own label.
 Each of them can be written again under
 .Ic [picker.keys] , [picker.project] , [picker.window] , [picker.theme] ,
-.Ic [picker.run] , [picker.open]
+.Ic [picker.run] , [picker.open] , [picker.panes]
 or
-.Ic [picker.panes]
+.Ic [picker.setup]
 for the one picker that wants a different answer, together with the
 .Ic label , hint
 and
@@ -1521,6 +1546,12 @@ A tmux with nothing to change says so in one line.
 Most people got these settings from
 .Lk https://github.com/tmux-plugins/tmux-sensible tmux-sensible ,
 which set them as a plugin and hasn't been pushed since April 2024.
+.\" @Yogesh(gap): doctor's setup line
+The
+.Ql setup
+line counts the items
+.Ic setup
+lists as open.
 .It Ic health Op Cm ack
 Why the health mark is up, one reason a line, or
 .Ql ok .
@@ -1593,6 +1624,14 @@ file of a daemon that never removed it, moved here by the next daemon to
 start once it has found that pid dead; its presence is what makes
 .Ic sessions resurrect
 treat the last snapshot as taken before a crash
+.\" @Yogesh(gap): the skip file's entry
+.It Pa $XDG_STATE_HOME/tmux-companion/setup-skipped.tsv
+the ids
+.Ic setup
+was told to skip, one per line
+.\" @Yogesh(gap): the build stamp's entry
+.It Pa $XDG_STATE_HOME/tmux-companion/build-seen
+the build a daemon first ran here and when, tab-separated
 .It Pa $XDG_STATE_HOME/tmux-companion/journal.tsv
 what ran long, what the agents asked, what opened and closed
 .It Pa $XDG_STATE_HOME/tmux-companion/daemon.log

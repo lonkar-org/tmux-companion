@@ -245,6 +245,7 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                     Some(said) => {
                         st.reports
                             .insert(args.pane, crate::panes::Reported { state: said, at });
+                        st.agent_reported = true;
                     }
                     None => {
                         st.reports.remove(&args.pane);
@@ -260,6 +261,14 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         "__reports" => {
             let reports = state.lock().await.reports.clone();
             serde_json::to_string(&reports).map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        // What `setup` and `doctor` ask the daemon, as JSON: whether an agent
+        // has reported since it started, which is the one sign the hooks work.
+        "__setup" => {
+            let facts = crate::proto::SetupFacts {
+                agent_reported: state.lock().await.agent_reported,
+            };
+            serde_json::to_string(&facts).map_err(|e| anyhow::anyhow!("{e}"))
         }
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
@@ -964,6 +973,33 @@ mod tests {
         let r = dispatch(Request::raw("noop", serde_json::Value::Null), state()).await;
         assert!(r.error.is_none(), "{:?}", r.error);
         assert_eq!(r.output, "");
+    }
+
+    #[tokio::test]
+    async fn setup_hears_that_an_agent_reported_and_a_clear_does_not_count() {
+        let st = state();
+        let facts = |r: crate::proto::Response| -> crate::proto::SetupFacts {
+            assert!(r.error.is_none(), "{:?}", r.error);
+            serde_json::from_str(&r.output).expect("json")
+        };
+        let ask = || Request::raw("__setup", serde_json::Value::Null);
+        assert!(!facts(dispatch(ask(), st.clone()).await).agent_reported);
+
+        let clear = crate::proto::AgentArgs {
+            pane: "%1".into(),
+            state: None,
+        };
+        dispatch(Request::build("__agent", &clear), st.clone()).await;
+        assert!(!facts(dispatch(ask(), st.clone()).await).agent_reported);
+
+        let busy = crate::proto::AgentArgs {
+            pane: "%1".into(),
+            state: Some(crate::panes::Report::Busy),
+        };
+        dispatch(Request::build("__agent", &busy), st.clone()).await;
+        // And it stays said after the pane's report is forgotten.
+        dispatch(Request::build("__agent", &clear), st.clone()).await;
+        assert!(facts(dispatch(ask(), st.clone()).await).agent_reported);
     }
 
     #[tokio::test]

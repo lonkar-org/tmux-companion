@@ -83,7 +83,12 @@ pub(super) enum Ended {
     Typed(String),
     /// Esc or ctrl-d.
     Cancelled,
+    /// One of the caller's ctrl keys, on a row: the letter and the row's index.
+    Key(char, usize),
 }
+
+/// The ctrl keys the loop keeps for itself, whatever a caller asks for.
+const RESERVED: [char; 8] = ['a', 'c', 'd', 'j', 'k', 'p', 'u', 'm'];
 
 /// The shares ctrl-p cycles through, as percentages of the popup.
 ///
@@ -171,6 +176,20 @@ impl State {
         self.selected = 0;
         self.offset = 0;
         self.preview_scroll = 0;
+    }
+
+    /// Put the cursor on the row the caller built at `index`, when it matched.
+    ///
+    /// For a picker that is opened again after acting on a row, so the cursor
+    /// comes back where it was rather than at the top.
+    pub(super) fn select_index(&mut self, index: usize) {
+        if let Some(at) = self
+            .hits
+            .iter()
+            .position(|h| self.rows[h.row].index == index)
+        {
+            self.selected = at;
+        }
     }
 
     /// The row the cursor is on, if anything matched.
@@ -630,6 +649,22 @@ pub(super) fn draw(
 
 /// Show the picker and wait for a decision.
 pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Result<Ended> {
+    run_keyed(items, query, chrome, &[], None)
+}
+
+/// Show the picker, and end on any of `keys` pressed with ctrl as well.
+///
+/// The keys are the caller's, and they are only ever ctrl chords: a plain
+/// letter is the query, and taking one away would make a row that holds it
+/// impossible to search for. A key this loop already uses wins over the
+/// caller's, so a caller cannot take cancel or the preview scroll away.
+pub(super) fn run_keyed(
+    items: &[Item],
+    query: &str,
+    chrome: &Chrome,
+    keys: &[char],
+    start_at: Option<usize>,
+) -> anyhow::Result<Ended> {
     use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
     let mut state = State::new(
@@ -638,6 +673,9 @@ pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Resul
         chrome.preview_percent,
         &chrome.look.column_order,
     );
+    if let Some(index) = start_at {
+        state.select_index(index);
+    }
     let mut terminal = ratatui::init();
     // Whatever happens below, the terminal goes back to how it was found. A
     // picker that panics with raw mode still on leaves the pane unusable and
@@ -688,6 +726,11 @@ pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Resul
                     state.preview_scroll = state.preview_scroll.saturating_add(1);
                 }
                 KeyCode::Char('p') if ctrl => state.cycle_preview(),
+                KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
+                    if let Some(row) = state.current() {
+                        return Ok(Ended::Key(c, row.index));
+                    }
+                }
                 // ctrl-a and ctrl-u both clear. They are one key in most
                 // people's hands and two in fzf's, and a picker is not the
                 // place to be strict about which.
@@ -897,6 +940,22 @@ mod tests {
         let state = State::new(&items, "   ", 0, &[]);
         let order: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
         assert_eq!(order, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_picker_opened_again_starts_on_the_row_it_was_on() {
+        let items = vec![Item::new("one"), Item::new("two"), Item::new("three")];
+        let mut state = State::new(&items, "", 0, &[]);
+        state.select_index(2);
+        assert_eq!(state.current().map(|r| r.index), Some(2));
+        // A row the query hid leaves the cursor where it was.
+        let mut state = State::new(&items, "one", 0, &[]);
+        state.select_index(2);
+        assert_eq!(state.current().map(|r| r.index), Some(0));
+        // The caller's keys never take the picker's own.
+        for c in ['a', 'c', 'd', 'j', 'k', 'p', 'u'] {
+            assert!(RESERVED.contains(&c), "{c}");
+        }
     }
 
     #[test]

@@ -2613,3 +2613,219 @@ fn an_imported_resurrect_save_is_read_when_there_is_nothing_of_our_own() {
     assert!(out.contains("new-session -d -s delta"), "{out}");
     assert!(out.contains("send-keys -t =delta:1.1 nvim"), "{out}");
 }
+
+// ── setup ────────────────────────────────────────────────────────────────────
+
+/// A server started on a tmux.conf of this test's own, rather than the
+/// shipped example, so `setup` has something to find open.
+fn bare_session(t: &Tmux, conf: &Path, name: &str, command: Option<&str>) {
+    let conf = conf.display().to_string();
+    let mut args = vec![
+        "-f",
+        conf.as_str(),
+        "new-session",
+        "-d",
+        "-s",
+        name,
+        "-x",
+        "160",
+        "-y",
+        "40",
+    ];
+    if let Some(c) = command {
+        args.push(c);
+    }
+    t.tmux(&args);
+}
+
+/// `setup --print`, as id to (state, key).
+fn setup_rows(t: &Tmux) -> std::collections::HashMap<String, (String, String)> {
+    let (out, err, ok) = t.run(&["setup", "--print"]);
+    assert!(ok, "{err}");
+    out.lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            assert_eq!(f.len(), 5, "{l}");
+            (f[0].to_string(), (f[2].to_string(), f[3].to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn setup_finds_a_bare_tmux_open_and_a_binding_made_by_hand_on() {
+    let Some(t) = Tmux::start("setupprint") else {
+        return;
+    };
+    let conf = t.sandbox.join("tmux.conf");
+    std::fs::write(&conf, "set -g mouse on\n").unwrap();
+    bare_session(&t, &conf, "bare", None);
+
+    let rows = setup_rows(&t);
+    assert!(rows.len() > 30, "{rows:?}");
+    for id in [
+        "panes",
+        "panes-agents",
+        "inbox",
+        "brief-hook",
+        "status-right",
+    ] {
+        assert_eq!(rows[id].0, "open", "{id}: {:?}", rows[id]);
+    }
+    // tmux's own `prefix c` is taken, so a fallback is offered for it.
+    assert_eq!(rows["panes"].1, "prefix g");
+    assert_eq!(rows["new-window"].1, "prefix N");
+
+    t.tmux(&[
+        "bind",
+        "j",
+        "display-popup",
+        "-E",
+        "tmux-companion panes --agents",
+    ]);
+    t.tmux(&[
+        "set-hook",
+        "-g",
+        "client-attached[7]",
+        "run-shell 'tmux-companion brief --hook'",
+    ]);
+    let rows = setup_rows(&t);
+    assert_eq!(rows["panes-agents"], ("on".into(), "prefix j".into()));
+    assert_eq!(rows["panes"].0, "open", "--agents is not the plain list");
+    assert_eq!(rows["brief-hook"].0, "on");
+    assert_eq!(rows["start-hook"].0, "open");
+
+    // What a shell with the marks says on its first prompt.
+    let pane = t.tmux(&["display-message", "-p", "-t", "bare", "#{pane_id}"]);
+    t.tmux(&["set", "-p", "-t", &pane, "@tmux-companion-marks", "1"]);
+    assert_eq!(setup_rows(&t)["shell-init"].0, "on");
+
+    // A config written off is a decision, not a gap.
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[notify]\nenabled = false\n",
+    )
+    .unwrap();
+    let rows = setup_rows(&t);
+    assert_eq!(rows["notify"].0, "off-by-choice");
+    assert_eq!(rows["online"].0, "open");
+
+    let (out, _, ok) = t.run(&["doctor"]);
+    assert!(ok);
+    let line = out
+        .lines()
+        .find(|l| l.trim_start().starts_with("setup"))
+        .unwrap_or_else(|| panic!("no setup line in {out}"));
+    assert!(line.contains(" open"), "{line}");
+}
+
+#[test]
+fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
+    let Some(t) = Tmux::start("setupwrite") else {
+        return;
+    };
+    // tmux.conf as a link into a checkout, the way dotfiles keep it.
+    let checkout = t.sandbox.join("dotfiles");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let real = checkout.join("tmux.conf");
+    std::fs::write(&real, "# mine, above\nset -g mouse on\n").unwrap();
+    let link = t.sandbox.join(".tmux.conf");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // The clipboard is a file, so nothing reaches the machine's own.
+    let clip = t.sandbox.join("bin/clip");
+    let clipped = t.sandbox.join("clipboard");
+    std::fs::write(&clip, format!("#!/bin/sh\ncat > '{}'\n", clipped.display())).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&clip, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let config = t.sandbox.join("config/tmux-companion/config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "# my config, keep this comment\n[clipboard]\ncopy = \"{}\"\n",
+            clip.display()
+        ),
+    )
+    .unwrap();
+
+    let exe = t.binary.display().to_string();
+    bare_session(&t, &link, "write", Some(&format!("{exe} setup")));
+    let screen = |t: &Tmux| t.capture("write");
+    assert!(
+        t.until(10, |t| screen(t).contains("inbox")),
+        "the picker never drew:\n{}",
+        screen(&t)
+    );
+
+    // Enter on the inbox row, and yes to writing it.
+    t.tmux(&["send-keys", "-t", "write", "-l", "inbox"]);
+    t.tmux(&["send-keys", "-t", "write", "Enter"]);
+    assert!(
+        t.until(10, |t| screen(t).contains("[y/N]")),
+        "no question:\n{}",
+        screen(&t)
+    );
+    t.tmux(&["send-keys", "-t", "write", "y", "Enter"]);
+    assert!(
+        // The whole table rather than `list-keys -T prefix M-g`, which
+        // answers for some keys and not others (see src/keys.rs).
+        t.until(10, |t| t.tmux(&["list-keys", "-T", "prefix"]).lines().any(
+            |l| l.contains(" M-g ") && l.contains("tmux-companion inbox")
+        )),
+        "M-g was never bound:\n{}",
+        screen(&t)
+    );
+
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link was replaced with a file"
+    );
+    let text = std::fs::read_to_string(&real).unwrap();
+    assert!(
+        text.starts_with("# mine, above\nset -g mouse on\n"),
+        "{text}"
+    );
+    assert!(text.contains("# setup-item: inbox M-g"), "{text}");
+    assert!(
+        std::fs::read_to_string(&clipped)
+            .unwrap_or_default()
+            .contains("tmux-companion inbox"),
+        "the snippet was not copied"
+    );
+
+    // The same again for a config item: merged, checked, daemon restarted.
+    assert!(
+        t.until(10, |t| screen(t).contains("sourced")),
+        "the picker did not come back:\n{}",
+        screen(&t)
+    );
+    t.tmux(&["send-keys", "-t", "write", "-l", "window-names"]);
+    t.tmux(&["send-keys", "-t", "write", "Enter"]);
+    assert!(
+        t.until(10, |t| screen(t).contains("config.toml? [y/N]")),
+        "no question for the config:\n{}",
+        screen(&t)
+    );
+    t.tmux(&["send-keys", "-t", "write", "y", "Enter"]);
+    assert!(
+        t.until(15, |_| std::fs::read_to_string(&config)
+            .unwrap_or_default()
+            .contains("[window_names]")),
+        "config.toml was not written:\n{}",
+        screen(&t)
+    );
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        text.starts_with("# my config, keep this comment\n"),
+        "{text}"
+    );
+    t.tmux(&["send-keys", "-t", "write", "Escape"]);
+
+    let rows = setup_rows(&t);
+    assert_eq!(rows["inbox"].0, "on");
+    assert_eq!(rows["window-names"].0, "on");
+}

@@ -215,6 +215,9 @@ pub struct PickerLayout {
     /// `[picker.panes]`, for the list of every pane on the server.
     #[serde(default)]
     pub panes: PickerOverride,
+    /// `[picker.setup]`, for the checklist `setup` shows.
+    #[serde(default)]
+    pub setup: PickerOverride,
 }
 
 /// One picker's departures from `[picker]`.
@@ -292,6 +295,8 @@ pub enum Picker {
     Open,
     /// Every pane on the server, or only the agents among them.
     Panes,
+    /// The checklist of what the tool offers.
+    Setup,
 }
 
 /// What one picker looks like before anybody configures it.
@@ -332,6 +337,10 @@ fn builtin(
         // Beside the list rather than under it: the rows are wide and the
         // list is what is being searched.
         Picker::Panes => (P::Right, 50, B::Edge, L::BottomCenter),
+        // What it is for, the lines to add and the file they go in. Under the
+        // list, because a tmux binding is one long line and beside a list it
+        // would wrap into four.
+        Picker::Setup => (P::Bottom, 40, B::Edge, L::TopCenter),
     }
 }
 
@@ -346,6 +355,7 @@ impl PickerLayout {
             Picker::Run => &self.run,
             Picker::Open => &self.open,
             Picker::Panes => &self.panes,
+            Picker::Setup => &self.setup,
         }
     }
 

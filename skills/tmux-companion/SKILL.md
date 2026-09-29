@@ -55,11 +55,14 @@ beside it.
   and a human asking for it
 - Confuse `tmux-companion shutdown`, which stops the daemon only, with
   `sessions shutdown`, which saves and then stops the tmux server
-- Open `run`, `keys`, `cheatsheet`, `start`, `new-window`, `project` with no
-  argument or `theme pick` from an agent loop. They are pickers, they draw a
-  full-screen UI and they wait for a human keypress. Most of them take `--print`,
-  which is your version; `new-window` takes nothing, so from a script use
-  `tmux new-window -c DIR`
+<!-- @Yogesh(gap): setup joins the picker list, and the line under it saying why an agent must never open it -->
+- Open `run`, `keys`, `cheatsheet`, `setup`, `start`, `new-window`, `project`
+  with no argument or `theme pick` from an agent loop. They are pickers, they
+  draw a full-screen UI and they wait for a human keypress. Most of them take
+  `--print`, which is your version; `new-window` takes nothing, so from a
+  script use `tmux new-window -c DIR`. `setup --print` lists what is on and
+  what is open; the picker writes tmux.conf and config.toml, and whether to
+  is the human's answer
 - `send-keys` into a pane the human is looking at, or `switch-client` and
   `select-window` to drag their focus somewhere. Your own pane is the harness
 

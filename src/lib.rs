@@ -83,6 +83,8 @@ pub mod segments;
 pub mod server;
 /// Snapshots of the whole server, in generations.
 pub mod sessions;
+/// The checklist of what the tool offers and a way to add what is missing.
+pub mod setup;
 /// The OSC 133 prompt marks and the shell code that emits them.
 pub mod shell;
 /// Timed work and small tmux commands.

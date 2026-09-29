@@ -377,7 +377,53 @@ pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow:
         screen::Ended::Chosen(i) => Outcome::Chosen(i),
         screen::Ended::Typed(q) => Outcome::Typed(q),
         screen::Ended::Cancelled => Outcome::Cancelled,
+        // No keys were asked for, so none can end it.
+        screen::Ended::Key(_, i) => Outcome::Chosen(i),
     })
+}
+
+/// What somebody did with a picker that has keys of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Keyed {
+    /// Enter on a row, by index into the original list.
+    Chosen(usize),
+    /// One of the caller's ctrl keys on a row: the letter and the index.
+    Key(char, usize),
+    /// Esc, or enter on nothing.
+    Cancelled,
+}
+
+/// Show the picker with ctrl keys of the caller's own, starting on a row.
+///
+/// For a list somebody acts on more than once: the caller does what the key
+/// asked and opens the picker again at the same row. The keys are letters
+/// pressed with ctrl; ones the picker already uses (cancel, clear, the
+/// preview) stay the picker's.
+pub fn run_keyed(
+    items: Vec<Item>,
+    query: &str,
+    chrome: &Chrome,
+    keys: &[char],
+    start_at: Option<usize>,
+) -> anyhow::Result<Keyed> {
+    if items.is_empty() {
+        return Ok(Keyed::Cancelled);
+    }
+    let chrome = if previewable(chrome, &items) {
+        chrome.clone()
+    } else {
+        Chrome {
+            preview: Preview::None,
+            ..chrome.clone()
+        }
+    };
+    Ok(
+        match screen::run_keyed(&items, query, &chrome, keys, start_at)? {
+            screen::Ended::Chosen(i) => Keyed::Chosen(i),
+            screen::Ended::Key(c, i) => Keyed::Key(c, i),
+            screen::Ended::Typed(_) | screen::Ended::Cancelled => Keyed::Cancelled,
+        },
+    )
 }
 
 /// Where the preview really goes, once the popup has had its say.

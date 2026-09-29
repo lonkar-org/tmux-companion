@@ -26,6 +26,18 @@ pub struct AgentArgs {
     pub state: Option<crate::panes::Report>,
 }
 
+/// What the daemon knows that `setup` asks about: the answer to `__setup`.
+///
+/// A response rather than an args struct, since the request carries nothing.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SetupFacts {
+    /// Whether any agent has reported through its hooks since the daemon
+    /// started.
+    #[serde(default)]
+    pub agent_reported: bool,
+}
+
 /// `quiet`: how long to be quiet for, zero for off, nothing to only ask.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

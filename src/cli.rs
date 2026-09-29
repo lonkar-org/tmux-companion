@@ -195,6 +195,15 @@ pub enum Cmd {
     /// Print what somebody would otherwise have to ask you for
     Doctor,
 
+    // @Yogesh(word): --help for setup, the line under Commands and the one for --print
+    /// What the tool offers, whether each is on for you, and a way to add what
+    /// is missing
+    Setup {
+        /// Print the rows as tab-separated columns and exit, opening nothing
+        #[arg(long)]
+        print: bool,
+    },
+
     /// Searchable key bindings
     Keys {
         /// Show every binding, including the ones tmux ships
@@ -1103,6 +1112,10 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
+        // No `Request::build` and no args struct in proto.rs: the checklist
+        // reads tmux and the config itself and draws in this terminal. The
+        // daemon is asked one raw question, `__setup`, for what only it saw.
+        Cmd::Setup { print } => crate::setup::run(print).await?,
         Cmd::Theme { action } => crate::theme::cli::run(action)?,
     }
 
@@ -2379,6 +2392,15 @@ async fn run_daemon_shutdown() -> anyhow::Result<()> {
 /// at startup and holds it for its whole life, so editing the file changes
 /// nothing until this runs. tmux is not touched.
 async fn run_daemon_restart() -> anyhow::Result<()> {
+    println!("{}", restart_daemon().await?);
+    Ok(())
+}
+
+/// The body of `restart`, answering with the line it prints.
+///
+/// `setup` restarts the daemon after writing config.toml and says so in its
+/// footer rather than on a terminal the picker is about to draw over.
+pub(crate) async fn restart_daemon() -> anyhow::Result<String> {
     let was = daemon_is_running().await;
     if was {
         stop_the_daemon().await;
@@ -2393,12 +2415,11 @@ async fn run_daemon_restart() -> anyhow::Result<()> {
     if let Some(why) = resp.error {
         anyhow::bail!("the daemon came back but refused: {why}");
     }
-    println!(
+    Ok(format!(
         "daemon {}, now {}",
         if was { "restarted" } else { "started" },
         crate::proto::build_id()
-    );
-    Ok(())
+    ))
 }
 
 /// Whether anything is listening on the socket.
@@ -3897,19 +3918,29 @@ async fn run_clipboard(stdin: bool) -> anyhow::Result<()> {
     } else {
         tmux_capture(&["show-buffer"]).await
     };
+    copy_to_clipboard(&text).await
+}
 
+/// Pipe text into the clipboard command the config picks for this platform.
+///
+/// `setup` copies a snippet with this before it offers to write one.
+pub(crate) async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     let config = config_or_default();
     let (program, args) = config.clipboard.command();
 
-    let mut child = tokio::process::Command::new(program)
+    let mut child = tokio::process::Command::new(&program)
         .args(args)
         .stdin(std::process::Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("{program}: {e}"))?;
     if let Some(mut input) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
         input.write_all(text.as_bytes()).await?;
     }
-    child.wait().await?;
+    let status = child.wait().await?;
+    if !status.success() {
+        anyhow::bail!("{program} exited {status}");
+    }
     Ok(())
 }
 

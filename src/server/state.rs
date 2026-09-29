@@ -85,6 +85,12 @@ pub struct ServerState {
     /// `tmux-companion agent` run out of its hooks. Dropped when the pane
     /// goes or stops running an agent.
     pub reports: crate::panes::Reports,
+    /// Whether any agent has reported since this daemon started.
+    ///
+    /// Kept apart from `reports`, which forgets a pane once it closes: the
+    /// question `setup` asks is whether the hooks are wired at all, and one
+    /// report ever is the answer.
+    pub agent_reported: bool,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
@@ -141,6 +147,7 @@ impl ServerState {
             nudged: std::collections::HashSet::new(),
             quiet_until: None,
             reports: crate::panes::Reports::new(),
+            agent_reported: false,
             git_cache: TtlMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),

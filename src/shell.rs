@@ -18,6 +18,12 @@
 //! a real tmux and checks the cursor actually moves, which is the only thing
 //! that catches this -- the hook installs cleanly either way.
 //!
+//! On its first prompt, and only then, each snippet also sets the pane option
+//! `@tmux-companion-marks` to 1. That is how `tmux-companion setup` tells a
+//! pane whose shell emits the marks from one whose shell does not: the marks
+//! themselves leave nothing tmux can be asked about. It is one `tmux` call per
+//! shell, inside tmux only, with its output and its failure thrown away.
+//!
 //! These are emitted whether or not tmux is the terminal, because they are
 //! useful in any terminal that reads them and invisible in one that does not.
 //! What tmux will not do is pass them through to the terminal outside it, which
@@ -47,6 +53,17 @@ __tmux_companion_preexec() {
 add-zsh-hook precmd __tmux_companion_precmd
 add-zsh-hook preexec __tmux_companion_preexec
 
+# Once, on the first prompt: tell tmux this pane's shell emits the marks. The
+# hook takes itself off, so no later prompt runs it, and it is added after the
+# one above so that one still reads the exit status first.
+__tmux_companion_marked() {
+  add-zsh-hook -d precmd __tmux_companion_marked
+  [[ -n ${TMUX_PANE:-} ]] &&
+    command tmux set -p -t "$TMUX_PANE" @tmux-companion-marks 1 >/dev/null 2>&1
+  return 0
+}
+add-zsh-hook precmd __tmux_companion_marked
+
 # The start-of-prompt mark goes in the prompt itself, and not in precmd where
 # the other two hooks live.
 #
@@ -74,6 +91,17 @@ __tmux_companion_precmd() {
   printf '\033]133;D;%s\033\\' "$status_"
   printf '\033]133;A\033\\'
   __tmux_companion_at_prompt=1
+  __tmux_companion_marked
+}
+
+# Once, on the first prompt: tell tmux this pane's shell emits the marks. Every
+# later prompt returns on the first line.
+__tmux_companion_marked() {
+  [[ -z ${__tmux_companion_did_mark:-} ]] || return 0
+  __tmux_companion_did_mark=1
+  [[ -n ${TMUX_PANE:-} ]] &&
+    command tmux set -p -t "$TMUX_PANE" @tmux-companion-marks 1 >/dev/null 2>&1
+  return 0
 }
 
 # bash has no preexec, so the DEBUG trap stands in for one. It fires for every
@@ -107,6 +135,13 @@ end
 
 function __tmux_companion_postexec --on-event fish_postexec
     printf '\033]133;D;%s\033\\' $status
+end
+
+# Once, on the first prompt: tell tmux this pane's shell emits the marks. The
+# function erases itself, and its event handler with it.
+function __tmux_companion_marked --on-event fish_prompt
+    functions --erase __tmux_companion_marked
+    set -q TMUX_PANE; and command tmux set -p -t $TMUX_PANE @tmux-companion-marks 1 >/dev/null 2>&1
 end
 "#;
 
@@ -287,6 +322,53 @@ mod tests {
             assert!(text.contains("shell-init"), "{s}");
             assert!(text.lines().next().unwrap().starts_with('#'), "{s}");
         }
+    }
+
+    #[test]
+    fn every_snippet_tells_tmux_once_and_quietly_that_the_marks_are_on() {
+        // `setup` reads the option off the panes; the marks themselves leave
+        // nothing tmux can be asked about.
+        for s in SHELLS {
+            let text = init(s).unwrap();
+            let line = text
+                .lines()
+                .find(|l| l.contains("@tmux-companion-marks"))
+                .unwrap_or_else(|| panic!("{s} never sets the option"));
+            assert!(line.contains("set -p -t"), "{s}: {line}");
+            assert!(line.contains(">/dev/null 2>&1"), "{s} is not quiet: {line}");
+            assert!(
+                text.contains("TMUX_PANE"),
+                "{s} does not check it is in tmux"
+            );
+            assert_eq!(text.matches("@tmux-companion-marks").count(), 1, "{s}");
+        }
+        // zsh and fish take the hook off after it has run; bash cannot take
+        // one entry out of PROMPT_COMMAND safely, so it returns on a flag.
+        assert!(
+            init("zsh")
+                .unwrap()
+                .contains("add-zsh-hook -d precmd __tmux_companion_marked")
+        );
+        assert!(
+            init("fish")
+                .unwrap()
+                .contains("functions --erase __tmux_companion_marked")
+        );
+        assert!(init("bash").unwrap().contains("|| return 0"));
+    }
+
+    #[test]
+    fn the_zsh_mark_hook_runs_after_the_one_that_reads_the_status() {
+        // add-zsh-hook appends, so the order they are added in is the order
+        // they run in, and the exit status belongs to the first.
+        let text = init("zsh").unwrap();
+        let status = text
+            .find("add-zsh-hook precmd __tmux_companion_precmd")
+            .unwrap();
+        let once = text
+            .find("add-zsh-hook precmd __tmux_companion_marked")
+            .unwrap();
+        assert!(status < once);
     }
 
     #[test]

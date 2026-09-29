@@ -259,8 +259,8 @@ bind -N "companion: copy menu of open and search, g again for the top" -T copy-m
   "open URL or file under the cursor" o { run-shell "tmux-companion open --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}" } \
   "#{?selection_present,,-}open the selection" O { send-keys -X copy-selection-no-clear ; run-shell "tmux-companion open --pane '##{pane_id}' -s" } \
   "" \
-  "search the line, in a popup" s { run-shell -C "display-popup -h 65% -w 65% -B -E \"tmux-companion open -i --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}\"" } \
-  "#{?selection_present,,-}search the selection, in a popup" S { send-keys -X copy-selection-no-clear ; run-shell -C "display-popup -h 65% -w 65% -B -E 'tmux-companion open -i -s'" } \
+  "search the line, in a popup" s { run-shell -C "display-popup -h 65% -w 65% -B -E \"tmux-companion open --choose --pane '##{pane_id}' --cursor-x '##{copy_cursor_x}' -- ##{q:copy_cursor_line}\"" } \
+  "#{?selection_present,,-}search the selection, in a popup" S { send-keys -X copy-selection-no-clear ; run-shell -C "display-popup -h 65% -w 65% -B -E 'tmux-companion open --choose -s'" } \
   "" \
   "jump to the top of history" g { send-keys -X history-top }
 # Picking the thing by a hint instead of moving the cursor to it is

@@ -30,6 +30,9 @@ pub struct Brief {
     pub agents: (usize, usize, usize),
     /// The last snapshot's stamp and how long ago it was taken, when any.
     pub last_snapshot: Option<(String, u64)>,
+    /// How many `setup` items are open, asked only in the week after this
+    /// build first ran; `None` outside that week.
+    pub setup_open: Option<usize>,
 }
 
 impl Brief {
@@ -118,6 +121,10 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
         b.agents.1,
         b.agents.2
     ));
+    if let Some(open) = b.setup_open.filter(|n| *n > 0) {
+        // @Yogesh(word): the brief's line in the week after an install or upgrade, when setup has items open
+        out.push_str(&format!("{open} setup items open: tmux-companion setup\n"));
+    }
     out
 }
 
@@ -160,10 +167,21 @@ pub async fn gather() -> Brief {
             let age = stamp_secs(&stamp).map_or(0, |t| now.saturating_sub(t));
             (stamp, age)
         });
+    // Only in the week after this build first ran, because after that the
+    // list is something somebody has seen and decided about, and a line on
+    // every attach would be the nag this screen exists not to be. The check
+    // is one small file read; the count behind it is a handful of tmux calls
+    // and is skipped outside the week.
+    let setup_open = if crate::setup::build_is_fresh() {
+        Some(crate::setup::count().await.0)
+    } else {
+        None
+    };
     Brief {
         waiting,
         health,
         idle,
+        setup_open,
         sessions: sessions_text
             .lines()
             .filter(|l| !l.trim().is_empty())
@@ -245,6 +263,29 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("Idle for"), "{text}");
+        assert!(!text.contains("setup"), "{text}");
+    }
+
+    #[test]
+    fn the_setup_line_shows_only_with_something_open_and_is_never_news() {
+        let b = Brief {
+            setup_open: Some(4),
+            ..Default::default()
+        };
+        assert!(
+            !b.has_news(),
+            "an open setup item must not open the popup on attach"
+        );
+        let text = render(&b, 1000, "/home/me");
+        assert!(text.contains("4 setup items open"), "{text}");
+        assert!(text.contains("tmux-companion setup"), "{text}");
+        for quiet in [Some(0), None] {
+            let b = Brief {
+                setup_open: quiet,
+                ..Default::default()
+            };
+            assert!(!render(&b, 1000, "/home/me").contains("setup"));
+        }
     }
 
     #[test]

@@ -7,6 +7,14 @@ entry per phase of the comrades port.
 
 ### Added
 
+<!-- @Yogesh(gap): the setup entry: what it is for, where it writes and how, the shell-init first-prompt option, doctor's line and the brief's first-week line -->
+- `setup`: what the tool offers and the state of each, with the lines to add
+  one. Enter copies them and asks before writing a fenced block into the
+  tmux.conf tmux loaded, or merging into config.toml. `--print` prints the
+  rows. `doctor` counts what is open, and the brief does for the week after a
+  build first runs.
+- `shell-init` sets the pane option `@tmux-companion-marks` on the first
+  prompt, which is how `setup` sees the marks are on.
 - `kill --ask` looks before it asks. A shell at its prompt is refused with
   no question, and anything else gets tmux's confirmation naming the program
   and its pid. The `K` binding in `docs/tmux.conf.full.example` uses it.

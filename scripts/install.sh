@@ -46,6 +46,14 @@ while [ $# -gt 0 ]; do
 done
 
 say() { printf 'tmux-companion: %s\n' "$*" >&2; }
+
+# The last thing either install path says: where to go next. `setup` lists
+# what the tool offers and which of it is on, which is the question a fresh
+# install has.
+hint_setup() {
+  # @Yogesh(word): the installer's last line, pointing at setup
+  say "next: tmux-companion setup"
+}
 die() { printf 'tmux-companion: %s\n' "$*" >&2; exit 1; }
 
 # ── where it goes ────────────────────────────────────────────────────────────
@@ -94,6 +102,7 @@ build_from_source() {
   install -m 755 "$here/target/release/$BIN" "$DEST/$BIN"
   say "installed $DEST/$BIN"
   install_manual "$here/docs/$BIN.1"
+  hint_setup
 }
 
 # The manual, beside the binary. `man tmux-companion` finds it because
@@ -183,3 +192,4 @@ case ":$PATH:" in
   *":$DEST:"*) ;;
   *) say "$DEST is not on your PATH. Add it, or pass --prefix /usr/local." ;;
 esac
+hint_setup

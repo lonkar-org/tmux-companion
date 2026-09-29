@@ -1074,6 +1074,7 @@ current_window_background = "color236"
 #   [picker.run]        the shell history
 #   [picker.open]       the application chooser
 #   [picker.panes]      every pane on the server, or the agents among them
+#   [picker.setup]      the checklist `setup` shows
 #
 # Three keys exist only in these tables, because they are the words one picker
 # says and not a shape every picker shares: `label` is what it calls itself on

@@ -35,6 +35,8 @@ pub async fn report() -> String {
     let _ = writeln!(out, "  sessions      {}", sessions_state());
     let _ = writeln!(out, "  autosave      {}", autosave_state());
     let _ = writeln!(out, "  health        {}", health_state().await);
+    // @Yogesh(word): the label of doctor's setup line
+    let _ = writeln!(out, "  setup         {}", setup_state().await);
     let _ = writeln!(out, "  tmux          {}", tmux_version());
     let _ = writeln!(out, "  platform      {}", platform());
     out.push_str(&options_section(tmux_options().as_ref()));
@@ -410,6 +412,12 @@ fn health_line(reasons: &str) -> String {
     line
 }
 
+/// How many of the things `setup` lists are open, by the same rules it uses.
+async fn setup_state() -> String {
+    let (open, total) = crate::setup::count().await;
+    crate::setup::doctor_line(open, total)
+}
+
 fn state_dir_state() -> String {
     let Some(dir) = crate::server::state_dir() else {
         return "unknown, neither XDG_STATE_HOME nor HOME is set".to_string();
@@ -461,6 +469,7 @@ mod tests {
             "config",
             "glyphs",
             "state dir",
+            "setup",
             "tmux",
             "platform",
         ] {

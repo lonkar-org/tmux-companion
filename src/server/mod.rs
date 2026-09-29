@@ -81,6 +81,9 @@ pub async fn run() -> anyhow::Result<()> {
             // fixed, and a later client that failed to connect for some
             // unrelated reason blamed the config for it.
             clear_config_error();
+            // The first start of a build is when it arrived, near enough,
+            // which is what the brief's week of mentioning `setup` counts from.
+            crate::setup::record_build();
             c
         }
         Err(e) => {
