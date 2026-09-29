@@ -52,6 +52,10 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- A pocket put away in one session could be parked in another, whichever
+  was opened last, and the next press then opened a new, empty pocket
+  instead of bringing it back. It's parked in the session the key was
+  pressed in.
 - A pocket brought back could show a bare prompt, with what it had printed
   gone. It opened and came back one column wide to slide, and a shell whose
   prompt was drawn at one column cleared the screen on its next redraw. The

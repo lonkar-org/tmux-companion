@@ -967,6 +967,71 @@ fn a_pocket_brought_back_still_shows_what_it_printed() {
     );
 }
 
+#[test]
+fn a_pocket_parks_in_its_own_session_when_a_newer_one_exists() {
+    // break-pane with no target makes its window in the newest session when
+    // run-shell runs it, so a pocket put away in an older session was parked
+    // in the newer one, and the next press here found nothing and opened a
+    // new, empty pocket. The recording caught it after the project chapter
+    // had opened another session.
+    let Some(t) = Tmux::start("pocketsess") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[run]\nslide_steps = 0\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    t.session("newer", &dir);
+    let home_pane = t
+        .must(&["display-message", "-p", "-t", "=alpha:", "#{pane_id}"])
+        .trim()
+        .to_string();
+    let pocket_where = |t: &Tmux| {
+        t.tmux(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id} #{session_name}:#{window_name} #{@tmux-companion-pocket}",
+        ])
+        .lines()
+        .find(|l| l.ends_with(" shell"))
+        .map(|l| {
+            let f: Vec<&str> = l.split(' ').collect();
+            (f[0].to_string(), f[1].to_string())
+        })
+    };
+
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let (pocket, _) = pocket_where(&t).expect("a pocket pane");
+    t.must(&["send-keys", "-t", &pocket, "echo pocket-$((6*7))", "Enter"]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "away: {err}");
+    let (parked, place) = pocket_where(&t).expect("the pocket, parked");
+    assert_eq!(parked, pocket, "a different pane was parked");
+    assert_eq!(place, "alpha:_pocket", "parked outside its own session");
+
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "back: {err}");
+    let (back, place) = pocket_where(&t).expect("the pocket, back");
+    assert_eq!(
+        back, pocket,
+        "a new pocket came out instead of the parked one"
+    );
+    assert!(place.starts_with("alpha:"), "came back to {place}");
+    let screen = t.tmux(&["capture-pane", "-p", "-t", &pocket]);
+    assert!(
+        screen.contains("pocket-42"),
+        "the pocket's screen:\n{screen}"
+    );
+}
+
 /// A checkout's own `.tmux-companion.toml` decides the windows, and runs its
 /// commands only under a path `[project] trusted` names.
 #[test]

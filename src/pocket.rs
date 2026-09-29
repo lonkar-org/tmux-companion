@@ -179,11 +179,26 @@ pub fn bring_args(here: &Here, id: &str, opening: u16) -> Vec<String> {
 /// The command that puts a pocket away: into the session's `_pocket` window
 /// when there is one, into a new window by that name when there is not.
 /// `-d` both ways, so the view stays where the key was pressed.
-pub fn park_args(id: &str, into: Option<&str>) -> Vec<String> {
+///
+/// `session` is the `=name` target of the session the key was pressed in.
+/// `break-pane` without `-t` makes its window in the newest session when it
+/// runs from `run-shell`, which has no client to go by, so with a second
+/// session opened later the pocket was parked there, the next press in this
+/// session found no pocket, and it opened a new, empty one.
+pub fn park_args(id: &str, into: Option<&str>, session: &str) -> Vec<String> {
     let s = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match into {
         Some(window) => s(&["join-pane", "-d", "-s", id, "-t", window]),
-        None => s(&["break-pane", "-d", "-s", id, "-n", WINDOW]),
+        None => s(&[
+            "break-pane",
+            "-d",
+            "-s",
+            id,
+            "-n",
+            WINDOW,
+            "-t",
+            &format!("{session}:"),
+        ]),
     }
 }
 
@@ -307,12 +322,12 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
         }
         Move::Park { id, into, .. } => {
             match into {
-                Some(window) => run(park_args(&id, Some(&window))).await,
+                Some(window) => run(park_args(&id, Some(&window), &session)).await,
                 None => {
                     // The window's id comes back so its name can be held:
                     // left to automatic-rename it would be called `zsh` by
                     // the next prompt and nothing would find it again.
-                    let mut args = park_args(&id, None);
+                    let mut args = park_args(&id, None, &session);
                     args.extend(["-P", "-F", "#{window_id}"].map(String::from));
                     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
                     let window = tmux_capture(&borrowed).await.trim().to_string();
@@ -454,11 +469,11 @@ mod tests {
             ["join-pane", "-fh", "-l", "1", "-s", "%7", "-t", "%1"]
         );
         assert_eq!(
-            park_args("%7", None),
-            ["break-pane", "-d", "-s", "%7", "-n", WINDOW]
+            park_args("%7", None, "=api"),
+            ["break-pane", "-d", "-s", "%7", "-n", WINDOW, "-t", "=api:"]
         );
         assert_eq!(
-            park_args("%7", Some("@4")),
+            park_args("%7", Some("@4"), "=api"),
             ["join-pane", "-d", "-s", "%7", "-t", "@4"]
         );
         let marks = mark_args("%7", "shell");
