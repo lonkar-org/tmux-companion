@@ -899,6 +899,74 @@ fn the_pocket_comes_out_is_parked_and_comes_back_the_same_pane() {
     assert_eq!(two.lines().count(), 3, "{two:?}");
 }
 
+#[test]
+fn a_pocket_brought_back_still_shows_what_it_printed() {
+    // The slide on, which the test above turns off. A pocket used to open and
+    // come back one column wide to slide, and its shell's first prompt, drawn
+    // a character to a row, sent a later redraw up that many rows to clear
+    // everything below: it came back as a bare prompt. Fast steps make that
+    // happen every time, where a slow slide only lost the race now and then.
+    let Some(t) = Tmux::start("pocketscreen") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[run]\nslide_steps = 3\nslide_ms = 30\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let home_pane = t
+        .must(&["display-message", "-p", "-t", "=alpha", "#{pane_id}"])
+        .trim()
+        .to_string();
+    let pocket_pane = |t: &Tmux| {
+        t.tmux(&[
+            "list-panes",
+            "-s",
+            "-t",
+            "=alpha",
+            "-F",
+            "#{pane_id} #{@tmux-companion-pocket}",
+        ])
+        .lines()
+        .find(|l| l.ends_with(" shell"))
+        .and_then(|l| l.split(' ').next())
+        .map(str::to_string)
+    };
+
+    let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+    assert!(ok, "{err}");
+    let pocket = pocket_pane(&t).expect("a pocket pane");
+    t.must(&[
+        "send-keys",
+        "-t",
+        &pocket,
+        "seq 1 60; echo pocket-$((6*7))",
+        "Enter",
+    ]);
+    let visible = |t: &Tmux| t.tmux(&["capture-pane", "-p", "-t", &pocket]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !visible(&t).contains("pocket-42") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the pocket never printed: {}",
+            visible(&t)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    for round in ["away", "back", "away again", "back again"] {
+        let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
+        assert!(ok, "{round}: {err}");
+    }
+    let screen = visible(&t);
+    assert!(
+        screen.contains("pocket-42") && screen.lines().any(|l| l.trim() == "60"),
+        "after two trips the pocket's screen is not what it showed:\n{screen}"
+    );
+}
+
 /// A checkout's own `.tmux-companion.toml` decides the windows, and runs its
 /// commands only under a path `[project] trusted` names.
 #[test]

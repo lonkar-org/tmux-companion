@@ -52,6 +52,10 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- A pocket brought back could show a bare prompt, with what it had printed
+  gone. It opened and came back one column wide to slide, and a shell whose
+  prompt was drawn at one column cleared the screen on its next redraw. The
+  pocket no longer slides: it opens, parks and comes back at its own width.
 - The daemon's socket is created `0600` rather than made so a moment later.
   Between the bind and the chmod it existed with the default mode.
 - A picker with nothing to show (`sessions idle`, `inbox`, `ports`, `panes`,

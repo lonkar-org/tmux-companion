@@ -276,8 +276,14 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
     let session = format!("={}", f[3]);
     let listing = tmux_capture(&["list-panes", "-s", "-t", &session, "-F", &format()]).await;
 
+    // No slide for a pocket, unlike `run`'s pane. A pane opened one column
+    // wide gets its shell's first prompt drawn one character to a row, and
+    // zsh's redraws go on believing it; the next resize sends the cursor up
+    // that many rows and clears everything below, which wiped what the pocket
+    // had printed. Parking and bringing back had the same problem from the
+    // other side. A pocket is an interactive shell, so it opens, parks and
+    // comes back at its own width.
     let width = crate::run::pane_width(here.window_width, config.run.width_percent);
-    let opening = if config.run.slide_steps > 0 { 1 } else { width };
     let run = |args: Vec<String>| async move {
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         tmux(&borrowed).await;
@@ -285,7 +291,7 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
 
     match decide(&here, &parse(&listing), &name) {
         Move::Create => {
-            let args = create_args(&here, opening);
+            let args = create_args(&here, width);
             let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
             let id = tmux_capture(&borrowed).await.trim().to_string();
             if !id.starts_with('%') {
@@ -294,17 +300,12 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
             for args in mark_args(&id, &name) {
                 run(args).await;
             }
-            crate::cli::slide(&id, opening, width, &config).await;
         }
         Move::Bring { id } => {
-            run(bring_args(&here, &id, opening)).await;
+            run(bring_args(&here, &id, width)).await;
             tmux(&["select-pane", "-t", &id]).await;
-            crate::cli::slide(&id, opening, width, &config).await;
         }
-        Move::Park { id, width, into } => {
-            if config.run.slide_steps > 0 && width > 1 {
-                crate::cli::slide(&id, width, 1, &config).await;
-            }
+        Move::Park { id, into, .. } => {
             match into {
                 Some(window) => run(park_args(&id, Some(&window))).await,
                 None => {
