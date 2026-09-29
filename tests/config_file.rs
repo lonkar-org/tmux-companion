@@ -31,6 +31,53 @@ impl Drop for Dir {
     }
 }
 
+/// A git repository of the test's own, removed when the test ends.
+///
+/// These tests used to render the crate's checkout, `CARGO_MANIFEST_DIR`,
+/// which is a repository on a runner and on the laptop but not in a git
+/// worktree run under act: there `.git` is a file naming a directory on the
+/// host, the container has no such path, git answers nothing, and four tests
+/// failed with `still has to render` and `client printed nothing`.
+struct Repo(std::path::PathBuf);
+
+impl Repo {
+    fn new(tag: &str) -> Self {
+        let p = std::env::temp_dir().join(format!("tc-repo-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).expect("create repo dir");
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Demo",
+                "-c",
+                "user.email=demo@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "first",
+            ][..],
+        ] {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(&p)
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok, "git {args:?} failed in {}", p.display());
+        }
+        Self(p)
+    }
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn check_accepts_the_example_file() {
     let out = bin()
@@ -212,6 +259,7 @@ fn a_config_the_daemon_accepts_changes_what_it_does() {
     // Not just parsed: actually reaching the cache. `ttl_secs = 0` means never
     // serve a git status from memory.
     let dir = Dir::new("applied");
+    let repo = Repo::new("applied");
     let config = dir.write("config.toml", "[git]\nttl_secs = 0.0\n");
     let sock = std::path::PathBuf::from(format!("/tmp/tc-applied-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&sock);
@@ -231,7 +279,8 @@ fn a_config_the_daemon_accepts_changes_what_it_does() {
     }
 
     let out = bin()
-        .args(["gst", env!("CARGO_MANIFEST_DIR")])
+        .arg("gst")
+        .arg(&repo.0)
         .env("TMUX_COMPANION_SOCK", &sock)
         .output()
         .expect("client runs");

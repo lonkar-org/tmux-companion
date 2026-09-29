@@ -75,10 +75,16 @@ jobs:
       # tests/e2e.rs drives a real tmux on its own socket. Without one those
       # tests skip themselves, which is worse than failing: the suite that
       # exists to catch behaviour would go quiet and nobody would notice.
+      #
+      # iproute2 is for `ss`, which `ports` reads where there is no lsof and
+      # which `ports_names_the_pane_that_started_the_listener` needs. GitHub's
+      # ubuntu image already has it, so the install is a no-op there; act's
+      # image has neither ss nor lsof, and the test failed only under act.
+      # macOS ships lsof.
       - name: Install tmux
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y tmux
+            sudo apt-get update && sudo apt-get install -y tmux iproute2
           else
             brew list tmux >/dev/null 2>&1 || brew install tmux
           fi

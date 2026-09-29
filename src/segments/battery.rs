@@ -54,13 +54,31 @@ fn format_battery_output(
     format!("{}{}{}{}", color, icon, pct_str, plug)
 }
 
+/// Whether the battery read failed because the machine has no power-supply
+/// class at all, which is a machine with no battery rather than a failure.
+///
+/// On Linux the crate lists `/sys/class/power_supply`, and a container or a
+/// VM can have no such directory. Treated as an error, it put `timer` on the
+/// health mark every render and hid whatever else the mark had to say, which
+/// is how it was found: under `act`, the config mark never showed.
+fn nowhere_to_look(e: &battery::Error) -> bool {
+    std::error::Error::source(e)
+        .and_then(|s| s.downcast_ref::<std::io::Error>())
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+}
+
 /// Read the battery and render percentage, icon and charging state.
 pub async fn render() -> anyhow::Result<String> {
     tokio::task::spawn_blocking(|| {
         use battery::units::ratio::ratio;
 
         let manager = battery::Manager::new()?;
-        let b = match manager.batteries()?.next() {
+        let mut batteries = match manager.batteries() {
+            Ok(batteries) => batteries,
+            Err(e) if nowhere_to_look(&e) => return Ok(String::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let b = match batteries.next() {
             Some(Ok(b)) => b,
             _ => return Ok(String::new()),
         };
@@ -89,6 +107,15 @@ pub async fn render() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_power_supply_directory_is_no_battery_and_anything_else_is_a_failure() {
+        let missing = battery::Error::from(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert!(nowhere_to_look(&missing));
+        let denied =
+            battery::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!nowhere_to_look(&denied));
+    }
 
     #[test]
     fn color_red_at_zero() {

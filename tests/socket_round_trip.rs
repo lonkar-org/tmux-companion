@@ -15,6 +15,53 @@ use std::{
 
 use tmux_companion::proto::{ClientsArgs, GstArgs, Request, Response};
 
+/// A git repository of the test's own, removed when the test ends.
+///
+/// These tests used to render the crate's checkout, `CARGO_MANIFEST_DIR`,
+/// which is a repository on a runner and on the laptop but not in a git
+/// worktree run under act: there `.git` is a file naming a directory on the
+/// host, the container has no such path, git answers nothing, and four tests
+/// failed with `still has to render` and `client printed nothing`.
+struct Repo(std::path::PathBuf);
+
+impl Repo {
+    fn new(tag: &str) -> Self {
+        let p = std::env::temp_dir().join(format!("tc-repo-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).expect("create repo dir");
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Demo",
+                "-c",
+                "user.email=demo@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "first",
+            ][..],
+        ] {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(&p)
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok, "git {args:?} failed in {}", p.display());
+        }
+        Self(p)
+    }
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A server process on a socket of its own, killed when the test ends.
 struct TestServer {
     child: Child,
@@ -154,10 +201,11 @@ fn a_noop_round_trips_over_the_socket() {
 }
 
 #[test]
-fn gst_renders_this_repository_over_the_socket() {
+fn gst_renders_a_repository_over_the_socket() {
     let server = TestServer::start("gst");
+    let repo = Repo::new("gst");
     let args = GstArgs {
-        path: Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+        path: Some(repo.0.clone()),
         pane_pid: None,
         force: false,
         style: Default::default(),
@@ -172,8 +220,8 @@ fn gst_renders_this_repository_over_the_socket() {
         !resp.output.is_empty(),
         "a git repository should render something"
     );
-    // The crate's own checkout is a work tree, so the branch glyph block is
-    // there whatever branch the test happens to run on.
+    // A work tree, so the branch glyph block is there whatever the branch
+    // is called.
     assert!(
         resp.output.contains("#["),
         "expected tmux markup: {:?}",
@@ -277,8 +325,10 @@ fn the_binary_client_prints_what_the_server_returned() {
     // The other tests speak to the socket directly. This one covers the client
     // half: `connect_with_retry`, the response parse and the print.
     let server = TestServer::start("clientbin");
+    let repo = Repo::new("clientbin");
     let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
-        .args(["gst", env!("CARGO_MANIFEST_DIR")])
+        .arg("gst")
+        .arg(&repo.0)
         .env("TMUX_COMPANION_SOCK", &server.sock)
         .output()
         .expect("client runs");
@@ -304,9 +354,11 @@ fn a_client_with_no_server_starts_one() {
         std::process::id()
     ));
     let _ = std::fs::remove_file(&sock);
+    let repo = Repo::new("autostart");
 
     let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
-        .args(["gst", env!("CARGO_MANIFEST_DIR")])
+        .arg("gst")
+        .arg(&repo.0)
         .env("TMUX_COMPANION_SOCK", &sock)
         .output()
         .expect("client runs");

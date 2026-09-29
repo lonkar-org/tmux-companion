@@ -40,6 +40,9 @@ entry per phase of the comrades port.
   `journal`, `search`, `keys`, `cheatsheet`) also puts its line on the tmux
   message line, so `display-popup -E` closing doesn't take it away. `--print`
   is unchanged.
+- A machine with no `/sys/class/power_supply` at all, such as a container,
+  reads as having no battery. It used to count as a failed battery read, so
+  the health mark said `timer` on every render and hid whatever came after.
 
 ## 0.5.2 - 2026-09-28
 

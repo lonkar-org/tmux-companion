@@ -339,7 +339,7 @@ fn skipping(name: &str, why: &str) {
     assert!(
         std::env::var_os("CI").is_none(),
         "{name} would skip ({why}), and CI is set, so it fails instead. \
-         Install tmux on the runner, or unset TC_SKIP_E2E."
+         Install what it names on the runner, or unset TC_SKIP_E2E."
     );
     static ANNOUNCED: std::sync::Once = std::sync::Once::new();
     ANNOUNCED.call_once(|| eprintln!("skipping the tmux tests in tests/e2e.rs: {why}"));
@@ -1474,9 +1474,13 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
 /// stderr, because `display-popup -E` takes stderr away with the popup.
 /// `--print` keeps to stderr.
 ///
-/// No client is attached here, so tmux has nobody to show the message to;
-/// what `show-messages` holds is the command that asked, which is enough to
-/// know it was sent.
+/// A client is attached, from a pane of a second session, because that is the
+/// only way the check means the same thing on every tmux. With no client,
+/// tmux 3.7c logs the `display-message` command in `show-messages` and 3.4,
+/// the runner's, answers `show-messages` itself with `no current client` and
+/// logs nothing; the first version of this test read the command log and
+/// passed on the laptop only. With one attached, both versions log the line
+/// as a message shown on that client, which is what the user would see.
 #[test]
 fn an_empty_picker_says_so_on_the_message_line() {
     let Some(t) = Tmux::start("emptysay") else {
@@ -1484,25 +1488,47 @@ fn an_empty_picker_says_so_on_the_message_line() {
     };
     let dir = repo_with_changes(&t.sandbox);
     t.session("fresh", &dir);
+    // `env -u TMUX`, since tmux refuses to attach from inside itself.
+    t.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "viewer",
+        "-x",
+        "120",
+        "-y",
+        "32",
+        &format!("env -u TMUX tmux -L {} attach -t fresh", t.socket),
+    ]);
+    assert!(
+        t.until(10, |t| !t.tmux(&["list-clients"]).is_empty()),
+        "no client ever attached: {:?}",
+        t.capture("viewer")
+    );
+    let shown = |t: &Tmux| {
+        t.tmux(&["show-messages"])
+            .lines()
+            .any(|l| l.contains("message: tmux-companion: no session idle for 3 days"))
+    };
 
     let (out, err, ok) = t.run(&["sessions", "idle", "--print"]);
     assert!(ok, "{err}");
     assert!(out.is_empty(), "{out:?}");
     assert_eq!(err, "no session idle for 3 days\n");
-    let messages = t.tmux(&["show-messages"]);
     assert!(
-        !messages.contains("display-message"),
-        "--print told tmux: {messages}"
+        !shown(&t),
+        "--print told tmux: {}",
+        t.tmux(&["show-messages"])
     );
 
     let (out, err, ok) = t.run(&["sessions", "idle"]);
     assert!(ok, "{err}");
     assert!(out.is_empty(), "{out:?}");
     assert_eq!(err, "no session idle for 3 days\n");
-    let messages = t.tmux(&["show-messages"]);
     assert!(
-        messages.contains("display-message") && messages.contains("no session idle for 3 days"),
-        "the message line never heard: {messages}"
+        t.until(5, shown),
+        "the message line never heard: {}",
+        t.tmux(&["show-messages"])
     );
 }
 
@@ -1570,6 +1596,15 @@ fn a_timer_with_no_server_to_save_has_not_failed() {
 fn ports_names_the_pane_that_started_the_listener() {
     if Command::new("python3").arg("--version").output().is_err() {
         skipping("ports", "no python3 on this machine");
+        return;
+    }
+    // `ports` reads lsof, or ss where there is no lsof. The runners have one
+    // each, ubuntu-latest `ss` and macos-latest `lsof`; act's image has
+    // neither, which ci.yml's tmux step now installs, and without this the
+    // test spent thirty seconds retrying before saying so.
+    let on_path = |tool: &str| Command::new(tool).arg("-V").output().is_ok();
+    if !on_path("lsof") && !on_path("ss") {
+        skipping("ports", "neither lsof nor ss is on PATH");
         return;
     }
     let Some(t) = Tmux::start("ports") else {
@@ -2286,12 +2321,15 @@ fn the_health_mark_appears_when_the_config_changes_under_a_running_daemon() {
     std::fs::write(&config, format!("{text}\n# edited\n")).unwrap();
 
     // The check is cached for five seconds; the mark shows on the read after.
+    let mut last = String::new();
     assert!(
         t.until(10, |t| {
             let (out, _, _) = t.run(&["status-right", &dir.display().to_string()]);
-            out.contains("config")
+            last = out;
+            last.contains("config")
         }),
-        "the bar never showed the config mark"
+        "the bar never showed the config mark: {last:?}\nhealth: {:?}",
+        t.run(&["health"])
     );
 
     let (out, _, ok) = t.run(&["doctor"]);
