@@ -17,6 +17,7 @@ reuse the cargo layer.
 scripts/playground.sh            # build if needed, then run
 scripts/playground.sh shell      # a shell in the image, no tour
 scripts/playground.sh smoke      # check the image is what the tour claims
+scripts/playground.sh tourpass   # drive the tour with keys, hardened and plain
 ```
 
 ## Locked down

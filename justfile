@@ -222,6 +222,14 @@ playground-build:
 playground-smoke:
     ./scripts/playground.sh smoke
 
+# smoke checks what the image holds and can't press a key; this attaches a
+# client inside the container and drives the pickers the tour uses, once with
+# the hardening flags and once without. It paces keys with sleeps, so it's a
+# check to run before a release, not in CI.
+# Drive the playground with real keys, hardened and plain.
+playground-tourpass:
+    ./scripts/playground.sh tourpass
+
 # The skill and the binary are released separately, on separate tag namespaces,
 # because SKILL.md changes on its own schedule and a version that moved with
 # every cargo release would stop meaning anything. This is the check for the

@@ -9,6 +9,8 @@
 #   scripts/playground.sh shell           a plain shell in the image, no tour
 #   scripts/playground.sh smoke           check the image is what the tour claims
 #   scripts/playground.sh rebuild         build from scratch, no cache
+#   scripts/playground.sh tourpass        drive the tour with keys, hardened and
+#                                         plain, before a release (not for CI)
 #
 # Env:
 #   IMAGE   image tag to build and run   (default tmux-companion:playground)
@@ -93,8 +95,21 @@ case "${1:-default}" in
              for _ in $(seq 1 60); do [ -f /tmp/smoke.rc ] && break; sleep 1; done
              cat /tmp/smoke.log
              exit "$(cat /tmp/smoke.rc 2>/dev/null || echo 1)"' ;;
+  tourpass)
+           have_image || build
+           # Both ways every time, whatever PLAIN says: the point is that the
+           # flags break nothing the plain run does. playground/tourpass.sh
+           # says what it checks and why it's not a CI job.
+           status=0
+           for mode in hardened plain; do
+             if [ "$mode" = plain ]; then flags=(); else flags=("${HARDEN[@]}"); fi
+             echo "== $mode"
+             docker run --rm -i ${flags[@]+"${flags[@]}"} "$IMAGE" bash -s \
+               < "$ROOT/playground/tourpass.sh" || status=1
+           done
+           exit "$status" ;;
   default) have_image || build
            run ;;
-  *)       sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  *)       sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
            exit 1 ;;
 esac
