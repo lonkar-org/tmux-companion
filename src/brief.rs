@@ -122,7 +122,8 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
         b.agents.2
     ));
     if let Some(open) = b.setup_open.filter(|n| *n > 0) {
-        // @Yogesh(decide): keep this line in the brief for a week after a new build, while setup has items open?
+        // Kept for now: a week after a new build, while setup has items open.
+        // Up for removal once there's feedback on whether it helps or nags.
         out.push_str(&format!("{open} setup items open: tmux-companion setup\n"));
     }
     out

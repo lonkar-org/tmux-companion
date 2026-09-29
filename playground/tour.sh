@@ -12,8 +12,12 @@
 # instruction is still in front of you after you have switched away from it.
 set -uo pipefail
 
-BOLD=$'\033[1m'; DIM=$'\033[2m'; OFF=$'\033[0m'
-KEY=$'\033[1;38;5;222m'; OK=$'\033[38;5;114m'; WARN=$'\033[38;5;208m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+OFF=$'\033[0m'
+KEY=$'\033[1;38;5;222m'
+OK=$'\033[38;5;114m'
+WARN=$'\033[38;5;208m'
 RULE=$'\033[38;5;240m'
 
 # The four glyphs written as escapes rather than as literal bytes, so the
@@ -23,16 +27,16 @@ GLYPHS=$(printf '     \U000f062c branch    \uf240 battery    \U000f08c0 ssh    \
 
 skipped=0
 
-rule()  { printf '%s%s%s\n' "$RULE" "────────────────────────────────────────────────────────────────────────" "$OFF"; }
-keys()  { printf '\n    %s%s%s\n' "$KEY" "$*" "$OFF"; }
-hint()  { tmux set -g @playground-step "$*" 2>/dev/null || true; }
+rule() { printf '%s%s%s\n' "$RULE" "────────────────────────────────────────────────────────────────────────" "$OFF"; }
+keys() { printf '\n    %s%s%s\n' "$KEY" "$*" "$OFF"; }
+hint() { tmux set -g @playground-step "$*" 2>/dev/null || true; }
 
 # What the heading and the prompt call where you are. The main tour sets it
 # per step; the basics track sets its own, so `1.3` is visibly a detour rather
 # than a step of the seventeen.
 LABEL=""
 
-begin() {              # begin <icon> <title>
+begin() { # begin <icon> <title>
   clear
   printf '%s%s  %s%s %s(%s)%s\n' "$BOLD" "$1" "$2" "$OFF" "$DIM" "$LABEL" "$OFF"
   rule
@@ -59,18 +63,26 @@ wait_for() {
     # One key, no Enter. `read -rsn1` returns as soon as something is
     # pressed; Enter arrives as an empty string because the newline is the
     # delimiter it stopped on, which is the case below that moves on.
-    IFS= read -rsn1 answer || { answer=q; printf '\n'; }
-    printf '\n\n' 
+    IFS= read -rsn1 answer || {
+      answer=q
+      printf '\n'
+    }
+    printf '\n\n'
     case "$answer" in
-      q|Q) return 3 ;;
-      b|B) return 2 ;;
-      t|T) [ -n "$EXTRA_KEYS" ] && return 4 ;;
-      s|S) skipped=$(( skipped + 1 )); return 0 ;;
-      "")  if [ -z "$verify" ] || eval "$verify" >/dev/null 2>&1; then
-             return 0
-           fi
-           printf '\n%sNot yet: %s%s\n' "$WARN" "$missing" "$OFF" ;;
-      *)   printf '\n%sEnter, b, s or q.%s\n' "$DIM" "$OFF" ;;
+      q | Q) return 3 ;;
+      b | B) return 2 ;;
+      t | T) [ -n "$EXTRA_KEYS" ] && return 4 ;;
+      s | S)
+        skipped=$((skipped + 1))
+        return 0
+        ;;
+      "")
+        if [ -z "$verify" ] || eval "$verify" >/dev/null 2>&1; then
+          return 0
+        fi
+        printf '\n%sNot yet: %s%s\n' "$WARN" "$missing" "$OFF"
+        ;;
+      *) printf '\n%sEnter, b, s or q.%s\n' "$DIM" "$OFF" ;;
     esac
   done
 }
@@ -82,7 +94,7 @@ back_here() {
 }
 
 windows_now() { tmux list-windows -a 2>/dev/null | wc -l | tr -d ' '; }
-panes_now()   { tmux list-panes -a 2>/dev/null | wc -l | tr -d ' '; }
+panes_now() { tmux list-panes -a 2>/dev/null | wc -l | tr -d ' '; }
 
 # Did a window ever get made since this step began?
 #
@@ -130,9 +142,9 @@ fi
 # also be failing an assertion.
 
 basics_01() {
-LABEL="tmux basics 1.1 of 1.9"
-begin "🧩" "What tmux actually is"
-cat <<EOF
+  LABEL="tmux basics 1.1 of 1.9"
+  begin "🧩" "What tmux actually is"
+  cat <<EOF
 Not a terminal. Not a shell. tmux is a ${BOLD}server${OFF} that owns your programs,
 and a ${BOLD}client${OFF} that draws them.
 
@@ -150,13 +162,13 @@ windows can be closed and opened again without the programs noticing.
 That one sentence is the whole reason tmux exists. Everything else in here is
 a consequence of it.
 EOF
-wait_for
+  wait_for
 }
 
 basics_02() {
-LABEL="tmux basics 1.2 of 1.9"
-begin "🗝" "The prefix, and why there is one"
-cat <<EOF
+  LABEL="tmux basics 1.2 of 1.9"
+  begin "🗝" "The prefix, and why there is one"
+  cat <<EOF
 tmux and the program you are running both want your keystrokes. tmux takes
 one key for itself and passes on everything else.
 
@@ -171,13 +183,13 @@ what you read elsewhere matches what you press here.
 If you ever need to send a real Ctrl-b to the program underneath, press it
 twice. That is also how you reach tmux when it is running inside tmux.
 EOF
-wait_for
+  wait_for
 }
 
 basics_03() {
-LABEL="tmux basics 1.3 of 1.9"
-begin "🗂" "Sessions, windows, panes"
-cat <<EOF
+  LABEL="tmux basics 1.3 of 1.9"
+  begin "🗂" "Sessions, windows, panes"
+  cat <<EOF
 Three levels, and they nest. Learning which is which is most of learning
 tmux.
 
@@ -201,13 +213,13 @@ A ${BOLD}session${OFF} is a set of windows, and the thing you attach to and deta
 The status bar at the bottom lists the windows of the session you are in.
 Look at it now: this session has one window called ${BOLD}tour${OFF}.
 EOF
-wait_for
+  wait_for
 }
 
 basics_04() {
-LABEL="tmux basics 1.4 of 1.9"
-begin "🔌" "Detach, the part that matters"
-cat <<EOF
+  LABEL="tmux basics 1.4 of 1.9"
+  begin "🔌" "Detach, the part that matters"
+  cat <<EOF
 Closing a terminal kills what was running in it. Detaching does not.
 
   ${BOLD}while you are attached${OFF}              ${BOLD}after prefix d${OFF}
@@ -227,13 +239,13 @@ ${DIM}tmux attach${OFF}, and the build you started two hours ago is still scroll
 
 You will press it in a moment. It is safe in here.
 EOF
-wait_for
+  wait_for
 }
 
 basics_05() {
-LABEL="tmux basics 1.5 of 1.9"
-begin "✂️ " "Your turn: split a pane"
-cat <<EOF
+  LABEL="tmux basics 1.5 of 1.9"
+  begin "✂️ " "Your turn: split a pane"
+  cat <<EOF
 Nothing is checked from here on. Press things and see what happens.
 
     ${KEY}prefix  %${OFF}       split this pane left and right
@@ -254,13 +266,13 @@ forward quickly.
 
 ${DIM}Those chords are tmux's own, not this tool's. They work in any tmux.${OFF}
 EOF
-wait_for
+  wait_for
 }
 
 basics_06() {
-LABEL="tmux basics 1.6 of 1.9"
-begin "🗃" "Your turn: windows"
-cat <<EOF
+  LABEL="tmux basics 1.6 of 1.9"
+  begin "🗃" "Your turn: windows"
+  cat <<EOF
 A window is a whole screen, and the status bar at the bottom lists them.
 
     ${KEY}prefix  c${OFF}       make a new window
@@ -277,13 +289,13 @@ ${DIM}In this playground prefix c is bound to something better, which asks where
 ${DIM}to open it. Step 8 of the main tour is about that. Everything else here is${OFF}
 ${DIM}stock tmux.${OFF}
 EOF
-wait_for
+  wait_for
 }
 
 basics_07() {
-LABEL="tmux basics 1.7 of 1.9"
-begin "🔌" "Your turn: detach and come back"
-cat <<EOF
+  LABEL="tmux basics 1.7 of 1.9"
+  begin "🔌" "Your turn: detach and come back"
+  cat <<EOF
 The one to actually feel.
 
     ${KEY}prefix  d${OFF}       detach
@@ -295,13 +307,13 @@ including this tour and where you are in it, will be exactly as you left it.
 ${DIM}Outside a container you would type${OFF} tmux attach ${DIM}to come back, or${OFF}
 ${DIM}tmux attach -t <name> ${DIM}when there is more than one session.${OFF}
 EOF
-wait_for
+  wait_for
 }
 
 basics_08() {
-LABEL="tmux basics 1.8 of 1.9"
-begin "\U0001f4dc" "Scrolling back, copying, and opening"
-cat <<EOF
+  LABEL="tmux basics 1.8 of 1.9"
+  begin "\U0001f4dc" "Scrolling back, copying, and opening"
+  cat <<EOF
 The mouse wheel works because this playground turns the mouse on. The
 keyboard way is worth knowing, because it is also how you copy.
 
@@ -326,13 +338,13 @@ says so instead:
 
 That message is the whole thing working except the last step.
 EOF
-wait_for
+  wait_for
 }
 
 basics_09() {
-LABEL="tmux basics 1.9 of 1.9"
-begin "\U0001f393" "That is tmux"
-cat <<EOF
+  LABEL="tmux basics 1.9 of 1.9"
+  begin "\U0001f393" "That is tmux"
+  cat <<EOF
 Four ideas and about a dozen keys:
 
     a ${BOLD}server${OFF} owns your programs, a ${BOLD}client${OFF} draws them
@@ -353,7 +365,7 @@ any shell; ${KEY}q${OFF} leaves the pager.
 The next step of the main tour is a searchable version of ${KEY}prefix ?${OFF}, which
 is where this tool starts.
 EOF
-wait_for
+  wait_for
 }
 
 # The detour's own loop, the same shape as the main one.
@@ -365,19 +377,21 @@ wait_for
 # The start index is what makes going backwards into the detour work: coming
 # back from step 2 should land on 1.9, the screen just left, not on 1.1.
 run_basics() {
-  local steps=(basics_01 basics_02 basics_03 basics_04 basics_05 basics_06 \
-               basics_07 basics_08 basics_09)
+  local steps=(basics_01 basics_02 basics_03 basics_04 basics_05 basics_06
+    basics_07 basics_08 basics_09)
   local j=${1:-0}
   while [ "$j" -lt "${#steps[@]}" ]; do
     "${steps[$j]}"
     case "$?" in
-      2) if [ "$j" -eq 0 ]; then
-           # Back off the top of the detour, which is step 1.
-           return 2
-         fi
-         j=$(( j - 1 )) ;;
+      2)
+        if [ "$j" -eq 0 ]; then
+          # Back off the top of the detour, which is step 1.
+          return 2
+        fi
+        j=$((j - 1))
+        ;;
       3) return 3 ;;
-      *) j=$(( j + 1 )) ;;
+      *) j=$((j + 1)) ;;
     esac
   done
   return 0
@@ -408,16 +422,18 @@ enter_basics() {
     # Step 1 gets to decide again: somebody who backs out and then presses
     # Enter has come to step 2 from step 1, and `b` there should take them
     # back to step 1 rather than into a detour they just left.
-    2) took_basics=0
-       return 2 ;;
+    2)
+      took_basics=0
+      return 2
+      ;;
   esac
   return 0
 }
 
 # ── 1 ──────────────────────────────────────────────────────────────────
 step_01() {
-begin "⌨️ " "Two keyboard things, or nothing below works"
-cat <<EOF
+  begin "⌨️ " "Two keyboard things, or nothing below works"
+  cat <<EOF
 ${BOLD}If you are running this inside tmux${OFF}
 
 Ctrl-b goes to the tmux you were already in, not to this one, so every step
@@ -448,15 +464,15 @@ of them keys to press, and then you come back here and carry on.
     ${KEY}t${OFF}        tmux basics first
     ${KEY}Enter${OFF}    skip it, I use tmux
 EOF
-hint "step 1: press t for tmux basics, or Enter to carry on"
-EXTRA_KEYS="   ${KEY}[t] tmux basics${OFF}${DIM}"
-wait_for
+  hint "step 1: press t for tmux basics, or Enter to carry on"
+  EXTRA_KEYS="   ${KEY}[t] tmux basics${OFF}${DIM}"
+  wait_for
 }
 
 # ── 2 ──────────────────────────────────────────────────────────────────────
 step_02() {
-begin "🔤" "Fonts, before anything else"
-cat <<EOF
+  begin "🔤" "Fonts, before anything else"
+  cat <<EOF
 The status bar is drawn with Nerd Font glyphs. Fonts are rendered by the
 terminal on your machine, not by anything in this container, so this is the
 one thing the image cannot do for you.
@@ -479,14 +495,14 @@ terminal's font:
 The second is the one this was built against. Everything else in the tour
 works without the font; it just reads worse.
 EOF
-hint "step 2: can you see the glyphs above, or boxes?"
-wait_for
+  hint "step 2: can you see the glyphs above, or boxes?"
+  wait_for
 }
 
 # ── 3 ──────────────────────────────────────────────────────────────────────
 step_03() {
-begin "📊" "What the bar is telling you"
-cat <<EOF
+  begin "📊" "What the bar is telling you"
+  cat <<EOF
 Look at the bottom line of ${BOLD}this${OFF} session, left to right:
 
     ${BOLD}session name${OFF}   coloured by the theme this session has
@@ -512,45 +528,48 @@ The whole right side is ${BOLD}one${OFF} subprocess per redraw. That is the poin
 the tool: tmux spawns a shell for every ${DIM}#()${OFF} on the bar, which is 14.6 ms of
 CPU each, so five segments in five calls cost more than computing all five.
 EOF
-hint "step 3: the bar here has no git, network or battery, and step 3 says why"
-wait_for
+  hint "step 3: the bar here has no git, network or battery, and step 3 says why"
+  wait_for
 }
 
 # ── 4 ──────────────────────────────────────────────────────────────────────
 step_04() {
-begin "❓" "Every binding, searchable"
-cat <<EOF
+  begin "❓" "Every binding, searchable"
+  cat <<EOF
 tmux already knows every key you have bound and the note attached to it.
 This reads them back and lets you type at them.
 
 Try searching for ${BOLD}pane${OFF}, or ${BOLD}copy${OFF}. Escape closes it.
 EOF
-keys "prefix  ?"
-hint "step 4: press prefix then ? to search every key binding"
-wait_for
+  keys "prefix  ?"
+  hint "step 4: press prefix then ? to search every key binding"
+  wait_for
 }
 
 # ── 5 ──────────────────────────────────────────────────────────────────────
 step_05() {
-begin "🃏" "The cheat sheet"
-cat <<EOF
-The same bindings, grouped into four boxes and sorted by how often you have
-actually pressed them. The order changes as you use it.
+  begin "🃏" "The cheat sheet"
+  cat <<EOF
+The cheat sheet is for the keys you keep having to look up. Every binding you
+run from ${BOLD}prefix ?${OFF} counts as a lookup, and the sheet puts those at the top
+of their box, marked ${BOLD}▸${OFF} with a count, until two weeks go by without you
+needing them. Then they drop off: you've learned them.
 
-The bindings written in tmux.conf come first in each box. Where a box would
-otherwise be nearly empty -- this config binds one pane key of its own --
-tmux's own bindings fill it out, which is why Panes shows the two splits you
-did not write.
+Nothing has been looked up in here yet, so give it one. Press ${BOLD}prefix ?${OFF},
+type ${BOLD}zen${OFF} and press Enter, then open the sheet. zen is at the top of its box.
+
+The fourth box holds tmux's own keys and plugin keys, only the ones you've
+looked up. ${BOLD}prefix M-/${OFF} searches those too: look up ${BOLD}split${OFF} and it shows there.
 EOF
-keys "prefix  Ctrl-c"
-hint "step 5: prefix then Ctrl-c for the cheat sheet"
-wait_for
+  keys "prefix  ?   zen   Enter        prefix  Ctrl-c"
+  hint "step 5: look up zen with prefix ?, then prefix Ctrl-c for the cheat sheet"
+  wait_for
 }
 
 # ── 6 ──────────────────────────────────────────────────────────────────────
 step_06() {
-begin "🚀" "One session per project"
-cat <<EOF
+  begin "🚀" "One session per project"
+  cat <<EOF
 The project picker lists live sessions first, then every directory zoxide
 knows, in one list. Picking a live one switches to it; picking a directory
 creates the session, with the windows your layout asks for.
@@ -565,33 +584,33 @@ ${DIM}[theme] default${OFF}, and you pick a different one per session in step 10
 picker remembers it against the project, so it comes back the same way next
 time.
 EOF
-keys "Alt-s        then type: sparrow        (or prefix P)"
-back_here
-hint "step 6: Alt-s, open sparrow-cli, then prefix i to come back"
-wait_for 'tmux has-session -t sparrow-cli' "there is no sparrow-cli session yet"
+  keys "Alt-s        then type: sparrow        (or prefix P)"
+  back_here
+  hint "step 6: Alt-s, open sparrow-cli, then prefix i to come back"
+  wait_for 'tmux has-session -t sparrow-cli' "there is no sparrow-cli session yet"
 }
 
 # ── 7 ──────────────────────────────────────────────────────────────────────
 step_07() {
-begin "🔁" "Switching between them"
-cat <<EOF
+  begin "🔁" "Switching between them"
+  cat <<EOF
 Press it again. sparrow-cli and playground are both live now, so they are at
 the top of the list, with their directories underneath.
 
 This is the whole navigation model: one key, one list, no window manager.
 EOF
-keys "Alt-s        then pick playground     (or prefix P)"
-back_here
-hint "step 7: Alt-s again, switch to playground, then prefix i to come back"
-wait_for
+  keys "Alt-s        then pick playground     (or prefix P)"
+  back_here
+  hint "step 7: Alt-s again, switch to playground, then prefix i to come back"
+  wait_for
 }
 
 # ── 8 ──────────────────────────────────────────────────────────────────────
 step_08() {
-MADE_A_WINDOW=''
-begin "🪟" "A new window, here or anywhere"
-before=$(windows_now)
-cat <<EOF
+  MADE_A_WINDOW=''
+  begin "🪟" "A new window, here or anywhere"
+  before=$(windows_now)
+  cat <<EOF
 tmux's own prefix-c opens a window in the current pane's directory and gives
 you no say in it. This starts with that directory already typed, so Enter is
 the same thing, and anything else you type is a directory to open instead:
@@ -613,19 +632,19 @@ repo has a detached HEAD, so the bar names the commit rather than a branch.
 The new window is in whichever session you pressed it in, so ${KEY}prefix i${OFF}
 brings you back here, or close the window with ${DIM}exit${OFF}.
 EOF
-keys "prefix  c      then type: lantern"
-hint "step 8: prefix then c, open a window in lantern-docs"
-wait_for "made_a_window $before" "no new window yet"
+  keys "prefix  c      then type: lantern"
+  hint "step 8: prefix then c, open a window in lantern-docs"
+  wait_for "made_a_window $before" "no new window yet"
 }
 
 # ── 9 ──────────────────────────────────────────────────────────────────────
 step_09() {
-# Counted before the step rather than after, so the check is "the pane you
-# opened is gone again" rather than a number baked in when this was written.
-local before
-before=$(panes_now)
-begin "⚡" "Run something beside what you are doing"
-cat <<EOF
+  # Counted before the step rather than after, so the check is "the pane you
+  # opened is gone again" rather than a number baked in when this was written.
+  local before
+  before=$(panes_now)
+  begin "⚡" "Run something beside what you are doing"
+  cat <<EOF
 A command from your shell history, in a pane that slides in next to the one
 you are in, and asks before it closes so you can read what it said.
 
@@ -643,16 +662,16 @@ failed, because those are the two things anybody does next.
 
 Press ${KEY}c${OFF} to close it before coming back.
 EOF
-keys "prefix  e"
-back_here
-hint "step 9: prefix e, run something, then c to close the pane"
-wait_for "[ \"\$(panes_now)\" -le $before ]" "the run pane is still open: press c in it"
+  keys "prefix  e"
+  back_here
+  hint "step 9: prefix e, run something, then c to close the pane"
+  wait_for "[ \"\$(panes_now)\" -le $before ]" "the run pane is still open: press c in it"
 }
 
 # ── 10 ─────────────────────────────────────────────────────────────────────
 step_10() {
-begin "🎨" "A colour per project"
-cat <<EOF
+  begin "🎨" "A colour per project"
+  cat <<EOF
 151 themes, from six colours: ${DIM}theme init${OFF} writes the six, and
 ${DIM}theme gen --shades${OFF} adds every colour in tmux's 6x6x6 cube whose text clears
 WCAG AAA, 145 more, each named after the bundled colour it sits nearest to so
@@ -671,32 +690,32 @@ session block and the pane border change with the session. A theme is a
 property of the session, not of the server, which is what lets one project
 be blue while another is green.
 EOF
-keys "prefix  Ctrl-t      in playground, then again in sparrow-cli"
-back_here
-hint "step 10: prefix Ctrl-t, pick a theme in two sessions, then prefix i"
-wait_for
+  keys "prefix  Ctrl-t      in playground, then again in sparrow-cli"
+  back_here
+  hint "step 10: prefix Ctrl-t, pick a theme in two sessions, then prefix i"
+  wait_for
 }
 
 # ── 11 ─────────────────────────────────────────────────────────────────────
 step_11() {
-begin "🧰" "Toggle the tools away"
-cat <<EOF
+  begin "🧰" "Toggle the tools away"
+  cat <<EOF
 One key to go to the tool window this session keeps, and the same key to go
 back where you were. In here the layout's tool window is ${BOLD}git${OFF}; on a real
 machine mine holds an agent.
 
 Try it in sparrow-cli, which has both windows.
 EOF
-keys "Alt-a                                 (or prefix A)"
-back_here
-hint "step 11: Alt-a there and back, then prefix i to come back here"
-wait_for
+  keys "Alt-a                                 (or prefix A)"
+  back_here
+  hint "step 11: Alt-a there and back, then prefix i to come back here"
+  wait_for
 }
 
 # ── 12 ─────────────────────────────────────────────────────────────────────
 step_12() {
-begin "📐" "The layout a project comes back with"
-cat <<EOF
+  begin "📐" "The layout a project comes back with"
+  cat <<EOF
 Arrange sparrow-cli however you like: split a pane, open a window, move
 things around. Then save it, and it is what that project opens with from now
 on, config or no config.
@@ -721,15 +740,15 @@ closes the thing you are reading. ${DIM}Alt-s${OFF} first, pick ${BOLD}sparrow-c
 If you do close the tour, nothing is lost: the playground brings it back at
 this step and you carry on.
 EOF
-back_here
-hint "step 12: in sparrow-cli: prefix Shift-S saves, prefix Shift-X closes, Alt-s reopens"
-wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/projects/*.toml' "nothing saved yet: prefix S in the sparrow-cli session"
+  back_here
+  hint "step 12: in sparrow-cli: prefix Shift-S saves, prefix Shift-X closes, Alt-s reopens"
+  wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/projects/*.toml' "nothing saved yet: prefix S in the sparrow-cli session"
 }
 
 # ── 13 ─────────────────────────────────────────────────────────────────────
 step_13() {
-begin "📦" "Every session, kept in generations"
-cat <<EOF
+  begin "📦" "Every session, kept in generations"
+  cat <<EOF
 The last step saved one project's layout. This saves the whole server: every
 session, every window, every pane, where each one was and what was running in
 it, as one generation under a timestamp. It is the half of tmux-resurrect this
@@ -758,15 +777,15 @@ What a restore is allowed to execute is ${DIM}[[restore.program]]${OFF} in the c
 it is default deny. A command no row claims opens its pane in the right
 directory, at a prompt, and waits for you.
 EOF
-back_here
-hint "step 13: prefix Alt-s saves, then tmux-companion sessions list"
-wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/sessions/*.toml' "no snapshot yet: prefix Alt-s in the playground session"
+  back_here
+  hint "step 13: prefix Alt-s saves, then tmux-companion sessions list"
+  wait_for 'ls "$XDG_STATE_HOME"/tmux-companion/sessions/*.toml' "no snapshot yet: prefix Alt-s in the playground session"
 }
 
 # ── 14 ─────────────────────────────────────────────────────────────────────
 step_14() {
-begin "🔍" "Copy mode, and jumping by prompt"
-cat <<EOF
+  begin "🔍" "Copy mode, and jumping by prompt"
+  cat <<EOF
 tmux has had next-prompt and previous-prompt since 3.3 and they do nothing
 until the shell says where a prompt begins. One line in .zshrc does that, and
 this image already has it:
@@ -784,14 +803,14 @@ Run two or three commands there first, then:
     ${KEY}v${OFF} then ${KEY}y${OFF}       select, and yank to the system clipboard
     ${KEY}q${OFF}              out
 EOF
-hint "step 14: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
-wait_for
+  hint "step 14: prefix [ then Ctrl-p and Ctrl-n to jump between prompts"
+  wait_for
 }
 
 # ── 15 ─────────────────────────────────────────────────────────────────────
 step_15() {
-begin "🔗" "Open what is under the cursor"
-cat <<EOF
+  begin "🔗" "Open what is under the cursor"
+  cat <<EOF
 In the playground session:
 
     ${DIM}cat ~/projects/orchard-api/build.log${OFF}
@@ -813,15 +832,15 @@ compiler was pointing at. Close it with ${DIM}:q${OFF}.
 The URL two lines below works the same way and cannot finish in here, for
 the reason 1.8 gave: no browser to hand it to.
 EOF
-keys "prefix  [      select the path      o"
-hint "step 15: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
-wait_for
+  keys "prefix  [      select the path      o"
+  hint "step 15: cat the build.log, select src/main.rs:2:22 in copy mode, press o"
+  wait_for
 }
 
 # ── 16 ─────────────────────────────────────────────────────────────────────
 step_16() {
-begin "🌳" "Five repositories, five different bars"
-cat <<EOF
+  begin "🌳" "Five repositories, five different bars"
+  cat <<EOF
 Each project is in a different state on purpose. Walk through them in the
 playground session and watch only the git segment:
 
@@ -835,15 +854,38 @@ playground session and watch only the git segment:
 A git status costs about 51 ms cold. It is cached for five seconds, per
 directory, which is why walking through these is instant the second time.
 EOF
-hint "step 16: cd through the five projects, watch the git segment"
-wait_for
+  hint "step 16: cd through the five projects, watch the git segment"
+  wait_for
 }
 
 # ── 17 ─────────────────────────────────────────────────────────────────────
 step_17() {
-begin "🏁" "That is the tour"
-cat <<EOF
-${OK}Done.${OFF}$( [ "$skipped" -gt 0 ] && printf ' %s(%d skipped)%s' "$DIM" "$skipped" "$OFF" )
+  begin "🧰" "What isn't on yet"
+  cat <<EOF
+On your own machine this is the first thing to run after installing. In the
+playground session:
+
+    ${DIM}tmux-companion setup${OFF}
+
+Every binding, hook and setting the tool has, whether each is on, and the
+line that turns on the ones that aren't. Enter copies the line and asks
+before writing it into tmux.conf or config.toml. ${KEY}Ctrl-x${OFF} skips one for good.
+
+In here about a dozen are open, each for a reason: ${BOLD}ports${OFF}, whose key this
+playground took for the project picker; the two attach hooks the example
+leaves commented out; the agent count and the health mark on the bar; and the
+settings that fetch, notify or save on a timer, which a container has no use
+for.
+EOF
+  hint "step 17: run tmux-companion setup in the playground session"
+  wait_for
+}
+
+# ── 18 ─────────────────────────────────────────────────────────────────────
+step_18() {
+  begin "🏁" "That is the tour"
+  cat <<EOF
+${OK}Done.${OFF}$([ "$skipped" -gt 0 ] && printf ' %s(%d skipped)%s' "$DIM" "$skipped" "$OFF")
 
 What is in this image, if you want to copy it out:
 
@@ -862,10 +904,10 @@ Read next:
 
 Nothing you did in here touched your machine. Run ${BOLD}tour${OFF} to go round again.
 EOF
-hint "the tour is done: run \`tour\` to go round again"
-printf '\n%s[Enter] for a shell%s ' "$DIM" "$OFF"
-IFS= read -r _ || true
-exec zsh
+  hint 'the tour is done: run `tour` to go round again'
+  printf '\n%s[Enter] for a shell%s ' "$DIM" "$OFF"
+  IFS= read -r _ || true
+  exec zsh
 }
 
 # ── The driver ───────────────────────────────────────────────────────────
@@ -873,7 +915,7 @@ exec zsh
 # A loop over the steps rather than a straight run, so `b` can hand back the
 # one before this. Each step is a function with no state of its own, so going
 # back into one redraws it from scratch.
-STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 step_10 step_11 step_12 step_13 step_14 step_15 step_16 step_17)
+STEPS=(step_01 step_02 step_03 step_04 step_05 step_06 step_07 step_08 step_09 step_10 step_11 step_12 step_13 step_14 step_15 step_16 step_17 step_18)
 TOTAL=${#STEPS[@]}
 
 # Where to start. `tour.sh 12` resumes at step 12, which is how the playground
@@ -883,9 +925,9 @@ TOTAL=${#STEPS[@]}
 # used to end the container.
 i=0
 if [ -n "${1:-}" ] && [ "$1" -eq "$1" ] 2>/dev/null; then
-  i=$(( $1 - 1 ))
+  i=$(($1 - 1))
   [ "$i" -lt 0 ] && i=0
-  [ "$i" -ge ${#STEPS[@]} ] && i=$(( ${#STEPS[@]} - 1 ))
+  [ "$i" -ge ${#STEPS[@]} ] && i=$((${#STEPS[@]} - 1))
 fi
 
 # Whether the detour was taken, which decides what `b` on step 2 means: back
@@ -894,7 +936,7 @@ fi
 took_basics=0
 
 while [ "$i" -lt "$TOTAL" ]; do
-  n=$(( i + 1 ))
+  n=$((i + 1))
   LABEL="step $n of $TOTAL"
   "${STEPS[$i]}"
   answer=$?
@@ -903,20 +945,22 @@ while [ "$i" -lt "$TOTAL" ]; do
   EXTRA_KEYS=""
   case "$answer" in
     2) if [ "$i" -eq 1 ] && [ "$took_basics" -eq 1 ]; then
-         # Back into the detour at its last screen, and back out of its first
-         # one lands on step 1.
-         enter_basics "$BASICS_LAST" || i=0
-       elif [ "$i" -gt 0 ]; then
-         i=$(( i - 1 ))
-       fi ;;
+      # Back into the detour at its last screen, and back out of its first
+      # one lands on step 1.
+      enter_basics "$BASICS_LAST" || i=0
+    elif [ "$i" -gt 0 ]; then
+      i=$((i - 1))
+    fi ;;
     3) quit_tour ;;
-    4) took_basics=1
-       if enter_basics 0; then
-         i=$(( i + 1 ))
-       else
-         i=0
-       fi ;;
-    *) i=$(( i + 1 )) ;;
+    4)
+      took_basics=1
+      if enter_basics 0; then
+        i=$((i + 1))
+      else
+        i=0
+      fi
+      ;;
+    *) i=$((i + 1)) ;;
   esac
 done
 

@@ -31,8 +31,6 @@
 
 # ── Keys: panes ──────────────────────────────────────────────────────────────
 
-# @Yogesh(check): the one-line questions below (`line = ...`), 53 of them; the setup picker shows each as its row
-
 [[item]]
 id = "zen"
 group = "Keys"

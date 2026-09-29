@@ -184,6 +184,14 @@ cat > "$XDG_CONFIG_HOME/tmux-companion/config.toml" <<'EOF'
 # The playground's config. docs/config.example.toml is the annotated one and
 # it is at /opt/playground/config.example.toml in this image.
 
+# Both are off out of the box. The cheat sheet step needs the usage log, and
+# the journal is what prefix J reads.
+[usage]
+enabled = true
+
+[journal]
+enabled = true
+
 [project]
 layout = "default"
 

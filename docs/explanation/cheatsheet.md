@@ -1,14 +1,12 @@
 # Why the cheat sheet forgets
 
-<!-- @Yogesh(check): the premise; is a lookup really "not learned yet" for you, or also "forgot it"? -->
 A binding you press doesn't need a cheat sheet. The one you open `prefix ?` to
 search for does, because you looked it up instead of pressing it and that's the
-only signal the tool gets about what you haven't learned yet. So the sheet
+only signal the tool gets about what you haven't learned yet, or have forgotten. So the sheet
 isn't a score of what you use. It's the list of keys you still search for.
 
 ## Looked up, then learned
 
-<!-- @Yogesh(check): the 14-day default and the "learned drops off" rule -->
 Each pick in the key search goes into the usage log with its time. A binding
 looked up in the last 14 days (`[usage] learned_after_days`) sits at the top of
 its box with a `▸` and its count, most lookups first. After 14 days without a
@@ -16,7 +14,6 @@ lookup it drops off the sheet and the line under the sheet counts it as
 learned. Looking it up again brings it back. With the days set to 0 nothing is
 ever learned.
 
-<!-- @Yogesh(check): old logs with no times count as learned; right call, or should they show once? -->
 A log written before picks carried a time has counts and no dates. Those
 bindings count as learned, since a count with no date says nothing about this
 week. The next lookup puts a date on them.

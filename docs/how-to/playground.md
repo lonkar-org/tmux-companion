@@ -62,7 +62,7 @@ screens of keys to press. Nothing in the detour is checked. It ends with
 [learntmux.dev](https://learntmux.dev), which is 42 tasks against a real tmux
 in the browser, and returns you to step two.
 
-The tour is sixteen steps. Each one says what to press, sets the step on a
+The tour is eighteen steps. Each one says what to press, sets the step on a
 second status line so it is still in front of you after you have switched
 sessions, and waits for Enter. Some steps check that the thing actually
 happened and say so when it did not; `s` skips one and `q` leaves the tour for

@@ -1,7 +1,7 @@
 # tmux-companion playground
 
 A throwaway tmux with everything turned on: the binary, the full config, five
-fake git projects and a seventeen step tour that walks you through the bindings
+fake git projects and a eighteen step tour that walks you through the bindings
 one at a time.
 
 ```sh
