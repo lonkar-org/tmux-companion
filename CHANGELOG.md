@@ -52,6 +52,8 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- The daemon's socket is created `0600` rather than made so a moment later.
+  Between the bind and the chmod it existed with the default mode.
 - A picker with nothing to show (`sessions idle`, `inbox`, `ports`, `panes`,
   `journal`, `search`, `keys`, `cheatsheet`) also puts its line on the tmux
   message line, so `display-popup -E` closing doesn't take it away. `--print`

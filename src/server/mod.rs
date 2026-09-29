@@ -22,6 +22,20 @@ use crate::{client::sock_path, proto::Request, server::state::ServerState};
 /// the rest of the day.
 const SOCKET_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Bind the socket with only its owner able to connect, from the instant it
+/// exists: the file is created under umask 0177, and the umask is put back
+/// straight after.
+///
+/// Tested through a real daemon in `tests/socket_round_trip.rs`, not here:
+/// umask is per process, and a unit test calling this would briefly narrow the
+/// modes of whatever the other test threads were creating at that moment.
+fn bind_owner_only(sock: &std::path::Path) -> std::io::Result<UnixListener> {
+    let previous = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o177));
+    let bound = UnixListener::bind(sock);
+    nix::sys::stat::umask(previous);
+    bound
+}
+
 /// Bind the socket and serve until killed.
 ///
 /// Exits quietly, and successfully, if another server is already listening:
@@ -95,17 +109,19 @@ pub async fn run() -> anyhow::Result<()> {
     // Remove stale socket file from a previous crashed run.
     let _ = std::fs::remove_file(&sock);
 
-    let listener = match UnixListener::bind(&sock) {
+    // The socket is an execution surface: a request makes this process read
+    // git state and spawn commands, and /tmp is a directory every user on the
+    // machine can write to. 0600 means only its owner can connect.
+    //
+    // bind creates the file with 0777 & !umask, so binding under 0177 makes it
+    // 0600 from the first instant. A chmod after the bind left a window where
+    // the socket existed with the default mode, and the socket test caught it
+    // there now and then. umask is per process, so it is held only around the
+    // bind, which runs before the daemon starts anything else.
+    let listener = match bind_owner_only(&sock) {
         Ok(l) => {
-            // The socket is an execution surface: a request makes this process
-            // read git state today and spawn commands once `run` and `open`
-            // land, and /tmp is a directory every user on the machine can write
-            // to. 0600 means only its owner can connect.
-            //
-            // There is a window between bind and chmod. Closing it properly
-            // needs the socket created inside a 0700 directory, which is what
-            // moving to $XDG_RUNTIME_DIR would give; until then this narrows it
-            // from forever to microseconds.
+            // Belt and braces, for a filesystem that doesn't apply umask to a
+            // socket.
             use std::os::unix::fs::PermissionsExt;
             if let Err(e) = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))
             {
