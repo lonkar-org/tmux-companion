@@ -387,14 +387,15 @@ pub async fn run(
     );
 
     if rows.is_empty() {
-        eprintln!(
-            "{}",
+        crate::picker::say_nothing_to_show(
             if all {
                 "nothing is listening"
             } else {
                 "no pane is listening on a port; --all lists the ones no pane started"
-            }
-        );
+            },
+            print,
+        )
+        .await;
         return Ok(());
     }
     if print {

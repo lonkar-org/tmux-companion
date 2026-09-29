@@ -1470,6 +1470,42 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
     assert_eq!(words, ["1", "1", "needle-42"], "{landed:?}");
 }
 
+/// A picker with nothing to show says so on tmux's message line as well as on
+/// stderr, because `display-popup -E` takes stderr away with the popup.
+/// `--print` keeps to stderr.
+///
+/// No client is attached here, so tmux has nobody to show the message to;
+/// what `show-messages` holds is the command that asked, which is enough to
+/// know it was sent.
+#[test]
+fn an_empty_picker_says_so_on_the_message_line() {
+    let Some(t) = Tmux::start("emptysay") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("fresh", &dir);
+
+    let (out, err, ok) = t.run(&["sessions", "idle", "--print"]);
+    assert!(ok, "{err}");
+    assert!(out.is_empty(), "{out:?}");
+    assert_eq!(err, "no session idle for 3 days\n");
+    let messages = t.tmux(&["show-messages"]);
+    assert!(
+        !messages.contains("display-message"),
+        "--print told tmux: {messages}"
+    );
+
+    let (out, err, ok) = t.run(&["sessions", "idle"]);
+    assert!(ok, "{err}");
+    assert!(out.is_empty(), "{out:?}");
+    assert_eq!(err, "no session idle for 3 days\n");
+    let messages = t.tmux(&["show-messages"]);
+    assert!(
+        messages.contains("display-message") && messages.contains("no session idle for 3 days"),
+        "the message line never heard: {messages}"
+    );
+}
+
 /// `health` says what the mark says, and `health ack` says what it left
 /// standing: quiet hours are how things are, so acknowledging doesn't end them.
 #[test]

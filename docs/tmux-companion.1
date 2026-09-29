@@ -537,6 +537,7 @@ on it, layout capture and all, so a session shut from here opens again from the
 project picker as it was.
 .Fl -print
 lists the rows as tab-separated columns and exits.
+.\" @Yogesh(gap): inside tmux and without --print, an empty sessions idle now also puts its line on the tmux message line. Say so here?
 No such session is one line on stderr and exit 0, not an error.
 .It Ic shutdown
 Stop the tmux-companion daemon, and only that.
@@ -569,6 +570,7 @@ opens on something else,
 rebuilds the list from tmux rather than using what the daemon holds, and
 .Fl -print
 lists the rows and exits.
+.\" @Yogesh(gap): inside tmux and without --print, keys and cheatsheet now also put this hint on the tmux message line. Say so here?
 When no binding carries the note there is nothing to show, and it says so on
 standard error and exits 0 rather than drawing an empty picker.
 Bound to
@@ -729,6 +731,7 @@ keeps only the agent rows,
 only one session's, and
 .Fl -print
 writes the rows as tab-separated columns with the pane id last, and exits.
+.\" @Yogesh(gap): inside tmux and without --print, panes (and inbox, ports, journal, search) now also say it on the tmux message line. Say so here and in their paragraphs?
 With nothing to show it says so on standard error and exits 0.
 Bound to
 .Ql prefix g ,

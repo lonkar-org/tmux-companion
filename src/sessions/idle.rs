@@ -131,10 +131,11 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     if sessions.is_empty() {
         // Not an error: the usual answer on a tidy server, and a script
         // calling this in a loop wants a zero, not a stack of failures.
-        eprintln!(
+        let text = format!(
             "no session idle for {days} day{}",
             crate::cli::plural(days as usize)
         );
+        crate::picker::say_nothing_to_show(&text, print).await;
         return Ok(None);
     }
 

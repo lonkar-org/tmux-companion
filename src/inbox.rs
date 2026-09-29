@@ -472,7 +472,7 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
     }
     let entries: Vec<Entry> = serde_json::from_str(&resp.output).unwrap_or_default();
     if entries.is_empty() {
-        eprintln!("no agent is waiting on you");
+        crate::picker::say_nothing_to_show("no agent is waiting on you", print).await;
         return Ok(());
     }
     let now = panes::now_secs();

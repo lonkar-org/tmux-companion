@@ -1298,7 +1298,7 @@ async fn run_keys(
 
     // `--all` shows tmux's own bindings too, so there is something to draw
     // even when none of them carries the note.
-    if !all && nothing_noted(&rows) {
+    if !all && nothing_noted(&rows, print).await {
         return Ok(());
     }
 
@@ -1441,14 +1441,16 @@ async fn run_binding(
 /// an empty picker or four empty boxes, and both look like the tool is broken
 /// rather than like the config is missing a word. One hint on stderr and exit
 /// 0: nothing failed, there is just nothing to show yet.
-fn nothing_noted(rows: &[crate::keys::KeyRow]) -> bool {
+async fn nothing_noted(rows: &[crate::keys::KeyRow], print: bool) -> bool {
     if !crate::keys::filter(rows, "custom: ").is_empty() {
         return false;
     }
-    eprintln!(
+    crate::picker::say_nothing_to_show(
         "no bindings carry a -N \"custom: ...\" note; keys and cheatsheet list only those. \
-         See docs/tmux.conf.starter.example"
-    );
+         See docs/tmux.conf.starter.example",
+        print,
+    )
+    .await;
     true
 }
 
@@ -1503,7 +1505,7 @@ async fn run_cheatsheet(print: bool) -> anyhow::Result<()> {
         })
         .collect();
 
-    if nothing_noted(&rows) {
+    if nothing_noted(&rows, print).await {
         return Ok(());
     }
 

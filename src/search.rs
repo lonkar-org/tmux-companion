@@ -442,7 +442,7 @@ pub async fn run(asked: Asked) -> anyhow::Result<()> {
     let rows = rows(&asked, matcher).await;
 
     if rows.is_empty() {
-        eprintln!("nothing in the scrollback matches");
+        crate::picker::say_nothing_to_show("nothing in the scrollback matches", asked.print).await;
         return Ok(());
     }
     if asked.print {

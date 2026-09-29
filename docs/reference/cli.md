@@ -103,6 +103,7 @@ start on it.
 | `project show [DIR]` | Which layout this project gets, which file decided, and the windows it opens: a saved layout, then the checkout's `.tmux-companion.toml`, then `[[project.override]]`, then `[project] layout`. A saved or checkout file that is there and not used is named with the reason, and a checkout file whose commands were blanked for want of `[project] trusted` says so |
 | `project close [SESSION]` | Close this project by letting every window exit, capturing the layout on the way out. An editor (nvim, vim, vi, hx) is asked to quit first and the close stops with it on screen when it will not; `--discard` quits editors with `:qa!`, `--no-save` leaves the saved layout alone. A session that is not there is an error. `close-project` is the old name and works for one release |
 
+<!-- @Yogesh(gap): inside tmux and without --print the no-note hint now also goes to the tmux message line, so a popup that closes does not take it. Say so in this paragraph? -->
 `keys` and `cheatsheet` list the bindings whose `-N` note starts with
 `custom: `, which is what the shipped configs write. When no binding carries
 the note, both print one hint on stderr pointing at
@@ -124,6 +125,7 @@ no terminal.
 
 ## Sessions
 
+<!-- @Yogesh(gap): `sessions idle` row says "None is one stderr line"; inside tmux and without --print it now also goes to the tmux message line (same for inbox, ports, panes, journal, search). Say so in the row? -->
 | Command | Does |
 | --- | --- |
 | `run [--pane ID]` | Pick a command from history and run it in a pane beside this one. Enter runs the pick, alt-enter runs exactly what you typed, `--print` lists and exits. `--pane` says which pane it belongs beside, for a caller that knows it. The binding passes nothing and the attached client's session decides, because the picker is a popup: a popup is not a client, an untargeted split lands in whichever session the server touched last, and tmux does not expand `#{pane_id}` in a `display-popup` command anyway |

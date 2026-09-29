@@ -3,6 +3,8 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+<!-- @Yogesh(gap): unreleased fix needs an entry: an empty picker (sessions idle, inbox, ports, panes, journal, search, keys, cheatsheet) also says its stderr line on the tmux message line, so display-popup -E no longer takes it away; --print unchanged. -->
+
 ## 0.5.2 - 2026-09-28
 
 The evening 0.5.1 went out the bar said `timer` over something that wasn't

@@ -425,9 +425,63 @@ fn previewable(chrome: &Chrome, items: &[Item]) -> bool {
         && items.iter().any(|i| !i.preview.is_empty())
 }
 
+/// Say that a picker has nothing to show, on stderr and, from a picker, on
+/// tmux's message line as well.
+///
+/// The pickers run in `display-popup -E`, which closes the popup the moment
+/// the command exits, so a line on stderr alone goes with it and the popup
+/// only flashes. The message line outlives the popup. `--print` keeps to
+/// stderr: its reader is a script, and its output stays what it was.
+pub async fn say_nothing_to_show(text: &str, print: bool) {
+    eprintln!("{text}");
+    if !also_in_tmux(std::env::var_os("TMUX").is_some(), print) {
+        return;
+    }
+    let text = format!("tmux-companion: {}", literal_for_tmux(text));
+    // Output captured and dropped: tmux's own complaint, such as no client to
+    // show it on, is not something the caller printed.
+    let _ = tokio::process::Command::new("tmux")
+        .args(["display-message", &text])
+        .output()
+        .await;
+}
+
+/// Whether a nothing-to-show line goes to tmux too: only inside tmux, and
+/// never for `--print`.
+fn also_in_tmux(in_tmux: bool, print: bool) -> bool {
+    in_tmux && !print
+}
+
+/// Text for `display-message`, which expands formats: every `#` doubled so
+/// the text is shown as written. `display-message -l` would do the same, but
+/// it is newer than the tmux 3.2 the pickers are documented to need.
+fn literal_for_tmux(text: &str) -> String {
+    text.replace('#', "##")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── saying there is nothing ─────────────────────────────────────────────
+
+    #[test]
+    fn nothing_to_show_reaches_tmux_only_from_a_picker_inside_tmux() {
+        assert!(also_in_tmux(true, false));
+        assert!(!also_in_tmux(true, true), "--print stays on stderr");
+        assert!(!also_in_tmux(false, false), "no tmux to tell");
+        assert!(!also_in_tmux(false, true));
+    }
+
+    #[test]
+    fn a_hash_reaches_tmux_as_a_hash() {
+        assert_eq!(
+            literal_for_tmux("no session idle for 3 days"),
+            "no session idle for 3 days"
+        );
+        assert_eq!(literal_for_tmux("#{session_name}"), "##{session_name}");
+        assert_eq!(literal_for_tmux("a ## b #"), "a #### b ##");
+    }
 
     // ── laying rows out ──────────────────────────────────────────────────────
 

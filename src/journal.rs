@@ -252,7 +252,7 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
     let mut events = select(&all, since, project.as_deref());
     events.reverse();
     if events.is_empty() {
-        eprintln!(
+        let text = format!(
             "nothing in the journal for the last {} day{}{}",
             days.max(1),
             if days.max(1) == 1 { "" } else { "s" },
@@ -261,6 +261,7 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
                 .map(|p| format!(" in {p}"))
                 .unwrap_or_default()
         );
+        crate::picker::say_nothing_to_show(&text, print).await;
         return Ok(());
     }
     let (_, today) = local(now);

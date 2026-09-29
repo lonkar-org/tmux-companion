@@ -596,14 +596,15 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
     let rows = rows(&panes, &filter, &clock);
 
     if rows.is_empty() {
-        eprintln!(
-            "{}",
+        crate::picker::say_nothing_to_show(
             if agents {
                 "no agent panes running"
             } else {
                 "no panes to show"
-            }
-        );
+            },
+            print,
+        )
+        .await;
         return Ok(());
     }
 
