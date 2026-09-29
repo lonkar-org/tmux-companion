@@ -473,6 +473,10 @@ pub enum Cmd {
         /// The seconds between TERM and KILL
         #[arg(long, value_name = "SECS", default_value_t = crate::kill::DEFAULT_GRACE_SECS)]
         grace: u64,
+        // @Yogesh(word): --help line for kill --ask; the placeholder only says what it does
+        /// Confirm in tmux by name and pid first
+        #[arg(long)]
+        ask: bool,
     },
 
     /// What a mouse click on a segment of the bar does: bound to
@@ -1080,7 +1084,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             let stop = kill.then(|| std::time::Duration::from_secs(grace));
             crate::ports::run(all, udp, print, target, stop).await?
         }
-        Cmd::Kill { pane, grace } => crate::kill::run(pane, grace).await?,
+        Cmd::Kill { pane, grace, ask } => crate::kill::run(pane, grace, ask).await?,
         Cmd::Promote { name, pane } => crate::promote::run(name, pane).await?,
         Cmd::Click { range } => crate::click::run(range).await?,
         Cmd::Brief { print, hook } => crate::brief::run(print, hook).await?,

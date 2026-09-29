@@ -110,6 +110,8 @@ Said plainly rather than left to be discovered.
   taken from the terminal rather than from the shell's children, so a
   background job survives it. `ports --kill` is the same escalation on one
   pid.
+<!-- @Yogesh(gap): describe --ask -->
+- `kill --ask`
 - `doctor` reads tmux's options and says which cost something, where
   `tmux-plugins/tmux-sensible` set them for you. It sets nothing, so a
   tmux.conf stays the only place an option comes from.

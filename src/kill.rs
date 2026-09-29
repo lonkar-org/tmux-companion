@@ -243,8 +243,109 @@ pub async fn stop_process(pid: u32, name: &str, grace: Duration, pane: Option<&s
     say_in_tmux(pane, &sentence(name, ended, grace)).await;
 }
 
+/// The sentence for a pane with nothing to stop, or `None` when there is.
+fn refusal(verdict: &Verdict, id: &str) -> Option<String> {
+    match verdict {
+        Verdict::Nothing => Some(format!("nothing is running in {id}")),
+        Verdict::OnlyTheShell(shell) => {
+            // @Yogesh(word): message when --ask finds only the shell at its prompt; has {shell} and {id}
+            Some(format!(
+                "only {shell} is running in {id}, and kill-pane is the key for that"
+            ))
+        }
+        Verdict::Group { .. } => None,
+    }
+}
+
+/// What `kill --ask` does with a pane, decided before anything is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    /// Nothing to stop: say this and ask nothing.
+    Refuse(String),
+    /// Something runs: ask about it by name and pid.
+    Confirm {
+        /// The name to call it by.
+        name: String,
+        /// The pid that name belongs to.
+        pid: i32,
+    },
+}
+
+/// What `kill --ask` does for this verdict.
+///
+/// The pid is the group leader's, the process the name comes from, or the
+/// first one's when the leader has gone.
+pub fn ask(verdict: &Verdict, id: &str) -> Ask {
+    if let Some(sentence) = refusal(verdict, id) {
+        return Ask::Refuse(sentence);
+    }
+    let Verdict::Group { group, pids, name } = verdict else {
+        unreachable!("refusal answers for everything but a group");
+    };
+    let pid = if pids.contains(group) {
+        *group
+    } else {
+        pids.first().copied().unwrap_or(*group)
+    };
+    Ask::Confirm {
+        name: name.clone(),
+        pid,
+    }
+}
+
+/// The prompt tmux shows for a confirm, as a format: a `#` in the name is
+/// doubled so tmux prints it rather than reading a format from it.
+pub fn confirm_prompt(name: &str, pid: i32) -> String {
+    let name = escape_format(name);
+    // @Yogesh(word): confirm prompt text for --ask; has {name} and {pid}
+    format!("{name} {pid} (y/n)")
+}
+
+/// A literal for a tmux format: `#` is the one character it expands.
+fn escape_format(s: &str) -> String {
+    s.replace('#', "##")
+}
+
+/// A word the shell hands back whole.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// A string for tmux's own command parser, in double quotes: the three
+/// characters it reads inside them are escaped.
+fn tmux_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if matches!(c, '\\' | '"' | '$') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// The command a `y` to the confirm runs: this binary, by its own path, doing
+/// the plain `kill` on the same pane.
+///
+/// Two format expansions happen on the way: `confirm-before` expands its
+/// command when it is given, and `run-shell` expands its shell command when
+/// it runs. A `#` in the path or the id is escaped for both. `--grace` goes
+/// along when it is not the default.
+pub fn confirm_command(me: &str, id: &str, grace_secs: u64) -> String {
+    let mut shell = format!("{} kill --pane {}", shell_quote(me), shell_quote(id));
+    if grace_secs != DEFAULT_GRACE_SECS {
+        shell.push_str(&format!(" --grace {grace_secs}"));
+    }
+    escape_format(&format!("run-shell {}", tmux_quote(&escape_format(&shell))))
+}
+
 /// `kill`: stop what is in front in a pane.
-pub async fn run(pane: Option<String>, grace_secs: u64) -> anyhow::Result<()> {
+///
+/// With `ask`, nothing is stopped here: a pane with something in front gets
+/// tmux's own confirm, naming it, whose `y` runs the plain `kill`.
+pub async fn run(pane: Option<String>, grace_secs: u64, ask_first: bool) -> anyhow::Result<()> {
     let grace = Duration::from_secs(grace_secs);
     let pane = pane
         .filter(|p| !p.trim().is_empty())
@@ -268,10 +369,33 @@ pub async fn run(pane: Option<String>, grace_secs: u64) -> anyhow::Result<()> {
 
     // Printed and nothing more: from a binding `run-shell` shows what a
     // command printed, which is where `quiet` says its piece too.
-    match verdict(&on_tty, pane_pid) {
-        Verdict::Nothing => println!("nothing is running in {id}"),
-        Verdict::OnlyTheShell(shell) => {
-            println!("only {shell} is running in {id}, and kill-pane is the key for that")
+    let verdict = verdict(&on_tty, pane_pid);
+    if ask_first {
+        match ask(&verdict, id) {
+            Ask::Refuse(sentence) => println!("{sentence}"),
+            Ask::Confirm { name, pid } => {
+                // By its own path: `run-shell` has the tmux server's PATH.
+                let me = std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "tmux-companion".to_string());
+                // No `-t`: it takes a client, not a pane, and tmux finds the
+                // one the key was pressed in the way it does for the binding.
+                crate::cli::tmux(&[
+                    "confirm-before",
+                    "-p",
+                    &confirm_prompt(&name, pid),
+                    &confirm_command(&me, id, grace_secs),
+                ])
+                .await;
+            }
+        }
+        return Ok(());
+    }
+    match verdict {
+        Verdict::Nothing | Verdict::OnlyTheShell(_) => {
+            if let Some(sentence) = refusal(&verdict, id) {
+                println!("{sentence}");
+            }
         }
         Verdict::Group { group, pids, name } => {
             let ended = stop(Target::Group(group), &pids, grace).await;
@@ -403,6 +527,68 @@ mod tests {
         assert!(
             sentence("cargo", Ended::Refused(nix::errno::Errno::EPERM), g)
                 .contains("could not be signalled")
+        );
+    }
+
+    #[test]
+    fn ask_leaves_a_shell_at_its_prompt_unasked() {
+        let v = verdict(&[on(100, 100, 100, "zsh")], 100);
+        assert!(matches!(ask(&v, "%45"), Ask::Refuse(s) if s.contains("zsh") && s.contains("%45")));
+        assert!(matches!(ask(&Verdict::Nothing, "%45"), Ask::Refuse(_)));
+    }
+
+    #[test]
+    fn ask_names_a_running_program_and_its_pid() {
+        let tty = [
+            on(100, 100, 300, "zsh"),
+            on(300, 300, 300, "cargo"),
+            on(301, 300, 300, "rustc"),
+        ];
+        assert_eq!(
+            ask(&verdict(&tty, 100), "%45"),
+            Ask::Confirm {
+                name: "cargo".into(),
+                pid: 300
+            }
+        );
+        // The leader gone, the name and the pid are both the one left.
+        let tty = [on(100, 100, 300, "zsh"), on(301, 300, 300, "rustc")];
+        assert_eq!(
+            ask(&verdict(&tty, 100), "%45"),
+            Ask::Confirm {
+                name: "rustc".into(),
+                pid: 301
+            }
+        );
+    }
+
+    #[test]
+    fn the_prompt_carries_the_name_and_pid_with_a_hash_kept_literal() {
+        let p = confirm_prompt("cargo", 300);
+        assert!(p.contains("cargo") && p.contains("300"));
+        assert!(confirm_prompt("a#b", 1).contains("a##b"));
+    }
+
+    #[test]
+    fn the_confirm_command_quotes_the_pane_and_carries_a_grace_that_was_given() {
+        let me = "/usr/local/bin/tmux-companion";
+        assert_eq!(
+            confirm_command(me, "%45", DEFAULT_GRACE_SECS),
+            r#"run-shell "'/usr/local/bin/tmux-companion' kill --pane '%45'""#
+        );
+        assert_eq!(
+            confirm_command(me, "%45", 10),
+            r#"run-shell "'/usr/local/bin/tmux-companion' kill --pane '%45' --grace 10""#
+        );
+    }
+
+    #[test]
+    fn the_confirm_command_survives_a_path_with_quotes_dollars_and_hashes() {
+        // Two expansions on the way, so a `#` is four; `$`, `"` and the
+        // backslash of the shell's `'\''` are escaped for tmux's parser.
+        assert_eq!(
+            confirm_command("/o'k/$x/#1/\"q", "%1", DEFAULT_GRACE_SECS),
+            r#"run-shell "'/o'\\''k/\$x/####1/\"q' kill --pane '%1'""#
         );
     }
 

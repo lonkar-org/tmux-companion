@@ -1025,7 +1025,7 @@ The idea is
 which asked for the name, and it hasn't been pushed since May 2023.
 Bound to
 .Ql prefix @ .
-.It Ic kill Op Fl -pane Ar id , Fl -grace Ar secs
+.It Ic kill Op Fl -pane Ar id , Fl -grace Ar secs , Fl -ask
 Stop what runs in front in a pane, for a program that stopped answering
 .Ql C-c .
 The foreground process group of the pane's terminal gets TERM, which a
@@ -1051,10 +1051,13 @@ that closes the pane and tmux has
 for it.
 .Fl -pane
 is the pane the key was pressed in, which the binding passes.
+.\" @Yogesh(gap): describe --ask
+.Fl -ask
 .Lk https://github.com/tmux-plugins/tmux-cowboy tmux-cowboy
 was the one key for this, sending KILL with no TERM before it, and was last
 pushed in May 2021.
 Bound to
+.\" @Yogesh(check): still "behind a confirmation" now the binding is kill --ask and the confirmation names what it stops?
 .Ql prefix K
 behind a confirmation.
 .It Ic zen Op Fl -pane Ar id
