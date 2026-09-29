@@ -21,7 +21,6 @@ scripts/playground.sh smoke      # check the image is what the tour claims
 
 ## Locked down
 
-<!-- @Yogesh(check): wording of this section, and whether README should link here -->
 The tour works the same with the container locked down: a read-only image, no
 network, no capabilities, and a cap on processes and memory. The home
 directory and `/tmp` become tmpfs, so nothing is written to disk at all.
@@ -39,7 +38,6 @@ runs without them.
 
 ## Checking the image
 
-<!-- @Yogesh(check): wording of this section -->
 Each published image is signed with [cosign](https://docs.sigstore.dev)
 by the workflow that built it, with no key: the signature names
 `.github/workflows/playground.yml` and the tag it ran at. To check one:
@@ -71,12 +69,12 @@ tmux. The entrypoint says so and waits before attaching when it sees `$TMUX`.
 Two of the bindings are `Alt-s` and `Alt-a`. Terminal.app and iTerm2 send an
 accented character for Option until they are told otherwise:
 
-| | |
-| --- | --- |
-| Terminal.app | Settings, Profiles, Keyboard, "Use Option as Meta key" |
-| iTerm2 | Settings, Profiles, Keys, Left Option key: `Esc+` |
-| Ghostty | `macos-option-as-alt = true` |
-| Alacritty, kitty, WezTerm | already send it |
+|                           |                                                        |
+| ------------------------- | ------------------------------------------------------ |
+| Terminal.app              | Settings, Profiles, Keyboard, "Use Option as Meta key" |
+| iTerm2                    | Settings, Profiles, Keys, Left Option key: `Esc+`      |
+| Ghostty                   | `macos-option-as-alt = true`                           |
+| Alacritty, kitty, WezTerm | already send it                                        |
 
 The playground binds the same two to the prefix as well, so `prefix P` opens
 the project picker and `prefix A` toggles, and nothing has to be configured
@@ -135,13 +133,13 @@ redraw, and tmux redraws on pane output as well as on the timer.
 Each one is in a different state, so the git segment has something different to
 say in each:
 
-| | |
-| --- | --- |
-| `orchard-api` | clean |
-| `orchard-web` | three modified, one untracked |
-| `sparrow-cli` | staged and modified at once, on a branch long enough to be truncated |
-| `lantern-docs` | detached HEAD, one untracked file |
-| `anvil-infra` | two commits ahead of its upstream |
+|                |                                                                      |
+| -------------- | -------------------------------------------------------------------- |
+| `orchard-api`  | clean                                                                |
+| `orchard-web`  | three modified, one untracked                                        |
+| `sparrow-cli`  | staged and modified at once, on a branch long enough to be truncated |
+| `lantern-docs` | detached HEAD, one untracked file                                    |
+| `anvil-infra`  | two commits ahead of its upstream                                    |
 
 `orchard-api/build.log` holds a compiler error with a path, a line and a
 column in it, for the copy-mode `o` binding to open.
@@ -159,12 +157,12 @@ not update is not worth failing a release whose image is already pushed.
 
 Everything the playground runs is a file in the image:
 
-| | |
-| --- | --- |
-| `~/.config/tmux/companion.conf` | `docs/tmux.conf.full.example`, unchanged |
-| `~/.config/tmux/playground.conf` | the tour's scaffolding, not part of the tool |
-| `~/.config/tmux-companion/config.toml` | the layout the projects open with |
-| `/opt/playground/config.example.toml` | every option, annotated |
+|                                        |                                              |
+| -------------------------------------- | -------------------------------------------- |
+| `~/.config/tmux/companion.conf`        | `docs/tmux.conf.full.example`, unchanged     |
+| `~/.config/tmux/playground.conf`       | the tour's scaffolding, not part of the tool |
+| `~/.config/tmux-companion/config.toml` | the layout the projects open with            |
+| `/opt/playground/config.example.toml`  | every option, annotated                      |
 
 `docker cp <container>:/home/play/.config/tmux/companion.conf .` copies one
 out, or read them in the container and copy what you want.
