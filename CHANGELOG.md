@@ -3,6 +3,48 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## 0.7.0 - 2026-09-30
+
+Every popup looks different: each column is styled by what it is rather than
+a whole row in one colour, the cursor row is a band in your theme's colour,
+and rows and titles carry Nerd Font icons. Nothing to change in your config
+to get it, but on tmux 3.3 or later add `-B` to your own picker bindings, or
+copy them again from the examples so tmux doesn't draw a second border round
+the picker's.
+
+### Changed
+
+- Picker rows are built from cells that each carry a tone: bold for the thing
+  you act on, grey for detail, italic for an agent's words, amber, green and
+  red for state. The theme's `@theme-color-main-1` colours the cursor mark,
+  the query's matches and the labels and the cursor row is a band tinted
+  from it, held to 7:1 contrast. The prefilled query a picker opens with is
+  no longer highlighted.
+- Rows and picker titles carry icons through the glyph preset so the
+  `ascii` preset still prints 7-bit. Keys in the hint line are bold.
+- `brief`, `doctor`, the cheat sheet, `sessions list` and `health` print
+  headings, icons and tones on a terminal. Piped or under `--print` they're
+  unchanged.
+- The resurrect screen and `run`'s exit dialog use the same band for focus.
+- `NO_COLOR` keeps bold, italic and underline and drops colour; the band
+  becomes reverse video.
+- The picker bindings in the tmux.conf examples, the playground config and
+  the `setup` snippets pass `display-popup -B`, guarded with `%if` on
+  `#{version}` so tmux 3.2 still gets a working binding. `setup` drops the
+  flag when `tmux -V` is older than 3.3. The bar's click popups do the same.
+  `brief` and the resurrect screen keep tmux's border.
+
+### Fixed
+
+- `run` and `pocket` open a full-height column at the window's right edge
+  and closing or parking it gave the whole width to the rightmost pane so
+  that pane grew with every use. Both now put the window's layout back.
+
+### Added
+
+- `just surfaces` renders every popup in a seeded sandbox tmux to `.ansi`,
+  `.txt` and, with `agg` installed, `.png`.
+
 ## 0.6.0 - 2026-09-30
 
 `setup` lists everything the tool offers, says which parts are on for you,
