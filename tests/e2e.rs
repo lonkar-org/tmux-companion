@@ -938,6 +938,18 @@ fn a_pocket_brought_back_still_shows_what_it_printed() {
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
     assert!(ok, "{err}");
     let pocket = pocket_pane(&t).expect("a pocket pane");
+    // A prompt short enough not to wrap at the pocket's width. A runner's
+    // hostname can run to sixty characters, and a shell redrawing a prompt
+    // that wraps writes over the line above it on every resize, which is the
+    // shell's doing and not the pocket's. macOS CI failed on exactly that.
+    t.must(&[
+        "send-keys",
+        "-t",
+        &pocket,
+        "PS1='$ '; PROMPT='$ '; clear",
+        "Enter",
+    ]);
+    std::thread::sleep(std::time::Duration::from_millis(300));
     t.must(&[
         "send-keys",
         "-t",
