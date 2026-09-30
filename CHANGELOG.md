@@ -3,7 +3,13 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.6.0 - 2026-09-30
+
+`setup` lists everything the tool offers, says which parts are on for you,
+and adds the rest when you ask. The cheat sheet now shows the keys you keep
+looking up until you've learned them. Before upgrading: binding notes say
+`companion:` (a `custom:` note still reads for this release), and the
+journal and the usage log are off until you turn them on.
 
 ### Added
 
@@ -19,6 +25,12 @@ entry per phase of the comrades port.
   and its pid. The `K` binding in `docs/tmux.conf.full.example` uses it.
 - `docs/how-to/which-key.md`: every key in the full example, the question
   it answers, its `--help` line, and the tmux default it replaces.
+- `docs/tmux.conf.full.example` binds `note` (`prefix N`), `sessions
+  resurrect --merge` (`prefix C-r`), `sessions idle` (`prefix C-i`), `keys
+  --all` (`prefix M-/`), and a copy-mode menu on `g` for opening and
+  searching what's under the cursor.
+- `just playground-tourpass` drives the playground with real keys, once
+  locked down and once plain, as a check before a release.
 
 ### Changed
 
@@ -27,12 +39,17 @@ entry per phase of the comrades port.
   no lookup. Companion keys fill three boxes; the fourth holds the tmux and
   plugin keys you've looked up. `cheatsheet --print` writes rows as TSV.
   `docs/explanation/cheatsheet.md` says why.
+- `keys --all` lists bindings with no note as well, by their command, so a
+  plugin's key can be found and looked up.
 - Binding notes start `companion: ` rather than `custom: `. A note still
   written `custom: ` is read as `companion: ` for one release, so an older
   tmux.conf keeps its keys in the search and on the cheat sheet.
 - `[journal]` and `[usage]` are off until turned on, like every other
   background task. `journal` says it's off rather than showing an empty day.
 - `DESIGN.md` and `BENCHMARKS.md` moved under `docs/`.
+- The playground tour has a cheat sheet step that looks a key up first and a
+  step for `setup`, eighteen in all, and its config turns the usage log and
+  the journal on.
 - The playground image's two base images are pinned by digest, and
   `.github/dependabot.yml` bumps them, and the workflow actions, weekly.
 - The workflows pin every action to a commit SHA, with the version in a
