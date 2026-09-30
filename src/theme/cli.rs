@@ -256,7 +256,15 @@ fn theme_pick(
                 // list where every row is painted its own colour is a list
                 // where half the rows cannot be read.
                 .with_swatch(Some(r.colour.clone()))
-                .in_columns(r.columns())
+                .in_cells({
+                    let mut cols = r.columns().into_iter();
+                    let mut next = || cols.next().unwrap_or_default();
+                    vec![
+                        crate::picker::Cell::strong(next()),
+                        crate::picker::Cell::dim(next()),
+                        crate::picker::Cell::dim(next()),
+                    ]
+                })
         })
         .collect();
 
@@ -268,6 +276,7 @@ fn theme_pick(
         },
         footer: "enter applies it   esc cancels".into(),
         preview_title: "[ Colours ]".into(),
+        icon: crate::tmux::icons::THEME.into(),
         ..Default::default()
     }
     .configured(&config.picker, crate::config::Picker::Theme);

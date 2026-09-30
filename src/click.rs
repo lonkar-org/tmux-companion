@@ -23,7 +23,12 @@ pub fn action(
     segments: &[RightSegment],
     show: AgentsShow,
     me: &str,
+    borderless: bool,
 ) -> Option<String> {
+    // The pickers draw their own border, so on a tmux that can leave its own
+    // off (3.3, `-B`) it does. The brief prints rather than draws, and
+    // tmux's border is the only frame it has.
+    let b = if borderless { "-B " } else { "" };
     let name = range.trim().strip_prefix("user|").unwrap_or(range.trim());
     let segment = segments.iter().find(|s| s.name.range_name() == name)?;
     if !segment.on_click.trim().is_empty() {
@@ -33,9 +38,9 @@ pub fn action(
         // The number clicked is the busy count, and the inbox lists the
         // stopped ones: the agent list is what that number is made of.
         SegmentName::Agents if show == AgentsShow::Busy => Some(format!(
-            "display-popup -E -w 80% -h 70% \"{me} panes --agents\""
+            "display-popup {b}-E -w 80% -h 70% \"{me} panes --agents\""
         )),
-        SegmentName::Agents => Some(format!("display-popup -E -w 80% -h 70% \"{me} inbox\"")),
+        SegmentName::Agents => Some(format!("display-popup {b}-E -w 80% -h 70% \"{me} inbox\"")),
         SegmentName::Health => Some(format!("display-popup -E -w 70% -h 60% \"{me} brief\"")),
         _ => None,
     }
@@ -52,6 +57,7 @@ pub async fn run(range: String) -> anyhow::Result<()> {
         &config.status.right.segments,
         config.agents.show,
         &me,
+        crate::setup::catalog::popups_take_b(),
     ) {
         // `run-shell -C` runs a tmux command rather than a shell one, so the
         // config writes `display-popup ...` the way tmux.conf would.
@@ -79,27 +85,30 @@ mod tests {
             seg(SegmentName::Agents, ""),
             seg(SegmentName::Health, ""),
         ];
-        let a = action("agents", &segs, AgentsShow::Waiting, "/opt/tc").unwrap();
+        let a = action("agents", &segs, AgentsShow::Waiting, "/opt/tc", true).unwrap();
         assert!(
             a.starts_with("display-popup") && a.contains("/opt/tc inbox"),
             "{a}"
         );
-        let h = action("user|health", &segs, AgentsShow::Waiting, "/opt/tc").unwrap();
+        let h = action("user|health", &segs, AgentsShow::Waiting, "/opt/tc", true).unwrap();
         assert!(h.contains("/opt/tc brief"), "{h}");
         assert_eq!(
-            action("git", &segs, AgentsShow::Waiting, "/opt/tc"),
+            action("git", &segs, AgentsShow::Waiting, "/opt/tc", true),
             None,
             "nothing to open for git"
         );
-        assert_eq!(action("clock", &segs, AgentsShow::Waiting, "/opt/tc"), None);
+        assert_eq!(
+            action("clock", &segs, AgentsShow::Waiting, "/opt/tc", true),
+            None
+        );
     }
 
     #[test]
     fn the_busy_count_opens_the_agent_list_rather_than_the_inbox() {
         let segs = vec![seg(SegmentName::Agents, "")];
-        let a = action("agents", &segs, AgentsShow::Busy, "/opt/tc").unwrap();
+        let a = action("agents", &segs, AgentsShow::Busy, "/opt/tc", true).unwrap();
         assert!(a.contains("/opt/tc panes --agents"), "{a}");
-        let b = action("agents", &segs, AgentsShow::Both, "/opt/tc").unwrap();
+        let b = action("agents", &segs, AgentsShow::Both, "/opt/tc", true).unwrap();
         assert!(
             b.contains("/opt/tc inbox"),
             "both draws the waiting count too: {b}"
@@ -110,7 +119,7 @@ mod tests {
     fn a_configured_click_wins_and_can_name_this_binary() {
         let segs = vec![seg(SegmentName::Git, "display-popup -E \"{me} panes\"")];
         assert_eq!(
-            action("git", &segs, AgentsShow::Waiting, "/opt/tc").as_deref(),
+            action("git", &segs, AgentsShow::Waiting, "/opt/tc", true).as_deref(),
             Some("display-popup -E \"/opt/tc panes\"")
         );
     }

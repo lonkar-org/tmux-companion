@@ -189,6 +189,18 @@ pub fn columns(e: &Event, today: &str) -> Vec<String> {
     ]
 }
 
+/// The icon for a kind of event, and whether its detail is an agent's words.
+fn look(kind: Kind) -> (&'static str, bool) {
+    use crate::tmux::icons;
+    match kind {
+        Kind::Ran => (icons::CLOCK, false),
+        Kind::Asked => (icons::WAITING, true),
+        Kind::Answered => (icons::CHECK, true),
+        Kind::Opened => (icons::SESSION, false),
+        Kind::Closed => (icons::CLOSED, false),
+    }
+}
+
 /// The daemon's task: watch every pane and write down what finishes.
 ///
 /// Same tracker as `[notify]`, run with its own threshold and no interest in
@@ -281,12 +293,28 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
     let items: Vec<crate::picker::Item> = events
         .iter()
         .map(|e| {
-            let cols = columns(e, &today);
-            crate::picker::Item::new(cols.join(" ")).in_columns(cols)
+            use crate::picker::{Cell, Tone};
+            let mut cols = columns(e, &today).into_iter();
+            let mut next = || cols.next().unwrap_or_default();
+            let (when, session, kind, detail) = (next(), next(), next(), next());
+            let label = format!("{when} {session} {kind} {detail}");
+            // These happened; none of them is waiting now, so the icon says
+            // what kind of event it was and nothing is coloured as a state.
+            // What an agent asked or answered is its words, not ours.
+            let (icon, said) = look(e.kind);
+            crate::picker::Item::new(label)
+                .in_cells(vec![
+                    Cell::dim(when),
+                    Cell::strong(session),
+                    Cell::dim(kind),
+                    Cell::new(detail, if said { Tone::Quote } else { Tone::Plain }),
+                ])
+                .with_icon(icon, Tone::Dim)
         })
         .collect();
     let chrome = crate::picker::Chrome {
         title: "[ Journal ]".into(),
+        icon: crate::tmux::icons::JOURNAL.into(),
         footer: "enter goes to that session   ctrl-a clears the filter   esc closes".into(),
         preview_title: String::new(),
         ..Default::default()

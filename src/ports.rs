@@ -433,13 +433,21 @@ pub async fn run(
                 ),
                 preview,
             )
-            .in_columns(vec![
-                format!("{}/{}", r.port, r.protocol.word()),
-                r.address.clone(),
-                format!("{} {}", r.program, r.pid),
-                r.at.clone().unwrap_or_else(|| "-".to_string()),
-                r.cwd.clone(),
-            ]),
+            // The port is what you came looking for, so it is bold. The pane
+            // is where enter goes, and a port with no pane behind it has
+            // nowhere to go, so its `-` is grey.
+            .in_cells(vec![
+                crate::picker::Cell::strong(format!("{}/{}", r.port, r.protocol.word())),
+                crate::picker::Cell::dim(r.address.clone()),
+                crate::picker::Cell::plain(r.program.clone()),
+                crate::picker::Cell::dim(r.pid.to_string()),
+                match &r.at {
+                    Some(at) => crate::picker::Cell::plain(at.clone()),
+                    None => crate::picker::Cell::dim("-"),
+                },
+                crate::picker::Cell::dim(r.cwd.clone()),
+            ])
+            .with_icon(crate::tmux::icons::PORT, crate::picker::Tone::Dim),
         );
     }
 
@@ -457,6 +465,7 @@ pub async fn run(
         }
         .into(),
         preview_title: "[ Screen ]".into(),
+        icon: crate::tmux::icons::PORT.into(),
         ..Default::default()
     }
     .configured(&config.picker, crate::config::Picker::Panes);

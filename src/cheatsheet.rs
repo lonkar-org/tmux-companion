@@ -281,34 +281,136 @@ fn top(title: &str, box_w: usize) -> String {
     format!("┌{title}{rule}┐")
 }
 
+/// The icon each box's title carries on a terminal, in `TITLES` order.
+const ICONS: [&str; 4] = [
+    crate::tmux::icons::PANE,
+    crate::tmux::icons::SEARCH,
+    crate::tmux::icons::SETUP,
+    crate::tmux::icons::KEY,
+];
+
 /// Render the whole sheet for a terminal of this size.
 pub fn render(boxes: &[Vec<Entry>; 4], cols: usize, lines: usize) -> String {
+    render_in(boxes, cols, lines, &crate::picker::Paint::plain())
+}
+
+/// A string cut into pieces at character positions.
+fn pieces(s: &str, at: &[usize]) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    let mut from = 0;
+    for &to in at.iter().chain(std::iter::once(&chars.len())) {
+        let to = to.clamp(from, chars.len());
+        out.push(chars[from..to].iter().collect());
+        from = to;
+    }
+    out
+}
+
+/// One entry line, painted: the learning mark in the accent, because it is
+/// the one thing on the sheet that changes as you learn; the chord in bold,
+/// because it is what you press; the group word in grey; and a binding
+/// already learned grey as a whole, because you no longer need to read it.
+///
+/// Laid out plain first and inked after, by position, so the padding is
+/// counted over what the terminal draws.
+fn cell_in(entries: &[Entry], i: usize, width: usize, paint: &crate::picker::Paint) -> String {
+    use crate::picker::Tone;
+    let plain = cell(entries, i, width);
+    let Some(e) = entries.get(i) else {
+        return plain;
+    };
+    if !paint.escapes {
+        return plain;
+    }
+    let group = e.note.split(' ').next().unwrap_or("").chars().count();
+    let parts = pieces(&plain, &[5, 20, 21, 21 + group]);
+    let tone = |t: Tone| {
+        if e.state == State::Learned {
+            Tone::Dim
+        } else {
+            t
+        }
+    };
+    [
+        (&parts[0], Tone::Accent),
+        (&parts[1], tone(Tone::Strong)),
+        (&parts[2], Tone::Plain),
+        (&parts[3], Tone::Dim),
+        (&parts[4], tone(Tone::Plain)),
+    ]
+    .iter()
+    .map(|(text, t)| paint.ink(text, *t))
+    .collect()
+}
+
+/// A top rule, painted: the rule in the frame colour and the title in the
+/// accent.
+fn top_in(title: &str, box_w: usize, paint: &crate::picker::Paint) -> String {
+    use ratatui::style::Modifier;
+    let plain = top(title, box_w);
+    if !paint.escapes {
+        return plain;
+    }
+    let shown = title.chars().take(box_w.saturating_sub(2)).count();
+    let parts = pieces(&plain, &[1, 1 + shown]);
+    format!(
+        "{}{}{}",
+        paint.ink_style(&parts[0], paint.frame()),
+        paint.ink_style(
+            &parts[1],
+            paint
+                .style(crate::picker::Tone::Accent)
+                .add_modifier(Modifier::BOLD)
+        ),
+        paint.ink_style(&parts[2], paint.frame()),
+    )
+}
+
+/// The whole sheet, painted. With [`crate::picker::Paint::plain`] this is
+/// [`render`] exactly.
+pub fn render_in(
+    boxes: &[Vec<Entry>; 4],
+    cols: usize,
+    lines: usize,
+    paint: &crate::picker::Paint,
+) -> String {
     // Two boxes and a two-space gutter; two lines held back for the prompt.
     let box_w = (cols.saturating_sub(2)) / 2;
     let box_h = (lines.saturating_sub(2)) / 2;
     let inner = box_w.saturating_sub(4);
     let rows = box_h.saturating_sub(2);
+    let frame = |s: &str| paint.ink_style(s, paint.frame());
+    let title = |i: usize| -> String {
+        let glyph = paint.glyph(ICONS[i]);
+        if paint.escapes && !glyph.trim().is_empty() {
+            format!(" {}{}", glyph.trim_end(), TITLES[i])
+        } else {
+            TITLES[i].to_string()
+        }
+    };
 
     let mut out = String::new();
     for half in 0..2 {
         let (l, r) = (half * 2, half * 2 + 1);
         out.push_str(&format!(
             "{}  {}\n",
-            top(TITLES[l], box_w),
-            top(TITLES[r], box_w)
+            top_in(&title(l), box_w, paint),
+            top_in(&title(r), box_w, paint)
         ));
         for i in 0..rows {
             out.push_str(&format!(
-                "│ {} │  │ {} │\n",
-                cell(&boxes[l], i, inner),
-                cell(&boxes[r], i, inner),
+                "{} {} {}  {} {} {}\n",
+                frame("│"),
+                cell_in(&boxes[l], i, inner, paint),
+                frame("│"),
+                frame("│"),
+                cell_in(&boxes[r], i, inner, paint),
+                frame("│"),
             ));
         }
-        out.push_str(&format!(
-            "└{}┘  └{}┘\n",
-            "─".repeat(box_w.saturating_sub(2)),
-            "─".repeat(box_w.saturating_sub(2)),
-        ));
+        let bottom = format!("└{}┘", "─".repeat(box_w.saturating_sub(2)));
+        out.push_str(&format!("{}  {}\n", frame(&bottom), frame(&bottom)));
     }
     out
 }

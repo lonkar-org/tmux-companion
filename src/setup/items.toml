@@ -78,7 +78,7 @@ command = "project"
 key = "M-s"
 table = "root"
 fallback = ["M-p", "M-j"]
-snippet = '''bind -N "companion: project pick a project" -n {key} display-popup -E -w 80% -h 70% "tmux-companion project"'''
+snippet = '''bind -N "companion: project pick a project" -n {key} display-popup -B -E -w 80% -h 70% "tmux-companion project"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -90,7 +90,7 @@ command = "new-window"
 key = "c"
 table = "prefix"
 fallback = ["N", "M-c"]
-snippet = '''bind -N "companion: window new one here, or at any directory" {key} display-popup -E -w 65% -h 65% "tmux-companion new-window"'''
+snippet = '''bind -N "companion: window new one here, or at any directory" {key} display-popup -B -E -w 65% -h 65% "tmux-companion new-window"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -102,7 +102,7 @@ command = "panes"
 key = "g"
 table = "prefix"
 fallback = ["j", "M-j"]
-snippet = '''bind -N "companion: window jump to any pane" {key} display-popup -E -w 80% -h 70% "tmux-companion panes"'''
+snippet = '''bind -N "companion: window jump to any pane" {key} display-popup -B -E -w 80% -h 70% "tmux-companion panes"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -114,7 +114,7 @@ command = "panes --agents"
 key = "G"
 table = "prefix"
 fallback = ["A", "M-G"]
-snippet = '''bind -N "companion: window jump to an agent" {key} display-popup -E -w 80% -h 70% "tmux-companion panes --agents"'''
+snippet = '''bind -N "companion: window jump to an agent" {key} display-popup -B -E -w 80% -h 70% "tmux-companion panes --agents"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -126,7 +126,7 @@ command = "inbox"
 key = "M-g"
 table = "prefix"
 fallback = ["I", "M-i"]
-snippet = '''bind -N "companion: project the agents waiting on you" {key} display-popup -E -w 80% -h 70% "tmux-companion inbox"'''
+snippet = '''bind -N "companion: project the agents waiting on you" {key} display-popup -B -E -w 80% -h 70% "tmux-companion inbox"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -138,7 +138,7 @@ command = "run"
 key = "e"
 table = "prefix"
 fallback = ["R", "M-e"]
-snippet = '''bind -N "companion: window run a command from history" {key} display-popup -E -w 70% -h 60% "tmux-companion run"'''
+snippet = '''bind -N "companion: window run a command from history" {key} display-popup -B -E -w 70% -h 60% "tmux-companion run"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -150,7 +150,7 @@ command = "ports"
 key = "P"
 table = "prefix"
 fallback = ["O", "M-P"]
-snippet = '''bind -N "companion: window which pane listens on which port" {key} display-popup -E -w 80% -h 70% "tmux-companion ports"'''
+snippet = '''bind -N "companion: window which pane listens on which port" {key} display-popup -B -E -w 80% -h 70% "tmux-companion ports"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -248,7 +248,7 @@ command = "search"
 key = "/"
 table = "prefix"
 fallback = ["F", "M-/"]
-snippet = '''bind -N "companion: copy search every pane's scrollback" {key} display-popup -E -w 90% -h 80% "tmux-companion search"'''
+snippet = '''bind -N "companion: copy search every pane's scrollback" {key} display-popup -B -E -w 90% -h 80% "tmux-companion search"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -286,7 +286,7 @@ command = "keys"
 key = "?"
 table = "prefix"
 fallback = ["h", "F1"]
-snippet = '''bind -N "companion: help search every key binding" {key} display-popup -E -w 80% -h 60% "tmux-companion keys"'''
+snippet = '''bind -N "companion: help search every key binding" {key} display-popup -B -E -w 80% -h 60% "tmux-companion keys"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -298,7 +298,7 @@ command = "cheatsheet"
 key = "C-c"
 table = "prefix"
 fallback = ["H", "C-h"]
-snippet = '''bind -N "companion: help cheat sheet of my bindings" {key} display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"'''
+snippet = '''bind -N "companion: help cheat sheet of my bindings" {key} display-popup -B -E -w 90% -h 80% "tmux-companion cheatsheet"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -322,7 +322,7 @@ command = "journal"
 key = "J"
 table = "prefix"
 fallback = ["Y", "M-J"]
-snippet = '''bind -N "companion: help what happened today" {key} display-popup -E -w 80% -h 70% "tmux-companion journal"'''
+snippet = '''bind -N "companion: help what happened today" {key} display-popup -B -E -w 80% -h 70% "tmux-companion journal"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -334,7 +334,7 @@ command = "theme pick"
 key = "C-t"
 table = "prefix"
 fallback = ["T", "M-t"]
-snippet = '''bind -N "companion: config pick a colour theme" {key} display-popup -E -w 70% -h 70% "tmux-companion theme pick"'''
+snippet = '''bind -N "companion: config pick a colour theme" {key} display-popup -B -E -w 70% -h 70% "tmux-companion theme pick"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -360,7 +360,7 @@ command = "keys --all"
 key = "M-/"
 table = "prefix"
 fallback = ["C-_", "M-?"]
-snippet = '''bind -N "companion: help search every key binding, tmux's own too" {key} display-popup -E -w 80% -h 60% "tmux-companion keys --all"'''
+snippet = '''bind -N "companion: help search every key binding, tmux's own too" {key} display-popup -B -E -w 80% -h 60% "tmux-companion keys --all"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -396,7 +396,7 @@ command = "sessions idle"
 key = "C-i"
 table = "prefix"
 fallback = ["M-i", "C-j"]
-snippet = '''bind -N "companion: sessions list the idle ones, enter closes it" {key} display-popup -E -w 85% -h 65% "tmux-companion sessions idle"'''
+snippet = '''bind -N "companion: sessions list the idle ones, enter closes it" {key} display-popup -B -E -w 85% -h 65% "tmux-companion sessions idle"'''
 goes = "tmux.conf"
 
 [[item]]

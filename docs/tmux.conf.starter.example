@@ -58,8 +58,16 @@ set -g window-status-separator       " "
 # Which project. Live sessions first, then the directories zoxide (or
 # `[project] dirs_source`) knows. Picking a directory builds its session from
 # `[[layout]]` in config.toml, or a plain shell when there is none.
+# `display-popup -B` (tmux 3.3 and later) leaves tmux's own border off, because
+# the pickers draw theirs. tmux 3.2 has no -B, so there the %else line binds
+# the same popup with both borders.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: project pick a project" -n M-s \
+  display-popup -B -E -w 80% -h 70% "tmux-companion project"
+%else
 bind -N "companion: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
+%endif
 
 # The next window in this session, wrapping at the end.
 bind -N "companion: project toggle the windows in this session" -n M-a \
@@ -69,27 +77,57 @@ bind -N "companion: project flip to the last window" -n M-A \
   run-shell "tmux-companion toggle --last '#{session_name}'"
 
 # Every binding, searchable, and the same list as a cheat sheet.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: help search every key binding" ? \
+  display-popup -B -E -w 80% -h 60% "tmux-companion keys"
+%else
 bind -N "companion: help search every key binding" ? \
   display-popup -E -w 80% -h 60% "tmux-companion keys"
+%endif
+%if "#{>=:#{version},3.3}"
+bind -N "companion: help cheat sheet of my bindings" C-c \
+  display-popup -B -E -w 90% -h 80% "tmux-companion cheatsheet"
+%else
 bind -N "companion: help cheat sheet of my bindings" C-c \
   display-popup -E -w 90% -h 80% "tmux-companion cheatsheet"
+%endif
 
 # tmux's own prefix+c, with a say in the directory: the query starts on this
 # pane's directory, so Enter is what prefix+c always did.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: window new one here, or at any directory" c \
+  display-popup -B -E -w 65% -h 65% "tmux-companion new-window"
+%else
 bind -N "companion: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
+%endif
 
 # A command from shell history, run in a pane beside this one.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: window run a command from history" e \
+  display-popup -B -E -w 70% -h 60% "tmux-companion run"
+%else
 bind -N "companion: window run a command from history" e \
   display-popup -E -w 70% -h 60% "tmux-companion run"
+%endif
 
 # Every pane on the server, with what it runs and whether it has gone quiet;
 # enter jumps there. `--agents` narrows it to the coding agents.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: window jump to any pane" g \
+  display-popup -B -E -w 80% -h 70% "tmux-companion panes"
+%else
 bind -N "companion: window jump to any pane" g \
   display-popup -E -w 80% -h 70% "tmux-companion panes"
+%endif
 # What the agents stopped to ask, oldest first; enter jumps to the one picked.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: project the agents waiting on you" M-g \
+  display-popup -B -E -w 80% -h 70% "tmux-companion inbox"
+%else
 bind -N "companion: project the agents waiting on you" M-g \
   display-popup -E -w 80% -h 70% "tmux-companion inbox"
+%endif
 # One screen of what needs you: the waiting agents, the health reasons, the
 # idle sessions, the numbers. The same screen opens by itself on attach when
 # there is news, through the client-attached hook below.
@@ -101,8 +139,13 @@ bind -T root MouseDown1StatusRight \
   run-shell "tmux-companion click '#{mouse_status_range}'"
 # What happened in each project today, newest first: what ran long, what the
 # agents asked, what opened and closed.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: help what happened today" J \
+  display-popup -B -E -w 80% -h 70% "tmux-companion journal"
+%else
 bind -N "companion: help what happened today" J \
   display-popup -E -w 80% -h 70% "tmux-companion journal"
+%endif
 # Quiet hours from a prompt: `45m`, `2h`, or `off`. The health mark says
 # `quiet` while it lasts.
 bind -N "companion: config quiet hours, no nagging for a while" Q \

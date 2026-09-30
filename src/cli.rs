@@ -1334,6 +1334,7 @@ async fn run_keys(
 
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
+        icon: crate::tmux::icons::KEY.into(),
         footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
@@ -1396,6 +1397,7 @@ async fn run_keys_unused(
     // says what this list is and how much the log knows.
     let mut chrome = crate::picker::Chrome {
         preview_title: "[ What it runs ]".into(),
+        icon: crate::tmux::icons::KEY.into(),
         ..Default::default()
     }
     .configured(&config.picker, crate::config::Picker::Keys);
@@ -1421,10 +1423,21 @@ fn key_items<'a>(rows: impl Iterator<Item = &'a crate::keys::KeyRow>) -> Vec<cra
             format!("{} {described}", r.shown),
             format!("{}\n\n{}", r.shown, r.command),
         )
-        // Two columns rather than one padded string: the picker measures
-        // them across every row, so the notes line up whatever the widest
-        // chord turns out to be.
-        .in_columns(vec![r.shown.clone(), described.to_string()])
+        // Columns rather than one padded string: the picker measures them
+        // across every row, so the notes line up whatever the widest chord
+        // turns out to be. The chord is what you press, so it is bold; the
+        // `companion: pane` in front of a note is filing, so it is grey and
+        // the words after it are what the eye lands on. It stays in the row
+        // rather than going, because the opening query matches on it.
+        .in_cells({
+            let (filed, rest) = crate::keys::filed_under(described);
+            vec![
+                crate::picker::Cell::strong(r.shown.clone()),
+                crate::picker::Cell::dim(filed),
+                crate::picker::Cell::plain(rest),
+            ]
+        })
+        .with_icon(crate::tmux::icons::KEY, crate::picker::Tone::Dim)
     })
     .collect()
 }
@@ -1493,7 +1506,28 @@ async fn run_health(ack: bool) -> anyhow::Result<()> {
     if let Some(e) = resp.error {
         anyhow::bail!(e);
     }
-    println!("{}", resp.output);
+    // `ok` in green with the check; a reason in the colour the health mark
+    // is drawn in on the bar, since that mark is why anybody asks.
+    use crate::picker::Tone;
+    let paint = crate::picker::Paint::for_stdout(false);
+    for line in resp.output.lines() {
+        if line.trim() == "ok" {
+            println!(
+                "{}{}",
+                paint.icon(crate::tmux::icons::CHECK, Tone::Ok),
+                paint.ink(line, Tone::Ok)
+            );
+        } else {
+            println!(
+                "{}{}",
+                paint.icon(crate::tmux::icons::HEALTH, Tone::Waiting),
+                paint.ink(line, Tone::Waiting)
+            );
+        }
+    }
+    if resp.output.is_empty() {
+        println!();
+    }
     Ok(())
 }
 
@@ -1554,7 +1588,11 @@ async fn run_cheatsheet(print: bool) -> anyhow::Result<()> {
     }
 
     let (cols, lines) = terminal_size();
-    print!("{}", crate::cheatsheet::render(&sheet.boxes, cols, lines));
+    let paint = crate::picker::Paint::for_stdout(false);
+    print!(
+        "{}",
+        crate::cheatsheet::render_in(&sheet.boxes, cols, lines, &paint)
+    );
 
     use std::io::Write;
     if footer.is_empty() {
@@ -1707,9 +1745,18 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
 
     let mut items: Vec<crate::picker::Item> = Vec::with_capacity(rows.len());
     for r in &rows {
+        use crate::picker::{Cell, Tone};
+        // The kind of row is the icon rather than a word in its own column:
+        // `session` down half the list said the same thing on every line.
+        // A live session is what you switch to, so its name is bold; a
+        // directory is somewhere you could go, so it is plain.
+        let (icon, name) = match r.kind {
+            Kind::Session => (crate::tmux::icons::SESSION, Tone::Strong),
+            Kind::Directory => (crate::tmux::icons::FOLDER, Tone::Plain),
+        };
         let mark = match r.kind {
             Kind::Session => "session",
-            Kind::Directory => "dir    ",
+            Kind::Directory => "dir",
         };
         let where_it_is = crate::project::short_path(&r.path, &home);
         // A detached session quiet for a day or more says so in a fourth
@@ -1717,20 +1764,21 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         // is only pushed when there is something to say: an empty last cell
         // would still pad the path out to the widest row.
         let idle = crate::project::idle_column(r);
-        let mut columns = vec![mark.trim_end().to_string(), r.label.clone(), where_it_is];
-        let mut label = format!("{mark} {} {}", r.label, columns[2]);
+        let mut label = format!("{mark} {} {}", r.label, where_it_is);
+        let mut cells = vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)];
         if let Some(idle) = idle {
             // In the label too, so typing `idle` filters down to them.
             label.push(' ');
             label.push_str(&idle);
-            columns.push(idle);
+            cells.push(Cell::dim(idle));
         }
         items.push(
             crate::picker::Item::with_preview(
                 label,
                 project_preview(r, &config.project.preview_window).await,
             )
-            .in_columns(columns)
+            .in_cells(cells)
+            .with_icon(icon, Tone::Dim)
             // The project's own theme colour as a block in front of the row.
             // Painting the whole line in it, which is what this did before,
             // makes a dark project colour unreadable on a dark popup.
@@ -1740,6 +1788,7 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
 
     let chrome = crate::picker::Chrome {
         title: "[ Project ]".into(),
+        icon: crate::tmux::icons::SESSION.into(),
         footer: "up = last session   type a path for a new one   esc cancels".into(),
         preview_title: "[ Where ]".into(),
         ..Default::default()
@@ -2105,7 +2154,11 @@ async fn run_new_window() -> anyhow::Result<()> {
     if !paths.iter().any(|p| p == &pane_dir) {
         items.push(
             crate::picker::Item::with_preview(prefill.clone(), listing(&pane_dir))
-                .in_columns(vec!["here".to_string(), prefill.clone()]),
+                .in_cells(vec![
+                    crate::picker::Cell::dim("here"),
+                    crate::picker::Cell::plain(prefill.clone()),
+                ])
+                .with_icon(crate::tmux::icons::FOLDER, crate::picker::Tone::Dim),
         );
         targets.push(pane_dir.clone());
     }
@@ -2113,12 +2166,14 @@ async fn run_new_window() -> anyhow::Result<()> {
         let short = crate::project::short_path(p, &home);
         items.push(
             crate::picker::Item::with_preview(short.clone(), listing(p))
-                .in_columns(vec![String::new(), short]),
+                .in_columns(vec![String::new(), short])
+                .with_icon(crate::tmux::icons::FOLDER, crate::picker::Tone::Dim),
         );
         targets.push(p.clone());
     }
     let chrome = crate::picker::Chrome {
         title: "[ New window at ]".into(),
+        icon: crate::tmux::icons::FOLDER.into(),
         footer:
             "enter opens a window   ctrl-u clears it   type a path that is not listed   esc cancels"
                 .into(),
@@ -2618,28 +2673,33 @@ fn run_sessions_list(json: bool) -> anyhow::Result<()> {
         println!("no snapshots yet. `tmux-companion sessions save` takes one");
         return Ok(());
     }
+    // The newest is the one a resurrect takes, so its mark is the accent; a
+    // snapshot taken at a clean shutdown is the one that is whole, so it
+    // says so in green, and one nobody can read says so in red.
+    use crate::picker::Tone;
+    let paint = crate::picker::Paint::for_stdout(false);
     for g in &generations {
         let mark = if Some(g.stamp.clone()) == last {
-            "*"
+            paint.ink("*", Tone::Accent)
         } else {
-            " "
+            " ".to_string()
         };
+        let stamp = paint.ink(&g.stamp, Tone::Strong);
         match crate::sessions::store::load_in(&state_dir, &g.stamp) {
             Ok(snap) => println!(
-                "{mark} {}  {} session{}, {} pane{}  {}  {}{}",
-                g.stamp,
+                "{mark} {stamp}  {} session{}, {} pane{}  {}  {}{}",
                 snap.session.len(),
                 plural(snap.session.len()),
                 snap.pane_count(),
                 plural(snap.pane_count()),
                 if !snap.header.imported_from.is_empty() {
-                    "imported"
+                    paint.ink("imported", Tone::Plain)
                 } else if snap.header.clean {
-                    "taken at shutdown"
+                    paint.ink("taken at shutdown", Tone::Ok)
                 } else {
-                    "taken while running"
+                    paint.ink("taken while running", Tone::Plain)
                 },
-                snap.header.captured_at,
+                paint.ink(&snap.header.captured_at, Tone::Dim),
                 // Where an import came from, since its stamp is when it
                 // landed here and says nothing about the machine it left.
                 if snap.header.imported_from.is_empty() {
@@ -2648,7 +2708,10 @@ fn run_sessions_list(json: bool) -> anyhow::Result<()> {
                     format!("  from {}", snap.header.imported_from)
                 }
             ),
-            Err(e) => println!("{mark} {}  unreadable: {e}", g.stamp),
+            Err(e) => println!(
+                "{mark} {stamp}  {}",
+                paint.ink(&format!("unreadable: {e}"), Tone::Failed)
+            ),
         }
     }
     Ok(())
@@ -2975,11 +3038,15 @@ async fn run_command(
 
     let items: Vec<crate::picker::Item> = commands
         .iter()
-        .map(|c| crate::picker::Item::new(c.clone()))
+        .map(|c| {
+            crate::picker::Item::new(c.clone())
+                .with_icon(crate::tmux::icons::HISTORY, crate::picker::Tone::Dim)
+        })
         .collect();
 
     let chrome = crate::picker::Chrome {
         title: "[ Run command ]".into(),
+        icon: crate::tmux::icons::RUN.into(),
         footer: "enter runs it in a side pane   esc cancels".into(),
         preview_title: String::new(),
         ..Default::default()
@@ -3012,10 +3079,14 @@ async fn run_command(
     );
     let opening = if config.run.slide_steps > 0 { 1 } else { width };
 
+    // The window as it is now, so the side pane can put it back when it
+    // closes; see `restore_args`.
+    let saved = tmux_display_at(pane.as_deref(), "#{window_id}\t#{window_layout}").await;
     let args = crate::run::split_args(
         pane.as_deref(),
         opening,
         &format!("{} run --exec {}", exe.display(), shell_quote(&command)),
+        Some(&saved),
     );
     tmux(&args.iter().map(String::as_str).collect::<Vec<_>>()).await;
     Ok(())
@@ -3050,12 +3121,13 @@ async fn open_with_chosen(
                 a.name.clone(),
                 crate::open::application_command(&a.command, &text, line, column),
             )
-            .in_columns(vec![a.name.clone()])
+            .in_cells(vec![crate::picker::Cell::strong(a.name.clone())])
         })
         .collect();
 
     let chrome = crate::picker::Chrome {
         title: "[ Open with ]".into(),
+        icon: crate::tmux::icons::RUN.into(),
         footer: "enter opens it   esc cancels".into(),
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
@@ -3173,6 +3245,12 @@ async fn run_in_this_pane(command: &str, config: &crate::config::Config) -> anyh
         match dialog(code, config).await {
             Choice::Close => {
                 slide(&target, width, 1, config).await;
+                if let Some(args) = std::env::var(crate::run::LAYOUT_ENV)
+                    .ok()
+                    .and_then(|saved| crate::run::restore_args(&target, &saved))
+                {
+                    tmux(&args.iter().map(String::as_str).collect::<Vec<_>>()).await;
+                }
                 return Ok(());
             }
             Choice::Restart => println!(),
@@ -3290,21 +3368,19 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
     use ratatui::{
         crossterm::event::{self, Event, KeyCode, KeyEventKind},
         layout::{Alignment, Constraint, Direction, Layout},
-        style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::Paragraph,
     };
 
+    use crate::picker::Tone;
+    let paint = crate::picker::Paint::detect();
     let mut selected = default_button(code);
     let said = if code == 0 {
-        Span::styled(
-            "Command finished successfully",
-            Style::default().fg(Color::Indexed(114)),
-        )
+        Span::styled("Command finished successfully", paint.style(Tone::Ok))
     } else {
         Span::styled(
             format!("Command failed with exit {code}"),
-            Style::default().fg(Color::Indexed(174)),
+            paint.style(Tone::Failed),
         )
     };
 
@@ -3330,16 +3406,11 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
 
                 let mut buttons = vec![Span::raw("  ")];
                 for (i, choice) in BUTTONS.iter().enumerate() {
+                    // The band is focus here as it is in every picker.
                     buttons.push(if i == selected {
-                        Span::styled(
-                            button_label(*choice),
-                            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
-                        )
+                        Span::styled(button_label(*choice), paint.on_band(Tone::Strong))
                     } else {
-                        Span::styled(
-                            button_label(*choice),
-                            Style::default().fg(Color::Indexed(246)),
-                        )
+                        Span::styled(button_label(*choice), paint.style(Tone::Dim))
                     });
                     buttons.push(Span::raw("   "));
                 }
@@ -3348,7 +3419,7 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         "  Enter=default  c/v/r/q  \u{2190}/\u{2192}/Tab  Esc=view",
-                        Style::default().fg(Color::Indexed(240)),
+                        paint.style(Tone::Dim),
                     )))
                     .alignment(Alignment::Left),
                     rows[4],

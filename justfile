@@ -125,6 +125,11 @@ bench-bar:
 bench-pickers:
     ./scripts/bench.sh pickers
 
+# Render every popup surface in a seeded sandbox tmux: .ansi, .txt and, with agg installed, .png.
+surfaces OUT="target/surfaces" *SURFACES: build
+    ./scripts/capture-surfaces.sh {{OUT}} "$PWD/target/release/tmux-companion" {{SURFACES}}
+    if command -v agg >/dev/null; then ./scripts/surface-png.sh {{OUT}}; fi
+
 # Daemon CPU per request, today's binary only.
 bench-segments:
     ./scripts/bench.sh segments

@@ -110,6 +110,74 @@ pub const UNMERGED: &str = "\u{f1a98} ";
 /// A single space, named so a format string reads as what it draws.
 pub const WHITE_SPACE: &str = " ";
 
+// ── Popups ──────────────────────────────────────────────────────────────────
+//
+// What a row in a picker is, drawn in the column in front of it. No trailing
+// space, unlike the bar's: the picker pads its icon column itself.
+
+/// A tmux session (fa-window_restore): the project picker's live rows.
+pub const SESSION: &str = "\u{f2d2}";
+
+/// A directory (fa-folder): a project not yet open, a place for a window.
+pub const FOLDER: &str = "\u{f07b}";
+
+/// A path nobody has opened yet (fa-plus).
+pub const PATH_NEW: &str = "\u{f067}";
+
+/// A pane running a shell or a program (fa-terminal).
+pub const PANE: &str = "\u{f120}";
+
+/// A listening port (fa-plug).
+pub const PORT: &str = "\u{f1e6}";
+
+/// Searching scrollback (fa-search).
+pub const SEARCH: &str = "\u{f002}";
+
+/// A key binding (fa-keyboard_o).
+pub const KEY: &str = "\u{f11c}";
+
+/// A command from history (fa-history).
+pub const HISTORY: &str = "\u{f1da}";
+
+/// Something setup can add (fa-wrench).
+pub const SETUP: &str = "\u{f0ad}";
+
+/// The journal (fa-book).
+pub const JOURNAL: &str = "\u{f02d}";
+
+/// A colour theme (fa-paint_brush).
+pub const THEME: &str = "\u{f1fc}";
+
+/// A snapshot of the server (fa-camera).
+pub const SNAPSHOT: &str = "\u{f030}";
+
+/// Quiet hours (fa-moon_o).
+pub const QUIET: &str = "\u{f186}";
+
+/// On, done, fine (fa-check).
+pub const CHECK: &str = "\u{f00c}";
+
+/// Not done yet (fa-circle_o).
+pub const OPEN_ITEM: &str = "\u{f10c}";
+
+/// Skipped on purpose (fa-ban).
+pub const SKIPPED: &str = "\u{f05e}";
+
+/// Cannot tell (fa-question).
+pub const UNKNOWN: &str = "\u{f128}";
+
+/// A time, or something that ran long (fa-clock_o).
+pub const CLOCK: &str = "\u{f017}";
+
+/// Run it (fa-play).
+pub const RUN: &str = "\u{f04b}";
+
+/// Nobody has looked in days (fa-bed).
+pub const IDLE: &str = "\u{f236}";
+
+/// Closed (fa-times).
+pub const CLOSED: &str = "\u{f00d}";
+
 /// Look a glyph up by the name of its constant.
 ///
 /// This is what lets a config file say `STAGED = "*"`: the name in the file is
@@ -159,6 +227,27 @@ pub fn by_name(name: &str) -> Option<&'static str> {
         "TAG" => Some(TAG),
         "UNMERGED" => Some(UNMERGED),
         "WHITE_SPACE" => Some(WHITE_SPACE),
+        "SESSION" => Some(SESSION),
+        "FOLDER" => Some(FOLDER),
+        "PATH_NEW" => Some(PATH_NEW),
+        "PANE" => Some(PANE),
+        "PORT" => Some(PORT),
+        "SEARCH" => Some(SEARCH),
+        "KEY" => Some(KEY),
+        "HISTORY" => Some(HISTORY),
+        "SETUP" => Some(SETUP),
+        "JOURNAL" => Some(JOURNAL),
+        "THEME" => Some(THEME),
+        "SNAPSHOT" => Some(SNAPSHOT),
+        "QUIET" => Some(QUIET),
+        "CHECK" => Some(CHECK),
+        "OPEN_ITEM" => Some(OPEN_ITEM),
+        "SKIPPED" => Some(SKIPPED),
+        "UNKNOWN" => Some(UNKNOWN),
+        "CLOCK" => Some(CLOCK),
+        "RUN" => Some(RUN),
+        "IDLE" => Some(IDLE),
+        "CLOSED" => Some(CLOSED),
         _ => None,
     }
 }

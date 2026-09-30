@@ -129,6 +129,33 @@ pub fn decide(here: &Here, panes: &[Seen], name: &str) -> Move {
     }
 }
 
+/// The pane option a pocket keeps the layout of the window it came out into,
+/// as it was before it came: the window id, a tab, and `#{window_layout}`.
+///
+/// A pocket opens with `-fh`, a new column at the window's right edge, and
+/// tmux takes that column from every pane; parked again, the width goes back
+/// to the rightmost pane alone. Out and away a few times and that pane had
+/// eaten its neighbours. Reapplying the layout from before the pocket came out
+/// puts every pane back where it was.
+pub const LAYOUT: &str = "@tmux-companion-pocket-layout";
+
+/// The `select-layout` that puts a window back the way it was before a pocket
+/// came out into it, from what [`LAYOUT`] held. A layout that no longer fits,
+/// because the window was split while the pocket was out, is refused by tmux
+/// and changes nothing.
+pub fn restore_args(saved: &str) -> Option<Vec<String>> {
+    let (window, layout) = saved.trim().split_once('\t')?;
+    if window.is_empty() || layout.is_empty() {
+        return None;
+    }
+    Some(
+        ["select-layout", "-t", window, layout]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    )
+}
+
 /// The `split-window` that makes a new pocket, printing its pane id.
 pub fn create_args(here: &Here, opening: u16) -> Vec<String> {
     [
@@ -299,6 +326,9 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
     // other side. A pocket is an interactive shell, so it opens, parks and
     // comes back at its own width.
     let width = crate::run::pane_width(here.window_width, config.run.width_percent);
+    // The window as it is before a pocket comes out into it, kept on the
+    // pocket so parking it can put the window back.
+    let before = tmux_display_at(Some(&here.pane), "#{window_id}\t#{window_layout}").await;
     let run = |args: Vec<String>| async move {
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         tmux(&borrowed).await;
@@ -315,12 +345,15 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
             for args in mark_args(&id, &name) {
                 run(args).await;
             }
+            tmux(&["set-option", "-p", "-t", &id, LAYOUT, &before]).await;
         }
         Move::Bring { id } => {
             run(bring_args(&here, &id, width)).await;
+            tmux(&["set-option", "-p", "-t", &id, LAYOUT, &before]).await;
             tmux(&["select-pane", "-t", &id]).await;
         }
         Move::Park { id, into, .. } => {
+            let saved = tmux_display_at(Some(&id), &format!("#{{{LAYOUT}}}")).await;
             match into {
                 Some(window) => run(park_args(&id, Some(&window), &session)).await,
                 None => {
@@ -336,6 +369,9 @@ pub async fn run(name: Option<String>, pane: Option<String>) -> anyhow::Result<(
                         tmux(&["set-option", "-w", "-t", &window, "allow-rename", "off"]).await;
                     }
                 }
+            }
+            if let Some(args) = restore_args(&saved) {
+                run(args).await;
             }
         }
         Move::Nothing => {
@@ -370,6 +406,23 @@ mod tests {
             width: 66,
             mark: mark.into(),
         }
+    }
+
+    #[test]
+    fn a_parked_pocket_puts_the_window_back_the_way_it_was() {
+        assert_eq!(
+            restore_args("@4\tb25e,160x40,0,0{79x40,0,0,1,80x40,80,0,2}\n").unwrap(),
+            [
+                "select-layout",
+                "-t",
+                "@4",
+                "b25e,160x40,0,0{79x40,0,0,1,80x40,80,0,2}"
+            ]
+        );
+        // A pocket made before this was kept has nothing saved, and parks the
+        // way it always did.
+        assert_eq!(restore_args(""), None);
+        assert_eq!(restore_args("@4\t"), None);
     }
 
     #[test]

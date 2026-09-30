@@ -140,7 +140,16 @@ pub fn dedupe(commands: Vec<String>) -> Vec<String> {
 /// after a project switch is not the session on screen. The pane opened, ran
 /// the command and drew its dialog in a window nobody was looking at, and the
 /// reel recorded a picker that closed onto an empty prompt.
-pub fn split_args(pane: Option<&str>, opening: u16, command: &str) -> Vec<String> {
+///
+/// `saved` is the window's id and layout from before the split, handed to the
+/// new pane in its environment so it can put the window back on the way out;
+/// see [`restore_args`].
+pub fn split_args(
+    pane: Option<&str>,
+    opening: u16,
+    command: &str,
+    saved: Option<&str>,
+) -> Vec<String> {
     let mut args: Vec<String> = vec!["split-window".into(), "-fh".into()];
     if let Some(p) = pane
         && !p.is_empty()
@@ -148,10 +157,54 @@ pub fn split_args(pane: Option<&str>, opening: u16, command: &str) -> Vec<String
         args.push("-t".into());
         args.push(p.to_string());
     }
+    if let Some(saved) = saved.filter(|s| s.contains('\t')) {
+        args.push("-e".into());
+        args.push(format!("{LAYOUT_ENV}={saved}"));
+    }
     args.push("-l".into());
     args.push(opening.to_string());
     args.push(command.to_string());
     args
+}
+
+/// Where the side pane finds the window it opened in, as it was: the window id,
+/// a tab, and `#{window_layout}`.
+pub const LAYOUT_ENV: &str = "TMUX_COMPANION_RUN_LAYOUT";
+
+/// Close the side pane and put the window back the way it was, as one tmux
+/// command list.
+///
+/// A `-fh` split is a new column at the far right, so the slide takes its
+/// width from whatever pane was rightmost, and when the pane closes tmux hands
+/// the column back to that same neighbour. Every run left the rightmost pane a
+/// little wider than before; in the demo reel the caption column grew a
+/// chapter at a time. Reapplying the layout from before the split undoes all
+/// of it.
+///
+/// One command list, because `kill-pane` ends the process sending it: the
+/// server has the whole list by then and runs `select-layout` after the pane
+/// is gone. A layout that no longer fits, because somebody split the window
+/// while the command ran, is refused by tmux and changes nothing.
+pub fn restore_args(pane: &str, saved: &str) -> Option<Vec<String>> {
+    let (window, layout) = saved.split_once('\t')?;
+    if pane.is_empty() || window.is_empty() || layout.is_empty() {
+        return None;
+    }
+    Some(
+        [
+            "kill-pane",
+            "-t",
+            pane,
+            ";",
+            "select-layout",
+            "-t",
+            window,
+            layout,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    )
 }
 
 /// The widths a pane passes through while it slides out.
@@ -515,7 +568,7 @@ mod tests {
 
     #[test]
     fn the_split_is_aimed_at_the_pane_the_binding_named() {
-        let args = split_args(Some("%12"), 1, "tc run --exec 'git log'");
+        let args = split_args(Some("%12"), 1, "tc run --exec 'git log'", None);
         assert_eq!(
             args,
             vec![
@@ -534,7 +587,7 @@ mod tests {
     fn without_a_pane_the_split_is_left_to_tmux() {
         // Typed at a shell rather than pressed, where tmux's own current pane
         // is the right answer and $TMUX_PANE is already set.
-        let args = split_args(None, 56, "tc run --exec 'ls'");
+        let args = split_args(None, 56, "tc run --exec 'ls'", None);
         assert!(!args.iter().any(|a| a == "-t"), "{args:?}");
         assert_eq!(args.first().map(String::as_str), Some("split-window"));
     }
@@ -543,7 +596,33 @@ mod tests {
     fn an_empty_pane_is_the_same_as_no_pane() {
         // `#{pane_id}` from a binding that fired outside a pane comes through
         // as an empty string, and `-t ''` is an error rather than a default.
-        assert!(!split_args(Some(""), 1, "x").iter().any(|a| a == "-t"));
+        assert!(!split_args(Some(""), 1, "x", None).iter().any(|a| a == "-t"));
+    }
+
+    #[test]
+    fn the_layout_from_before_the_split_rides_along_and_comes_back_on_close() {
+        let saved = "@3\tb25e,160x40,0,0{79x40,0,0,1,80x40,80,0,2}";
+        let args = split_args(Some("%1"), 1, "x", Some(saved));
+        let e = args.iter().position(|a| a == "-e").expect("-e");
+        assert_eq!(args[e + 1], format!("{LAYOUT_ENV}={saved}"));
+        assert_eq!(
+            restore_args("%9", saved).unwrap(),
+            [
+                "kill-pane",
+                "-t",
+                "%9",
+                ";",
+                "select-layout",
+                "-t",
+                "@3",
+                "b25e,160x40,0,0{79x40,0,0,1,80x40,80,0,2}"
+            ]
+        );
+        // Nothing saved, or nothing readable, and the pane just exits the way
+        // it always did.
+        assert_eq!(restore_args("%9", ""), None);
+        assert_eq!(restore_args("", saved), None);
+        assert!(!split_args(Some("%1"), 1, "x", Some("")).contains(&"-e".to_string()));
     }
 
     #[test]

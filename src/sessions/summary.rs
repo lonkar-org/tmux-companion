@@ -138,6 +138,7 @@ pub fn confirm(headline: &str, rows: Vec<Row>, countdown: Duration) -> anyhow::R
     let started = Instant::now();
     let mut counting = true;
 
+    let paint = crate::picker::Paint::detect();
     let mut terminal = ratatui::init();
     // Whatever happens below, the terminal goes back to how it was found. A
     // screen that panics with raw mode still on leaves the pane unusable.
@@ -148,7 +149,14 @@ pub fn confirm(headline: &str, rows: Vec<Row>, countdown: Duration) -> anyhow::R
                 return Ok(Outcome::Go(approved(&rows)));
             }
             terminal.draw(|frame| {
-                draw(frame, headline, &rows, cursor, counting.then_some(left));
+                draw(
+                    frame,
+                    headline,
+                    &rows,
+                    cursor,
+                    counting.then_some(left),
+                    &paint,
+                );
             })?;
 
             // Poll rather than block, so the clock can run out while nobody is
@@ -214,9 +222,11 @@ fn draw(
     rows: &[Row],
     cursor: usize,
     counting: Option<u64>,
+    paint: &crate::picker::Paint,
 ) {
+    use crate::picker::Tone;
     use ratatui::layout::{Constraint, Layout};
-    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::style::Modifier;
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -230,7 +240,16 @@ fn draw(
 
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(headline),
+            Line::from(vec![
+                Span::styled(
+                    paint.icon_cell(crate::tmux::icons::SNAPSHOT),
+                    paint.style(Tone::Accent),
+                ),
+                Span::styled(
+                    headline,
+                    paint.style(Tone::Accent).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
                 format!(
                     "{} pane{} need{} a decision",
@@ -238,7 +257,8 @@ fn draw(
                     plural(rows.len()),
                     if rows.len() == 1 { "s" } else { "" }
                 ),
-                Style::default().fg(Color::Yellow),
+                // It wants you, so it is the waiting colour.
+                paint.style(Tone::Waiting),
             )),
         ]),
         chunks[0],
@@ -248,20 +268,39 @@ fn draw(
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let mark = if row.approved { "run " } else { "skip" };
-            let style = if i == cursor {
-                Style::default().add_modifier(Modifier::REVERSED)
+            // Run is a decision that will act, so it is green; skip is the
+            // pane left at a prompt, so it is grey. The pane is bold because
+            // it is what tab acts on, and the reason is detail.
+            let (mark, tone) = if row.approved {
+                ("run ", Tone::Ok)
             } else {
-                Style::default()
+                ("skip", Tone::Dim)
             };
-            Line::from(Span::styled(
-                format!("{mark}  {:<22}  {}  ({})", row.at, row.command, row.why),
-                style,
-            ))
+            let on = i == cursor;
+            let style = |t: Tone| if on { paint.on_band(t) } else { paint.style(t) };
+            let mut spans = vec![
+                Span::styled(mark, style(tone)),
+                Span::styled("  ", style(Tone::Plain)),
+                Span::styled(format!("{:<22}", row.at), style(Tone::Strong)),
+                Span::styled(format!("  {}  ", row.command), style(Tone::Plain)),
+                Span::styled(format!("({})", row.why), style(Tone::Dim)),
+            ];
+            if on {
+                let used: usize = spans.iter().map(Span::width).sum();
+                let width = usize::from(chunks[1].width);
+                if width > used {
+                    spans.push(Span::styled(" ".repeat(width - used), style(Tone::Plain)));
+                }
+            }
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(list).block(Block::default().borders(Borders::TOP)),
+        Paragraph::new(list).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(paint.frame()),
+        ),
         chunks[1],
     );
 
@@ -271,8 +310,16 @@ fn draw(
         }
         None => "[enter] go   [tab] run this one   [a] all   [q] cancel".to_string(),
     };
+    let keys: Vec<Span> = crate::picker::paint::hint_parts(&keys)
+        .into_iter()
+        .map(|(w, key)| Span::styled(w, paint.style(if key { Tone::Strong } else { Tone::Dim })))
+        .collect();
     frame.render_widget(
-        Paragraph::new(keys).block(Block::default().borders(Borders::TOP)),
+        Paragraph::new(Line::from(keys)).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(paint.frame()),
+        ),
         chunks[2],
     );
 }

@@ -74,37 +74,83 @@ pub fn stamp_secs(stamp: &str) -> Option<u64> {
 /// Sections in the order they need answering: what is waiting on you, what
 /// is wrong, what can go, then the one line of numbers.
 pub fn render(b: &Brief, now: u64, home: &str) -> String {
+    render_in(b, now, home, &crate::picker::Paint::plain())
+}
+
+/// The screen, painted: a heading with its icon for each section, and each
+/// value in the tone that says what it is. With [`Paint::plain`] this is
+/// exactly [`render`], which is what the tests and `--print` read.
+///
+/// Padding is done before the ink goes on, because a width counted over an
+/// escape is a column that lands somewhere different on every line.
+///
+/// [`Paint::plain`]: crate::picker::Paint::plain
+pub fn render_in(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint) -> String {
+    use crate::picker::Tone;
+    use crate::tmux::icons;
+    let ink = |text: String, tone: Tone| paint.ink(&text, tone);
     let mut out = String::new();
     if b.waiting.is_empty() {
+        out.push_str(&paint.icon(icons::CHECK, Tone::Ok));
         out.push_str("Nothing is waiting on you.\n");
     } else {
-        out.push_str(&format!("Waiting on you ({})\n", b.waiting.len()));
+        out.push_str(&paint.heading(
+            icons::WAITING,
+            &format!("Waiting on you ({})", b.waiting.len()),
+        ));
+        out.push('\n');
         for e in &b.waiting {
+            // A `done` agent is here so you can read its answer, not because
+            // it needs one, so its state is not amber.
+            let state = if e.state == "done" {
+                Tone::Dim
+            } else {
+                Tone::Waiting
+            };
             out.push_str(&format!(
-                "  {:<14} {:<12} {:<7} {:<5} {}\n",
-                e.at,
-                e.program,
-                e.state,
-                crate::panes::age(now.saturating_sub(e.since)),
-                e.question_line()
+                "  {} {} {} {} {}\n",
+                ink(format!("{:<14}", e.at), Tone::Strong),
+                ink(format!("{:<12}", e.program), Tone::Plain),
+                ink(format!("{:<7}", e.state), state),
+                ink(
+                    format!("{:<5}", crate::panes::age(now.saturating_sub(e.since))),
+                    Tone::Dim
+                ),
+                ink(e.question_line(), Tone::Quote)
             ));
         }
     }
     out.push('\n');
     if b.health.is_empty() {
-        out.push_str("Health: ok\n");
+        // The check, not the health mark: the mark is an alert, and an alert
+        // drawn green beside `ok` says two things at once.
+        out.push_str(&paint.icon(icons::CHECK, Tone::Ok));
+        out.push_str(&format!("Health: {}\n", ink("ok".into(), Tone::Ok)));
     } else {
-        out.push_str("Health\n");
+        out.push_str(&paint.heading(icons::HEALTH, "Health"));
+        out.push('\n');
         for r in &b.health {
-            out.push_str(&format!("  {r}\n"));
+            // The bar draws the health mark in the waiting colour, so a
+            // reason here is the same colour as the mark that sent you.
+            out.push_str(&format!("  {}\n", ink(r.clone(), Tone::Waiting)));
         }
     }
     out.push('\n');
     if !b.idle.is_empty() {
-        out.push_str(&format!("Idle for {IDLE_DAYS}+ days ({})\n", b.idle.len()));
+        out.push_str(&paint.heading(
+            icons::IDLE,
+            &format!("Idle for {IDLE_DAYS}+ days ({})", b.idle.len()),
+        ));
+        out.push('\n');
         for s in &b.idle {
             let cols = crate::sessions::idle::columns(s, home);
-            out.push_str(&format!("  {}\n", cols.join("  ")));
+            let tones = [Tone::Strong, Tone::Dim, Tone::Plain, Tone::Dim];
+            let cells: Vec<String> = cols
+                .into_iter()
+                .zip(tones)
+                .map(|(c, t)| ink(c, t))
+                .collect();
+            out.push_str(&format!("  {}\n", cells.join("  ")));
         }
         out.push('\n');
     }
@@ -112,19 +158,36 @@ pub fn render(b: &Brief, now: u64, home: &str) -> String {
         Some((_, age)) => format!("last snapshot {} ago", crate::panes::age(*age)),
         None => "no snapshot yet".to_string(),
     };
+    // The numbers are the line; the words around them are grey. A waiting
+    // count above zero is amber, because it is the one that wants you.
+    let waiting = if b.agents.2 > 0 {
+        Tone::Waiting
+    } else {
+        Tone::Strong
+    };
     out.push_str(&format!(
-        "{} session{}, {} agent{} ({} busy, {} waiting), {snapshot}\n",
-        b.sessions,
-        if b.sessions == 1 { "" } else { "s" },
-        b.agents.0,
-        if b.agents.0 == 1 { "" } else { "s" },
-        b.agents.1,
-        b.agents.2
+        "{}{}{}{}{}{}{}{}\n",
+        ink(b.sessions.to_string(), Tone::Strong),
+        ink(
+            format!(" session{}, ", if b.sessions == 1 { "" } else { "s" }),
+            Tone::Dim
+        ),
+        ink(b.agents.0.to_string(), Tone::Strong),
+        ink(
+            format!(" agent{} (", if b.agents.0 == 1 { "" } else { "s" }),
+            Tone::Dim
+        ),
+        ink(b.agents.1.to_string(), Tone::Strong),
+        ink(" busy, ".into(), Tone::Dim),
+        ink(b.agents.2.to_string(), waiting),
+        ink(format!(" waiting), {snapshot}"), Tone::Dim),
     ));
     if let Some(open) = b.setup_open.filter(|n| *n > 0) {
-        // Kept for now: a week after a new build, while setup has items open.
-        // Up for removal once there's feedback on whether it helps or nags.
-        out.push_str(&format!("{open} setup items open: tmux-companion setup\n"));
+        out.push_str(&paint.icon(icons::SETUP, Tone::Dim));
+        out.push_str(&format!(
+            "{open} setup items open: {}\n",
+            ink("tmux-companion setup".into(), Tone::Strong)
+        ));
     }
     out
 }
@@ -220,9 +283,15 @@ pub async fn run(print: bool, hook: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     let home = std::env::var("HOME").unwrap_or_default();
-    print!("{}", render(&b, crate::panes::now_secs(), &home));
+    let paint = crate::picker::Paint::for_stdout(print);
+    print!("{}", render_in(&b, crate::panes::now_secs(), &home, &paint));
     if !print && std::io::stdin().is_terminal() {
-        println!("\npress enter to close");
+        println!(
+            "\n{}{}",
+            paint.ink("press ", crate::picker::Tone::Dim),
+            paint.ink("enter", crate::picker::Tone::Strong)
+                + &paint.ink(" to close", crate::picker::Tone::Dim)
+        );
         let mut line = String::new();
         let _ = std::io::stdin().read_line(&mut line);
     }
@@ -342,6 +411,22 @@ mod tests {
             text.ends_with("1 session, 1 agent (0 busy, 1 waiting), last snapshot 12m ago\n"),
             "{text}"
         );
+        // Painted, the state is amber and the question is italic, and the
+        // pane it is in is neither: the tone sits on the cell, not the row.
+        let painted = render_in(
+            &b,
+            1000,
+            "/home/me",
+            &crate::picker::Paint {
+                escapes: true,
+                ..crate::picker::Paint::default()
+            },
+        );
+        let row = painted.lines().nth(1).unwrap_or_default();
+        assert!(row.contains("\x1b[38;5;214mwaiting"), "{row:?}");
+        assert!(row.contains("\x1b[3m> Continue? (y/n)"), "{row:?}");
+        assert!(row.contains("\x1b[1mapi:2.1"), "{row:?}");
+        assert!(!row.contains("214mapi"), "{row:?}");
         // An agent that said `done` is listed, but it is not news.
         let mut done = asked("Here is the diff.");
         done.state = "done".into();

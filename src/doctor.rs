@@ -16,29 +16,62 @@ use std::fmt::Write as _;
 
 /// Gather the report and print it.
 pub async fn run() -> anyhow::Result<()> {
-    print!("{}", report().await);
+    print!(
+        "{}",
+        report_in(&crate::picker::Paint::for_stdout(false)).await
+    );
     Ok(())
 }
 
 /// The report, as a string, so a test can read it without capturing stdout.
 pub async fn report() -> String {
-    let mut out = String::new();
+    report_in(&crate::picker::Paint::plain()).await
+}
 
-    let _ = writeln!(out, "tmux-companion {}", crate::proto::build_id());
-    let _ = writeln!(out, "  binary        {}", current_exe());
-    let _ = writeln!(out, "  daemon        {}", daemon_state().await);
-    let _ = writeln!(out, "  socket        {}", socket_state());
-    let _ = writeln!(out, "  config        {}", config_state());
-    let _ = writeln!(out, "  glyphs        {}", glyph_state());
-    let _ = writeln!(out, "  state dir     {}", state_dir_state());
-    let _ = writeln!(out, "  daemon log    {}", log_state());
-    let _ = writeln!(out, "  sessions      {}", sessions_state());
-    let _ = writeln!(out, "  autosave      {}", autosave_state());
-    let _ = writeln!(out, "  health        {}", health_state().await);
-    let _ = writeln!(out, "  setup         {}", setup_state().await);
-    let _ = writeln!(out, "  tmux          {}", tmux_version());
-    let _ = writeln!(out, "  platform      {}", platform());
-    out.push_str(&options_section(tmux_options().as_ref()));
+/// The report, painted: the section names in the accent, the names of the
+/// lines in grey so the values are what the eye reads, and health in the
+/// colour it would be on the bar. Plain, it is [`report`] exactly, which is
+/// what gets pasted into an issue.
+pub async fn report_in(paint: &crate::picker::Paint) -> String {
+    use crate::picker::Tone;
+    let mut out = String::new();
+    let line = |out: &mut String, name: &str, value: String, tone: Tone| {
+        let _ = writeln!(
+            out,
+            "  {}{}",
+            paint.ink(&format!("{name:<14}"), Tone::Dim),
+            paint.ink(&value, tone)
+        );
+    };
+
+    let _ = writeln!(
+        out,
+        "{}",
+        paint.heading(
+            crate::tmux::icons::SETUP,
+            &format!("tmux-companion {}", crate::proto::build_id())
+        )
+    );
+    line(&mut out, "binary", current_exe(), Tone::Plain);
+    line(&mut out, "daemon", daemon_state().await, Tone::Plain);
+    line(&mut out, "socket", socket_state(), Tone::Plain);
+    line(&mut out, "config", config_state(), Tone::Plain);
+    line(&mut out, "glyphs", glyph_state(), Tone::Plain);
+    line(&mut out, "state dir", state_dir_state(), Tone::Plain);
+    line(&mut out, "daemon log", log_state(), Tone::Plain);
+    line(&mut out, "sessions", sessions_state(), Tone::Plain);
+    line(&mut out, "autosave", autosave_state(), Tone::Plain);
+    let health = health_state().await;
+    let tone = if health == "ok" {
+        Tone::Ok
+    } else {
+        Tone::Waiting
+    };
+    line(&mut out, "health", health, tone);
+    line(&mut out, "setup", setup_state().await, Tone::Plain);
+    line(&mut out, "tmux", tmux_version(), Tone::Plain);
+    line(&mut out, "platform", platform(), Tone::Plain);
+    out.push_str(&options_section_in(tmux_options().as_ref(), paint));
     out
 }
 
@@ -164,20 +197,43 @@ pub fn advice(options: &std::collections::HashMap<String, String>) -> Vec<Advice
 /// `None` is a tmux that would not answer, which outside a server is the
 /// ordinary case and gets one line saying so.
 pub fn options_section(options: Option<&std::collections::HashMap<String, String>>) -> String {
-    let mut out = String::from("tmux options\n");
+    options_section_in(options, &crate::picker::Paint::plain())
+}
+
+/// The options section, painted: what is set now in amber, because it is the
+/// thing costing you, and the line that fixes it in bold, because it is the
+/// thing you would copy.
+pub fn options_section_in(
+    options: Option<&std::collections::HashMap<String, String>>,
+    paint: &crate::picker::Paint,
+) -> String {
+    use crate::picker::Tone;
+    let mut out = paint.heading(crate::tmux::icons::PANE, "tmux options");
+    out.push('\n');
     let Some(options) = options else {
-        out.push_str("  no tmux server to ask\n");
+        out.push_str(&format!(
+            "  {}\n",
+            paint.ink("no tmux server to ask", Tone::Dim)
+        ));
         return out;
     };
     let advice = advice(options);
     if advice.is_empty() {
-        out.push_str("  nothing to suggest\n");
+        out.push_str(&format!(
+            "  {}\n",
+            paint.ink("nothing to suggest", Tone::Ok)
+        ));
         return out;
     }
     let width = advice.iter().map(|a| a.found.len()).max().unwrap_or(0);
     for a in &advice {
-        let _ = writeln!(out, "  {:<width$}  {}", a.found, a.why);
-        let _ = writeln!(out, "  {:<width$}  {}", "", a.fix);
+        let _ = writeln!(
+            out,
+            "  {}  {}",
+            paint.ink(&format!("{:<width$}", a.found), Tone::Waiting),
+            a.why
+        );
+        let _ = writeln!(out, "  {:<width$}  {}", "", paint.ink(a.fix, Tone::Strong));
     }
     out
 }

@@ -149,8 +149,21 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     let items: Vec<crate::picker::Item> = sessions
         .iter()
         .map(|s| {
+            use crate::picker::Cell;
             let cols = columns(s, &home);
-            crate::picker::Item::new(cols.join(" ")).in_columns(cols)
+            let label = cols.join(" ");
+            let mut cols = cols.into_iter();
+            let mut next = || cols.next().unwrap_or_default();
+            // The session is what enter closes, so it is bold; how long it
+            // has sat is the reason it is on the list, so it is not grey.
+            crate::picker::Item::new(label)
+                .in_cells(vec![
+                    Cell::strong(next()),
+                    Cell::dim(next()),
+                    Cell::plain(next()),
+                    Cell::dim(next()),
+                ])
+                .with_icon(crate::tmux::icons::IDLE, crate::picker::Tone::Dim)
         })
         .collect();
 
@@ -160,6 +173,7 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     // nobody has asked to set differently.
     let chrome = crate::picker::Chrome {
         title: "[ Idle sessions ]".into(),
+        icon: crate::tmux::icons::IDLE.into(),
         footer: "enter closes the pick (project close, layout saved first)   esc cancels".into(),
         ..Default::default()
     }

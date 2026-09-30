@@ -559,14 +559,23 @@ pub async fn jump(id: &str) {
     crate::cli::tmux(&["select-pane", "-t", id]).await;
 }
 
-/// The colour a picker row gets for its state: the bar's waiting colour for
-/// an agent that asked or went quiet, the busy colour for one that said it
-/// is working, nothing for a `done` agent, which needs no more than the row.
-pub fn row_colour(state: State) -> Option<String> {
+/// The icon and tone a picker row's state gets: the bar's waiting colour on
+/// the state of an agent that asked or went quiet, the busy colour on one that
+/// said it is working, and grey for a `done` agent or a pane gone quiet, which
+/// need no more than the row.
+///
+/// The tone goes on the state cell and the icon, never the whole row: the
+/// path beside a waiting agent is not waiting.
+pub fn state_look(state: State) -> (&'static str, crate::picker::Tone) {
+    use crate::picker::Tone;
+    use crate::tmux::icons;
     match state {
-        State::Asked(_) | State::Waiting(_) => Some(WAITING_COLOUR.to_string()),
-        State::Busy => Some(BUSY_COLOUR.to_string()),
-        _ => None,
+        State::Asked(_) | State::Waiting(_) => (icons::WAITING, Tone::Waiting),
+        State::Busy => (icons::BUSY, Tone::Busy),
+        State::Done(_) => (icons::CHECK, Tone::Dim),
+        State::Reading => (icons::SEARCH, Tone::Plain),
+        State::Active => (icons::PANE, Tone::Plain),
+        State::Idle(_) => (icons::PANE, Tone::Dim),
     }
 }
 
@@ -620,20 +629,33 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
         .iter()
         .zip(previews)
         .map(|(r, preview)| {
+            use crate::picker::{Cell, Tone};
             let state = r.state.to_string();
+            // The same colours the bar uses, so the row that wants you is
+            // the one that stands out here too.
+            let (icon, tone) = state_look(r.state);
             crate::picker::Item::with_preview(
                 format!("{} {} {} {}", r.at, r.program, state, r.cwd),
                 preview,
             )
-            .in_columns(vec![r.at.clone(), r.program.clone(), state, r.cwd.clone()])
-            // The same colours the bar uses, so the row that wants you is
-            // the one that stands out here too.
-            .in_colour(row_colour(r.state))
+            .in_cells(vec![
+                Cell::strong(&r.at),
+                Cell::plain(&r.program),
+                Cell::new(state, if tone == Tone::Plain { Tone::Dim } else { tone }),
+                Cell::dim(&r.cwd),
+            ])
+            .with_icon(icon, tone)
         })
         .collect();
 
     let chrome = crate::picker::Chrome {
         title: if agents { "[ Agents ]" } else { "[ Panes ]" }.into(),
+        icon: if agents {
+            crate::tmux::icons::AGENT
+        } else {
+            crate::tmux::icons::PANE
+        }
+        .into(),
         footer: "enter jumps there   ctrl-a clears the filter   esc cancels".into(),
         preview_title: "[ Screen ]".into(),
         ..Default::default()
@@ -843,14 +865,15 @@ mod tests {
             assert_eq!(Report::from_word(r.word()), Some(r));
         }
         assert_eq!(Report::from_word("thinking"), None);
-        assert_eq!(row_colour(State::Asked(1)).as_deref(), Some(WAITING_COLOUR));
-        assert_eq!(
-            row_colour(State::Waiting(1)).as_deref(),
-            Some(WAITING_COLOUR)
-        );
-        assert_eq!(row_colour(State::Busy).as_deref(), Some(BUSY_COLOUR));
-        assert_eq!(row_colour(State::Done(1)), None);
-        assert_eq!(row_colour(State::Idle(1)), None);
+        use crate::picker::Tone;
+        assert_eq!(state_look(State::Asked(1)).1, Tone::Waiting);
+        assert_eq!(state_look(State::Waiting(1)).1, Tone::Waiting);
+        assert_eq!(state_look(State::Busy).1, Tone::Busy);
+        assert_eq!(state_look(State::Done(1)).1, Tone::Dim);
+        assert_eq!(state_look(State::Idle(1)).1, Tone::Dim);
+        // Asked and busy must not share an icon: the colour is not the only
+        // way to tell them apart, which matters under NO_COLOR.
+        assert_ne!(state_look(State::Asked(1)).0, state_look(State::Busy).0);
     }
 
     #[test]

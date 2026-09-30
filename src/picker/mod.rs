@@ -31,11 +31,13 @@
 //! somebody is looking at it.
 
 pub mod ansi;
+pub mod paint;
 mod screen;
 pub mod style;
 
 use ratatui::style::Color;
 
+pub use paint::{Paint, Tone};
 pub use style::{BorderKind, Edge, LabelPosition, Look, PreviewBorder};
 
 /// One row a picker can show.
@@ -46,13 +48,6 @@ pub struct Item {
     pub label: String,
     /// Shown in the preview pane. Empty means this row has nothing to show.
     pub preview: String,
-    /// The colour to draw the row's text in. `None` leaves it the default.
-    ///
-    /// Carried as the string the source produced, a tmux `colourNNN` or a
-    /// `#rrggbb`, and turned into a terminal colour at draw time. Keeping the
-    /// string means the item type does not drag a ratatui type into every
-    /// module that builds one.
-    pub colour: Option<String>,
     /// The row split into columns, aligned against every other row's.
     ///
     /// A label built with `{:<22}` cannot line up once anything in it is
@@ -66,6 +61,50 @@ pub struct Item {
     /// project's colour as a block and stay readable, which colouring a whole
     /// line on a dark bar does not manage.
     pub swatch: Option<String>,
+    /// What kind of text each column is, by the same position as `columns`.
+    ///
+    /// A column with no tone here is plain. This is what replaced colouring
+    /// the whole row: a waiting pane's state is amber and its path is not.
+    pub tones: Vec<Tone>,
+    /// A glyph in front of the row saying what kind of row it is, and the
+    /// tone it is drawn in. One of the constants in `src/tmux/icons.rs`, so
+    /// the glyph preset reaches it.
+    pub icon: Option<(String, Tone)>,
+}
+
+/// One column of a row and what kind of text it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cell {
+    /// What it says.
+    pub text: String,
+    /// What kind of text it is.
+    pub tone: Tone,
+}
+
+impl Cell {
+    /// A cell in a tone.
+    pub fn new(text: impl Into<String>, tone: Tone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+    /// Text with nothing to say about itself.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self::new(text, Tone::Plain)
+    }
+    /// The thing you act on.
+    pub fn strong(text: impl Into<String>) -> Self {
+        Self::new(text, Tone::Strong)
+    }
+    /// Detail.
+    pub fn dim(text: impl Into<String>) -> Self {
+        Self::new(text, Tone::Dim)
+    }
+    /// Words that are not the tool's own.
+    pub fn quote(text: impl Into<String>) -> Self {
+        Self::new(text, Tone::Quote)
+    }
 }
 
 impl Item {
@@ -86,9 +125,17 @@ impl Item {
         }
     }
 
-    /// The same item, drawn in a colour.
-    pub fn in_colour(mut self, colour: Option<String>) -> Self {
-        self.colour = colour.filter(|c| !c.trim().is_empty());
+    /// The same item, drawn as cells that each say what kind of text they
+    /// are. The columns line up as `in_columns` lines them up.
+    pub fn in_cells(mut self, cells: Vec<Cell>) -> Self {
+        self.tones = cells.iter().map(|c| c.tone).collect();
+        self.columns = cells.into_iter().map(|c| c.text).collect();
+        self
+    }
+
+    /// The same item, with a glyph in front saying what kind of row it is.
+    pub fn with_icon(mut self, glyph: &str, tone: Tone) -> Self {
+        self.icon = Some((glyph.trim_end().to_string(), tone));
         self
     }
 
@@ -165,7 +212,7 @@ pub fn lay_out(cells: &[&str], widths: &[usize]) -> String {
 /// A position no row has is skipped rather than drawn as a blank column, and a
 /// position left out is a column that is not drawn at all. An empty order is
 /// the row as the picker built it.
-pub fn reordered<'a>(cells: &[&'a str], order: &[usize]) -> Vec<&'a str> {
+pub fn reordered<T: Copy>(cells: &[T], order: &[usize]) -> Vec<T> {
     if order.is_empty() {
         return cells.to_vec();
     }
@@ -185,9 +232,46 @@ pub fn laid_out(items: &[Item]) -> Vec<String> {
 
 /// Every row laid out, with the columns in the order the config asks for.
 pub fn laid_out_in(items: &[Item], order: &[usize]) -> Vec<String> {
+    laid_out_toned(items, order)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect()
+}
+
+/// Where each tone sits in a laid-out row, as a range of characters.
+pub type Spans = Vec<(std::ops::Range<usize>, Tone)>;
+
+/// Every row laid out, and the character range each column's tone covers.
+///
+/// The ranges are what let a row be drawn cell by cell after the matcher has
+/// had the whole line: the matcher sees one string, the drawing sees where
+/// each column starts and what kind of text it is.
+pub fn laid_out_toned(items: &[Item], order: &[usize]) -> Vec<(String, Spans)> {
     let cells: Vec<Vec<&str>> = items.iter().map(|i| reordered(&i.cells(), order)).collect();
+    let tones: Vec<Vec<Tone>> = items
+        .iter()
+        .map(|i| {
+            let all: Vec<Tone> = (0..i.cells().len())
+                .map(|c| i.tones.get(c).copied().unwrap_or_default())
+                .collect();
+            reordered(&all, order)
+        })
+        .collect();
     let widths = column_widths(&cells);
-    cells.iter().map(|row| lay_out(row, &widths)).collect()
+    cells
+        .iter()
+        .zip(tones)
+        .map(|(row, tones)| {
+            let mut spans = Vec::new();
+            let mut at = 0;
+            for (i, cell) in row.iter().enumerate() {
+                let len = cell.chars().count();
+                spans.push((at..at + len, tones.get(i).copied().unwrap_or_default()));
+                at += widths.get(i).copied().unwrap_or(len).max(len) + COLUMN_GAP;
+            }
+            (lay_out(row, &widths), spans)
+        })
+        .collect()
 }
 
 /// A tmux colour string as a terminal colour.
@@ -268,6 +352,9 @@ pub struct Chrome {
     pub prompt: String,
     /// The border, the labels, the rules and where each one sits.
     pub look: Look,
+    /// The glyph inside the title's brackets, one of the constants in
+    /// `src/tmux/icons.rs`. Empty draws the title alone.
+    pub icon: String,
 }
 
 impl Default for Chrome {
@@ -280,6 +367,7 @@ impl Default for Chrome {
             preview_percent: 55,
             prompt: "> ".into(),
             look: Look::default(),
+            icon: String::new(),
         }
     }
 }
@@ -631,13 +719,55 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_colour_is_not_a_colour() {
-        assert_eq!(Item::new("x").in_colour(Some("  ".into())).colour, None);
+    fn a_blank_swatch_is_not_a_colour() {
         assert_eq!(Item::new("x").with_swatch(Some(String::new())).swatch, None);
-        assert_eq!(
-            Item::new("x").in_colour(Some("colour4".into())).colour,
-            Some("colour4".to_string())
-        );
+    }
+
+    #[test]
+    fn each_tone_covers_its_own_column_and_nothing_else() {
+        // The whole point of cells: the state is amber, the path beside it is
+        // not, and the padding between them belongs to neither.
+        let items = vec![
+            Item::new("a").in_cells(vec![
+                Cell::strong("api:0.0"),
+                Cell::new("asked", Tone::Waiting),
+                Cell::dim("~/code/api"),
+            ]),
+            Item::new("b").in_cells(vec![
+                Cell::strong("billing-worker:1.0"),
+                Cell::plain("idle"),
+                Cell::dim("~/b"),
+            ]),
+        ];
+        let laid = laid_out_toned(&items, &[]);
+        let (text, spans) = &laid[0];
+        let at = |r: &std::ops::Range<usize>| -> String {
+            text.chars().skip(r.start).take(r.len()).collect()
+        };
+        assert_eq!(at(&spans[0].0), "api:0.0");
+        assert_eq!(spans[0].1, Tone::Strong);
+        assert_eq!(at(&spans[1].0), "asked");
+        assert_eq!(spans[1].1, Tone::Waiting);
+        assert_eq!(at(&spans[2].0), "~/code/api");
+        assert_eq!(spans[2].1, Tone::Dim);
+        // Aligned with the longer row's columns.
+        assert_eq!(spans[1].0.start, laid[1].1[1].0.start);
+    }
+
+    #[test]
+    fn a_tone_follows_its_column_when_the_config_reorders_them() {
+        let items = vec![Item::new("x").in_cells(vec![Cell::strong("key"), Cell::dim("does")])];
+        let (text, spans) = &laid_out_toned(&items, &[1, 0])[0];
+        assert!(text.starts_with("does"));
+        assert_eq!(spans[0].1, Tone::Dim);
+        assert_eq!(spans[1].1, Tone::Strong);
+    }
+
+    #[test]
+    fn a_row_built_from_columns_alone_is_plain() {
+        let items = vec![Item::new("x").in_columns(vec!["a", "b"])];
+        let (_, spans) = &laid_out_toned(&items, &[])[0];
+        assert!(spans.iter().all(|(_, t)| *t == Tone::Plain));
     }
 
     // ── layout ───────────────────────────────────────────────────

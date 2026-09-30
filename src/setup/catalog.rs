@@ -154,13 +154,65 @@ impl Item {
 
     /// The snippet with a key in place of `{key}`, trimmed of blank edges.
     pub fn snippet_for(&self, key: Option<&str>) -> String {
+        self.snippet_in(key, popups_take_b())
+    }
+
+    /// The snippet for a tmux that does or does not take `display-popup -B`.
+    ///
+    /// The picker draws its own border, so the snippets ask tmux not to draw
+    /// a second one round it. `-B` is tmux 3.3; a 3.2 refuses the flag and the
+    /// popup never opens, so there it comes out and the border is doubled.
+    pub fn snippet_in(&self, key: Option<&str>, borderless: bool) -> String {
         let key = key.map(quote_key).unwrap_or_else(|| "{key}".to_string());
-        self.snippet.trim().replace("{key}", &key)
+        let s = self.snippet.trim().replace("{key}", &key);
+        if borderless {
+            s
+        } else {
+            s.replace("display-popup -B ", "display-popup ")
+        }
     }
 
     /// The command's words: the subcommand path and the flags.
     pub fn words(&self) -> Vec<&str> {
         self.command.split_whitespace().collect()
+    }
+}
+
+/// Whether the tmux on PATH takes `display-popup -B`, asked once.
+///
+/// `tmux -V` rather than `#{version}`, so it answers with no server running.
+/// A tmux that cannot be asked gets the flag: every tmux still packaged
+/// anywhere current is 3.3 or later except Ubuntu 22.04's 3.2a, and that one
+/// answers `-V` like any other.
+pub fn popups_take_b() -> bool {
+    static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        crate::tmux::command_sync()
+            .arg("-V")
+            .output()
+            .ok()
+            .map(|o| at_least(&String::from_utf8_lossy(&o.stdout), (3, 3)))
+            .unwrap_or(true)
+    })
+}
+
+/// Whether `tmux -V` output names at least this version: `tmux 3.3a`,
+/// `tmux next-3.6`, `tmux 3.2`. Unreadable output is taken as new enough.
+pub fn at_least(version: &str, want: (u32, u32)) -> bool {
+    let v = version.trim().rsplit(' ').next().unwrap_or("");
+    let v = v.rsplit('-').next().unwrap_or(v);
+    let mut parts = v.split('.');
+    let major = parts.next().and_then(|p| p.parse::<u32>().ok());
+    let minor = parts.next().map(|p| {
+        p.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+    match (major, minor) {
+        (Some(ma), Some(mi)) => (ma, mi) >= want,
+        _ => true,
     }
 }
 
@@ -369,6 +421,36 @@ mod tests {
         let i = items().into_iter().find(|i| i.id == "panes").unwrap();
         assert!(i.snippet_for(Some("j")).contains("\" j display-popup"));
         assert!(i.snippet_for(None).contains("{key}"));
+    }
+
+    #[test]
+    fn a_picker_popup_drops_its_border_where_tmux_can_and_keeps_it_where_it_cannot() {
+        let items = items();
+        let panes = items.iter().find(|i| i.id == "panes").unwrap();
+        assert!(
+            panes
+                .snippet_in(Some("g"), true)
+                .contains("display-popup -B -E")
+        );
+        let old = panes.snippet_in(Some("g"), false);
+        assert!(old.contains("display-popup -E"), "{old}");
+        assert!(!old.contains("-B"), "{old}");
+        // The brief prints rather than draws, so tmux's border is its only
+        // frame and it keeps it on every version.
+        let brief = items.iter().find(|i| i.id == "brief").unwrap();
+        assert!(!brief.snippet_in(Some("b"), true).contains("-B"));
+    }
+
+    #[test]
+    fn a_version_is_read_the_way_tmux_prints_it() {
+        assert!(at_least("tmux 3.3", (3, 3)));
+        assert!(at_least("tmux 3.3a", (3, 3)));
+        assert!(at_least("tmux 3.7c\n", (3, 3)));
+        assert!(at_least("tmux 3.10", (3, 3)));
+        assert!(at_least("tmux next-3.6", (3, 3)));
+        assert!(!at_least("tmux 3.2a", (3, 3)));
+        assert!(!at_least("tmux 2.9", (3, 3)));
+        assert!(at_least("", (3, 3)));
     }
 
     #[test]

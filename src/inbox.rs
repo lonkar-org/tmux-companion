@@ -493,20 +493,35 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
     let items: Vec<crate::picker::Item> = entries
         .iter()
         .map(|e| {
-            let waited = format!("{} {}", e.state, panes::age(now.saturating_sub(e.since)));
+            use crate::picker::{Cell, Tone};
+            use crate::tmux::icons;
+            let age = panes::age(now.saturating_sub(e.since));
             let q = e.question_line();
+            // A `done` agent answered: it is on the list so you can read
+            // the answer, not because it needs one, so it is not amber.
+            let (icon, tone) = if e.state == "done" {
+                (icons::CHECK, Tone::Dim)
+            } else {
+                (icons::WAITING, Tone::Waiting)
+            };
             crate::picker::Item::with_preview(
-                format!("{} {} {} {}", e.at, e.program, waited, q),
+                format!("{} {} {} {} {}", e.at, e.program, e.state, age, q),
                 e.lines.clone(),
             )
-            .in_columns(vec![e.at.clone(), e.program.clone(), waited, q])
-            // A `done` agent answered: it is on the list so you can read
-            // the answer, not because it needs one, so it is not coloured.
-            .in_colour((e.state != "done").then(|| panes::WAITING_COLOUR.to_string()))
+            .in_cells(vec![
+                Cell::strong(&e.at),
+                Cell::plain(&e.program),
+                Cell::new(&e.state, tone),
+                Cell::dim(age),
+                // The agent's words, not ours.
+                Cell::quote(q),
+            ])
+            .with_icon(icon, tone)
         })
         .collect();
     let chrome = crate::picker::Chrome {
         title: "[ Inbox ]".into(),
+        icon: crate::tmux::icons::WAITING.into(),
         footer: "enter jumps there   esc leaves them waiting".into(),
         preview_title: "[ Where it stopped ]".into(),
         ..Default::default()

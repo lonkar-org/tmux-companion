@@ -463,16 +463,19 @@ pub async fn run(asked: Asked) -> anyhow::Result<()> {
                 format!("{} {} {}", r.at, r.program, r.line.text),
                 r.preview.clone(),
             )
-            .in_columns(vec![
-                r.at.clone(),
-                r.program.clone(),
-                r.line.text.trim_start().to_string(),
+            // The line is what was searched for, so it is the one thing at
+            // full strength; where it is sits in grey beside it.
+            .in_cells(vec![
+                crate::picker::Cell::dim(r.at.clone()),
+                crate::picker::Cell::dim(r.program.clone()),
+                crate::picker::Cell::plain(r.line.text.trim_start().to_string()),
             ])
         })
         .collect();
 
     let chrome = crate::picker::Chrome {
         title: "[ Scrollback ]".into(),
+        icon: crate::tmux::icons::SEARCH.into(),
         footer: "enter goes to the line   ctrl-a clears the filter   esc cancels".into(),
         preview_title: "[ Around it ]".into(),
         ..Default::default()

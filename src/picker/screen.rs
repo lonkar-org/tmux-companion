@@ -32,6 +32,7 @@ use ratatui::{
 
 use super::{
     Chrome, Item, Preview,
+    paint::{Paint, Tone},
     style::{Edge, LabelPosition},
 };
 
@@ -41,8 +42,10 @@ pub(super) struct Row {
     pub index: usize,
     /// The row laid out, with every column at the width they all share.
     pub text: String,
-    /// Tint for the row's text.
-    pub colour: Option<Color>,
+    /// Where each column's tone starts and ends in `text`.
+    pub spans: super::Spans,
+    /// The glyph in front of the row, with the preset applied, and its tone.
+    pub icon: Option<(String, Tone)>,
     /// Solid block drawn in front of the row.
     pub swatch: Option<Color>,
     /// What the preview pane shows for this row.
@@ -62,7 +65,15 @@ pub(super) struct State {
     rows: Vec<Row>,
     /// Whether any row carries a swatch, so the ones without still line up.
     swatch_column: bool,
+    /// How wide the icon column is: the widest icon, or zero when no row has
+    /// one. A preset can make an icon two or three characters.
+    icon_width: usize,
     query: String,
+    /// The query the picker opened with. Its matches are not highlighted:
+    /// a prefilled `companion: ` lit up the same word on every row, which is
+    /// the list telling you what it was opened with rather than what you
+    /// typed.
+    opening: String,
     hits: Vec<Hit>,
     /// Index into `hits`, not into `rows`.
     selected: usize,
@@ -99,25 +110,29 @@ const PREVIEW_SHARES: [u16; 4] = [30, 50, 70, 0];
 
 impl State {
     pub(super) fn new(items: &[Item], query: &str, preview_percent: u16, order: &[usize]) -> Self {
-        let laid = super::laid_out_in(items, order);
+        let laid = super::laid_out_toned(items, order);
         let swatch_column = items.iter().any(|i| i.swatch.is_some());
-        let rows = items
+        let rows: Vec<Row> = items
             .iter()
             .zip(laid)
             .enumerate()
-            .map(|(index, (item, text))| Row {
+            .map(|(index, (item, (text, spans)))| Row {
                 index,
                 text,
-                colour: item.colour.as_deref().and_then(super::colour_of),
+                spans,
+                icon: item.icon.clone(),
                 swatch: item.swatch.as_deref().and_then(super::colour_of),
                 preview: item.preview.clone(),
             })
             .collect();
+        let icon_width = icon_width(&rows);
 
         let mut state = Self {
             rows,
             swatch_column,
+            icon_width,
             query: query.to_string(),
+            opening: query.to_string(),
             hits: Vec::new(),
             selected: 0,
             offset: 0,
@@ -178,6 +193,16 @@ impl State {
         self.preview_scroll = 0;
     }
 
+    /// Put the glyph preset on every icon, and measure the column again.
+    pub(super) fn apply_glyphs(&mut self, paint: &Paint) {
+        for row in &mut self.rows {
+            if let Some((glyph, _)) = &mut row.icon {
+                *glyph = paint.glyph(glyph).trim_end().to_string();
+            }
+        }
+        self.icon_width = icon_width(&self.rows);
+    }
+
     /// Put the cursor on the row the caller built at `index`, when it matched.
     ///
     /// For a picker that is opened again after acting on a row, so the cursor
@@ -193,6 +218,12 @@ impl State {
     }
 
     /// The row the cursor is on, if anything matched.
+    /// Whether the query's matches are drawn: only once it is not the one
+    /// the picker opened with.
+    fn highlighting(&self) -> bool {
+        self.query != self.opening
+    }
+
     fn current(&self) -> Option<&Row> {
         self.hits.get(self.selected).map(|h| &self.rows[h.row])
     }
@@ -441,7 +472,14 @@ pub(super) fn scrolled(offset: usize, selected: usize, height: usize) -> usize {
 /// are the difference between a label sitting on the line and a label that has
 /// eaten the corner. Writing into the buffer is the whole of what a title does
 /// anyway.
-fn draw_label(frame: &mut Frame, area: Rect, text: &str, at: LabelPosition, offset: u16) {
+fn draw_label(
+    frame: &mut Frame,
+    area: Rect,
+    text: &str,
+    at: LabelPosition,
+    offset: u16,
+    style: Style,
+) {
     if at == LabelPosition::Hidden || text.trim().is_empty() || area.width == 0 || area.height == 0
     {
         return;
@@ -455,52 +493,123 @@ fn draw_label(frame: &mut Frame, area: Rect, text: &str, at: LabelPosition, offs
     };
     frame
         .buffer_mut()
-        .set_stringn(x, y, text, area.width as usize, Style::default());
+        .set_stringn(x, y, text, area.width as usize, style);
 }
 
-/// One row, styled: the swatch, the match highlight and the row's own colour.
+/// A label with its icon inside the brackets: `[ Panes ]` becomes
+/// `[ <icon> Panes ]`. A label somebody configured without brackets gets the
+/// icon in front.
+pub(super) fn labelled(title: &str, icon: &str) -> String {
+    let icon = icon.trim_end();
+    if icon.is_empty() || title.trim().is_empty() {
+        return title.to_string();
+    }
+    match title.strip_prefix("[ ") {
+        Some(rest) => format!("[ {icon} {rest}"),
+        None => format!("{icon} {title}"),
+    }
+}
+
+/// The widest icon any row has, or zero when none has one.
+fn icon_width(rows: &[Row]) -> usize {
+    rows.iter()
+        .filter_map(|r| r.icon.as_ref())
+        .map(|(g, _)| Span::raw(g.as_str()).width())
+        .max()
+        .unwrap_or(0)
+}
+
+/// The tone of the character at `i`, from the row's spans.
+fn tone_at(spans: &super::Spans, i: usize) -> Tone {
+    spans
+        .iter()
+        .find(|(r, _)| r.contains(&i))
+        .map_or(Tone::Plain, |(_, t)| *t)
+}
+
+/// One row, styled: the cursor, the icon, the swatch, each cell's tone and
+/// the query's matches, on the band when the cursor is on it.
+///
+/// The band is the only thing that says "the cursor is here", so it runs the
+/// full width of the list rather than stopping where the text does.
+#[allow(clippy::too_many_arguments)]
 fn row_line<'a>(
     row: &'a Row,
     hit: &Hit,
     swatch_column: bool,
+    icon_width: usize,
     selected: bool,
     marker: &'a str,
+    paint: &Paint,
+    width: usize,
+    highlight: bool,
 ) -> Line<'a> {
+    let style = |tone: Tone| {
+        if selected {
+            paint.on_band(tone)
+        } else {
+            paint.style(tone)
+        }
+    };
     let mut spans: Vec<Span> = Vec::new();
+    let mut used = 0usize;
 
+    let marker_width = marker.chars().count();
     spans.push(if selected {
-        Span::styled(marker, Style::default().fg(Color::Magenta))
+        Span::styled(marker, style(Tone::Accent))
     } else {
-        Span::raw(" ".repeat(marker.chars().count()))
+        Span::raw(" ".repeat(marker_width))
     });
+    used += marker_width;
 
-    if swatch_column {
-        spans.push(match row.swatch {
-            Some(c) => Span::styled("\u{2588}\u{2588} ", Style::default().fg(c)),
-            None => Span::raw("   "),
-        });
+    if icon_width > 0 {
+        let (glyph, tone) = row
+            .icon
+            .as_ref()
+            .map_or(("", Tone::Plain), |(g, t)| (g.as_str(), *t));
+        let pad = icon_width.saturating_sub(Span::raw(glyph).width());
+        spans.push(Span::styled(
+            format!("{glyph}{} ", " ".repeat(pad)),
+            style(tone),
+        ));
+        used += icon_width + 1;
     }
 
-    let base = match row.colour {
-        Some(c) => Style::default().fg(c),
-        None => Style::default(),
-    };
-    let base = if selected {
-        base.add_modifier(Modifier::BOLD)
-    } else {
-        base
-    };
-    // The matched characters, one span each where they are not contiguous.
-    // Cheap enough at this size, and it keeps the highlight exactly on the
-    // characters the matcher used rather than on a range around them.
+    if swatch_column {
+        let back = style(Tone::Plain);
+        spans.push(match row.swatch {
+            Some(c) if paint.colour => Span::styled("\u{2588}\u{2588}", back.fg(c)),
+            Some(_) => Span::styled("  ", back),
+            None => Span::styled("  ", back),
+        });
+        spans.push(Span::styled(" ", back));
+        used += 3;
+    }
+
+    // One span per run of characters that share a style, so a row is a
+    // handful of spans rather than one per character.
+    let mut run = String::new();
+    let mut run_style: Option<Style> = None;
     for (i, ch) in row.text.chars().enumerate() {
-        let matched = hit.positions.binary_search(&(i as u32)).is_ok();
-        let style = if matched {
-            base.fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        let matched = highlight && hit.positions.binary_search(&(i as u32)).is_ok();
+        let this = if matched {
+            paint.matched(selected)
         } else {
-            base
+            style(tone_at(&row.spans, i))
         };
-        spans.push(Span::styled(ch.to_string(), style));
+        if run_style.is_some_and(|s| s != this) {
+            spans.push(Span::styled(std::mem::take(&mut run), run_style.unwrap()));
+        }
+        run_style = Some(this);
+        run.push(ch);
+        used += 1;
+    }
+    if let Some(s) = run_style {
+        spans.push(Span::styled(run, s));
+    }
+
+    if selected && width > used {
+        spans.push(Span::styled(" ".repeat(width - used), style(Tone::Plain)));
     }
     Line::from(spans)
 }
@@ -511,6 +620,7 @@ pub(super) fn draw(
     state: &mut State,
     chrome: &Chrome,
     preview: Option<Preview>,
+    paint: &Paint,
 ) {
     // The popup itself, which is where the outer border and the labels on it
     // are drawn. `area` below is shadowed by each pane as they are split out.
@@ -521,15 +631,19 @@ pub(super) fn draw(
     // The outer box, and what is left inside it.
     let inner = match look.border.set() {
         Some(set) => {
-            let block = Block::default().borders(Borders::ALL).border_set(set);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(set)
+                .border_style(paint.frame());
             let inner = block.inner(area);
             frame.render_widget(block, area);
             draw_label(
                 frame,
                 area,
-                &chrome.title,
+                &labelled(&chrome.title, &paint.glyph(&chrome.icon)),
                 look.label_position,
                 look.label_offset,
+                paint.style(Tone::Accent).add_modifier(Modifier::BOLD),
             );
             inner
         }
@@ -540,13 +654,17 @@ pub(super) fn draw(
     let panes = panes(inner, chrome, previewing, state.preview_percent);
 
     if let Some(hint) = panes.hint {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!(" {}", chrome.footer.trim()),
-                Style::default().fg(Color::DarkGray),
-            ))),
-            hint,
+        // The keys in bold and what they do in grey, so the eye finds the
+        // key first and reads the verb only when it needs to.
+        let mut words = vec![Span::raw(" ")];
+        words.extend(
+            super::paint::hint_parts(&chrome.footer)
+                .into_iter()
+                .map(|(w, key)| {
+                    Span::styled(w, paint.style(if key { Tone::Strong } else { Tone::Dim }))
+                }),
         );
+        frame.render_widget(Paragraph::new(Line::from(words)), hint);
     }
 
     // Inset by one, so a rule reads as a line under the list rather than as a
@@ -556,7 +674,7 @@ pub(super) fn draw(
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {}", rule.repeat(area.width.saturating_sub(1) as usize)),
-                Style::default().fg(Color::DarkGray),
+                paint.frame(),
             ))),
             area,
         );
@@ -564,6 +682,8 @@ pub(super) fn draw(
 
     // The rows themselves.
     let height = panes.list.height as usize;
+    let list_width = panes.list.width as usize;
+    let highlight = state.highlighting();
     state.offset = scrolled(state.offset, state.selected, height);
     let mut lines: Vec<Line> = state
         .hits
@@ -576,8 +696,12 @@ pub(super) fn draw(
                 &state.rows[hit.row],
                 hit,
                 state.swatch_column,
+                state.icon_width,
                 i == state.selected,
                 &look.marker,
+                paint,
+                list_width,
+                highlight,
             )
         })
         .collect();
@@ -596,14 +720,14 @@ pub(super) fn draw(
     let mut prompt = vec![
         Span::styled(
             format!(" {}", chrome.prompt),
-            Style::default().fg(Color::Cyan),
+            paint.style(Tone::Accent).add_modifier(Modifier::BOLD),
         ),
         Span::raw(state.query.as_str()),
-        Span::styled("\u{2588}", Style::default().fg(Color::DarkGray)),
+        Span::styled("\u{2588}", paint.style(Tone::Dim)),
     ];
     if look.counter {
         let counted = format!("  {}/{}", state.hits.len(), state.rows.len());
-        prompt.push(Span::styled(counted, Style::default().fg(Color::DarkGray)));
+        prompt.push(Span::styled(counted, paint.style(Tone::Dim)));
     }
     frame.render_widget(Paragraph::new(Line::from(prompt)), panes.prompt);
 
@@ -622,7 +746,10 @@ pub(super) fn draw(
             .set()
             .unwrap_or(ratatui::symbols::border::ROUNDED);
         let borders = previewing.map_or(Borders::NONE, |p| look.preview_border.sides(p));
-        let block = Block::default().borders(borders).border_set(set);
+        let block = Block::default()
+            .borders(borders)
+            .border_set(set)
+            .border_style(paint.frame());
         let body = block.inner(area);
         frame.render_widget(block, area);
         draw_label(
@@ -631,6 +758,7 @@ pub(super) fn draw(
             &chrome.preview_title,
             look.preview_label_position,
             look.preview_label_offset,
+            paint.style(Tone::Dim),
         );
         // Clipped at the pane edge rather than reflowed. A preview is either
         // a capture of somebody else's screen, which is already the shape it
@@ -676,6 +804,8 @@ pub(super) fn run_keyed(
     if let Some(index) = start_at {
         state.select_index(index);
     }
+    let paint = Paint::detect();
+    state.apply_glyphs(&paint);
     let mut terminal = ratatui::init();
     // Whatever happens below, the terminal goes back to how it was found. A
     // picker that panics with raw mode still on leaves the pane unusable and
@@ -688,7 +818,7 @@ pub(super) fn run_keyed(
                 terminal.size()?.width,
                 chrome.look.min_list_width,
             );
-            terminal.draw(|frame| draw(frame, &mut state, chrome, preview))?;
+            terminal.draw(|frame| draw(frame, &mut state, chrome, preview, &paint))?;
 
             let Event::Key(key) = event::read()? else {
                 continue;
@@ -764,6 +894,16 @@ mod tests {
             preview_title: "[ Where ]".into(),
             ..Chrome::default()
         }
+    }
+
+    #[test]
+    fn the_opening_query_is_not_highlighted_and_a_typed_one_is() {
+        let items = vec![Item::new("companion: pane zen")];
+        let mut state = State::new(&items, "companion: ", 0, &[]);
+        assert!(!state.highlighting());
+        state.query.push('z');
+        state.refilter();
+        assert!(state.highlighting());
     }
 
     #[test]

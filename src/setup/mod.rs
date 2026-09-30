@@ -237,12 +237,26 @@ pub fn tsv(items: &[Item], states: &[State], keys: &[Option<(String, String)>]) 
 }
 
 /// The preview for a row: what it is for, the lines, and where they go.
+///
+/// The lines that get written are bold, because they are what enter acts on,
+/// and `goes in` is grey beside the file it names. The escapes are the
+/// picker's to draw: this string only ever reaches the preview pane.
 pub fn preview(item: &Item, key: Option<&str>, file: &str) -> String {
-    let goes = "goes in";
+    let snippet: Vec<String> = item
+        .snippet_for(key)
+        .lines()
+        .map(|l| {
+            if l.is_empty() {
+                String::new()
+            } else {
+                format!("\x1b[1m{l}\x1b[0m")
+            }
+        })
+        .collect();
     format!(
-        "{}\n\n{}\n\n{goes} {file}\n",
+        "{}\n\n{}\n\n\x1b[38;5;245mgoes in\x1b[0m {file}\n",
         item.line,
-        item.snippet_for(key)
+        snippet.join("\n")
     )
 }
 
@@ -500,9 +514,22 @@ async fn copy(text: &str) -> Result<(), String> {
 }
 
 /// The chrome the setup picker is drawn with.
+/// The icon and tone of an item's state, on its state cell and its icon.
+fn state_look(state: State) -> (&'static str, crate::picker::Tone) {
+    use crate::picker::Tone;
+    use crate::tmux::icons;
+    match state {
+        State::On => (icons::CHECK, Tone::Ok),
+        State::Open => (icons::OPEN_ITEM, Tone::Plain),
+        State::OffByChoice | State::Skipped => (icons::SKIPPED, Tone::Dim),
+        State::CantTell => (icons::UNKNOWN, Tone::Dim),
+    }
+}
+
 fn chrome(config: &crate::config::Config) -> crate::picker::Chrome {
     crate::picker::Chrome {
         title: "[ Setup ]".into(),
+        icon: crate::tmux::icons::SETUP.into(),
         footer: "enter copies and offers to add   ctrl-x skip   ctrl-e set the key   esc leaves"
             .into(),
         preview_title: "[ What it adds ]".into(),
@@ -548,14 +575,21 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
                     .as_ref()
                     .map(|(t, k)| key_label(t, k))
                     .unwrap_or_default();
+                let (icon, tone) = state_look(states[i]);
+                // A row set aside is set aside as a whole, so all of it
+                // goes grey: that is the one case where the row is the state.
+                let aside = matches!(states[i], State::Skipped | State::OffByChoice);
+                let body = |text: String, t: crate::picker::Tone| {
+                    crate::picker::Cell::new(text, if aside { crate::picker::Tone::Dim } else { t })
+                };
                 crate::picker::Item::with_preview(item.id.clone(), preview(item, key, &file))
-                    .in_columns(vec![
-                        states[i].word().to_string(),
-                        item.id.clone(),
-                        label,
-                        item.line.clone(),
+                    .in_cells(vec![
+                        crate::picker::Cell::new(states[i].word(), tone),
+                        body(item.id.clone(), crate::picker::Tone::Strong),
+                        body(label, crate::picker::Tone::Plain),
+                        body(item.line.clone(), crate::picker::Tone::Plain),
                     ])
-                    .in_colour((states[i] == State::Skipped).then(|| "colour244".to_string()))
+                    .with_icon(icon, tone)
             })
             .collect();
 

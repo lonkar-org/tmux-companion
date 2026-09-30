@@ -192,6 +192,25 @@ pub fn described(row: &KeyRow) -> &str {
     }
 }
 
+/// A note split into where it is filed and what it says:
+/// `companion: pane zen, everything but this one goes` is
+/// (`companion: pane`, `zen, everything but this one goes`).
+///
+/// A note without the prefix, which is every tmux default and every plugin,
+/// is filed nowhere and says all of itself.
+pub fn filed_under(note: &str) -> (&str, &str) {
+    let Some(rest) = note.strip_prefix("companion: ") else {
+        return ("", note);
+    };
+    match rest.split_once(' ') {
+        Some((group, _)) => {
+            let cut = "companion: ".len() + group.len();
+            (&note[..cut], note[cut..].trim_start())
+        }
+        None => (note, ""),
+    }
+}
+
 /// Sort by note and drop the second row for a table and key.
 ///
 /// Sorting by the note rather than the key is what makes the list read as a
@@ -550,6 +569,19 @@ bind-key    -T prefix \"      split-window
 bind-key -r -T prefix ?       run-shell -b keys.zsh
 bind-key    -T prefix M-x     display-popup -E something
 ";
+
+    #[test]
+    fn a_note_is_split_into_its_filing_and_what_it_says() {
+        assert_eq!(
+            filed_under("companion: pane zen, everything but this one goes"),
+            ("companion: pane", "zen, everything but this one goes")
+        );
+        assert_eq!(
+            filed_under("Kill current window"),
+            ("", "Kill current window")
+        );
+        assert_eq!(filed_under("companion: help"), ("companion: help", ""));
+    }
 
     #[test]
     fn a_note_in_the_old_shape_reads_as_companion() {
