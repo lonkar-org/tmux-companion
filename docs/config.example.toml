@@ -1093,7 +1093,11 @@ current_window_background = "color236"
 #   preview = "bottom"
 #   preview_percent = 30
 #   preview_label_position = "top-center"
-#   column_order = [1, 0]
+#   # a keys row is [chord, filed under, what it does]. What it does goes
+#   # last: its column is as wide as the longest one, a bare command included,
+#   # and anything after it is pushed off the edge. A position left out isn't
+#   # drawn, so [1, 0] hides the description.
+#   column_order = [1, 0, 2]
 #
 #   [picker.run]
 #   preview = "none"

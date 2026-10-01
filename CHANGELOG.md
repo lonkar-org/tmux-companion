@@ -36,6 +36,15 @@ entry per phase of the comrades port.
   them.
 - `config check` names `keys.toml` too when it read one.
 
+### Fixed
+
+- The `[picker.keys]` example's `column_order = [1, 0]` hid every binding's
+  description once 0.7.0 split a keys row into three cells. The example is
+  `[1, 0, 2]` now: filing, chord, then the description, last because its
+  column is as wide as the longest one. A config that copied the old line
+  wants the same change.
+
+
 ## 0.7.0 - 2026-09-30
 
 Every popup looks different: each column is styled by what it is rather than
