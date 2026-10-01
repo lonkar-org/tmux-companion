@@ -83,6 +83,175 @@ pub struct Config {
     /// What happens when a file is opened out of copy mode.
     #[serde(default)]
     pub open: Open,
+    /// Keys tmux and the apps in its panes both want.
+    #[serde(default)]
+    pub keys: Keys,
+}
+
+/// Keys tmux and the apps in its panes both want: the registry
+/// `keys discover` and `keys collide` read. See
+/// `docs/dev/design-key-routing.md`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Keys {
+    /// Whether `keys route` wraps tmux's root bindings. Off until somebody
+    /// turns it on: it rewrites their root table.
+    pub route: bool,
+    /// How long a key both tmux and an app want is held, in milliseconds,
+    /// before tmux takes it.
+    pub hold_ms: u64,
+    /// One table per app, by the name tmux shows as its pane's command.
+    pub app: std::collections::BTreeMap<String, KeyApp>,
+    /// One table per key, in tmux's spelling: what it is meant to do in each
+    /// layer, and how it is routed.
+    pub key: std::collections::BTreeMap<String, KeyEntry>,
+}
+
+impl Default for Keys {
+    fn default() -> Self {
+        Self {
+            route: false,
+            // 170 ms: long enough for a deliberate double press, short enough
+            // that a single one doesn't feel late. Measured on the spike.
+            hold_ms: 170,
+            app: std::collections::BTreeMap::new(),
+            key: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// How a key both tmux and an app claim is settled.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyRoute {
+    /// Held: a double press goes to the app, anything else to tmux.
+    #[default]
+    Hold,
+    /// tmux always has it; an app's claim is only reported.
+    Tmux,
+    /// The app has it at once while it claims it, the way vim-tmux-navigator
+    /// shares its keys: the app hands off to tmux itself.
+    App,
+}
+
+impl KeyRoute {
+    /// The word the config and the report use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KeyRoute::Hold => "hold",
+            KeyRoute::Tmux => "tmux",
+            KeyRoute::App => "app",
+        }
+    }
+}
+
+/// One key in the registry.
+///
+/// Every field that isn't one of the three below names a layer, `tmux`,
+/// `nvim`, and says what the key should do there: a word or two found in the
+/// binding's note or description, or failing that its command. A layer that
+/// finds something else, or nothing, is drift in `keys collide`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(default)]
+pub struct KeyEntry {
+    /// A label for the report, `tree`, `next`; nothing acts on it.
+    pub intent: String,
+    /// How the key is settled when both sides claim it.
+    pub route: KeyRoute,
+    /// This key's hold, in place of `[keys] hold_ms`.
+    pub hold_ms: Option<u64>,
+    /// Layer to what the key should do there.
+    #[serde(flatten)]
+    pub expect: std::collections::BTreeMap<String, String>,
+}
+
+/// Where `keys.toml` is looked for: beside the config file, or under
+/// `$XDG_CONFIG_HOME/tmux-companion/` when the config is the old
+/// `~/tmux-companion.toml` or there is none.
+pub fn keys_file_for(config: Option<&std::path::Path>) -> Option<PathBuf> {
+    match config {
+        Some(p) if p.file_name().is_some_and(|n| n != "tmux-companion.toml") => {
+            Some(p.with_file_name("keys.toml"))
+        }
+        _ => std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .map(|d| d.join("tmux-companion").join("keys.toml")),
+    }
+}
+
+/// Merge `keys.toml` into the config's `[keys]`.
+///
+/// Both count, so a setting, an app or a key defined in both is an error
+/// naming both files rather than one quietly winning. `config_text` is only
+/// read for which names its `[keys]` section sets.
+pub fn merge_keys_file(
+    keys: &mut Keys,
+    config_text: &str,
+    config_path: &std::path::Path,
+    keys_text: &str,
+    keys_path: &std::path::Path,
+) -> Result<(), ConfigError> {
+    let error = |message: String| ConfigError {
+        path: keys_path.to_path_buf(),
+        message,
+        did_you_mean: None,
+    };
+    let from_file: Keys = toml::from_str(keys_text).map_err(|e| error(e.to_string()))?;
+    let raw: toml::Table = toml::from_str(keys_text).map_err(|e| error(e.to_string()))?;
+    let in_config: toml::Table = toml::from_str::<toml::Table>(config_text)
+        .ok()
+        .and_then(|t| t.get("keys").and_then(|k| k.as_table()).cloned())
+        .unwrap_or_default();
+
+    let mut twice = Vec::new();
+    for (name, value) in &raw {
+        match (
+            name.as_str(),
+            value.as_table(),
+            in_config.get(name).and_then(|v| v.as_table()),
+        ) {
+            ("app" | "key", Some(here), Some(there)) => {
+                twice.extend(
+                    here.keys()
+                        .filter(|k| there.contains_key(*k))
+                        .map(|k| format!("keys.{name}.{k}")),
+                );
+            }
+            ("app" | "key", _, None) => {}
+            _ if in_config.contains_key(name) => twice.push(format!("keys.{name}")),
+            _ => {}
+        }
+    }
+    if !twice.is_empty() {
+        return Err(error(format!(
+            "{} set here and in {} too; keep each in one file",
+            twice.join(", "),
+            config_path.display()
+        )));
+    }
+
+    if raw.contains_key("route") {
+        keys.route = from_file.route;
+    }
+    if raw.contains_key("hold_ms") {
+        keys.hold_ms = from_file.hold_ms;
+    }
+    keys.app.extend(from_file.app);
+    keys.key.extend(from_file.key);
+    Ok(())
+}
+
+/// What one app claims, beyond what discovery finds.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct KeyApp {
+    /// Keys in tmux's spelling the app wants in every mode, added to what
+    /// discovery reads. For an app with no adapter this is the whole list.
+    pub claims: Vec<String>,
+    /// The discovered modes that count as claims for routing. Unset means
+    /// normal mode for a modal editor (nvim, vim) and every mode otherwise.
+    pub modes: Option<Vec<String>>,
 }
 
 /// Where the editor goes when `open` finds a file.
@@ -1211,6 +1380,7 @@ impl Default for Config {
             bar: Bar::default(),
             picker: PickerLayout::default(),
             open: Open::default(),
+            keys: Keys::default(),
         }
     }
 }
@@ -2338,7 +2508,14 @@ pub fn deprecations(config: &Config) -> Vec<String> {
 /// Parse a config from TOML text, naming the file in any error.
 pub fn parse(text: &str, path: &std::path::Path) -> Result<Config, ConfigError> {
     match toml::from_str::<Config>(text) {
-        Ok(c) => validate(c, path),
+        Ok(mut c) => {
+            if let Some(keys_path) = keys_file_for(Some(path))
+                && let Ok(keys_text) = std::fs::read_to_string(&keys_path)
+            {
+                merge_keys_file(&mut c.keys, text, path, &keys_text, &keys_path)?;
+            }
+            validate(c, path)
+        }
         Err(e) => {
             let message = e.to_string();
             let did_you_mean = unknown_field(&message)
@@ -2386,7 +2563,14 @@ pub fn load() -> Result<(Config, Source), ConfigError> {
             Err(_) => continue,
         }
     }
-    Ok((Config::default(), Source::Defaults))
+    // No config file, but a keys file stands on its own.
+    let mut config = Config::default();
+    if let Some(keys_path) = keys_file_for(None)
+        && let Ok(keys_text) = std::fs::read_to_string(&keys_path)
+    {
+        merge_keys_file(&mut config.keys, "", &keys_path, &keys_text, &keys_path)?;
+    }
+    Ok((config, Source::Defaults))
 }
 
 /// Load from an explicit path, which must exist.
@@ -3189,5 +3373,58 @@ name = "work"
                 assert!(i < j, "XDG path must be tried before the home dotfile");
             }
         }
+    }
+
+    #[test]
+    fn a_keys_file_adds_to_the_config_and_a_name_in_both_is_an_error() {
+        let config_text = "[keys]\nroute = true\n[keys.key.\"M-a\"]\nroute = \"app\"\n";
+        let mut keys: Config = toml::from_str(config_text).unwrap();
+        let keys_text = "hold_ms = 200\n[key.\"M-1\"]\nintent = \"tree\"\nnvim = \"NvimTreeToggle\"\n[app.nano]\nclaims = [\"C-o\"]\n";
+        let (c, k) = (
+            std::path::Path::new("config.toml"),
+            std::path::Path::new("keys.toml"),
+        );
+        merge_keys_file(&mut keys.keys, config_text, c, keys_text, k).unwrap();
+        assert!(keys.keys.route, "the config's own setting stays");
+        assert_eq!(keys.keys.hold_ms, 200);
+        assert_eq!(keys.keys.key["M-a"].route, KeyRoute::App);
+        assert_eq!(keys.keys.key["M-1"].expect["nvim"], "NvimTreeToggle");
+        assert_eq!(keys.keys.key["M-1"].intent, "tree");
+        assert_eq!(keys.keys.app["nano"].claims, ["C-o"]);
+
+        let mut again: Config = toml::from_str(config_text).unwrap();
+        let err = merge_keys_file(
+            &mut again.keys,
+            config_text,
+            c,
+            "route = false\n[key.\"M-a\"]\nroute = \"tmux\"\n",
+            k,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("keys.route"), "{}", err.message);
+        assert!(err.message.contains("keys.key.M-a"), "{}", err.message);
+        assert_eq!(err.path, k);
+    }
+
+    #[test]
+    fn a_keys_file_with_an_unknown_setting_is_an_error_in_that_file() {
+        let mut c = Config::default();
+        let err = merge_keys_file(
+            &mut c.keys,
+            "",
+            std::path::Path::new("c"),
+            "rout = true\n",
+            std::path::Path::new("k"),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("rout"), "{}", err.message);
+    }
+
+    #[test]
+    fn keys_toml_sits_beside_the_config() {
+        assert_eq!(
+            keys_file_for(Some(std::path::Path::new("/c/tmux-companion/config.toml"))),
+            Some(PathBuf::from("/c/tmux-companion/keys.toml"))
+        );
     }
 }

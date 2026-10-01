@@ -3185,3 +3185,573 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
     assert_eq!(rows["inbox"].0, "on");
     assert_eq!(rows["window-names"].0, "on");
 }
+
+// ── The key hold ───────────────────────────────────────────────────────
+//
+// The binding shape from docs/dev/design-key-routing.md, in
+// tests/fixtures/key-hold.conf, driven the way a hand drives it. A key table
+// only runs on typed input, and `send-keys` straight at a server skips its
+// tables, so each test nests two servers: an outer one whose pane runs a
+// client of the inner one. `send-keys` at the outer pane arrives at the inner
+// server as typed bytes. The inner pane records every byte it gets with
+// `dd bs=1`, so the order of the tmux action (it types `[T]`) and a forwarded
+// key is visible.
+//
+// The hold is 400 ms here rather than the 170 ms default, and every gap is a
+// fraction or a multiple of it, so a loaded runner moves a press by tens of
+// milliseconds without moving it across the edge of the window.
+
+/// How long the fixture holds, in milliseconds.
+const HOLD_MS: u64 = 400;
+
+/// Two nested tmux servers and the file the inner pane writes to.
+struct KeyHold {
+    outer: String,
+    inner: String,
+    out: PathBuf,
+    dir: PathBuf,
+    second_client: bool,
+}
+
+static KEY_HOLD_SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl KeyHold {
+    /// Start both servers on the fixture's bindings. With `claim`, the inner
+    /// pane claims those keys for `owner`, the way a publisher would; `dd` is
+    /// what the pane runs.
+    fn start(name: &str, claim: Option<(&str, &str)>) -> Option<Self> {
+        let fixture = include_str!("fixtures/key-hold.conf")
+            .replace("HOLD_SECS", &format!("{:.3}", HOLD_MS as f64 / 1000.0));
+        Self::start_with(name, &fixture, claim)
+    }
+
+    /// Start both servers with the inner one on `conf`.
+    fn start_with(name: &str, conf_text: &str, claim: Option<(&str, &str)>) -> Option<Self> {
+        if std::env::var_os("TC_SKIP_E2E").is_some_and(|v| v == "1") {
+            skipping(name, "TC_SKIP_E2E=1");
+            return None;
+        }
+        let Ok(v) = Command::new("tmux").arg("-V").output() else {
+            skipping(name, "no tmux on this machine");
+            return None;
+        };
+        if !tmux_at_least(&String::from_utf8_lossy(&v.stdout), 3, 4) {
+            skipping(name, "the key hold needs tmux 3.4 for send-keys -K");
+            return None;
+        }
+
+        let serial = KEY_HOLD_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!("{}{serial}", std::process::id());
+        let dir = std::env::temp_dir().join(format!("tce2e-hold-{name}-{id}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)
+            .unwrap_or_else(|e| panic!("cannot create {}: {e}", dir.display()));
+        let conf = dir.join("key-hold.conf");
+        std::fs::write(&conf, conf_text).unwrap();
+        let out = dir.join("pane.bytes");
+        std::fs::write(&out, "").unwrap();
+
+        let h = KeyHold {
+            outer: format!("tchold-o{id}"),
+            inner: format!("tchold-i{id}"),
+            out,
+            dir,
+            second_client: false,
+        };
+        let inner_cmd = format!(
+            "env -u TMUX tmux -L {} -f {} new -s i 'stty raw -echo; exec dd bs=1 of={} 2>/dev/null'",
+            h.inner,
+            conf.display(),
+            h.out.display()
+        );
+        h.outer_tmux(&[
+            "-f",
+            "/dev/null",
+            "new",
+            "-d",
+            "-s",
+            "o",
+            "-x",
+            "100",
+            "-y",
+            "30",
+            &inner_cmd,
+        ]);
+        h.wait_for("the inner pane to run dd", || {
+            h.inner_tmux(&["display", "-p", "-t", "i", "#{pane_current_command}"]) == "dd"
+        });
+        h.wait_for("the inner client to attach", || {
+            !h.inner_tmux(&["list-clients"]).is_empty()
+        });
+        if let Some((owner, keys)) = claim {
+            h.inner_tmux(&["set", "-p", "-t", "i", "@kc_owner", owner]);
+            h.inner_tmux(&["set", "-p", "-t", "i", "@kc_claim", keys]);
+        }
+        Some(h)
+    }
+
+    /// Run the binary under test inside the inner server, the way a line in
+    /// tmux.conf would, with this test's own config and state. Panics with
+    /// what it said when it fails.
+    fn companion(&self, config: &str, args: &str) {
+        let cfg = self.dir.join("config.toml");
+        std::fs::write(&cfg, config).unwrap();
+        std::fs::create_dir_all(self.dir.join("state")).unwrap();
+        let line = format!(
+            "env TMUX_COMPANION_CONFIG={} XDG_STATE_HOME={} {} {args} 2>&1 || echo FAILED",
+            cfg.display(),
+            self.dir.join("state").display(),
+            target_binary().display()
+        );
+        let said = self.inner_tmux(&["run-shell", &line]);
+        assert!(!said.contains("FAILED"), "{args}: {said}");
+    }
+
+    fn outer_tmux(&self, args: &[&str]) -> String {
+        tmux_on(&self.outer, args)
+    }
+
+    fn inner_tmux(&self, args: &[&str]) -> String {
+        tmux_on(&self.inner, args)
+    }
+
+    fn wait_for(&self, what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Type a key on the first client.
+    fn press(&self, key: &str) {
+        self.outer_tmux(&["send-keys", "-t", "o:0", key]);
+    }
+
+    /// Type a key on a second client of the same inner session, attaching it
+    /// the first time.
+    fn press_second(&mut self, key: &str) {
+        if !self.second_client {
+            let attach = format!("env -u TMUX tmux -L {} attach -t i", self.inner);
+            self.outer_tmux(&["new-window", "-t", "o:1", &attach]);
+            self.wait_for("the second client to attach", || {
+                self.inner_tmux(&["list-clients"]).lines().count() == 2
+            });
+            self.second_client = true;
+        }
+        self.outer_tmux(&["send-keys", "-t", "o:1", key]);
+    }
+
+    /// Wait a fraction of the hold: `pause(4)` is a quarter of it.
+    fn pause(&self, divisor: u64) {
+        std::thread::sleep(Duration::from_millis(HOLD_MS / divisor));
+    }
+
+    /// Wait out any hold still open, then everything the pane got.
+    fn settled(&self) -> Vec<u8> {
+        std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
+        std::fs::read(&self.out).unwrap()
+    }
+
+    /// How many times the tmux action ran, for a pane that can't show it.
+    fn actions(&self) -> usize {
+        std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
+        self.inner_tmux(&["show", "-gv", "@log"])
+            .matches("T(")
+            .count()
+    }
+}
+
+impl Drop for KeyHold {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .args(["-L", &self.outer, "kill-server"])
+            .env_remove("TMUX")
+            .output();
+        let _ = Command::new("tmux")
+            .args(["-L", &self.inner, "kill-server"])
+            .env_remove("TMUX")
+            .output();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// One tmux call on a named server, never the developer's: `-L` is always
+/// passed and `$TMUX` is never inherited.
+fn tmux_on(socket: &str, args: &[&str]) -> String {
+    let o = Command::new("tmux")
+        .arg("-L")
+        .arg(socket)
+        .args(args)
+        .env_remove("TMUX")
+        .output()
+        .unwrap_or_else(|e| panic!("tmux {} did not run: {e}", args.join(" ")));
+    String::from_utf8_lossy(&o.stdout).trim_end().to_string()
+}
+
+/// Whether `tmux -V` output is at least `major.minor`. `tmux next-3.6` and
+/// `tmux 3.5a` both count by their numbers.
+fn tmux_at_least(version: &str, major: u32, minor: u32) -> bool {
+    let digits: String = version
+        .split_whitespace()
+        .last()
+        .unwrap_or("")
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = digits.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let (a, b) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    (a, b) >= (major, minor)
+}
+
+#[test]
+fn tmux_at_least_reads_the_versions_tmux_prints() {
+    assert!(tmux_at_least("tmux 3.7c", 3, 4));
+    assert!(tmux_at_least("tmux 3.4", 3, 4));
+    assert!(tmux_at_least("tmux next-3.6", 3, 4));
+    assert!(!tmux_at_least("tmux 3.3a", 3, 4));
+    assert!(!tmux_at_least("tmux 2.9", 3, 4));
+}
+
+const ACTION: &[u8] = b"[T]";
+const ESC_A: &[u8] = b"\x1ba";
+
+#[test]
+fn an_unclaimed_key_runs_the_tmux_action_at_once() {
+    let Some(h) = KeyHold::start("none", None) else {
+        return;
+    };
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        ACTION,
+        "no wait when nobody claims the key"
+    );
+}
+
+#[test]
+fn a_claim_on_another_key_does_not_hold_this_one() {
+    let Some(h) = KeyHold::start("other", Some(("dd", "|M-1|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(std::fs::read(&h.out).unwrap(), ACTION);
+}
+
+#[test]
+fn a_claimed_key_runs_the_tmux_action_when_the_hold_times_out() {
+    let Some(h) = KeyHold::start("timeout", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(std::fs::read(&h.out).unwrap(), b"", "held: nothing yet");
+    assert_eq!(h.settled(), ACTION);
+}
+
+#[test]
+fn a_double_press_inside_the_hold_sends_one_key_to_the_app() {
+    let Some(h) = KeyHold::start("double", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(h.settled(), ESC_A);
+}
+
+#[test]
+fn a_second_press_late_in_the_hold_still_counts_as_a_double() {
+    let Some(h) = KeyHold::start("late", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.pause(3);
+    h.press("M-a");
+    assert_eq!(h.settled(), ESC_A);
+}
+
+#[test]
+fn two_presses_further_apart_than_the_hold_are_two_tmux_actions() {
+    let Some(h) = KeyHold::start("apart", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
+    h.press("M-a");
+    assert_eq!(h.settled(), b"[T][T]");
+}
+
+#[test]
+fn another_key_inside_the_hold_runs_the_action_then_arrives() {
+    for (key, then) in [("x", &b"x"[..]), ("Enter", b"\r"), ("C-c", b"\x03")] {
+        let Some(h) = KeyHold::start("other-key", Some(("dd", "|M-a|"))) else {
+            return;
+        };
+        h.press("M-a");
+        h.press(key);
+        assert_eq!(h.settled(), [ACTION, then].concat(), "M-a then {key}");
+    }
+}
+
+#[test]
+fn another_bound_key_inside_the_hold_runs_its_own_binding_after() {
+    let Some(h) = KeyHold::start("bound-key", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.press("M-s");
+    assert_eq!(h.settled(), b"[T][S]");
+}
+
+#[test]
+fn an_old_timer_does_not_fire_into_a_newer_hold() {
+    let Some(h) = KeyHold::start("generation", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.press("M-a");
+    h.pause(4);
+    // the first timer fires inside this hold and must see it is not its own
+    h.press("M-a");
+    assert_eq!(h.settled(), [ESC_A, ACTION].concat());
+}
+
+#[test]
+fn a_claim_whose_owner_is_not_in_front_is_ignored() {
+    let Some(h) = KeyHold::start("stale", Some(("nvim", "|M-a|"))) else {
+        return;
+    };
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(h.settled(), b"[T][T]", "dd is in front, not nvim: no hold");
+}
+
+#[test]
+fn two_clients_holding_at_once_each_resolve_their_own() {
+    let Some(mut h) = KeyHold::start("clients", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    // attach the second client before the first press, so the attach does not
+    // eat into the first hold
+    h.press_second("");
+    h.press("M-a");
+    h.pause(8);
+    h.press_second("M-a");
+    assert_eq!(h.settled(), b"[T][T]", "both holds timed out");
+    let tables = h.inner_tmux(&["list-clients", "-F", "#{client_key_table}"]);
+    assert!(
+        tables.lines().all(|t| t == "root"),
+        "no client left in a hold table: {tables}"
+    );
+}
+
+#[test]
+fn a_pane_in_copy_mode_never_reaches_the_wrapper() {
+    let Some(h) = KeyHold::start("copy", Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    h.inner_tmux(&["copy-mode", "-t", "i"]);
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(h.actions(), 0, "copy mode does not fall through to root");
+}
+
+// ── keys route, against the bindings it generates ──────────────────────
+
+/// A tmux.conf with one shared key, the way somebody would write it, and one
+/// that stays tmux's alone.
+const ROUTE_CONF: &str = "bind -N 'companion: mark' -n M-a { set -gaF @log 'T ' ; send-keys -l '[T]' }\n\
+                          bind -n M-s { send-keys -l '[S]' }\n";
+
+fn route_config(extra: &str) -> String {
+    format!("[keys]\nroute = true\nhold_ms = {HOLD_MS}\n{extra}")
+}
+
+#[test]
+fn a_routed_key_is_held_for_a_claim_and_runs_at_once_without_one() {
+    let Some(h) = KeyHold::start_with("route-claim", ROUTE_CONF, None) else {
+        return;
+    };
+    h.companion(&route_config(""), "keys route");
+    assert!(
+        h.inner_tmux(&["list-keys", "-a", "-N", "-T", "root"])
+            .contains("companion: mark"),
+        "the wrapper keeps the note the keys picker files it under"
+    );
+
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        ACTION,
+        "nobody claims it: no wait"
+    );
+
+    h.companion(&route_config(""), "keys claim -t i --owner M-a");
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(
+        h.settled(),
+        [ACTION, ESC_A].concat(),
+        "claimed: the double press reaches the app"
+    );
+}
+
+#[test]
+fn a_static_claim_holds_with_no_publisher_until_one_speaks() {
+    let Some(h) = KeyHold::start_with("route-static", ROUTE_CONF, None) else {
+        return;
+    };
+    h.companion(
+        &route_config("[keys.app.dd]\nclaims = [\"M-a\"]\n"),
+        "keys route",
+    );
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(
+        h.settled(),
+        ESC_A,
+        "dd claims M-a in config and is in front"
+    );
+
+    // a publisher that speaks for dd and claims nothing in this mode
+    h.inner_tmux(&["set", "-p", "-t", "i", "@kc_owner", "dd"]);
+    h.press("M-a");
+    h.press("M-a");
+    assert_eq!(
+        h.settled(),
+        [ESC_A, ACTION, ACTION].concat(),
+        "the publisher's silence wins over the static list"
+    );
+}
+
+#[test]
+fn routing_off_puts_every_binding_back() {
+    let Some(h) = KeyHold::start_with("route-off", ROUTE_CONF, None) else {
+        return;
+    };
+    h.companion(&route_config(""), "keys route");
+    assert!(h.inner_tmux(&["list-keys"]).contains("kc-tmux"));
+
+    h.companion("[keys]\nroute = false\n", "keys route");
+    let listing = h.inner_tmux(&["list-keys"]);
+    assert!(
+        !listing.contains("kc-tmux") && !listing.contains("kc-hold-"),
+        "nothing of the router is left: {listing}"
+    );
+    assert!(
+        h.inner_tmux(&["list-keys", "-a", "-N", "-T", "root"])
+            .contains("companion: mark"),
+        "the note came back with it"
+    );
+    h.inner_tmux(&["set", "-p", "-t", "i", "@kc_owner", "dd"]);
+    h.inner_tmux(&["set", "-p", "-t", "i", "@kc_claim", "|M-a|"]);
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        ACTION,
+        "a claim means nothing with routing off"
+    );
+}
+
+#[test]
+fn a_resourced_tmux_conf_is_wrapped_fresh_with_its_new_action() {
+    let Some(h) = KeyHold::start_with("route-resource", ROUTE_CONF, None) else {
+        return;
+    };
+    h.companion(&route_config(""), "keys route");
+    let edited = h.dir.join("edited.conf");
+    std::fs::write(&edited, "bind -n M-a { send-keys -l '[U]' }\n").unwrap();
+    h.inner_tmux(&["source-file", &edited.display().to_string()]);
+    h.companion(&route_config(""), "keys route");
+    h.inner_tmux(&["set", "-p", "-t", "i", "@kc_owner", "dd"]);
+    h.inner_tmux(&["set", "-p", "-t", "i", "@kc_claim", "|M-a|"]);
+    h.press("M-a");
+    assert_eq!(
+        h.settled(),
+        b"[U]",
+        "the edited action, held, not the old one"
+    );
+}
+
+#[test]
+fn a_release_takes_every_claim_back() {
+    let Some(h) = KeyHold::start_with("route-release", ROUTE_CONF, None) else {
+        return;
+    };
+    h.companion(&route_config(""), "keys route");
+    h.companion(&route_config(""), "keys claim -t i --app dd --owner M-a");
+    for opt in ["@kc_claim", "@kc_owner", "@kc_app"] {
+        assert!(
+            !h.inner_tmux(&["show", "-pv", "-t", "i", opt]).is_empty(),
+            "{opt} set"
+        );
+    }
+    assert_eq!(
+        h.inner_tmux(&["show", "-pv", "-t", "i", "@kc_claim"]),
+        "|M-a|"
+    );
+    h.companion(&route_config(""), "keys release -t i");
+    for opt in ["@kc_claim", "@kc_owner", "@kc_app"] {
+        assert!(
+            h.inner_tmux(&["show", "-pv", "-t", "i", opt]).is_empty(),
+            "{opt} gone"
+        );
+    }
+}
+
+#[test]
+fn route_app_hands_a_claimed_key_over_at_once_and_route_tmux_never_does() {
+    let Some(h) = KeyHold::start_with("route-app", ROUTE_CONF, Some(("dd", "|M-a|M-s|"))) else {
+        return;
+    };
+    h.companion(
+        &route_config(
+            "[keys.key.\"M-a\"]\nroute = \"app\"\n[keys.key.\"M-s\"]\nroute = \"tmux\"\n",
+        ),
+        "keys route",
+    );
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        ESC_A,
+        "app: claimed, so straight to the pane"
+    );
+    h.press("M-s");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        [ESC_A, b"[S]"].concat(),
+        "tmux: claimed, and tmux has it anyway"
+    );
+
+    h.inner_tmux(&["set", "-p", "-u", "-t", "i", "@kc_claim"]);
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        [ESC_A, b"[S]", ACTION].concat(),
+        "app, unclaimed: tmux at once"
+    );
+}
+
+#[test]
+fn keys_toml_beside_the_config_is_read_too() {
+    let Some(h) = KeyHold::start_with("route-keys-toml", ROUTE_CONF, Some(("dd", "|M-a|"))) else {
+        return;
+    };
+    std::fs::write(h.dir.join("keys.toml"), "[key.\"M-a\"]\nroute = \"app\"\n").unwrap();
+    h.companion(&route_config(""), "keys route");
+    h.press("M-a");
+    h.pause(4);
+    assert_eq!(
+        std::fs::read(&h.out).unwrap(),
+        ESC_A,
+        "the route came from keys.toml"
+    );
+}

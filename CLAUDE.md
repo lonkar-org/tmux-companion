@@ -78,6 +78,10 @@ description they had.
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
 | `src/journal.rs` | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed |
+| `src/keyroute/mod.rs` | keys that tmux and the apps in its panes both want: what each layer binds, and where they collide |
+| `src/keyroute/collide.rs` | where the layers disagree: a key tmux's root table binds that an app in a pane binds too, and the keys in scope nobody has taken yet |
+| `src/keyroute/discover.rs` | what each layer binds, found without asking any app to do anything new |
+| `src/keyroute/spell.rs` | key names in tmux's spelling, from the spellings the apps in its panes use |
 | `src/keys.rs` | key bindings, parsed out of `tmux list-keys` into rows a picker can search |
 | `src/kill.rs` | stopping what hangs in a pane: TERM, a wait, and KILL if it is still there |
 | `src/lib.rs` | one binary in two modes; the library `tests/` links against |

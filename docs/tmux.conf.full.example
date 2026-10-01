@@ -456,3 +456,12 @@ bind -N "companion: sessions list the idle ones, enter closes it" C-i \
 # With no themes on disk this does nothing and says nothing, which is the state
 # every install is in until `tmux-companion theme init` is run.
 set-hook -g session-created "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'"
+
+# ── Keys an app in a pane wants too ─────────────────────────────────────────
+#
+# Last, after every bind above: it reads the root table as this file left it.
+# With [keys] route off, which is the default, it changes nothing. With it on,
+# a root key that the app in front also wants is held for [keys] hold_ms: a
+# second press in that time goes to the app, anything else lets tmux have it.
+# `tmux-companion keys collide` shows which keys that is. Needs tmux 3.4.
+run-shell "tmux-companion keys route"

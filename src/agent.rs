@@ -65,6 +65,9 @@ pub enum AgentAction {
 /// an `AskUserQuestion` going up and an MCP server asking are `asked`; the
 /// end of a response is `done`. `idle_prompt` is deliberately not `asked`:
 /// it fires a minute after every answer and would turn each `done` orange.
+/// A session starting names the pane `claude` for key routing, since claude's
+/// process is named for its version, and records that version as the claim's
+/// owner; a session ending takes the claim back.
 pub fn hooks(program: &str) -> Option<String> {
     match program.trim() {
         "claude" | "claude-code" => Some(
@@ -90,6 +93,12 @@ pub fn hooks(program: &str) -> Option<String> {
     ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "tmux-companion agent done" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "tmux-companion keys claim --app claude --owner --quiet" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "tmux-companion keys release --quiet" }] }
     ]
   }
 }
@@ -175,6 +184,14 @@ mod tests {
             "idle_prompt would turn every answer into a question"
         );
         assert_eq!(command("Stop", 0), "tmux-companion agent done");
+        assert_eq!(
+            command("SessionStart", 0),
+            "tmux-companion keys claim --app claude --owner --quiet"
+        );
+        assert_eq!(
+            command("SessionEnd", 0),
+            "tmux-companion keys release --quiet"
+        );
         assert!(hooks("codex").is_none());
         assert!(KNOWN.contains(&"claude"));
     }

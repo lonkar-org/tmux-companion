@@ -35,6 +35,7 @@ pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod inbox;
 pub mod journal;
+pub mod keyroute;
 pub mod keys;
 /// Stopping what hangs in a pane: TERM, a wait, then KILL.
 pub mod kill;

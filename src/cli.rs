@@ -204,7 +204,11 @@ pub enum Cmd {
     },
 
     /// Searchable key bindings
+    #[command(args_conflicts_with_subcommands = true)]
     Keys {
+        /// Find out what each layer binds, or where they collide
+        #[command(subcommand)]
+        action: Option<KeysAction>,
         /// Show every binding, including the ones tmux ships
         #[arg(long)]
         all: bool,
@@ -600,6 +604,68 @@ pub enum Cmd {
     },
 }
 
+/// What `keys` can do besides open the bindings picker.
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "kebab-case")]
+pub enum KeysAction {
+    /// Read what tmux and the apps in its panes bind, and save it for collide
+    Discover {
+        /// Only this layer: tmux or nvim
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::keyroute::discover::LAYERS))]
+        layer: Option<String>,
+        /// Print the rows as tab-separated columns as well as saving them
+        #[arg(long)]
+        print: bool,
+    },
+    /// Keys tmux's root table and an app both bind, and the keys nobody does
+    Collide {
+        /// Print the report as JSON instead of opening the picker
+        #[arg(long)]
+        json: bool,
+        /// Discover again first rather than reading the last discovery
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Wrap tmux's root bindings so a key an app claims is held, or with
+    /// [keys] route off, put them back; the last line of tmux.conf runs it
+    Route {
+        /// Print the tmux script and what it would do, and apply nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Say what was wrapped and what was left alone
+        #[arg(long)]
+        print: bool,
+    },
+    /// Tell tmux which keys the app in a pane wants, for a hook or a wrapper
+    Claim {
+        /// Name the app, for one whose process name doesn't say what it is
+        #[arg(long)]
+        app: Option<String>,
+        /// Record the pane's current command as the claim's owner, so the
+        /// claim stops counting once something else is in front
+        #[arg(long)]
+        owner: bool,
+        /// The pane, `%3`; $TMUX_PANE when not given
+        #[arg(short = 't', long)]
+        pane: Option<String>,
+        /// Say nothing and exit 0 when there is no pane or tmux refuses, for
+        /// a hook that runs outside tmux as often as in it
+        #[arg(long)]
+        quiet: bool,
+        /// Keys in tmux's spelling, M-a, C-Tab, F5
+        keys: Vec<String>,
+    },
+    /// Take back every claim on a pane
+    Release {
+        /// The pane, `%3`; $TMUX_PANE when not given
+        #[arg(short = 't', long)]
+        pane: Option<String>,
+        /// Say nothing and exit 0 when there is no pane or tmux refuses
+        #[arg(long)]
+        quiet: bool,
+    },
+}
+
 /// The two probes.
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "kebab-case")]
@@ -907,6 +973,11 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         // read of the file says, which is what somebody debugging one wants.
         Cmd::Config { action } => run_config(action)?,
         Cmd::Keys {
+            action: Some(action),
+            ..
+        } => run_keys_action(action).await?,
+        Cmd::Keys {
+            action: None,
             all,
             query,
             refresh,
@@ -1214,6 +1285,15 @@ fn run_config(action: ConfigAction) -> anyhow::Result<()> {
             match result {
                 Ok((config, source)) => {
                     println!("{source}: ok");
+                    // keys.toml was read and merged by the load above; saying
+                    // so is the only way to know it was found at all.
+                    let config_file = match &source {
+                        config::Source::File(p) => Some(p.as_path()),
+                        _ => None,
+                    };
+                    if let Some(keys) = config::keys_file_for(config_file).filter(|k| k.exists()) {
+                        println!("{}: ok", keys.display());
+                    }
                     for note in config::deprecations(&config) {
                         println!("  {note}");
                     }
@@ -1411,6 +1491,349 @@ async fn run_keys_unused(
         return Ok(());
     };
     run_binding(row, config).await
+}
+
+/// `keys discover` and `keys collide`. Both run here in the client: they
+/// start or connect to editors, which the daemon never does.
+async fn run_keys_action(action: KeysAction) -> anyhow::Result<()> {
+    use crate::keyroute::discover;
+
+    let config = config_or_default();
+    let path = discover::path()
+        .ok_or_else(|| anyhow::anyhow!("no state dir: neither XDG_STATE_HOME nor HOME is set"))?;
+    let fresh = |layer: Option<String>| {
+        let apps = config.keys.app.clone();
+        let path = path.clone();
+        async move {
+            let found = discover::discover(layer.as_deref(), &apps).await;
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&found)?)?;
+            anyhow::Ok(found)
+        }
+    };
+
+    match action {
+        KeysAction::Route { dry_run, print } => {
+            return run_keys_route(&config, &path, dry_run, print).await;
+        }
+        KeysAction::Claim {
+            app,
+            owner,
+            pane,
+            quiet,
+            keys,
+        } => {
+            let done = run_keys_claim(app, owner, pane, keys).await;
+            return if quiet { Ok(()) } else { done };
+        }
+        KeysAction::Release { pane, quiet } => {
+            let done = run_keys_release(pane).await;
+            return if quiet { Ok(()) } else { done };
+        }
+        KeysAction::Discover { layer, print } => {
+            let found = fresh(layer).await?;
+            if print {
+                for r in &found.rows {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        r.layer,
+                        r.mode,
+                        r.key,
+                        r.rung.as_str(),
+                        r.pane,
+                        r.desc,
+                        r.source
+                    );
+                }
+            }
+            for note in &found.notes {
+                eprintln!("{note}");
+            }
+            eprintln!("{} rows written to {}", found.rows.len(), path.display());
+        }
+        KeysAction::Collide { json, refresh } => {
+            let found = match (refresh, discover::load(&path)) {
+                (false, Some(found)) => found,
+                _ => fresh(None).await?,
+            };
+            let report = crate::keyroute::collide::report(&found, &config.keys.key);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                return Ok(());
+            }
+            // The layout comes from the keys picker's config, the words and
+            // the column order do not: a `[picker.keys]` hint says enter runs
+            // a binding, and its `column_order` is written for that picker's
+            // two columns, so it would drop two of these four.
+            let mut chrome = crate::picker::Chrome {
+                icon: crate::tmux::icons::KEY.into(),
+                preview_title: "[ Who wants it ]".into(),
+                ..Default::default()
+            }
+            .configured(&config.picker, crate::config::Picker::Keys);
+            chrome.look.column_order = Vec::new();
+            chrome.title = "[ Key collisions ]".into();
+            chrome.preview_title = "[ Who wants it ]".into();
+            chrome.footer = format!(
+                "{} collisions   {} drift   {} free   esc closes",
+                report.collisions.len(),
+                report.drift.len(),
+                report.free.len()
+            );
+            crate::picker::run(collide_items(&report), "", &chrome)?;
+        }
+    }
+    Ok(())
+}
+
+/// `keys route`: read the live root table and wrap it, rewrap it or put it
+/// back, by one sourced script.
+///
+/// Quiet on success without `--print`, because tmux.conf runs it on every
+/// source and `run-shell` puts whatever it prints in front of you.
+async fn run_keys_route(
+    config: &crate::config::Config,
+    discovered: &std::path::Path,
+    dry_run: bool,
+    print: bool,
+) -> anyhow::Result<()> {
+    use crate::keyroute::route;
+
+    let version = crate::tmux::command().arg("-V").output().await?;
+    let version = route::tmux_version(&String::from_utf8_lossy(&version.stdout));
+    let mut enabled = config.keys.route;
+    if enabled && version.is_none_or(|v| v < route::MIN_TMUX) {
+        eprintln!(
+            "keys route: [keys] route is on but this tmux is older than {}.{}, which send-keys -K needs; nothing is wrapped",
+            route::MIN_TMUX.0,
+            route::MIN_TMUX.1
+        );
+        enabled = false;
+    }
+
+    let listing = crate::tmux::command().arg("list-keys").output().await?;
+    let listing = route::parse_listing(&String::from_utf8_lossy(&listing.stdout));
+    let notes = crate::tmux::command()
+        .args(["list-keys", "-a", "-N", "-T", "root"])
+        .output()
+        .await?;
+    let notes = route::root_notes(&String::from_utf8_lossy(&notes.stdout), &listing);
+    let rows = crate::keyroute::discover::load(discovered)
+        .map(|d| d.rows)
+        .unwrap_or_default();
+    let claims = route::static_claims(&rows, &config.keys.app);
+    let plan = route::plan(
+        &listing,
+        &notes,
+        enabled,
+        config.keys.hold_ms,
+        &claims,
+        &config.keys.key,
+    );
+
+    if dry_run {
+        print!("{}", plan.script);
+    }
+    if dry_run || print {
+        if !plan.wrapped.is_empty() {
+            println!(
+                "wrapped, hold {} ms: {}",
+                config.keys.hold_ms,
+                plan.wrapped.join(" ")
+            );
+        }
+        if !plan.unwrapped.is_empty() {
+            println!("put back: {}", plan.unwrapped.join(" "));
+        }
+        for (key, why) in &plan.skipped {
+            println!("left alone: {key}, {why}");
+        }
+    }
+    if dry_run || plan.script.is_empty() {
+        return Ok(());
+    }
+
+    // Kept, not a temporary file: when a wrapper misbehaves, the script that
+    // made it is the first thing to read.
+    let script = discovered.with_file_name("keys-route.tmux");
+    if let Some(dir) = script.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&script, &plan.script)?;
+    let out = crate::tmux::command()
+        .arg("source-file")
+        .arg(&script)
+        .output()
+        .await?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "tmux refused {}: {}",
+            script.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// The pane a claim is about: the flag, else the pane this runs in.
+fn claim_pane(pane: Option<String>) -> anyhow::Result<String> {
+    pane.or_else(|| std::env::var("TMUX_PANE").ok())
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("no pane: pass -t, or run this inside tmux"))
+}
+
+/// `keys claim`: set the pane options the router reads, spelled and piped the
+/// way its conditions match them, so a hook never formats them by hand.
+async fn run_keys_claim(
+    app: Option<String>,
+    owner: bool,
+    pane: Option<String>,
+    keys: Vec<String>,
+) -> anyhow::Result<()> {
+    let pane = claim_pane(pane)?;
+    if keys.is_empty() && app.is_none() && !owner {
+        anyhow::bail!("nothing to claim: name keys, --app or --owner");
+    }
+    let mut spelled = Vec::new();
+    for key in &keys {
+        if !crate::keyroute::spell::in_scope(key) {
+            anyhow::bail!(
+                "{key} is not a key tmux's root table could hold: Ctrl, Alt or an F key, in tmux's spelling"
+            );
+        }
+        spelled.push(key.as_str());
+    }
+    let mut args: Vec<String> = Vec::new();
+    let mut set = |name: &str, value: &str| {
+        if !args.is_empty() {
+            args.push(";".into());
+        }
+        args.extend(["set-option", "-p", "-t", &pane, name, value].map(String::from));
+    };
+    if !spelled.is_empty() {
+        set("@kc_claim", &format!("|{}|", spelled.join("|")));
+    }
+    if let Some(app) = &app {
+        if !crate::keyroute::route::plain_name(app) {
+            anyhow::bail!("{app}: an app's name is letters, digits, '-', '_' and '.'");
+        }
+        set("@kc_app", app);
+    }
+    if owner {
+        let out = crate::tmux::command()
+            .args([
+                "display-message",
+                "-p",
+                "-t",
+                &pane,
+                "#{pane_current_command}",
+            ])
+            .output()
+            .await?;
+        let command = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if command.is_empty() {
+            anyhow::bail!("tmux has no pane {pane}");
+        }
+        set("@kc_owner", &command);
+    }
+    tmux_or_bail(&args).await
+}
+
+/// `keys release`: unset every claim option on the pane.
+async fn run_keys_release(pane: Option<String>) -> anyhow::Result<()> {
+    let pane = claim_pane(pane)?;
+    let mut args: Vec<String> = Vec::new();
+    for name in ["@kc_claim", "@kc_owner", "@kc_app"] {
+        if !args.is_empty() {
+            args.push(";".into());
+        }
+        args.extend(["set-option", "-p", "-u", "-t", &pane, name].map(String::from));
+    }
+    tmux_or_bail(&args).await
+}
+
+/// One tmux call, its complaint as the error when it fails.
+async fn tmux_or_bail(args: &[String]) -> anyhow::Result<()> {
+    let out = crate::tmux::command().args(args).output().await?;
+    if !out.status.success() {
+        anyhow::bail!("tmux: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(())
+}
+
+/// The picker rows for a collision report: collisions, then free keys, then
+/// what discovery could not read.
+///
+/// The tmux cell is cut short: a binding with no note is described by its
+/// command, and a navigator's `if-shell` is wider than the picker. The whole
+/// command is in the preview.
+fn collide_items(report: &crate::keyroute::collide::Report) -> Vec<crate::picker::Item> {
+    use crate::picker::{Cell, Item};
+    const TMUX_CELL: usize = 40;
+    let short = |text: &str| -> String {
+        if text.chars().count() <= TMUX_CELL {
+            text.to_string()
+        } else {
+            format!(
+                "{}\u{2026}",
+                text.chars().take(TMUX_CELL - 1).collect::<String>()
+            )
+        }
+    };
+    let mut items: Vec<Item> = report
+        .collisions
+        .iter()
+        .map(|c| {
+            let apps: Vec<String> = c
+                .apps
+                .iter()
+                .map(crate::keyroute::collide::claim_line)
+                .collect();
+            let mut preview = format!("{}  route {}\n\ntmux root\n  {}\n", c.key, c.route, c.tmux);
+            for (claim, line) in c.apps.iter().zip(&apps) {
+                preview.push_str(&format!("{line}\n  found {}\n", claim.rung.as_str()));
+            }
+            Item::with_preview(
+                format!("collision {} {} {}", c.key, c.tmux, apps.join(" ")),
+                preview,
+            )
+            .in_cells(vec![
+                Cell::new("collision", crate::picker::Tone::Waiting),
+                Cell::strong(c.key.clone()),
+                Cell::dim(short(&c.tmux)),
+                Cell::plain(apps.join("  |  ")),
+            ])
+        })
+        .collect();
+    items.extend(report.drift.iter().map(|d| {
+        let found = if d.found.is_empty() {
+            "nothing".to_string()
+        } else {
+            d.found.join(", ")
+        };
+        Item::with_preview(
+            format!("drift {} {} {} {found}", d.key, d.layer, d.expected),
+            format!(
+                "{}\n\nthe registry says {} should be\n  {}\nit is\n  {found}\n",
+                d.key, d.layer, d.expected
+            ),
+        )
+        .in_cells(vec![
+            Cell::new("drift", crate::picker::Tone::Failed),
+            Cell::strong(d.key.clone()),
+            Cell::dim(d.layer.clone()),
+            Cell::plain(format!("wants {}, is {found}", d.expected)),
+        ])
+    }));
+    items.extend(report.free.iter().map(|k| {
+        Item::new(format!("free {k}")).in_cells(vec![Cell::dim("free"), Cell::strong(k.clone())])
+    }));
+    items.extend(report.notes.iter().map(|n| {
+        Item::new(format!("note {n}")).in_cells(vec![Cell::dim("note"), Cell::plain(n.clone())])
+    }));
+    items
 }
 
 /// The picker rows for a set of bindings.

@@ -1151,3 +1151,47 @@ editor = "nvim '+call cursor({line},{column})' {path}"
 #   name = "nvim"
 #   command = "nvim '+call cursor({line},{column})' {path}"
 #   pane = true
+
+[keys]
+# Keys tmux and the apps in its panes both want. `keys discover` reads what
+# each layer binds on its own, nvim live over its socket; a table here adds
+# claims for an app nothing can read, matched on the name tmux shows as the
+# pane's command. `keys collide` shows where they meet.
+
+# Whether `keys route`, the last line of tmux.conf, wraps tmux's root bindings
+# so a key the app in front wants is held rather than taken. Off by default:
+# it rewrites your root table. Needs tmux 3.4.
+route = false
+
+# How long a held key waits, in milliseconds. A second press inside it goes to
+# the app; when it runs out, or another key comes, tmux runs its binding.
+hold_ms = 170
+
+# [keys.app.nano]
+# claims = ["C-o", "C-x", "C-w"]
+#
+# Which modes of what discovery found count as claims. Unset is normal mode
+# for nvim and vim, so M-1 mapped in normal mode isn't held in insert mode,
+# and every mode for anything else.
+# [keys.app.nvim]
+# modes = ["n", "x"]
+
+# One table per key, in tmux's spelling. `route` settles a key both sides
+# claim: "hold" (the default) waits hold_ms for a second press, "app" hands it
+# to the app at once while it claims it, the way vim-tmux-navigator shares
+# M-h/j/k/l, and "tmux" never lets the app have it. `hold_ms` overrides the one
+# above. Any other field names a layer and a word or two its binding's note,
+# description or command should contain; `keys collide` lists one that
+# doesn't as drift. `intent` is a label for you.
+#
+# These tables, `[keys.app.*]` and the two settings above can also live in
+# keys.toml beside this file, without the "keys." prefix. Both count, and a
+# name set in both is an error.
+#
+# [keys.key."M-h"]
+# route = "app"
+#
+# [keys.key."M-1"]
+# intent = "tree"
+# tmux = "choose-tree"
+# nvim = "NvimTree"

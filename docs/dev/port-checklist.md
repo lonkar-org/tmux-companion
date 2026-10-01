@@ -145,3 +145,9 @@ pid.
   read from `src/setup/items.toml`, with each item's state detected from
   `list-keys`, `show-hooks`, the config and PATH, and a fenced block in the
   tmux.conf tmux loaded for what gets added.
+- `keys discover` and `keys collide` are new rather than ported: step 1 of
+  `docs/dev/design-key-routing.md`. Discovery asks a running nvim over its
+  own socket, so no app has to write anything for it.
+- `keys route`, `keys claim` and `keys release` are new: step 3 of
+  `docs/dev/design-key-routing.md`, tested against real tmux servers in
+  `tests/e2e.rs` with the same nested-client harness as the hold itself.

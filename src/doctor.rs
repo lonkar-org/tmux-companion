@@ -61,6 +61,7 @@ pub async fn report_in(paint: &crate::picker::Paint) -> String {
     line(&mut out, "daemon log", log_state(), Tone::Plain);
     line(&mut out, "sessions", sessions_state(), Tone::Plain);
     line(&mut out, "autosave", autosave_state(), Tone::Plain);
+    line(&mut out, "key routing", key_routing_state(), Tone::Plain);
     let health = health_state().await;
     let tone = if health == "ok" {
         Tone::Ok
@@ -431,6 +432,50 @@ fn autosave_state() -> String {
     )
 }
 
+/// Whether `keys route` is on, whether this tmux can do it, and how many root
+/// keys carry a wrapper right now.
+fn key_routing_state() -> String {
+    use crate::keyroute::route;
+    let Ok((config, _)) = crate::config::load() else {
+        return "unknown, the config does not parse".to_string();
+    };
+    let wrapped = crate::tmux::command_sync()
+        .arg("list-keys")
+        .output()
+        .map(|o| {
+            route::parse_listing(&String::from_utf8_lossy(&o.stdout))
+                .iter()
+                .filter(|b| b.table == "root" && route::is_wrapper(&b.command))
+                .count()
+        })
+        .unwrap_or(0);
+    let version = crate::tmux::command_sync()
+        .arg("-V")
+        .output()
+        .ok()
+        .and_then(|o| route::tmux_version(&String::from_utf8_lossy(&o.stdout)));
+    key_routing_line(config.keys.route, config.keys.hold_ms, version, wrapped)
+}
+
+/// The words for [`key_routing_state`].
+pub fn key_routing_line(
+    on: bool,
+    hold_ms: u64,
+    version: Option<(u32, u32)>,
+    wrapped: usize,
+) -> String {
+    let (major, minor) = crate::keyroute::route::MIN_TMUX;
+    match (on, wrapped) {
+        (false, 0) => "[keys] route off".to_string(),
+        (false, n) => format!("[keys] route off, but {n} keys are still wrapped; run `keys route` to put them back"),
+        (true, _) if version.is_none_or(|v| v < (major, minor)) => {
+            format!("[keys] route on, but it needs tmux {major}.{minor}; nothing is wrapped")
+        }
+        (true, 0) => "[keys] route on, nothing wrapped yet; is `run-shell \"tmux-companion keys route\"` the last line of tmux.conf?".to_string(),
+        (true, n) => format!("[keys] route on, {n} keys wrapped, hold {hold_ms} ms"),
+    }
+}
+
 /// What the health mark would say, asked of the running daemon.
 ///
 /// The daemon holds the two things a client cannot see: when it started and
@@ -503,6 +548,21 @@ fn platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_routing_says_what_is_on_and_what_is_wrapped() {
+        assert_eq!(
+            key_routing_line(false, 170, Some((3, 7)), 0),
+            "[keys] route off"
+        );
+        assert!(key_routing_line(false, 170, Some((3, 7)), 2).contains("still wrapped"));
+        assert!(key_routing_line(true, 170, Some((3, 3)), 0).contains("needs tmux 3.4"));
+        assert!(key_routing_line(true, 170, Some((3, 7)), 0).contains("last line of tmux.conf"));
+        assert_eq!(
+            key_routing_line(true, 200, Some((3, 7)), 5),
+            "[keys] route on, 5 keys wrapped, hold 200 ms"
+        );
+    }
 
     #[test]
     fn the_health_line_names_ack_only_when_something_failed() {

@@ -622,6 +622,158 @@ line per binding to standard output and the same summary to standard error.
 It does not combine with
 .Fl -all :
 tmux's own bindings are nobody's to prune.
+.It Ic keys discover Op Fl -layer Ar layer , Fl -print
+Reads what tmux's root table binds and what the apps in its panes bind, and
+saves it for
+.Ic keys collide .
+No app is asked to do anything new.
+Each app is read by the best way that answers: a running instance through an
+interface it already has, then its own configuration or a headless start with
+it, then what
+.Ic [keys.app. Ns Ar name Ns Ic ] claims
+declares.
+nvim is asked live over the socket every nvim serves, one call to
+.Fn nvim_get_keymap
+per mode and nothing else, and every nvim pane answers for itself; when none
+does, one
+.Ql nvim --headless
+start with your config answers instead.
+Only keys tmux's root table could stand in front of are kept: Ctrl, Alt and
+the F keys.
+claude is read from its
+.Pa keybindings.json
+over a table of its default keys, fzf from
+.Ev FZF_DEFAULT_OPTS
+over fzf's defaults, vim from
+.Ql :map
+in a silent start with your vimrc, nano from the
+.Ql bind
+lines of your nanorc with no defaults, since nothing installed lists them,
+and zsh from
+.Ql bindkey -L
+in an interactive start; zsh is reported and never routed, since it is the
+command in every idle pane.
+fzf-lua's fzf keys come back from a live nvim when fzf-lua is loaded.
+.Fl -layer
+reads only one of
+.Ql tmux ,
+.Ql nvim ,
+.Ql vim ,
+.Ql claude ,
+.Ql fzf ,
+.Ql nano
+or
+.Ql zsh ,
+and
+.Fl -print
+writes one
+.Ar layer mode key rung pane description source
+line per binding as well.
+What could not be read goes to standard error, one line per layer.
+It runs in the client; the daemon never starts or connects to an editor.
+.It Ic keys collide Op Fl -json , Fl -refresh
+The keys tmux's root table binds that an app binds too, with every app that
+wants each one and the modes it wants it in, followed by the Ctrl, Alt and F
+keys nobody binds, for when a new shared action needs a home.
+Two spellings of one key, such as
+.Ql M-S-a
+and
+.Ql M-A ,
+count as one.
+A key the registry describes, with a field naming a layer and a word or two
+its binding should contain, is listed as drift when that layer binds it to
+something else or to nothing; collisions show the route the registry gives
+them.
+It reads the last
+.Ic keys discover ,
+and discovers first when there is none or with
+.Fl -refresh .
+.Fl -json
+prints the report instead of opening the picker.
+.It Ic keys route Op Fl -dry-run , Fl -print
+Wraps tmux's root bindings so that a key the app in front of a pane wants is
+held rather than taken.
+It belongs on the last line of tmux.conf,
+.Ql run-shell \(dqtmux-companion keys route\(dq ,
+because it reads the root table as tmux.conf left it.
+Each Ctrl, Alt or F binding in root moves, untouched and with its note, into
+the
+.Ql kc-tmux
+table, and root gets a wrapper carrying the same note.
+When nothing claims the key it runs the binding at once.
+When something does, it waits
+.Ic [keys] hold_ms ,
+170 by default: a second press in that time sends one key to the app, and
+when the time runs out, or another key comes first, tmux runs its binding and
+the other key follows.
+A claim is the pane-option contract below, or a static claim: what
+.Ic keys discover
+found for the app in front, in the modes that count, plus
+.Ic [keys.app. Ns Ar name Ns Ic ] claims .
+A key whose name has punctuation in it is left alone.
+.Ic [keys.key. Ns Ar key Ns Ic ] route
+settles one key:
+.Ql hold ,
+the default,
+.Ql app ,
+which hands a claimed key to the app at once and runs tmux's binding at once
+otherwise, the way vim-tmux-navigator shares its keys, or
+.Ql tmux ,
+which leaves the key unwrapped; its
+.Ic hold_ms
+overrides the one in
+.Ic [keys] .
+With
+.Ic [keys] route
+off, the default, it puts every wrapped binding back and does nothing else;
+below tmux 3.4 it says so and wraps nothing.
+Running it again after tmux.conf is sourced wraps the fresh bindings.
+It prints nothing unless something fails;
+.Fl -print
+says what was wrapped and what was left alone, and
+.Fl -dry-run
+prints the tmux script as well and applies nothing.
+.It Ic keys claim Oo Fl -app Ar name Oc Oo Fl -owner Oc Oo Fl t Ar pane Oc Op Ar key ...
+Sets the pane options a wrapper reads, spelled the way it matches them, for a
+hook or a wrapper script.
+The keys go into
+.Ql @kc_claim ;
+.Fl -app
+sets
+.Ql @kc_app ,
+for an app whose process name doesn't say what it is;
+.Fl -owner
+records the pane's current command as
+.Ql @kc_owner ,
+so the claim stops counting once something else is in front.
+The pane is
+.Ev TMUX_PANE
+unless
+.Fl t
+names one.
+.It Ic keys release Op Fl t Ar pane
+Unsets all three.
+.Pp
+The contract, for anybody writing a publisher: code inside an app that keeps
+its claims current as its mode changes.
+.Ql @kc_owner
+is the
+.Ql pane_current_command
+tmux shows for the app;
+.Ql @kc_claim
+is the keys claimed right now in tmux's spelling, each between pipes, with a
+pipe at both ends:
+.Ql |M-a|M-1|C-q| .
+A claim counts only while the pane's command equals
+.Ql @kc_owner ,
+so one left behind by an app that crashed stops counting once the shell is
+back.
+While
+.Ql @kc_owner
+names the app in front, its static claims don't apply: a publisher that
+claims nothing in this mode unsets
+.Ql @kc_claim
+and means it.
 .It Ic cheatsheet Op Fl -print
 The bindings you keep looking up, so you learn them and stop.
 A pick in the
@@ -723,7 +875,16 @@ on a permission prompt or
 .Ql PreToolUse
 on
 .Ql AskUserQuestion
-saying asked, to merge into
+saying asked, and
+.Ql SessionStart
+and
+.Ql SessionEnd
+running
+.Ic keys claim --app claude --owner
+and
+.Ic keys release ,
+so key routing knows a pane whose process is named for claude's version is
+claude; all of it to merge into
 .Pa ~/.claude/settings.json .
 .Ql idle_prompt
 is left out on purpose: it fires a minute after every answer and would turn
@@ -1347,9 +1508,9 @@ The sections are
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
-.Ic [picker] , [journal] , [online]
+.Ic [picker] , [journal] , [online] , [open]
 and
-.Ic [open] .
+.Ic [keys] .
 .Bl -tag -width Ds
 .It Ic config path
 Which file is being read.
@@ -1588,6 +1749,22 @@ run inside the checkout reads it too
 themes, and the two files that apply them
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/
 saved per-project layouts
+.It Pa $XDG_CONFIG_HOME/tmux-companion/keys.toml
+the
+.Ic [keys]
+settings and tables, without the
+.Ql keys.
+prefix, beside the config file; both files count, and a name set in both is
+an error
+.It Pa $XDG_STATE_HOME/tmux-companion/keys-discovered.json
+what
+.Ic keys discover
+found in each layer, read by
+.Ic keys collide
+.It Pa $XDG_STATE_HOME/tmux-companion/keys-route.tmux
+the script the last
+.Ic keys route
+sourced, kept for reading when a wrapper misbehaves
 .It Pa $XDG_STATE_HOME/tmux-companion/keys-usage.tsv
 which bindings the key picker ran, written only with
 .Ic [usage] enabled

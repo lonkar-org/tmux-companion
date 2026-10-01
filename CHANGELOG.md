@@ -3,6 +3,39 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+### Added
+
+- `keys discover` reads what tmux's root table and the apps in its panes bind,
+  with no change to any app: nvim is asked live over the socket it already
+  serves, every nvim pane for itself, and a headless start with your config
+  stands in when none is open. `[keys.app.<name>] claims` adds keys for an
+  app nothing can read. `keys collide` shows the keys tmux and an app both
+  bind, and the Ctrl, Alt and F keys nobody does; `--json` for scripts.
+- `keys route`, as the last line of tmux.conf, holds a root key the app in
+  front of a pane wants: a double press inside `[keys] hold_ms` (170 by
+  default) goes to the app, a single press or any other key lets tmux have
+  it. Off unless `[keys] route = true`, and needs tmux 3.4. A claim comes from
+  the app itself through `@kc_claim`, from what `keys discover` found in the
+  modes `[keys.app.<name>] modes` counts, or from config. `keys claim` and
+  `keys release` set and clear the pane options for a hook or a wrapper, and
+  `doctor` says whether routing is on and how many keys are wrapped.
+- `[keys.key."M-a"]` settles one key: `route = "app"` hands a claimed key to
+  the app at once, the way vim-tmux-navigator shares its keys, `"tmux"` never
+  does, and `hold_ms` overrides the default. A field naming a layer, `nvim =
+  "NvimTree"`, is what that key should do there, and `keys collide` lists a
+  layer that does something else as drift. The `[keys]` tables can live in
+  `keys.toml` beside the config instead; a name set in both is an error.
+- `keys discover` reads claude (`keybindings.json` over its defaults), fzf
+  (`FZF_DEFAULT_OPTS` over its defaults), vim (`:map` in a silent start with
+  your vimrc), nano (nanorc `bind` lines) and zsh (`bindkey -L`), and
+  fzf-lua's binds from a live nvim. zsh is reported, never routed.
+  `agent hooks claude` adds `SessionStart` and `SessionEnd` hooks that name
+  the pane `claude` for routing; merge them into your settings again to get
+  them.
+- `config check` names `keys.toml` too when it read one.
+
 ## 0.7.0 - 2026-09-30
 
 Every popup looks different: each column is styled by what it is rather than

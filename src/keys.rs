@@ -253,7 +253,35 @@ pub async fn collect() -> anyhow::Result<Vec<KeyRow>> {
         let commands = list_keys(&["-T", table]).await;
         all.extend(rows_for_table(table, &notes, &commands));
     }
+    if all
+        .iter()
+        .any(|r| r.table == "root" && crate::keyroute::route::is_wrapper(&r.command))
+    {
+        see_through(&mut all, &list_keys(&[]).await);
+    }
     Ok(sort_and_dedupe(all))
+}
+
+/// Replace each `keys route` wrapper's command with the binding it wraps.
+///
+/// The wrapper keeps the note, so the row already reads right; its command is
+/// the hold, and running that from the picker would hold a key nobody
+/// pressed. The original sits in `kc-tmux`, which only the full listing shows.
+pub fn see_through(rows: &mut [KeyRow], full_listing: &str) {
+    use crate::keyroute::route;
+    let moved: HashMap<String, String> = route::parse_listing(full_listing)
+        .into_iter()
+        .filter(|b| b.table == route::TMUX_TABLE)
+        .map(|b| (b.key, b.command))
+        .collect();
+    for row in rows.iter_mut() {
+        if row.table == "root"
+            && route::is_wrapper(&row.command)
+            && let Some(original) = moved.get(&row.key)
+        {
+            row.command = original.clone();
+        }
+    }
 }
 
 /// One `tmux list-keys` call, empty on failure.
@@ -655,6 +683,23 @@ bind-key    -T prefix M-x     display-popup -E something
                        bind-key -T prefix c new-window\n";
         assert_eq!(parse_commands(listing, "root").len(), 1);
         assert_eq!(parse_commands(listing, "prefix").len(), 1);
+    }
+
+    #[test]
+    fn a_routed_key_shows_the_binding_it_wraps() {
+        let mut rows = vec![KeyRow {
+            table: "root".into(),
+            key: "M-a".into(),
+            shown: "M-a".into(),
+            note: "companion: next window".into(),
+            command: "if-shell -F \"x\" { switch-client -T kc-hold-M-a } { switch-client -T kc-tmux ; send-keys -K M-a }".into(),
+        }];
+        see_through(
+            &mut rows,
+            "bind-key    -T kc-tmux      M-a      next-window\n",
+        );
+        assert_eq!(rows[0].command, "next-window");
+        assert_eq!(rows[0].note, "companion: next window");
     }
 
     #[test]
