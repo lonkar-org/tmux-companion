@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A security problem
+    url: https://github.com/lonkar-org/tmux-companion/security/advisories/new
+    about: Report it privately, not as an issue. SECURITY.md has the details.
