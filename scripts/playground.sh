@@ -7,6 +7,8 @@
 #   scripts/playground.sh build           build only
 #   scripts/playground.sh run             run only, fails if not built
 #   scripts/playground.sh shell           a plain shell in the image, no tour
+#   scripts/playground.sh a11y [on]       the accessibility walkthrough instead
+#                                         of the tour; `on` with the settings
 #   scripts/playground.sh smoke           check the image is what the tour claims
 #   scripts/playground.sh rebuild         build from scratch, no cache
 #   scripts/playground.sh tourpass        drive the tour with keys, hardened and
@@ -81,6 +83,9 @@ case "${1:-default}" in
            run ;;
   shell)   have_image || build
            run zsh ;;
+  a11y)    have_image || build
+           shift
+           run /opt/playground/a11y.sh "$@" ;;
   smoke)   have_image || build
            # The checks run inside a tmux session rather than as the
            # container's own process: `project` opens a session and attaches
@@ -110,6 +115,6 @@ case "${1:-default}" in
            exit "$status" ;;
   default) have_image || build
            run ;;
-  *)       sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  *)       sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
            exit 1 ;;
 esac

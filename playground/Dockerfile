@@ -79,8 +79,8 @@ COPY --from=build /src/target/release/tmux-companion /usr/local/bin/tmux-compani
 COPY docs/tmux-companion.1 /usr/share/man/man1/tmux-companion.1
 COPY docs/tmux.conf.full.example /opt/playground/tmux.conf.full.example
 COPY docs/config.example.toml    /opt/playground/config.example.toml
-COPY --chmod=0755 playground/seed.sh playground/tour.sh playground/entrypoint.sh playground/smoke.sh /opt/playground/
-COPY playground/tmux.playground.conf /opt/playground/
+COPY --chmod=0755 playground/seed.sh playground/tour.sh playground/entrypoint.sh playground/smoke.sh playground/a11y.sh /opt/playground/
+COPY playground/tmux.playground.conf playground/a11y-walkthrough.txt /opt/playground/
 
 # Everything the tour needs is made now, at build time, so the container starts
 # in under a second rather than doing this in front of the person.

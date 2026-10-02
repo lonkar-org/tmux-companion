@@ -221,6 +221,11 @@ man:
 playground:
     ./scripts/playground.sh
 
+# The playground's accessibility walkthrough instead of the tour; MODE=on
+# switches the accessibility settings on.
+playground-a11y MODE="":
+    ./scripts/playground.sh a11y {{MODE}}
+
 # Build the playground image.
 playground-build:
     ./scripts/playground.sh build

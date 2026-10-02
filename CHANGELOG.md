@@ -18,6 +18,10 @@ entry per phase of the comrades port.
   network rate an arrow. `[quiet] daily = ["22:00-08:00"]` turns quiet hours
   on every day. Tab cycles a picker's preview and Delete clears its filter,
   each one key. `new-window --print` lists the directories as text.
+- `just playground-a11y` starts the playground image on an accessibility
+  walkthrough instead of the tour: the shipped example config alone, the task
+  list in a plain-text session a screen reader reads line by line, and `on`
+  for a second round with the accessibility settings switched on.
 - The crate is a library as well as a binary. `daemon::Daemon` asks a
   running daemon for a segment, blocking and with no runtime, and never starts
   or replaces one. `segments::git`, `tmux::format`, `segments::network` and

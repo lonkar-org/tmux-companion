@@ -1,0 +1,60 @@
+tmux-companion accessibility walkthrough
+
+This page is open in less. Arrow keys move, q leaves it for a shell.
+The prefix is Ctrl-b. Other sessions here: orchard-api and sparrow-cli.
+
+For each task, note whether you heard anything, what you heard, whether you
+finished, and how long it took. Gave up is a result.
+
+
+Round one: the defaults
+
+1. Where am I.
+   Read the status bar, the last line of the screen.
+
+2. Switch project.
+   Alt-s opens the project picker. Type orch. Is the selected row read?
+   Press Up and Down. Is each move read? Enter.
+
+3. Find a key.
+   Prefix then ? opens the keys picker. Type jump.
+   Do you hear the binding and what it does? Escape closes it.
+
+4. Jump to a pane.
+   Prefix then g lists every pane. Pick one, Enter.
+
+5. The text-only way.
+   In a shell, run: tmux-companion panes --print
+   Compare it with task 4.
+
+6. Jump.
+   Prefix then Space, type two letters of something on screen, then the
+   letter shown beside it. Expected to fail with a screen reader. Note what
+   you hear, if anything.
+
+
+Round two: the accessibility settings
+
+Leave the container, then start it again from the repo with:
+just playground-a11y on
+
+7. A notification.
+   In orchard-api run sleep 12, then prefix then ) for the next session.
+   When it finishes, the message stays until a key. Is it read?
+   Then prefix then ~ lists the messages. Are the old ones read?
+
+8. Restoring sessions.
+   In orchard-api, run sleep 600. Then, in any shell:
+   tmux-companion sessions save
+   tmux kill-session -t orchard-api
+   tmux-companion sessions resurrect --merge
+   The screen waits rather than counting down. Is the pane's row read?
+   Tab switches it between run and skip, Enter goes, q cancels.
+
+9. Your own pick.
+   Whatever you do most days.
+
+
+Leaving
+
+Prefix then d detaches, and the container ends.

@@ -16,6 +16,8 @@ reuse the cargo layer.
 ```sh
 scripts/playground.sh            # build if needed, then run
 scripts/playground.sh shell      # a shell in the image, no tour
+scripts/playground.sh a11y       # the accessibility walkthrough, no tour
+scripts/playground.sh a11y on    # the same, with the accessibility settings on
 scripts/playground.sh smoke      # check the image is what the tour claims
 scripts/playground.sh tourpass   # drive the tour with keys, hardened and plain
 ```
