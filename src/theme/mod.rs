@@ -130,7 +130,13 @@ pub fn readable_on(index: u8) -> (&'static str, f64) {
 /// that clears the threshold and says nothing. A greyscale or ANSI colour has
 /// no cube siblings, so it walks the greyscale ramp instead.
 pub fn border_for(index: u8, background: (u8, u8, u8)) -> (u8, f64) {
-    if contrast(rgb(index), background) >= BORDER_MIN {
+    lifted(index, background, BORDER_MIN)
+}
+
+/// A colour with this one's hue that clears `min` on `background`: the walk
+/// [`border_for`] does, to any threshold. Text wants [`TEXT_MIN_AA`].
+pub fn lifted(index: u8, background: (u8, u8, u8), min: f64) -> (u8, f64) {
+    if contrast(rgb(index), background) >= min {
         return (index, contrast(rgb(index), background));
     }
     if let Some(parts) = cube_parts(index) {
@@ -147,7 +153,7 @@ pub fn border_for(index: u8, background: (u8, u8, u8)) -> (u8, f64) {
             }
             current = shifted;
             let i = cube_index(current);
-            if contrast(rgb(i), background) >= BORDER_MIN {
+            if contrast(rgb(i), background) >= min {
                 return (i, contrast(rgb(i), background));
             }
         }
@@ -155,7 +161,7 @@ pub fn border_for(index: u8, background: (u8, u8, u8)) -> (u8, f64) {
         return (i, contrast(rgb(i), background));
     }
     for i in index.max(232)..=255 {
-        if contrast(rgb(i), background) >= BORDER_MIN {
+        if contrast(rgb(i), background) >= min {
             return (i, contrast(rgb(i), background));
         }
     }

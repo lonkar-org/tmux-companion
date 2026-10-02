@@ -307,7 +307,8 @@ bind -N "companion: session close this project cleanly" X \
 bind -N "companion: project save this layout for this project" S \
   run-shell 'tmux-companion project save'
 bind -N "companion: project forget this project's saved layout" M-S \
-  run-shell 'tmux-companion project forget'
+  confirm-before -p "forget the saved layout of #{session_name}? (y/n)" \
+  "run-shell 'tmux-companion project forget'"
 
 # ── Prompt marks, which tmux has had since 3.3 and nobody turned on ─────────
 #

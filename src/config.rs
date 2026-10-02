@@ -86,6 +86,21 @@ pub struct Config {
     /// Keys tmux and the apps in its panes both want.
     #[serde(default)]
     pub keys: Keys,
+    /// Quiet hours that come round every day.
+    #[serde(default)]
+    pub quiet: Quiet,
+}
+
+/// Quiet hours on a schedule, beside the timer `tmux-companion quiet` sets.
+///
+/// For anybody who would otherwise have to remember to turn quiet on, which
+/// is the hard part on the days it matters most.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct Quiet {
+    /// Windows of local time, `"22:00-08:00"`, quiet every day. One may cross
+    /// midnight.
+    pub daily: Vec<String>,
 }
 
 /// Keys tmux and the apps in its panes both want: the registry
@@ -642,6 +657,20 @@ pub struct Bar {
     /// The background behind the current window in the window list, which only
     /// the `window` segment draws.
     pub current_window_background: String,
+    /// Draw the bar's segments in colour. False keeps every count, glyph and
+    /// percentage and takes the colours away, for a bar read by somebody who
+    /// cannot tell them apart or would rather not be shown them. `NO_COLOR`
+    /// in the daemon's environment does the same.
+    pub colour: bool,
+}
+
+impl Bar {
+    /// Whether segments are drawn in colour: `colour`, unless `NO_COLOR` is
+    /// set in this process's environment. Read each time, so a daemon started
+    /// before somebody set it follows once it is.
+    pub fn colour_on(&self) -> bool {
+        self.colour && crate::picker::paint::no_color_unset(std::env::var_os("NO_COLOR").as_deref())
+    }
 }
 
 impl Default for Bar {
@@ -649,6 +678,7 @@ impl Default for Bar {
         Self {
             background: crate::tmux::format::BG_BAR.to_string(),
             current_window_background: crate::segments::window::BG_CURRENT_DEFAULT.to_string(),
+            colour: true,
         }
     }
 }
@@ -890,6 +920,10 @@ pub struct Notify {
     /// news. Without this list every `:q` fires a notification about a two-hour
     /// nvim session.
     pub ignore: Vec<String>,
+    /// How long tmux shows a notification or an agent nudge, in milliseconds,
+    /// when `command` is empty. Zero keeps it until a key is pressed, for
+    /// anybody four seconds is not enough time to read it in.
+    pub message_ms: u64,
 }
 
 impl Default for Notify {
@@ -900,6 +934,7 @@ impl Default for Notify {
             threshold_secs: 30,
             only_when_unwatched: true,
             command: Vec::new(),
+            message_ms: 4000,
             ignore: [
                 "nvim", "vim", "vi", "emacs", "nano", "less", "more", "man", "top", "htop", "btop",
                 "watch", "ssh", "tmux", "claude", "codex", "gemini", "lazygit", "tig", "fzf",
@@ -1381,6 +1416,7 @@ impl Default for Config {
             picker: PickerLayout::default(),
             open: Open::default(),
             keys: Keys::default(),
+            quiet: Quiet::default(),
         }
     }
 }
@@ -1511,6 +1547,12 @@ pub struct Sessions {
     /// one. Zero goes ahead without drawing it at all, which is `--yes` made
     /// permanent.
     pub confirm_secs: u64,
+    /// Open the restore summary with no countdown and wait for a key.
+    ///
+    /// For anybody a clock is a barrier to: someone who reads slowly, listens
+    /// through a screen reader, or presses keys slowly. It wins over
+    /// `confirm_secs`, zero included.
+    pub confirm_wait: bool,
 }
 
 impl Default for Sessions {
@@ -1525,6 +1567,7 @@ impl Default for Sessions {
             pane_history_lines: 2000,
             exclude: Vec::new(),
             confirm_secs: 5,
+            confirm_wait: false,
         }
     }
 }
@@ -2241,9 +2284,9 @@ pub struct Network {
     pub upload_colour: String,
     /// The unit after the number: `KiB/s` in `20KiB/s`.
     ///
-    /// Drawn dimmer than the number, so the figure reads first. The default is
-    /// a dark grey, which is a dark-bar choice: on a light bar set this to
-    /// something that is not nearly invisible.
+    /// Empty, the default, draws it in the figure's colour and tells it apart
+    /// by its italics. The dark grey it used to be measured 1.8:1 on the
+    /// upload block, which is text nobody can read.
     pub unit_colour: String,
 }
 
@@ -2253,7 +2296,7 @@ impl Default for Network {
             threshold_bps: 20_480,
             download_colour: "#5cae36".to_string(),
             upload_colour: "#0262a8".to_string(),
-            unit_colour: "colour237".to_string(),
+            unit_colour: String::new(),
         }
     }
 }
@@ -2461,6 +2504,21 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
             path: path.to_path_buf(),
             message: format!(
                 "`[online] probe` is `{probe}`, and it has to be a host and a port, like `1.1.1.1:443`"
+            ),
+            did_you_mean: None,
+        });
+    }
+
+    if let Some(bad) = config
+        .quiet
+        .daily
+        .iter()
+        .find(|w| crate::quiet::parse_window(w).is_none())
+    {
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message: format!(
+                "`[quiet] daily` has `{bad}`, and a window is two 24-hour times, like `22:00-08:00`"
             ),
             did_you_mean: None,
         });

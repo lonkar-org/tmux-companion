@@ -103,7 +103,7 @@ pub async fn net(config: &Config) -> anyhow::Result<String> {
     let span = std::time::Duration::from_secs_f64(elapsed);
     let dl = network::rate(rx - prev.rx, span);
     let ul = network::rate(tx - prev.tx, span);
-    let line = network::format_rates(dl, ul, &config.network, &config.bar.background);
+    let line = network::format_rates(dl, ul, &config.network, &config.bar);
     write_sample(path.as_deref(), rx, tx, now, &line);
     Ok(line)
 }

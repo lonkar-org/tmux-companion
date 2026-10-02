@@ -261,7 +261,10 @@ pub fn due(
 /// Empty means tmux's own `display-message`. A configured one gets
 /// `{program}`, `{at}`, `{waited}` and `{question}` substituted anywhere they
 /// appear, so a desktop notifier can be given a title and a body.
-pub fn nudge_command(e: &Entry, now: u64, configured: &[String]) -> Vec<String> {
+///
+/// `message_ms` is how long tmux shows it, zero until a key is pressed:
+/// `[notify] message_ms`, one setting for every message this daemon puts up.
+pub fn nudge_command(e: &Entry, now: u64, configured: &[String], message_ms: u64) -> Vec<String> {
     let waited = panes::age(now.saturating_sub(e.since));
     let question = e.question_line();
     if configured.is_empty() {
@@ -269,7 +272,7 @@ pub fn nudge_command(e: &Entry, now: u64, configured: &[String]) -> Vec<String> 
             "tmux".to_string(),
             "display-message".to_string(),
             "-d".to_string(),
-            "4000".to_string(),
+            message_ms.to_string(),
             format!(
                 "tmux-companion: {} in {} has waited {waited}",
                 e.program, e.at
@@ -329,6 +332,7 @@ pub fn turns_step(turns: &mut HashMap<String, u64>, seen: &[(String, State)], no
 pub async fn inbox_loop(
     config: crate::config::Agents,
     journal: crate::config::Journal,
+    message_ms: u64,
     state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
 ) {
     let interval = std::time::Duration::from_secs(config.interval_secs.max(1));
@@ -445,7 +449,7 @@ pub async fn inbox_loop(
             }
         };
         for e in to_nudge {
-            let cmd = nudge_command(&e, now, &config.nudge_command);
+            let cmd = nudge_command(&e, now, &config.nudge_command, message_ms);
             if let Some((program, args)) = cmd.split_first() {
                 let _ = tokio::process::Command::new(program)
                     .args(args)
@@ -859,7 +863,7 @@ mod tests {
     #[test]
     fn the_nudge_says_who_where_and_how_long_and_takes_a_configured_shape() {
         let e = quiet(&pane("%1", "claude", 1000, false), "> Continue?");
-        let plain = nudge_command(&e, 1300, &[]);
+        let plain = nudge_command(&e, 1300, &[], 4000);
         assert_eq!(plain[0], "tmux");
         assert!(
             plain[4].contains("claude in api:2.1 has waited 5m"),
@@ -873,8 +877,16 @@ mod tests {
                 "{program} at {at}".to_string(),
                 "{question} ({waited})".to_string(),
             ],
+            4000,
         );
         assert_eq!(custom, ["notify", "claude at api:2.1", "> Continue? (5m)"]);
+    }
+
+    #[test]
+    fn a_nudge_can_stay_until_a_key_is_pressed() {
+        let e = quiet(&pane("%1", "claude", 1000, false), "> Continue?");
+        let cmd = nudge_command(&e, 1300, &[], 0);
+        assert_eq!(cmd[2..4], ["-d", "0"]);
     }
 
     #[test]

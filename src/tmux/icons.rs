@@ -178,6 +178,25 @@ pub const IDLE: &str = "\u{f236}";
 /// Closed (fa-times).
 pub const CLOSED: &str = "\u{f00d}";
 
+/// Battery, empty (fa-battery-empty).
+pub const BATTERY_EMPTY: &str = "\u{f244}";
+/// Battery, a quarter (fa-battery-quarter).
+pub const BATTERY_QUARTER: &str = "\u{f243}";
+/// Battery, half (fa-battery-half).
+pub const BATTERY_HALF: &str = "\u{f242}";
+/// Battery, three quarters (fa-battery-three-quarters).
+pub const BATTERY_THREE_QUARTERS: &str = "\u{f241}";
+/// Battery, full (fa-battery-full).
+pub const BATTERY_FULL: &str = "\u{f240}";
+/// On mains power (fa-plug).
+pub const PLUGGED: &str = "\u{f1e6}";
+
+/// Download, in front of its rate when the bar has no colour to say it
+/// (fa-arrow-down).
+pub const RATE_DOWN: &str = "\u{f063} ";
+/// Upload, the same (fa-arrow-up).
+pub const RATE_UP: &str = "\u{f062} ";
+
 /// Look a glyph up by the name of its constant.
 ///
 /// This is what lets a config file say `STAGED = "*"`: the name in the file is
@@ -248,6 +267,14 @@ pub fn by_name(name: &str) -> Option<&'static str> {
         "RUN" => Some(RUN),
         "IDLE" => Some(IDLE),
         "CLOSED" => Some(CLOSED),
+        "BATTERY_EMPTY" => Some(BATTERY_EMPTY),
+        "BATTERY_QUARTER" => Some(BATTERY_QUARTER),
+        "BATTERY_HALF" => Some(BATTERY_HALF),
+        "BATTERY_THREE_QUARTERS" => Some(BATTERY_THREE_QUARTERS),
+        "BATTERY_FULL" => Some(BATTERY_FULL),
+        "PLUGGED" => Some(PLUGGED),
+        "RATE_DOWN" => Some(RATE_DOWN),
+        "RATE_UP" => Some(RATE_UP),
         _ => None,
     }
 }

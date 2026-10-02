@@ -221,8 +221,8 @@ line = "Can this project forget the layout I saved?"
 command = "project forget"
 key = "M-S"
 table = "prefix"
-fallback = ["M-W"]
-snippet = '''bind -N "companion: project forget this project's saved layout" {key} run-shell 'tmux-companion project forget''''
+fallback = ["V", "M-W"]
+snippet = '''bind -N "companion: project forget this project's saved layout" {key} confirm-before -p "forget the saved layout of #{session_name}? (y/n)" "run-shell 'tmux-companion project forget'"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -233,7 +233,7 @@ line = "Can I save every session right now?"
 command = "sessions save"
 key = "M-s"
 table = "prefix"
-fallback = ["M-v"]
+fallback = ["v", "M-v"]
 snippet = '''bind -N "companion: sessions save every session now" {key} run-shell "tmux-companion sessions save"'''
 goes = "tmux.conf"
 
@@ -383,7 +383,7 @@ line = "Is there a tmux key for that already?"
 command = "keys --all"
 key = "M-/"
 table = "prefix"
-fallback = ["C-_", "M-?"]
+fallback = ["k", "C-_", "M-?"]
 snippet = '''bind -N "companion: help search every key binding, tmux's own too" {key} display-popup -B -E -w 80% -h 60% "tmux-companion keys --all"'''
 goes = "tmux.conf"
 
@@ -407,7 +407,7 @@ line = "Laptop rebooted, where did all my sessions go?"
 command = "sessions resurrect --merge"
 key = "C-r"
 table = "prefix"
-fallback = ["M-r", "C-u"]
+fallback = ["u", "M-r", "C-u"]
 snippet = '''bind -N "companion: sessions bring back the ones that are missing" {key} display-popup -E -w 85% -h 75% "tmux-companion sessions resurrect --merge"'''
 goes = "tmux.conf"
 
@@ -419,7 +419,7 @@ line = "Which sessions haven't I touched in days?"
 command = "sessions idle"
 key = "C-i"
 table = "prefix"
-fallback = ["M-i", "C-j"]
+fallback = ["y", "M-i", "C-j"]
 snippet = '''bind -N "companion: sessions list the idle ones, enter closes it" {key} display-popup -B -E -w 85% -h 65% "tmux-companion sessions idle"'''
 goes = "tmux.conf"
 

@@ -202,13 +202,15 @@ pub fn message(f: &Finished) -> String {
 /// installed. A configured one gets the message as its last argument, and
 /// `{command}`, `{duration}` and `{pane}` are substituted anywhere they appear
 /// so a desktop notifier can be given a title and a body.
-pub fn notify_command(f: &Finished, configured: &[String]) -> Vec<String> {
+///
+/// `message_ms` is how long tmux shows it, zero until a key is pressed.
+pub fn notify_command(f: &Finished, configured: &[String], message_ms: u64) -> Vec<String> {
     if configured.is_empty() {
         return vec![
             "tmux".to_string(),
             "display-message".to_string(),
             "-d".to_string(),
-            "4000".to_string(),
+            message_ms.to_string(),
             format!("tmux-companion: {}", message(f)),
         ];
     }
@@ -255,7 +257,7 @@ pub async fn notify_loop(
             if quiet {
                 continue;
             }
-            let cmd = notify_command(&f, &settings.command);
+            let cmd = notify_command(&f, &settings.command, settings.message_ms);
             let Some((program, args)) = cmd.split_first() else {
                 continue;
             };
@@ -483,7 +485,7 @@ mod tests {
             command: "cargo".into(),
             ran_for: Duration::from_secs(90),
         };
-        let cmd = notify_command(&f, &[]);
+        let cmd = notify_command(&f, &[], 4000);
         assert_eq!(cmd[0], "tmux");
         assert!(cmd.last().unwrap().contains("cargo finished after 1m 30s"));
     }
@@ -501,7 +503,7 @@ mod tests {
             "ran for {duration} in {pane}".to_string(),
         ];
         assert_eq!(
-            notify_command(&f, &configured),
+            notify_command(&f, &configured, 4000),
             vec!["notify-send", "cargo", "ran for 45s in %3"]
         );
     }

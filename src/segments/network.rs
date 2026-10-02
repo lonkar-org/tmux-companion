@@ -11,7 +11,7 @@
 //! ```
 use std::time::{Duration, Instant};
 
-use crate::tmux::icons::{ARROW_LEFT, RATE_GIB, RATE_KIB, RATE_MIB};
+use crate::tmux::icons::{ARROW_LEFT, RATE_DOWN, RATE_GIB, RATE_KIB, RATE_MIB, RATE_UP};
 
 /// The default the config starts from, and what the tests measure against.
 ///
@@ -73,27 +73,62 @@ fn iec_fmt_styled(bytes_per_sec: u64, unit_colour: &str) -> String {
 /// threshold is: the text is drawn in the bar's background colour on top of
 /// the rate block, so a bar that is not `colour233` had this segment writing
 /// in a colour from somebody else's tmux.conf.
-pub fn format_rates(dl: u64, ul: u64, net: &crate::config::Network, bar_bg: &str) -> String {
+///
+/// With the bar's colour off the two blocks would look the same, so each rate
+/// gets an arrow saying which way it goes.
+pub fn format_rates(
+    dl: u64,
+    ul: u64,
+    net: &crate::config::Network,
+    bar: &crate::config::Bar,
+) -> String {
+    let bar_bg = bar.background.as_str();
+    let (down, up) = if bar.colour_on() {
+        ("", "")
+    } else {
+        (RATE_DOWN, RATE_UP)
+    };
     let mut out = String::new();
     if dl >= net.threshold_bps {
         out.push_str(&format!(
-            "#[fg={0}]{1}#[fg={2},bg={0}]{3}",
+            "#[fg={0}]{1}#[fg={2},bg={0}]{4}{3}",
             net.download_colour,
             ARROW_LEFT,
-            bar_bg,
-            iec_fmt_styled(dl, &net.unit_colour)
+            text_on(&net.download_colour, bar_bg),
+            iec_fmt_styled(dl, &unit_on(net, &net.download_colour, bar_bg)),
+            down,
         ));
     }
     if ul >= net.threshold_bps {
         out.push_str(&format!(
-            "#[fg={0}]{1}#[fg={2},bg={0}]{3}",
+            "#[fg={0}]{1}#[fg={2},bg={0}]{4}{3}",
             net.upload_colour,
             ARROW_LEFT,
-            bar_bg,
-            iec_fmt_styled(ul, &net.unit_colour)
+            text_on(&net.upload_colour, bar_bg),
+            iec_fmt_styled(ul, &unit_on(net, &net.upload_colour, bar_bg)),
+            up,
         ));
     }
     out
+}
+
+/// The figure's colour on a rate block: the bar's own background when that
+/// reads on the block, near-white when it doesn't. The upload block's blue
+/// measured 2.96 against the bar's colour233, under the 4.5 WCAG asks of
+/// text, and 6.3 against near-white.
+fn text_on(block: &str, bar_bg: &str) -> String {
+    crate::tmux::format::readable_text_on(block, bar_bg)
+}
+
+/// The unit's colour: `unit_colour` when it is set, otherwise the figure's,
+/// so the unit is told apart by its italics rather than by a colour dim enough
+/// to disappear. colour237 measured 1.8 on the upload block.
+fn unit_on(net: &crate::config::Network, block: &str, bar_bg: &str) -> String {
+    if net.unit_colour.trim().is_empty() {
+        text_on(block, bar_bg)
+    } else {
+        net.unit_colour.clone()
+    }
 }
 
 /// Read cumulative rx/tx bytes from all non-loopback interfaces via sysinfo.
@@ -143,7 +178,7 @@ pub fn advance(
     tx: u64,
     now: Instant,
     net: &crate::config::Network,
-    bar_bg: &str,
+    bar: &crate::config::Bar,
 ) -> String {
     let Some(prev) = *previous else {
         // Nothing to difference against yet; anchor and draw nothing.
@@ -161,7 +196,7 @@ pub fn advance(
     let dl = rate(rx.saturating_sub(prev.rx), elapsed);
     let ul = rate(tx.saturating_sub(prev.tx), elapsed);
     *previous = Some(NetSample { rx, tx, at: now });
-    *last_render = format_rates(dl, ul, net, bar_bg);
+    *last_render = format_rates(dl, ul, net, bar);
     last_render.clone()
 }
 
@@ -176,7 +211,14 @@ mod tests {
     }
 
     /// The bar background the defaults assume.
-    const BAR: &str = "colour233";
+    const BAR_BG: &str = "colour233";
+
+    fn bar() -> crate::config::Bar {
+        crate::config::Bar {
+            background: BAR_BG.into(),
+            ..crate::config::Bar::default()
+        }
+    }
 
     // ── iec_fmt ──────────────────────────────────────────────────────────────
 
@@ -244,18 +286,18 @@ mod tests {
 
     #[test]
     fn format_rates_both_below_threshold_empty() {
-        assert_eq!(format_rates(100, 100, &cfg(), BAR), "");
+        assert_eq!(format_rates(100, 100, &cfg(), &bar()), "");
     }
 
     #[test]
     fn format_rates_exactly_at_threshold_empty() {
         // threshold is >=, so 20479 is below and 20480 shows
-        assert_eq!(format_rates(THRESHOLD_BPS - 1, 0, &cfg(), BAR), "");
+        assert_eq!(format_rates(THRESHOLD_BPS - 1, 0, &cfg(), &bar()), "");
     }
 
     #[test]
     fn format_rates_dl_above_threshold() {
-        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), BAR);
+        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), &bar());
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#5cae36]"), "expected green arrow: {out}");
         assert!(
@@ -267,11 +309,13 @@ mod tests {
 
     #[test]
     fn format_rates_ul_above_threshold() {
-        let out = format_rates(0, THRESHOLD_BPS, &cfg(), BAR);
+        let out = format_rates(0, THRESHOLD_BPS, &cfg(), &bar());
         assert!(out.contains(ARROW_LEFT), "missing arrow: {out}");
         assert!(out.contains("#[fg=#0262a8]"), "expected blue arrow: {out}");
+        // The bar's colour233 reads at 2.96 on this blue, so the figure is
+        // near-white instead.
         assert!(
-            out.contains("#[fg=colour233,bg=#0262a8]"),
+            out.contains("#[fg=colour255,bg=#0262a8]"),
             "expected blue segment: {out}"
         );
         assert!(!out.contains("#[fg=#5cae36"), "should not have dl: {out}");
@@ -279,7 +323,7 @@ mod tests {
 
     #[test]
     fn format_rates_both_above_threshold() {
-        let out = format_rates(THRESHOLD_BPS * 10, THRESHOLD_BPS * 2, &cfg(), BAR);
+        let out = format_rates(THRESHOLD_BPS * 10, THRESHOLD_BPS * 2, &cfg(), &bar());
         assert!(out.contains("#[fg=#5cae36"), "missing dl: {out}");
         assert!(out.contains("#[fg=#0262a8"), "missing ul: {out}");
     }
@@ -288,7 +332,7 @@ mod tests {
     fn format_rates_no_leading_space_in_speed() {
         // Number part must immediately follow the color tag — no numeric padding.
         // Use 40 KiB/s (above 20 KiB/s threshold).
-        let out = format_rates(40 * 1024, 0, &cfg(), BAR);
+        let out = format_rates(40 * 1024, 0, &cfg(), &bar());
         assert!(out.contains("40"), "number present: {out}");
         assert!(!out.contains("   40"), "no left numeric padding: {out}");
     }
@@ -298,7 +342,7 @@ mod tests {
     #[test]
     fn iec_fmt_styled_kib() {
         assert_eq!(
-            iec_fmt_styled(2048, &cfg().unit_colour),
+            iec_fmt_styled(2048, "colour237"),
             format!("2#[fg=colour237,none,italics]{}#[none]", RATE_KIB)
         );
     }
@@ -306,7 +350,7 @@ mod tests {
     #[test]
     fn iec_fmt_styled_mib() {
         assert_eq!(
-            iec_fmt_styled(3 * 1024 * 1024, &cfg().unit_colour),
+            iec_fmt_styled(3 * 1024 * 1024, "colour237"),
             format!("3#[fg=colour237,none,italics]{}#[none]", RATE_MIB)
         );
     }
@@ -314,7 +358,7 @@ mod tests {
     #[test]
     fn iec_fmt_styled_bytes() {
         assert_eq!(
-            iec_fmt_styled(500, &cfg().unit_colour),
+            iec_fmt_styled(500, "colour237"),
             "500#[fg=colour237,none,italics]B/s#[none]"
         );
     }
@@ -328,7 +372,7 @@ mod tests {
             (5 * 1024 * 1024, "5", RATE_MIB),
             (2 * 1024 * 1024 * 1024, "2", RATE_GIB),
         ] {
-            let s = iec_fmt_styled(bps, &cfg().unit_colour);
+            let s = iec_fmt_styled(bps, "colour237");
             assert!(s.starts_with(expected_num), "num for {bps}: {s}");
             assert!(s.contains(expected_unit), "unit for {bps}: {s}");
             assert!(s.contains("#[fg=colour237,none,italics]"), "style tag: {s}");
@@ -338,17 +382,52 @@ mod tests {
 
     #[test]
     fn format_rates_unit_is_styled() {
-        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), BAR);
+        let out = format_rates(THRESHOLD_BPS, 0, &cfg(), &bar());
         assert!(
-            out.contains("#[fg=colour237,none,italics]"),
-            "unit style present: {out}"
+            out.contains("#[fg=colour233,none,italics]"),
+            "unit in the figure's colour, in italics: {out}"
         );
         assert!(out.contains("#[none]"), "unit reset present: {out}");
     }
 
     #[test]
+    fn without_colour_each_rate_says_which_way_it_goes() {
+        let plain = crate::config::Bar {
+            colour: false,
+            ..bar()
+        };
+        let out = format_rates(THRESHOLD_BPS, THRESHOLD_BPS, &cfg(), &plain);
+        let down = out.find(RATE_DOWN).expect("download arrow");
+        let up = out.find(RATE_UP).expect("upload arrow");
+        assert!(down < up, "{out}");
+        assert!(!format_rates(THRESHOLD_BPS, 0, &cfg(), &bar()).contains(RATE_DOWN));
+    }
+
+    #[test]
+    fn a_unit_colour_set_in_the_config_is_used_as_given() {
+        let net = crate::config::Network {
+            unit_colour: "colour240".into(),
+            ..cfg()
+        };
+        let out = format_rates(THRESHOLD_BPS, 0, &net, &bar());
+        assert!(out.contains("#[fg=colour240,none,italics]"), "{out}");
+    }
+
+    #[test]
+    fn every_default_rate_block_carries_text_at_wcag_aa() {
+        use crate::theme::{TEXT_MIN_AA, contrast};
+        use crate::tmux::format::colour_rgb;
+        let net = cfg();
+        for block in [&net.download_colour, &net.upload_colour] {
+            let text = text_on(block, BAR_BG);
+            let ratio = contrast(colour_rgb(&text).unwrap(), colour_rgb(block).unwrap());
+            assert!(ratio >= TEXT_MIN_AA, "{text} on {block}: {ratio:.2}");
+        }
+    }
+
+    #[test]
     fn format_rates_shows_human_readable_speed() {
-        let out = format_rates(2 * 1024 * 1024, 0, &cfg(), BAR); // 2 MiB/s
+        let out = format_rates(2 * 1024 * 1024, 0, &cfg(), &bar()); // 2 MiB/s
         assert!(out.contains(RATE_MIB), "expected MiB glyph in: {out}");
     }
 
@@ -398,7 +477,7 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        let out = advance(&mut prev, &mut last, 1000, 2000, t0, &cfg(), BAR);
+        let out = advance(&mut prev, &mut last, 1000, 2000, t0, &cfg(), &bar());
         assert_eq!(out, "", "nothing to difference against on the first call");
         let anchored = prev.expect("first call must store a sample");
         assert_eq!(anchored.rx, 1000);
@@ -411,7 +490,7 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         // 40 KiB down in one second — above the 20 KiB/s threshold.
         let out = advance(
             &mut prev,
@@ -420,7 +499,7 @@ mod tests {
             0,
             t0 + Duration::from_secs(1),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert!(out.contains(RATE_KIB), "expected a KiB/s rate: {out}");
         assert!(out.contains("40"), "expected 40 KiB/s: {out}");
@@ -433,7 +512,7 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         let out = advance(
             &mut prev,
             &mut last,
@@ -441,7 +520,7 @@ mod tests {
             0,
             t0 + Duration::from_millis(1100),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert!(out.contains("40"), "expected 40 KiB/s, got: {out}");
         assert!(
@@ -455,7 +534,7 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         let first = advance(
             &mut prev,
             &mut last,
@@ -463,7 +542,7 @@ mod tests {
             0,
             t0 + Duration::from_secs(1),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert!(!first.is_empty());
 
@@ -477,7 +556,7 @@ mod tests {
             0,
             t0 + Duration::from_millis(1050),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert_eq!(out, first, "should replay the previous rendering verbatim");
         assert_eq!(
@@ -492,9 +571,9 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         let at = t0 + MIN_ELAPSED + Duration::from_millis(1);
-        let out = advance(&mut prev, &mut last, 100 * 1024, 0, at, &cfg(), BAR);
+        let out = advance(&mut prev, &mut last, 100 * 1024, 0, at, &cfg(), &bar());
         assert!(
             !out.is_empty(),
             "just past the guard it must compute: {out}"
@@ -508,9 +587,9 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         let at = t0 + MIN_ELAPSED;
-        advance(&mut prev, &mut last, 100 * 1024, 0, at, &cfg(), BAR);
+        advance(&mut prev, &mut last, 100 * 1024, 0, at, &cfg(), &bar());
         assert_eq!(prev.expect("anchored").at, at);
     }
 
@@ -521,7 +600,7 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), BAR);
+        advance(&mut prev, &mut last, 0, 0, t0, &cfg(), &bar());
         let quiet = advance(
             &mut prev,
             &mut last,
@@ -529,7 +608,7 @@ mod tests {
             0,
             t0 + Duration::from_secs(1),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert_eq!(quiet, "", "10 B/s is below the threshold");
         let soon = advance(
@@ -539,7 +618,7 @@ mod tests {
             0,
             t0 + Duration::from_millis(1050),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert_eq!(soon, "");
     }
@@ -551,7 +630,15 @@ mod tests {
         let mut prev = None;
         let mut last = String::new();
         let t0 = Instant::now();
-        advance(&mut prev, &mut last, 1_000_000, 1_000_000, t0, &cfg(), BAR);
+        advance(
+            &mut prev,
+            &mut last,
+            1_000_000,
+            1_000_000,
+            t0,
+            &cfg(),
+            &bar(),
+        );
         let out = advance(
             &mut prev,
             &mut last,
@@ -559,7 +646,7 @@ mod tests {
             5,
             t0 + Duration::from_secs(1),
             &cfg(),
-            BAR,
+            &bar(),
         );
         assert_eq!(out, "", "a counter reset must not report a huge rate");
     }

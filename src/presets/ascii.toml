@@ -66,3 +66,16 @@ CLOCK = "."
 RUN = ">"
 IDLE = "zz"
 CLOSED = "x"
+
+# The battery: the percentage beside it always says the level in words, so
+# these only have to be told apart.
+BATTERY_EMPTY = "b0"
+BATTERY_QUARTER = "b1"
+BATTERY_HALF = "b2"
+BATTERY_THREE_QUARTERS = "b3"
+BATTERY_FULL = "b4"
+PLUGGED = "ac"
+
+# In front of a rate when the bar is drawn without colour.
+RATE_DOWN = "dn "
+RATE_UP = "up "

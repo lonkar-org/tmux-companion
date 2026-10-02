@@ -274,7 +274,12 @@ pub enum Cmd {
     /// on the pane's own directory, so pressing the key and then enter is
     /// "another window here" and nothing has to be typed for the common case.
     /// A directory the source has never seen can be typed in full.
-    NewWindow,
+    NewWindow {
+        /// Print the directories as tab-separated columns and exit, opening
+        /// nothing
+        #[arg(long)]
+        print: bool,
+    },
 
     /// Print the shell code that emits the OSC 133 prompt marks
     ///
@@ -1020,7 +1025,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             );
             run_close_project(session, discard, !no_save).await?
         }
-        Cmd::NewWindow => run_new_window().await?,
+        Cmd::NewWindow { print } => run_new_window(print).await?,
         Cmd::ShellInit { shell } => run_shell_init(shell)?,
         Cmd::Clipboard { stdin } => run_clipboard(stdin).await?,
         Cmd::Zen { pane } => run_zen(pane).await?,
@@ -1438,7 +1443,7 @@ async fn run_keys(
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
         icon: crate::tmux::icons::KEY.into(),
-        footer: "enter runs it   ctrl-a shows tmux's own   esc cancels".into(),
+        footer: "enter runs it   ctrl-a clears the filter, tmux's own too   esc cancels".into(),
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
     }
@@ -2554,7 +2559,7 @@ async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
 /// The tmux default for prefix+c opens a window in the pane's directory and
 /// gives you no say in it. This keeps that as the zero-keystroke case and adds
 /// the rest: the frecency list, and any path at all typed in full.
-async fn run_new_window() -> anyhow::Result<()> {
+async fn run_new_window(print: bool) -> anyhow::Result<()> {
     let home = std::env::var("HOME").unwrap_or_default();
 
     // Asking tmux rather than reading the process's own directory: a popup
@@ -2582,6 +2587,20 @@ async fn run_new_window() -> anyhow::Result<()> {
     let paths: Vec<String> = crate::project::source_dirs(&config, &home).await;
 
     let prefill = crate::project::short_path(&pane_dir, &home);
+
+    // The list as text: `here` on the pane's own directory, then the short
+    // path and the full one, for a screen reader or a script, which can then
+    // run `tmux new-window -c` on the one it wants.
+    if print {
+        if !paths.iter().any(|p| p == &pane_dir) {
+            println!("here\t{prefill}\t{pane_dir}");
+        }
+        for p in &paths {
+            let here = if p == &pane_dir { "here" } else { "" };
+            println!("{here}\t{}\t{p}", crate::project::short_path(p, &home));
+        }
+        return Ok(());
+    }
 
     // The pane's own directory goes on the list, not only into the query.
     // Without it, a directory the source has never seen -- which is most of them
@@ -2621,7 +2640,7 @@ async fn run_new_window() -> anyhow::Result<()> {
         title: "[ New window at ]".into(),
         icon: crate::tmux::icons::FOLDER.into(),
         footer:
-            "enter opens a window   ctrl-u clears it   type a path that is not listed   esc cancels"
+            "enter opens a window   ctrl-a clears the filter   type a path that is not listed   esc cancels"
                 .into(),
         preview_title: "[ Directory ]".into(),
         ..Default::default()
@@ -3860,6 +3879,14 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
                     });
                     buttons.push(Span::raw("   "));
                 }
+                // The terminal's cursor on the focused button, which a
+                // screen reader follows where it cannot see a band.
+                let before: usize = BUTTONS[..selected]
+                    .iter()
+                    .map(|c| Span::raw(button_label(*c)).width() + 3)
+                    .sum();
+                let x = rows[2].x + u16::try_from(2 + before).unwrap_or(0);
+                frame.set_cursor_position((x.min(rows[2].right().saturating_sub(1)), rows[2].y));
                 frame.render_widget(Paragraph::new(Line::from(buttons)), rows[2]);
 
                 frame.render_widget(

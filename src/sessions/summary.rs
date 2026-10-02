@@ -125,18 +125,24 @@ pub fn remaining(total: Duration, elapsed: Duration) -> u64 {
 /// Show the screen and answer what to do.
 ///
 /// `countdown` of zero never draws anything and goes ahead with whatever was
-/// already settled, which is `--yes` made permanent.
-pub fn confirm(headline: &str, rows: Vec<Row>, countdown: Duration) -> anyhow::Result<Outcome> {
+/// already settled, which is `--yes` made permanent. `None` draws it with no
+/// clock and waits for a key.
+pub fn confirm(
+    headline: &str,
+    rows: Vec<Row>,
+    countdown: Option<Duration>,
+) -> anyhow::Result<Outcome> {
     use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
-    if countdown.is_zero() || rows.is_empty() {
+    if countdown.is_some_and(|c| c.is_zero()) || rows.is_empty() {
         return Ok(Outcome::Go(approved(&rows)));
     }
+    let countdown = countdown.unwrap_or_default();
 
     let mut rows = rows;
     let mut cursor = 0usize;
     let started = Instant::now();
-    let mut counting = true;
+    let mut counting = !countdown.is_zero();
 
     let paint = crate::picker::Paint::detect();
     let mut terminal = ratatui::init();
@@ -303,6 +309,13 @@ fn draw(
         ),
         chunks[1],
     );
+    // The terminal's cursor on the row tab acts on, below the rule, so a
+    // screen reader reads the pane and its decision rather than nothing.
+    if let Ok(row) = u16::try_from(cursor + 1)
+        && row < chunks[1].height
+    {
+        frame.set_cursor_position((chunks[1].x, chunks[1].y + row));
+    }
 
     let keys = match counting {
         Some(left) => {
@@ -477,13 +490,13 @@ mod tests {
             approved: false,
         }];
         // No terminal is touched, so this is safe to call in a test.
-        let outcome = confirm("x", rows, Duration::ZERO).expect("no screen");
+        let outcome = confirm("x", rows, Some(Duration::ZERO)).expect("no screen");
         assert_eq!(outcome, Outcome::Go(Vec::new()));
     }
 
     #[test]
     fn nothing_to_ask_about_goes_ahead_without_drawing_anything() {
-        let outcome = confirm("x", Vec::new(), Duration::from_secs(5)).expect("no screen");
+        let outcome = confirm("x", Vec::new(), Some(Duration::from_secs(5))).expect("no screen");
         assert_eq!(outcome, Outcome::Go(Vec::new()));
     }
 }

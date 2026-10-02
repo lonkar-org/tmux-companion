@@ -1,12 +1,25 @@
 //! Battery percentage and icon, read through the `battery` crate.
-// Battery icons: 10 levels (empty → full)
+use crate::tmux::icons::{
+    BATTERY_EMPTY, BATTERY_FULL, BATTERY_HALF, BATTERY_QUARTER, BATTERY_THREE_QUARTERS, PLUGGED,
+};
+
+/// Battery icons: 10 levels, empty to full, as constants in `tmux/icons.rs`
+/// so the glyph preset and `[glyphs.icons]` reach them.
 const BATTERY_ICONS: [&str; 10] = [
-    "\u{f244}", "\u{f243}", "\u{f243}", "\u{f242}", "\u{f242}", "\u{f241}", "\u{f241}", "\u{f240}",
-    "\u{f240}", "\u{f240}",
+    BATTERY_EMPTY,
+    BATTERY_QUARTER,
+    BATTERY_QUARTER,
+    BATTERY_HALF,
+    BATTERY_HALF,
+    BATTERY_THREE_QUARTERS,
+    BATTERY_THREE_QUARTERS,
+    BATTERY_FULL,
+    BATTERY_FULL,
+    BATTERY_FULL,
 ];
 
 /// Drawn beside the percentage while the machine is on mains power.
-pub const CHARGING_ICON: &str = "\u{f1e6}";
+pub const CHARGING_ICON: &str = PLUGGED;
 
 // Color thresholds: red ≤10%, orange ≤30%, yellow ≤60%, green >60%
 fn battery_color(pct: u64) -> &'static str {
@@ -19,39 +32,25 @@ fn battery_color(pct: u64) -> &'static str {
 }
 
 /// Pure formatting logic extracted so it can be unit-tested without I/O.
-fn format_battery_output(
-    current: u64,
-    max: u64,
-    is_charging: bool,
-    external: bool,
-    epoch_secs: u64,
-) -> String {
+///
+/// The percentage is always drawn, because the colour and the icon alone say
+/// the level to nobody who can't tell red from green or whose font lacks the
+/// glyph. The icon is the level, not an animation: a bar that moves every
+/// second while charging pulls the eye away from whatever it was on.
+fn format_battery_output(current: u64, max: u64, external: bool) -> String {
     if current == 0 {
         return String::new();
     }
     let max = max.max(1);
-    let pct = (current * 100) / max;
+    let pct = ((current * 100) / max).min(100);
     let color = battery_color(pct);
-
-    let icon_idx = if is_charging || external {
-        (epoch_secs % 10) as usize
-    } else {
-        ((pct * 9) / 100) as usize
-    };
-
-    let icon = BATTERY_ICONS[icon_idx.min(9)];
-    let pct_str = if !external {
-        format!(" {}%", pct)
-    } else {
-        String::new()
-    };
+    let icon = BATTERY_ICONS[((pct * 9) / 100) as usize];
     let plug = if external {
         format!(" {}", CHARGING_ICON)
     } else {
         String::new()
     };
-
-    format!("{}{}{}{}", color, icon, pct_str, plug)
+    format!("{color}{icon} {pct}%{plug}")
 }
 
 /// Whether the battery read failed because the machine has no power-supply
@@ -85,21 +84,9 @@ pub async fn render() -> anyhow::Result<String> {
 
         let soc: f32 = b.state_of_charge().get::<ratio>(); // 0.0..=1.0
         let current = (soc * 100.0) as u64;
-        let is_charging = b.state() == battery::State::Charging;
         let external = matches!(b.state(), battery::State::Charging | battery::State::Full);
 
-        let epoch_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        Ok(format_battery_output(
-            current,
-            100,
-            is_charging,
-            external,
-            epoch_secs,
-        ))
+        Ok(format_battery_output(current, 100, external))
     })
     .await?
 }
@@ -151,40 +138,39 @@ mod tests {
 
     #[test]
     fn zero_capacity_returns_empty() {
-        assert_eq!(format_battery_output(0, 100, false, false, 0), "");
+        assert_eq!(format_battery_output(0, 100, false), "");
     }
 
     #[test]
     fn discharging_shows_percentage() {
-        let out = format_battery_output(80, 100, false, false, 0);
+        let out = format_battery_output(80, 100, false);
         assert!(out.contains("80%"), "expected 80% in: {out}");
         assert!(out.contains("#[fg=#5cae36]"), "expected green: {out}");
         assert!(!out.contains(CHARGING_ICON), "should not show plug: {out}");
     }
 
     #[test]
-    fn external_hides_percentage_shows_plug() {
-        let out = format_battery_output(80, 100, false, true, 0);
-        assert!(!out.contains('%'), "external should not show %: {out}");
-        assert!(out.contains(CHARGING_ICON), "should show plug: {out}");
+    fn on_mains_the_percentage_stays_and_the_plug_is_added() {
+        let out = format_battery_output(80, 100, true);
+        assert!(
+            out.contains("80%"),
+            "the level in words, plugged in too: {out}"
+        );
+        assert!(out.ends_with(CHARGING_ICON), "should show plug: {out}");
     }
 
     #[test]
-    fn charging_icon_cycles_by_epoch() {
-        // Charging animates: epoch_secs % 10 selects the icon index.
-        // At epoch=0 → idx=0, epoch=5 → idx=5.
-        let out0 = format_battery_output(50, 100, true, false, 0);
-        let out5 = format_battery_output(50, 100, true, false, 5);
-        // Both must contain a battery icon (non-empty output) — exact icon may differ.
-        assert!(!out0.is_empty());
-        assert!(!out5.is_empty());
+    fn the_icon_is_the_level_and_does_not_move() {
+        let a = format_battery_output(50, 100, true);
+        let b = format_battery_output(50, 100, true);
+        assert_eq!(a, b);
+        assert!(a.contains(BATTERY_HALF), "{a}");
     }
 
     #[test]
     fn icon_index_matches_percentage() {
-        // At 0% → idx 0 (lowest icon); at 100% → idx 9 (fullest icon).
-        let low = format_battery_output(5, 100, false, false, 0);
-        let full = format_battery_output(100, 100, false, false, 0);
+        let low = format_battery_output(5, 100, false);
+        let full = format_battery_output(100, 100, false);
         assert!(low.contains(BATTERY_ICONS[0]));
         assert!(full.contains(BATTERY_ICONS[9]));
     }
@@ -192,7 +178,7 @@ mod tests {
     #[test]
     fn percentage_calculated_correctly() {
         // 60/80 = 75%
-        let out = format_battery_output(60, 80, false, false, 0);
+        let out = format_battery_output(60, 80, false);
         assert!(out.contains("75%"), "expected 75% in: {out}");
     }
 }

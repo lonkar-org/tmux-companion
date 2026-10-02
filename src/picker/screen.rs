@@ -445,6 +445,26 @@ pub(super) fn bottom_aligned(area: Rect, rows: usize) -> Rect {
     }
 }
 
+/// The row of the list the selected hit is drawn on, counted from the top of
+/// the rows actually drawn, or none when it is not among them.
+///
+/// `shown` is how many rows were drawn starting at `offset`, and `from_bottom`
+/// says they were drawn upwards from the query, so the first is the last line.
+pub(super) fn cursor_row(
+    selected: usize,
+    offset: usize,
+    shown: usize,
+    from_bottom: bool,
+) -> Option<u16> {
+    let index = selected.checked_sub(offset).filter(|&i| i < shown)?;
+    let row = if from_bottom {
+        shown - 1 - index
+    } else {
+        index
+    };
+    u16::try_from(row).ok()
+}
+
 /// Which hits are on screen, given where the cursor is and how many rows fit.
 ///
 /// Returns the new scroll offset. The cursor stays put until it reaches an
@@ -706,6 +726,7 @@ pub(super) fn draw(
         })
         .collect();
     let mut rows_area = panes.list;
+    let shown = lines.len();
     if look.list_from == Edge::Bottom {
         // The first row nearest the query, with the rest growing away from
         // it. A short list has to be pushed down to the query rather than
@@ -715,6 +736,13 @@ pub(super) fn draw(
         rows_area = bottom_aligned(rows_area, lines.len());
     }
     frame.render_widget(Paragraph::new(lines), rows_area);
+    let on_row = cursor_row(
+        state.selected,
+        state.offset,
+        shown,
+        look.list_from == Edge::Bottom,
+    )
+    .map(|y| (rows_area.x, rows_area.y + y));
 
     // The query, and the counter beside it when it is wanted.
     let mut prompt = vec![
@@ -729,7 +757,23 @@ pub(super) fn draw(
         let counted = format!("  {}/{}", state.hits.len(), state.rows.len());
         prompt.push(Span::styled(counted, paint.style(Tone::Dim)));
     }
+    let typed = Line::from(prompt[..2].to_vec()).width();
     frame.render_widget(Paragraph::new(Line::from(prompt)), panes.prompt);
+
+    // The terminal's own cursor goes on the selected row, or at the end of
+    // the query when nothing is listed. A screen reader and a braille display
+    // follow the cursor and nothing else, so a selection drawn only as a band
+    // of colour is one they cannot find, and the row they do read is
+    // wherever ratatui last left it.
+    let at_query = (
+        panes
+            .prompt
+            .x
+            .saturating_add(u16::try_from(typed).unwrap_or(u16::MAX))
+            .min(panes.prompt.right().saturating_sub(1)),
+        panes.prompt.y,
+    );
+    frame.set_cursor_position(on_row.unwrap_or(at_query));
 
     // The preview, in its own box.
     if let Some(area) = panes.preview
@@ -855,7 +899,10 @@ pub(super) fn run_keyed(
                 KeyCode::Char('j') if ctrl => {
                     state.preview_scroll = state.preview_scroll.saturating_add(1);
                 }
+                // Tab does the same with one key, for anybody a chord is
+                // two keys too many.
                 KeyCode::Char('p') if ctrl => state.cycle_preview(),
+                KeyCode::Tab => state.cycle_preview(),
                 KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
                     if let Some(row) = state.current() {
                         return Ok(Ended::Key(c, row.index));
@@ -864,7 +911,13 @@ pub(super) fn run_keyed(
                 // ctrl-a and ctrl-u both clear. They are one key in most
                 // people's hands and two in fzf's, and a picker is not the
                 // place to be strict about which.
+                // Delete as well, the one key on a full keyboard that says
+                // "take this away" without a modifier.
                 KeyCode::Char('a') | KeyCode::Char('u') if ctrl => {
+                    state.query.clear();
+                    state.refilter();
+                }
+                KeyCode::Delete => {
                     state.query.clear();
                     state.refilter();
                 }
@@ -888,6 +941,25 @@ pub(super) fn run_keyed(
 mod tests {
     use super::*;
     use crate::picker::style::Look;
+
+    #[test]
+    fn the_cursor_sits_on_the_selected_row_counted_from_the_top() {
+        assert_eq!(cursor_row(5, 3, 10, false), Some(2));
+        assert_eq!(cursor_row(0, 0, 1, false), Some(0));
+    }
+
+    #[test]
+    fn a_list_drawn_from_the_bottom_puts_the_first_hit_on_the_last_line() {
+        assert_eq!(cursor_row(0, 0, 4, true), Some(3));
+        assert_eq!(cursor_row(3, 0, 4, true), Some(0));
+    }
+
+    #[test]
+    fn no_row_on_screen_means_no_cursor_row() {
+        assert_eq!(cursor_row(0, 0, 0, false), None);
+        assert_eq!(cursor_row(2, 3, 5, false), None);
+        assert_eq!(cursor_row(9, 3, 5, false), None);
+    }
 
     fn chrome() -> Chrome {
         Chrome {

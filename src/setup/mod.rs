@@ -388,7 +388,10 @@ pub const SKIP_KEY: char = 'x';
 pub const KEY_KEY: char = 'e';
 
 /// Ask a yes-or-no question on the terminal; anything but yes is no.
-fn confirm(question: &str) -> bool {
+///
+/// A line, not a single key, so a stray or doubled press cannot answer it and
+/// a screen reader reads the question before anything happens.
+pub(crate) fn confirm(question: &str) -> bool {
     print!("{question} [y/N] ");
     let _ = std::io::stdout().flush();
     let mut line = String::new();
@@ -530,7 +533,7 @@ fn chrome(config: &crate::config::Config) -> crate::picker::Chrome {
     crate::picker::Chrome {
         title: "[ Setup ]".into(),
         icon: crate::tmux::icons::SETUP.into(),
-        footer: "enter copies and offers to add   ctrl-x skip   ctrl-e set the key   esc leaves"
+        footer: "enter copies and offers to add   ctrl-x skip   ctrl-e set the key   esc closes"
             .into(),
         preview_title: "[ What it adds ]".into(),
         ..crate::picker::Chrome::default()

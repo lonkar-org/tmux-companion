@@ -73,6 +73,7 @@ one is explained on this page:
 | `[project]`, `[[project.override]]`                         | the directory source, the visit command, which layout             | [Where the directory list comes from](#where-the-directory-list-comes-from)        |
 | `[[layout]]`, `[[layout.window]]`, `[[layout.window.pane]]` | the windows a new project session starts with                     | [What a new project session starts with](#what-a-new-project-session-starts-with)  |
 | `[notify]`                                                  | announcing a long command that finished out of sight              | [Saying a long command finished](#saying-a-long-command-finished)                  |
+| `[quiet]`                                                   | quiet hours every day, at the same times                          | [Quiet hours every day](#quiet-hours-every-day)                                    |
 | `[journal]`                                                 | what ran long, what the agents asked, what opened and closed      | [The journal](#the-journal)                                                        |
 | `[online]`                                                  | asking whether the network is there, for the health mark          | [Saying the network is gone](#saying-the-network-is-gone)                          |
 | `[agents]`                                                  | which programs are coding agents, and when one counts as waiting  | [Which programs are agents](#which-programs-are-agents)                            |
@@ -128,7 +129,7 @@ upgrade drops nothing.
 threshold_bps = 20480
 download_colour = "#5cae36"
 upload_colour = "#0262a8"
-unit_colour = "colour237"
+unit_colour = ""
 
 [battery]
 ttl_secs = 30.0
@@ -139,10 +140,10 @@ nothing, since a bar that reacts to every background poll is noise. For a
 while this setting was read from the config and then ignored, because the
 segment used a constant of the same value, so changing it did nothing at all;
 it's honoured now. The two colours are the blocks each rate is drawn on, with
-the number written in the bar's own background colour on top, and
-`unit_colour` is the `KiB/s` after it, drawn dimmer so the figure reads first.
-The default there is a dark grey chosen for a dark bar, and on a light one it's
-very nearly invisible.
+the number written on top in the bar's own background colour, or in near-white
+on a block that colour doesn't reach 4.5:1 on, which is the upload block's
+blue. `unit_colour` is the `KiB/s` after it; empty, the default, draws it in
+the number's colour and tells it apart by its italics.
 
 `ttl_secs` is how long a battery reading stays fresh. Reading it is expensive
 and the number doesn't move fast enough to matter.
@@ -389,6 +390,11 @@ command = ["notify-send", "{command}", "ran for {duration}"]
 `{command}`, `{duration}`, `{pane}` and `{message}` are substituted in every
 argument.
 
+`message_ms`, 4000 by default, is how long tmux shows the message when
+`command` is empty, and the agents' nudges use it too. Zero keeps it up until a
+key is pressed, for anybody four seconds isn't long enough to read it in, and
+tmux's own `prefix ~` lists the messages that already went.
+
 The `ignore` list is doing real work. An editor, a pager or an agent runs for
 hours, and without the list every `:q` fires a notification about a two-hour
 nvim session. The default covers the editors, pagers and agents; add whatever
@@ -400,6 +406,22 @@ long any of it had already been going.
 
 The plugin this comes from is
 [rickstaa/tmux-notify](https://github.com/rickstaa/tmux-notify).
+
+## Quiet hours every day
+
+```toml
+[quiet]
+daily = ["22:00-08:00", "13:00-14:00"]
+```
+
+`tmux-companion quiet 2h` turns quiet on now, for a while. `daily` turns it on
+at the same times every day, so nobody has to remember to, which is the hard
+part on the days it matters most. Inside a window `[notify]` announces nothing,
+the inbox nudges nobody, the `agents` segment leaves the bar and the health
+mark says `quiet`. The times are local and 24-hour, a window may cross
+midnight, and a time that isn't one is refused when the config is read. With
+both a timer and a window running, quiet lasts until the later of the two
+ends.
 
 ## The journal
 
@@ -883,7 +905,8 @@ session isn't saved and doesn't come back, since stopping the server takes
 every session with it either way, and the command says so before it acts.
 `confirm_secs`, 5 by default, is how long the restore summary counts down
 before going ahead; it only opens when the restore doesn't know something,
-any key stops the clock, and zero is `--yes` made permanent.
+any key stops the clock, and zero is `--yes` made permanent. `confirm_wait =
+true` opens it with no clock and waits for a key, whatever `confirm_secs` says.
 
 `[autosave]` is the older, narrower version of this and is deprecated: it
 shelled out to tmux-resurrect's save script on a timer and kept one file,
@@ -1020,6 +1043,12 @@ own background showing through, which is what a transparent bar wants.
 `tmux-companion doctor` reads the live `status-style` and says when the two
 have drifted apart. `current_window_background` sits behind the current window
 in the window list, and only the `window` segment draws it.
+
+`colour = false` takes the colours off every segment and keeps everything else:
+the counts, the glyphs, the percentages, bold and italics. `NO_COLOR` in the
+daemon's environment does the same. Each rate gets an arrow, since the two
+blocks are told apart by colour otherwise. The one thing still said by colour
+alone is a branch with no upstream, which without it looks like a clean one.
 
 ## How the pickers are drawn
 

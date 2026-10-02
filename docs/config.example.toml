@@ -172,10 +172,10 @@ threshold_bps = 20480
 download_colour = "#5cae36"
 upload_colour = "#0262a8"
 
-# The unit after the number: `KiB/s` in `20KiB/s`, drawn dimmer so the figure
-# reads first. The default is a dark grey, which is a choice for a dark bar --
-# on a light one this is very nearly invisible, so set it to something else.
-unit_colour = "colour237"
+# The unit after the number: `KiB/s` in `20KiB/s`. Empty draws it in the
+# figure's colour, in italics. The figure itself is written in the bar's
+# background colour, or in near-white on a block that colour doesn't read on.
+unit_colour = ""
 
 [battery]
 # How long a battery reading stays fresh, in seconds. Reading it is expensive
@@ -484,6 +484,11 @@ only_when_unwatched = true
 #
 # {command}, {duration}, {pane} and {message} are substituted in every argument.
 command = []
+# How long tmux shows the message, in milliseconds, when command is empty. The
+# agents' nudges use it too. 0 keeps it up until a key is pressed, for anybody
+# four seconds isn't long enough to read it in; prefix ~ shows the ones already
+# gone.
+message_ms = 4000
 # Commands never worth announcing. An editor, a pager or an agent runs for
 # hours and finishing one is not news; without this list every `:q` fires a
 # notification about a two-hour nvim session.
@@ -492,6 +497,15 @@ ignore = [
   "top", "htop", "btop", "watch", "ssh", "tmux",
   "claude", "codex", "gemini", "lazygit", "tig", "fzf",
 ]
+
+[quiet]
+# Quiet hours that come round every day, beside the timer `tmux-companion
+# quiet 2h` sets: notifications, nudges and the agents count all hold off
+# inside them. Local 24-hour times, and a window may cross midnight. For
+# anybody who would otherwise have to remember to turn quiet on.
+#
+#   daily = ["22:00-08:00", "13:00-14:00"]
+daily = []
 
 [journal]
 # What happened in each project, written down as it happens: a command that
@@ -756,6 +770,10 @@ exclude = []
 # made permanent: the panes it would have asked about still open, in the right
 # directory, at a prompt.
 confirm_secs = 5
+# No countdown at all: the summary opens and waits for a key. For anyone a
+# clock is in the way of: reading slowly, listening through a screen reader,
+# pressing keys slowly. Wins over confirm_secs, zero included.
+confirm_wait = false
 
 # What a restore is allowed to run in a pane it is rebuilding.
 #
@@ -913,6 +931,11 @@ background = "color233"
 # The background behind the current window in the window list. Only the
 # `window` segment draws this, and only when that segment is turned on.
 current_window_background = "color236"
+# Draw the segments in colour. false keeps every count, glyph and percentage
+# and takes the colours away, which is also what NO_COLOR in the daemon's
+# environment does. The one thing colour alone says is that a branch has no
+# upstream yet; without colour that branch looks clean.
+colour = true
 
 [picker]
 # Everything under here is the answer for every picker at once, and every one
@@ -924,6 +947,13 @@ current_window_background = "color236"
 # How every picker is laid out: the key search, the cheat sheet, the project
 # list, the run history and the theme list all take their shape from here, so
 # one setting changes all of them rather than five drifting apart.
+#
+# A calmer screen, for anybody a lot at once is too much: the list and the
+# line saying what the keys do, and nothing else.
+#
+#   preview = "none"
+#   counter = false
+#   rules = false
 #
 # Where the preview pane goes: right, left, bottom, top, or none for no
 # preview at all. A picker whose rows have nothing to preview gets the whole

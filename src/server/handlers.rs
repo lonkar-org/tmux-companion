@@ -225,7 +225,7 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                     Some(secs) => st.quiet_until = Some(now.saturating_add(secs)),
                     None => {}
                 }
-                Ok(crate::quiet::status(st.quiet_until, now))
+                Ok(crate::quiet::status(st.quiet_ends(now), now))
             }
             Err(e) => Err(e),
         },
@@ -279,8 +279,18 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // `GlyphMap` for why the substitution lives at the edge rather than
         // being threaded through every call site.
         Ok(output) => {
-            let glyphs = state.lock().await.glyphs.clone();
-            Response::ok(glyphs.apply(&output).into_owned())
+            let (glyphs, colour) = {
+                let st = state.lock().await;
+                (st.glyphs.clone(), st.config.bar.colour_on())
+            };
+            let output = glyphs.apply(&output);
+            // Colour comes off last, after the glyphs, and only when asked:
+            // `[bar] colour = false`, or NO_COLOR in the daemon's environment.
+            if colour {
+                Response::ok(output.into_owned())
+            } else {
+                Response::ok(crate::tmux::format::without_colour(&output).into_owned())
+            }
         }
         Err(e) => Response::err(e),
     }
@@ -419,7 +429,7 @@ async fn render_right(
         Some(Ok((rx, tx))) => {
             let mut st = state.lock().await;
             let network = st.config.network.clone();
-            let bar_bg = st.config.bar.background.clone();
+            let bar = st.config.bar.clone();
             let ServerState {
                 net_previous,
                 net_last_render,
@@ -432,7 +442,7 @@ async fn render_right(
                 tx,
                 std::time::Instant::now(),
                 &network,
-                &bar_bg,
+                &bar,
             )
         }
         Some(Err(e)) => {
@@ -493,7 +503,7 @@ async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::Heal
         let now = crate::panes::now_secs();
         let quiet = s
             .is_quiet()
-            .then(|| crate::quiet::status(s.quiet_until, now));
+            .then(|| crate::quiet::status(s.quiet_ends(now), now));
         let offline = s
             .offline_since
             .map(|since| crate::online::reason(since, now, &s.config.online.probe));
@@ -594,7 +604,7 @@ async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
     let (rx, tx) = segments::network::sample().await?;
     let mut st = state.lock().await;
     let network = st.config.network.clone();
-    let bar_bg = st.config.bar.background.clone();
+    let bar = st.config.bar.clone();
     let ServerState {
         net_previous,
         net_last_render,
@@ -607,7 +617,7 @@ async fn net(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
         tx,
         std::time::Instant::now(),
         &network,
-        &bar_bg,
+        &bar,
     ))
 }
 

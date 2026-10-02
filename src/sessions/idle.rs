@@ -174,7 +174,7 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     let chrome = crate::picker::Chrome {
         title: "[ Idle sessions ]".into(),
         icon: crate::tmux::icons::IDLE.into(),
-        footer: "enter closes the pick (project close, layout saved first)   esc cancels".into(),
+        footer: "enter picks one to close (asks first, layout saved)   esc cancels".into(),
         ..Default::default()
     }
     .laid_out_by(&config.picker.resolved(crate::config::Picker::Project));
@@ -182,7 +182,16 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(None);
     };
-    Ok(sessions.get(index).map(|s| s.name.clone()))
+    let Some(name) = sessions.get(index).map(|s| s.name.clone()) else {
+        return Ok(None);
+    };
+    // Asked, because one press too many closes a session: this opens on C-i,
+    // which most terminals send for tab, and enter is the next key anybody
+    // presses.
+    if !crate::setup::confirm(&format!("close {name}? its layout is saved first")) {
+        return Ok(None);
+    }
+    Ok(Some(name))
 }
 
 #[cfg(test)]

@@ -220,6 +220,7 @@ pub async fn run() -> anyhow::Result<()> {
         tokio::spawn(crate::inbox::inbox_loop(
             config.agents.clone(),
             config.journal.clone(),
+            config.notify.message_ms,
             Arc::clone(&state),
         ));
     }

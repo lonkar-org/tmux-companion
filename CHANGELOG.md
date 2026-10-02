@@ -7,6 +7,17 @@ entry per phase of the comrades port.
 
 ### Added
 
+- Accessibility, a first round. The terminal's cursor sits on the selected
+  row of every picker, the resurrect screen's row and the run dialog's
+  button, and on the nearest match in `jump`, so a screen reader or a braille
+  display follows the selection instead of reading nothing. `[sessions]
+  confirm_wait = true` opens the resurrect screen with no countdown.
+  `[notify] message_ms` sets how long a notification or an agent nudge stays
+  up, and zero keeps it until a key. `[bar] colour = false`, or `NO_COLOR` in
+  the daemon's environment, draws the bar without colour and gives each
+  network rate an arrow. `[quiet] daily = ["22:00-08:00"]` turns quiet hours
+  on every day. Tab cycles a picker's preview and Delete clears its filter,
+  each one key. `new-window --print` lists the directories as text.
 - The crate is a library as well as a binary. `daemon::Daemon` asks a
   running daemon for a segment, blocking and with no runtime, and never starts
   or replaces one. `segments::git`, `tmux::format`, `segments::network` and
@@ -55,6 +66,19 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- The upload rate was written at 2.96:1 on its blue block and its unit at
+  1.8:1, under the 4.5:1 WCAG asks of text. Each block now takes whichever of
+  the bar's colour and near-white reads on it, and the unit takes the figure's
+  colour in italics; `[network] unit_colour` defaults to empty for that.
+- A theme colour too dark to read as text, colour17 among them, is stepped
+  lighter in its own hue before a picker or `jump` draws matches and labels
+  in it.
+- The battery keeps its percentage on mains power, its glyphs reach the ascii
+  preset, and the icon no longer cycles every second while charging.
+- `sessions idle` asks before closing the session picked, and the shipped
+  `project forget` binding goes through `confirm-before`.
+- Picker footers say the same thing for the same key: ctrl-a clears the
+  filter in all of them.
 - The `[picker.keys]` example's `column_order = [1, 0]` hid every binding's
   description once 0.7.0 split a keys row into three cells. The example is
   `[1, 0, 2]` now: filing, chord, then the description, last because its

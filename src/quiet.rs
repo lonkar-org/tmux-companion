@@ -28,6 +28,66 @@ pub fn parse_duration(text: &str) -> Option<u64> {
     n.checked_mul(mult)
 }
 
+/// A daily window, `22:00-08:00`, as minutes after midnight. The end may be
+/// earlier than the start, which is a window that crosses midnight.
+pub fn parse_window(text: &str) -> Option<(u32, u32)> {
+    let (start, end) = text.trim().split_once('-')?;
+    let minute = |t: &str| -> Option<u32> {
+        let (h, m) = t.trim().split_once(':')?;
+        let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+        (h < 24 && m < 60).then_some(h * 60 + m)
+    };
+    let (start, end) = (minute(start)?, minute(end)?);
+    (start != end).then_some((start, end))
+}
+
+/// Minutes until the window ends, when `minute` of the day is inside it.
+pub fn in_window(minute: u32, (start, end): (u32, u32)) -> Option<u32> {
+    const DAY: u32 = 24 * 60;
+    let inside = if start < end {
+        minute >= start && minute < end
+    } else {
+        minute >= start || minute < end
+    };
+    inside.then(|| (end + DAY - minute) % DAY)
+}
+
+/// Seconds of scheduled quiet left at `minute` of the day: the longest of
+/// the windows it is inside, so two that overlap read as one.
+pub fn scheduled(windows: &[String], minute: u32) -> Option<u64> {
+    windows
+        .iter()
+        .filter_map(|w| parse_window(w))
+        .filter_map(|w| in_window(minute, w))
+        .max()
+        .map(|m| u64::from(m) * 60)
+}
+
+/// Minutes since local midnight, for the daily windows.
+pub fn local_minute(secs: u64) -> u32 {
+    let t = libc::time_t::try_from(secs).unwrap_or(0);
+    // SAFETY: `tm` is a plain C struct that `localtime_r` fills completely,
+    // and both pointers are valid for the call.
+    let tm = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm
+    };
+    u32::try_from(tm.tm_hour * 60 + tm.tm_min).unwrap_or(0)
+}
+
+/// When quiet ends at `now`: the later of the timer `quiet` set and the end
+/// of a daily window it is inside.
+pub fn effective_until(until: Option<u64>, windows: &[String], now: u64) -> Option<u64> {
+    let timer = until.filter(|&u| u > now);
+    let daily = if windows.is_empty() {
+        None
+    } else {
+        scheduled(windows, local_minute(now)).map(|left| now + left)
+    };
+    timer.max(daily)
+}
+
 /// Whether quiet is on at `now`, given when it ends.
 pub fn is_quiet(until: Option<u64>, now: u64) -> bool {
     until.is_some_and(|u| u > now)
@@ -68,6 +128,43 @@ pub async fn run(duration: Option<String>, off: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_is_two_clock_times_and_may_cross_midnight() {
+        assert_eq!(parse_window("22:00-08:00"), Some((1320, 480)));
+        assert_eq!(parse_window(" 13:30 - 14:00 "), Some((810, 840)));
+        assert_eq!(parse_window("25:00-08:00"), None);
+        assert_eq!(parse_window("9-17"), None);
+        assert_eq!(parse_window("10:00-10:00"), None);
+    }
+
+    #[test]
+    fn inside_a_window_says_how_long_is_left() {
+        let night = (1320, 480);
+        assert_eq!(in_window(23 * 60, night), Some(9 * 60));
+        assert_eq!(in_window(7 * 60, night), Some(60));
+        assert_eq!(in_window(12 * 60, night), None);
+        assert_eq!(in_window(480, night), None, "the end is not inside");
+        assert_eq!(in_window(13 * 60 + 45, (810, 840)), Some(15));
+    }
+
+    #[test]
+    fn the_longest_overlapping_window_wins_and_a_bad_one_is_skipped() {
+        let w = vec![
+            "22:00-08:00".to_string(),
+            "nonsense".into(),
+            "23:00-09:00".into(),
+        ];
+        assert_eq!(scheduled(&w, 23 * 60 + 30), Some((9 * 60 + 30) * 60));
+        assert_eq!(scheduled(&w, 12 * 60), None);
+    }
+
+    #[test]
+    fn the_timer_and_the_schedule_give_the_later_end() {
+        assert_eq!(effective_until(Some(500), &[], 100), Some(500));
+        assert_eq!(effective_until(Some(50), &[], 100), None);
+        assert_eq!(effective_until(None, &[], 100), None);
+    }
 
     #[test]
     fn durations_read_the_way_ages_print() {

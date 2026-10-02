@@ -315,7 +315,7 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
     let chrome = crate::picker::Chrome {
         title: "[ Journal ]".into(),
         icon: crate::tmux::icons::JOURNAL.into(),
-        footer: "enter goes to that session   ctrl-a clears the filter   esc closes".into(),
+        footer: "enter goes to that session   ctrl-a clears the filter   esc cancels".into(),
         preview_title: String::new(),
         ..Default::default()
     }

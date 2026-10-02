@@ -150,6 +150,7 @@ impl Paint {
                 })
             })
             .unwrap_or(FALLBACK_ACCENT);
+        let accent = readable_accent(accent);
         Self {
             accent,
             band: band_for(accent),
@@ -387,6 +388,24 @@ pub fn accent_from(list: &str) -> Option<Color> {
         .map(|(_, c)| c)
 }
 
+/// The accent, stepped lighter in its own hue until it reads as text.
+///
+/// It draws the query's matches, the picker's label and the jump overlay's
+/// letters, all of them text somebody has to read, and a theme colour is
+/// chosen for the bar rather than for that: a dark blue reads as a block of
+/// background and not as a letter on a dark terminal. The background tested
+/// against is the band's base, the darkest surface the accent is drawn on
+/// that is not the terminal's own black, so a pass here passes on black too.
+/// A colour that isn't a palette index is left as it is.
+pub fn readable_accent(accent: Color) -> Color {
+    match accent {
+        Color::Indexed(i) => {
+            Color::Indexed(crate::theme::lifted(i, BAND_BASE, crate::theme::TEXT_MIN_AA).0)
+        }
+        other => other,
+    }
+}
+
 /// The words of a key hint, each marked as a key or not.
 ///
 /// `enter jumps there   ctrl-a clears the filter` is split into its groups by
@@ -449,6 +468,18 @@ pub fn is_key(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dark_accent_is_lifted_until_it_reads_as_text() {
+        use crate::theme::{TEXT_MIN_AA, contrast, rgb};
+        // blue-dark's colour17, which measured 1.13 against the background.
+        let Color::Indexed(lifted) = readable_accent(Color::Indexed(17)) else {
+            panic!("an index stays an index");
+        };
+        assert!(contrast(rgb(lifted), BAND_BASE) >= TEXT_MIN_AA, "{lifted}");
+        assert_eq!(readable_accent(Color::Indexed(214)), Color::Indexed(214));
+        assert_eq!(readable_accent(Color::Magenta), Color::Magenta);
+    }
 
     #[test]
     fn the_accent_is_the_most_recently_active_clients_theme() {

@@ -500,6 +500,31 @@ pub fn draw(buf: &mut Buffer, screens: &[Screen], state: &State, paint: &Paint) 
     }
 }
 
+/// Where the terminal's cursor goes: on the nearest match, the one enter
+/// takes, so a screen reader or a braille display reads the line it is on;
+/// at the end of the search in the corner while nothing matches.
+pub fn cursor_at(screens: &[Screen], state: &State, area: Rect) -> Option<(u16, u16)> {
+    let at = match state.hits.first() {
+        Some(hit) => {
+            let screen = &screens[hit.screen];
+            let p = &screen.pane;
+            let line = &screen.lines[usize::from(hit.row)];
+            let x = u16::try_from(cells_before(line, hit.col)).ok()?;
+            (p.left.checked_add(x)?, p.top.checked_add(hit.row)?)
+        }
+        None => {
+            // The prompt is right-aligned with one space after the search,
+            // so the end of the search is the pane's last cell.
+            let p = &screens.iter().find(|s| s.pane.active)?.pane;
+            (
+                (p.left + p.width).checked_sub(1)?,
+                (p.top + p.height).checked_sub(1)?,
+            )
+        }
+    };
+    (at.0 < area.width && at.1 < area.height).then_some(at)
+}
+
 /// `jump`: the overlay, and the pane and place picked from it.
 /// Rows a status line takes above the window: what a popup's `-y` has to
 /// clear, since on tmux 3.7 a popup's row is counted from the top of the
@@ -636,7 +661,12 @@ fn show(screens: Vec<Screen>) -> anyhow::Result<(Outcome, Vec<Screen>)> {
     let mut terminal = ratatui::init();
     let result = (|| -> anyhow::Result<Outcome> {
         loop {
-            terminal.draw(|frame| draw(frame.buffer_mut(), &screens, &state, &paint))?;
+            terminal.draw(|frame| {
+                draw(frame.buffer_mut(), &screens, &state, &paint);
+                if let Some(at) = cursor_at(&screens, &state, frame.area()) {
+                    frame.set_cursor_position(at);
+                }
+            })?;
             let Event::Key(key) = event::read()? else {
                 continue;
             };
@@ -822,6 +852,17 @@ mod tests {
             "display-popup -B -E -c /dev/ttys001 -t %3 -x 0 -y 40 -w 120 -h 39 \
              '/bin/tc' jump --overlay --pane '%3'"
         );
+    }
+
+    #[test]
+    fn the_cursor_is_on_the_nearest_match_or_after_the_search() {
+        let s = [screen(pane("%1", 10, 2, 40, 5, true), "x\n  日本 go")];
+        let area = Rect::new(0, 0, 80, 24);
+        let mut state = State::default();
+        assert_eq!(cursor_at(&s, &state, area), Some((49, 6)));
+        state.press(&s, Key::Char('g'));
+        // Row 1 of the pane, after two spaces, two wide characters and a space.
+        assert_eq!(cursor_at(&s, &state, area), Some((10 + 7, 3)));
     }
 
     #[test]

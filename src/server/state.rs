@@ -296,7 +296,13 @@ impl ServerState {
 
     /// Whether quiet hours are on right now.
     pub fn is_quiet(&self) -> bool {
-        crate::quiet::is_quiet(self.quiet_until, crate::panes::now_secs())
+        self.quiet_ends(crate::panes::now_secs()).is_some()
+    }
+
+    /// When quiet ends, from the timer and `[quiet] daily` together, or none
+    /// when it is not on.
+    pub fn quiet_ends(&self, now: u64) -> Option<u64> {
+        crate::quiet::effective_until(self.quiet_until, &self.config.quiet.daily, now)
     }
 
     // ── health ───────────────────────────────────────────────────────────────

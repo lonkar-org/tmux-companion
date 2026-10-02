@@ -277,6 +277,87 @@ pub fn powerline_segment(fg: &str, bg: &str, content: &str) -> String {
 /// constant now, so this has to cope with `colour233`, `#121212` and `red`
 /// alike. Anything it cannot read is left to the terminal's own default, which
 /// is the one outcome that cannot look wrong in somebody else's palette.
+/// The same markup with every colour taken out and every other attribute
+/// kept: `#[fg=colour39,bg=colour233,bold]main` becomes `#[bold]main`, and a
+/// style that held nothing but colours goes altogether.
+///
+/// What `NO_COLOR` and `[bar] colour = false` do to the status bar. The
+/// counts, the glyphs and the percentages are all still there; what goes is
+/// the colour somebody cannot see, or would rather not. `##` is tmux's
+/// literal `#` and is left alone.
+pub fn without_colour(markup: &str) -> std::borrow::Cow<'_, str> {
+    if !markup.contains("#[") {
+        return std::borrow::Cow::Borrowed(markup);
+    }
+    let mut out = String::with_capacity(markup.len());
+    let mut rest = markup;
+    while let Some(at) = rest.find('#') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("##") {
+            out.push_str("##");
+            rest = after;
+        } else if let Some(body) = tail.strip_prefix("#[")
+            && let Some(end) = body.find(']')
+        {
+            let kept: Vec<&str> = body[..end]
+                .split(',')
+                .map(str::trim)
+                .filter(|a| {
+                    !a.is_empty()
+                        && !["fg=", "bg=", "fill=", "us="]
+                            .iter()
+                            .any(|p| a.starts_with(p))
+                })
+                .collect();
+            if !kept.is_empty() {
+                out.push_str("#[");
+                out.push_str(&kept.join(","));
+                out.push(']');
+            }
+            rest = &body[end + 1..];
+        } else {
+            out.push('#');
+            rest = tail.strip_prefix('#').unwrap_or(tail);
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
+/// The RGB a tmux colour stands for: `#rrggbb`, `colourN` or `colorN`, or
+/// `None` for a name like `red` whose shade is the terminal's to decide.
+pub fn colour_rgb(colour: &str) -> Option<(u8, u8, u8)> {
+    let c = colour.trim();
+    if let Some(hex) = c.strip_prefix('#')
+        && hex.len() == 6
+        && let Ok(v) = u32::from_str_radix(hex, 16)
+    {
+        return Some(((v >> 16) as u8, (v >> 8) as u8, v as u8));
+    }
+    let index = c
+        .strip_prefix("colour")
+        .or_else(|| c.strip_prefix("color"))
+        .unwrap_or(c);
+    index.parse::<u8>().ok().map(crate::theme::rgb)
+}
+
+/// Whichever of `dark` and a near-white reads better as text on `background`,
+/// by the WCAG contrast ratio. `dark` when either colour can't be read, which
+/// is what the segment drew before it asked.
+pub fn readable_text_on(background: &str, dark: &str) -> String {
+    const LIGHT: &str = "colour255";
+    let (Some(bg), Some(d)) = (colour_rgb(background), colour_rgb(dark)) else {
+        return dark.to_string();
+    };
+    let light = crate::theme::rgb(255);
+    if crate::theme::contrast(d, bg) >= crate::theme::contrast(light, bg) {
+        dark.to_string()
+    } else {
+        LIGHT.to_string()
+    }
+}
+
 fn ansi(colour: &str, layer: u8) -> String {
     let c = colour.trim();
     if let Some(hex) = c.strip_prefix('#')
@@ -391,6 +472,20 @@ fn style_to_ansi(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_colour_keeps_the_attributes_and_drops_the_colours() {
+        assert_eq!(
+            without_colour(
+                "#[fg=colour39,bg=colour233,bold]main#[fg=colour237,none,italics]KiB/s#[none]"
+            ),
+            "#[bold]main#[none,italics]KiB/s#[none]"
+        );
+        assert_eq!(without_colour("#[fg=red]x"), "x");
+        assert_eq!(without_colour("100## done"), "100## done");
+        assert_eq!(without_colour("plain"), "plain");
+        assert_eq!(without_colour("#[fg=red"), "#[fg=red");
+    }
     use crate::tmux::icons::ARROW_RIGHT;
 
     // ── to_ansi ──────────────────────────────────────────────────────────────

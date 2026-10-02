@@ -155,7 +155,8 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
             &snapshot.header.captured_at,
             snapshot.header.clean,
         );
-        let countdown = std::time::Duration::from_secs(config.sessions.confirm_secs);
+        let countdown = (!config.sessions.confirm_wait)
+            .then(|| std::time::Duration::from_secs(config.sessions.confirm_secs));
         match crate::sessions::summary::confirm(&headline, rows, countdown)? {
             crate::sessions::summary::Outcome::Go(rows) => approved = rows,
             crate::sessions::summary::Outcome::Cancelled => {

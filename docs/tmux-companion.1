@@ -298,6 +298,17 @@ Each is a fuzzy-matched list with a preview.
 They are bound to keys in
 .Pa docs/tmux.conf.full.example ;
 the bindings shown are that file's.
+.Pp
+Every picker takes the same keys.
+Typing filters, the arrows and Page Up and Page Down move, enter takes the
+row, and escape, ctrl-c or ctrl-d closes it.
+Ctrl-a, ctrl-u or Delete clears the filter, ctrl-p or Tab changes where the
+preview sits, ctrl-j and ctrl-k scroll it, and alt-enter takes what was typed
+rather than the row.
+The terminal's cursor sits on the selected row, which is what a screen reader
+or a braille display follows, and on the end of the filter when nothing is
+listed.
+Nothing in a picker is timed.
 .Bl -tag -width Ds
 .It Ic project Oo Ar directory Oc Op Fl -print
 Live sessions and the directories the configured source knows, in one list,
@@ -444,6 +455,10 @@ takes all of them and
 cancels.
 .Ic [sessions] confirm_secs
 sets the countdown and zero never draws it.
+.Ic [sessions] confirm_wait
+draws it with no countdown and waits for a key, whatever
+.Ic confirm_secs
+says.
 .Fl -yes
 runs everything the table claimed without asking; whatever is not run still
 opens its pane, in the right directory, at a prompt.
@@ -1114,7 +1129,7 @@ on a machine without it, and either one names only the processes you own
 unless you're root.
 Bound to
 .Ql prefix P .
-.It Ic new-window
+.It Ic new-window Op Fl -print
 A window here, or at any directory.
 The rows are the pane's own directory and then the same source
 .Ic project
@@ -1122,6 +1137,10 @@ lists, so it is the one setting for both.
 The query starts on the pane's own directory, which is also the first row, so
 the key and enter is another window here.
 A path the source has never seen opens when it is typed in full.
+.Fl -print
+writes the rows and exits: a column that says
+.Ql here
+on the pane's own directory, the short path and the full one.
 Bound to
 .Ql prefix c .
 .It Ic run Op Fl -pane Ar id
@@ -1188,6 +1207,10 @@ in its place, so the silence reads as chosen rather than broken.
 With nothing given it says how long is left;
 .Fl -off
 ends it now.
+.Ic [quiet] daily
+turns it on at the same local times every day, such as
+.Ql 22:00-08:00 ;
+a timer and a window together last until the later one ends.
 The daemon keeps the clock, so every timer and every client agree.
 .It Ic journal Oo Fl -print Oc Oo Fl t Ar session Oc Op Fl -days Ar n
 What happened in each project, newest first: a command that ran past
