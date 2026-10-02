@@ -10,12 +10,12 @@ Second try focused on words and try to visualise like cursor moving on the line.
 I don't think most of the VO users visualise the way I or anyone else without visual impairment does it.
 
 One thing I like to integrate in tmux-companion as I'm understanding it, visually impaired either do not use vision or very less rely on it. This means most of the fancy things, colors, icons, tables, font glyphs, split panes, pop-ups, pocket pane, history executor, agents, brief, session all have different model in their brain.
-Layout and other vision dependent things are almost useless for them that does not mean what tmux-companion does or features it could offer are useless.
+Layout and other vision dependent things are almost useless for them that does not mean what tmux-companion does or features it could offer are useless to them.
 
 If I use and contribute to tmux-companion then more feature and bugfixes it lands more those could be channeled to these and other a11y users.
-My initial goal was not a11y at all but if it gets there in current feature state (2026-10-02) then that should become a goal First be companion, 'second to everyone'. At the moment everyone means devs that are visually impaired, with motor impairments, ADHD.
+My initial goal was not a11y at all but if it gets there in current feature state (2026-10-02) then that should become a goal. First be companion, 'second to everyone'. At the moment everyone means devs that are visually impaired, with motor impairments, ADHD.
 
-If there are guidelines and tests that can be put in place for features that cater the needs of everyone it should become easy over the time to improve and build on them. This is what I mean by channeled. Obviously some features will depend on vision or not possible to be used by other users, by knowingly and deliberately documenting it can be released but keeping things open when the fix is not possible, not due to time constraint but due to approach or design or fundamental limitation of the feature. I would rather love for myself to come up with a feature that is only for users of a11y or small segment of it and not for non-a11y users.
+If there are guidelines and tests that can be put in place for features that cater the needs of everyone it should become easy over the time to improve and build on them. This is what I mean by channeled. Obviously some features will depend on vision or not possible to be used by a11y users, by knowingly and deliberately documenting; it can be released but keeping things open when the fix is not possible, not due to time constraint but due to approach or design or fundamental limitation of the feature. I would rather love for myself to come up with a feature that is only for users of a11y or small segment of it and not for non-a11y users.
 
 This document does not bind or enforce anyone else strictly other than me and AI (claude at the moment) that works on this repository.
 
