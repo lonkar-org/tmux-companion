@@ -13,6 +13,25 @@ repository = "https://github.com/lonkar-org/tmux-companion"
 readme = "README.md"
 keywords = ["tmux", "status-line", "statusline", "git", "cli"]
 categories = ["command-line-utilities"]
+# What `cargo publish` uploads: the source, the files it embeds with
+# include_str!, the manual and the example configs a user copies. Not the
+# demo recordings, the playground image, the workflows or the scripts, which
+# are for working on this repository rather than building it.
+include = [
+    "/src/**/*",
+    "/build.rs",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/docs/tmux-companion.1",
+    "/docs/config.example.toml",
+    "/docs/tmux.conf.example",
+    "/docs/tmux.conf.starter.example",
+    "/docs/tmux.conf.full.example",
+    "/tests/fixtures/**/*",
+]
 
 [[bin]]
 name = "tmux-companion"

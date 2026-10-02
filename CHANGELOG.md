@@ -7,6 +7,9 @@ entry per phase of the comrades port.
 
 ### Added
 
+- crates.io: `cargo install --locked tmux-companion` builds a release, and the
+  release workflow publishes each tag there after the approved GitHub release,
+  signed in through trusted publishing rather than a stored token.
 - `jump`, on prefix Space and `s` in copy mode: type a few characters of anything on screen and
   then the label beside the one you meant, and copy mode lands there, in
   whichever pane of the window it is. It's flash.nvim's motion: the window

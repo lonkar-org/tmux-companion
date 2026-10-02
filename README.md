@@ -95,7 +95,14 @@ Homebrew 7 won't load a formula from a tap you haven't trusted, hence the middle
 line. That path brings the manual with it, so `man tmux-companion` works
 straight after.
 
-All four paths, with the flags and how to remove it again, are in
+Or from [crates.io](https://crates.io/crates/tmux-companion), compiled on your
+machine:
+
+```sh
+cargo install --locked tmux-companion
+```
+
+All five paths, with the flags and how to remove it again, are in
 [docs/how-to/install.md](docs/how-to/install.md).
 
 Then the way in, from a shell that is not in tmux yet:
@@ -200,7 +207,7 @@ painting, and none of that got cheaper. What halved is what it costs to do.
 | ------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | tutorial     | [docs/tutorial/first-hour.md](docs/tutorial/first-hour.md)                         | from nothing installed to a bar you can see and a picker you've pressed                    |
 | how-to       | [docs/how-to/playground.md](docs/how-to/playground.md)                             | a container to try it in, and the tour inside it                                           |
-| how-to       | [docs/how-to/install.md](docs/how-to/install.md)                                   | the four ways in, and how to remove it                                                     |
+| how-to       | [docs/how-to/install.md](docs/how-to/install.md)                                   | the five ways in, and how to remove it                                                     |
 | how-to       | [docs/how-to/themes.md](docs/how-to/themes.md)                                     | where themes live, what one is, and the contrast they clear                                |
 | how-to       | [docs/how-to/agents.md](docs/how-to/agents.md)                                     | the skill that teaches a coding agent to share your tmux server                            |
 | how-to       | [docs/how-to/which-key.md](docs/how-to/which-key.md)                               | list of key bindings that you could setup and what it could do for you                     |

@@ -1,6 +1,6 @@
 # Install
 
-Four ways, and the first one's the one to take.
+Five ways, and the first one's the one to take.
 
 ## Download the binary
 
@@ -63,6 +63,21 @@ release workflow rewrites it after each release, so a new version reaches brew
 a couple of minutes after it reaches the Releases page. The `homebrew-` on the
 front is Homebrew's convention rather than a second tap: `brew tap
 lonkar-org/tap` is what you type, and it expands the name itself.
+
+## Through cargo
+
+```sh
+cargo install --locked tmux-companion
+```
+
+That builds the release from [crates.io](https://crates.io/crates/tmux-companion)
+with the toolchain you have, which has to be Rust 1.95 or newer, and puts the
+binary in `~/.cargo/bin`. `--locked` builds against the versions the release was
+tested with rather than whatever is newest today. It takes a minute or two of
+compiling, and cargo installs binaries only, so there's no manual: `man` needs
+one of the other ways, or `docs/tmux-companion.1` from the crate's source.
+`cargo install` the same line again to upgrade, and `cargo uninstall
+tmux-companion` to remove it.
 
 ## Through tpm
 
