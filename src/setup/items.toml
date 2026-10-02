@@ -252,6 +252,18 @@ snippet = '''bind -N "companion: copy search every pane's scrollback" {key} disp
 goes = "tmux.conf"
 
 [[item]]
+id = "jump"
+group = "Keys"
+kind = "binding"
+line = "Can I get to that word on screen without the arrow keys?"
+command = "jump"
+key = "Space"
+table = "prefix"
+fallback = ["J", "M-Space"]
+snippet = '''bind -N "companion: copy jump to any text on screen" {key} run-shell -b "tmux-companion jump --pane '#{pane_id}' --client '#{client_name}'"'''
+goes = "tmux.conf"
+
+[[item]]
 id = "open"
 group = "Keys"
 kind = "binding"

@@ -19,8 +19,9 @@
 #
 # ── What this file takes over ───────────────────────────────────────────────
 #
-# Three of tmux's own prefix keys are rebound here, and one in copy mode:
+# Four of tmux's own prefix keys are rebound here, and one in copy mode:
 #
+#   prefix Space     next-layout      -> jump to any text on screen
 #   prefix c         new-window       -> the new-window picker
 #   prefix z         zoom this pane   -> zen
 #   prefix ?         list-keys        -> the keys picker
@@ -226,6 +227,19 @@ bind -N "companion: copy search every pane's scrollback" / \
 %else
 bind -N "companion: copy search every pane's scrollback" / \
   display-popup -E -w 90% -h 80% "tmux-companion search"
+%endif
+# Jump to any text on screen, flash.nvim's way: type a few characters of it,
+# then the letter that appears beside the one you meant, and copy mode lands
+# there in whichever pane of the window it is. `jump` opens its own popup over
+# the window, because only it can work out where the window sits under a
+# status line at the top. Space is what tmux-jump used, and takes tmux's
+# next-layout, which `select-layout` and prefix M-1..M-5 still reach.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: copy jump to any text on screen" Space \
+  run-shell -b "tmux-companion jump --pane '#{pane_id}' --client '#{client_name}'"
+# And `s` in copy mode, flash's own key, which copy-mode-vi leaves unbound.
+bind -N "companion: copy jump to any text on screen" -T copy-mode-vi s \
+  run-shell -b "tmux-companion jump --pane '#{pane_id}' --client '#{client_name}'"
 %endif
 # "address already in use": which pane is listening on what. Enter goes to
 # the pane. tmux has nothing on prefix+P.

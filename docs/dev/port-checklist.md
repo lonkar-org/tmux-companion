@@ -100,6 +100,11 @@ trusted`, with names-only as the untrusted fallback.
 - `pocket` is `nickdiego/tmux-pocket-pane` as option 1 of
   `design-pocket-pane.md`: the pane is parked with `join-pane` into a window
   called `_pocket` and brought back the same way, marked by a pane option.
+- `jump` replaces `schasse/tmux-jump`, the last tpm plugin, with the motion
+  `folke/flash.nvim` has: a multi-character search over every pane in the
+  window, labels that can't be the next character of a match, and a landing
+  by row and column rather than tmux-jump's one `cursor-right` per character,
+  which overshot on tmux 3.5 and later.
 - `search` is new: the zsh had nothing that read a pane it wasn't in. The
   stored searches are `tmux-plugins/tmux-copycat`'s and the list is
   `roosta/tmux-fuzzback`'s over every pane, and the jump is `goto-line`

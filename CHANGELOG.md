@@ -7,6 +7,13 @@ entry per phase of the comrades port.
 
 ### Added
 
+- `jump`, on prefix Space and `s` in copy mode: type a few characters of anything on screen and
+  then the label beside the one you meant, and copy mode lands there, in
+  whichever pane of the window it is. It's flash.nvim's motion: the window
+  greys, matches light up nearest the cursor first, and no label is a letter
+  that would continue the search, so typing never jumps early. It replaces
+  tmux-jump, the last tpm plugin, which took one character and landed a
+  column off per line on tmux 3.5 and later.
 - `keys discover` reads what tmux's root table and the apps in its panes bind,
   with no change to any app: nvim is asked live over the socket it already
   serves, every nvim pane for itself, and a headless start with your config

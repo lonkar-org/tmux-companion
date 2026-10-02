@@ -1737,6 +1737,77 @@ fn search_finds_a_line_in_the_history_and_lands_on_it() {
     assert_eq!(words, ["1", "1", "needle-42"], "{landed:?}");
 }
 
+/// `jump` puts the pane it was asked about in copy mode with the cursor on the
+/// match, by row and column, once the search is typed and enter pressed.
+///
+/// The overlay runs in a window of its own rather than in a popup, because a
+/// popup needs a client attached and the landing does not: it is the same
+/// process either way, reading its keys from whatever terminal it is in. Each
+/// letter typed is held back from the labels because it continues a match, so
+/// typing the search can never jump early.
+#[test]
+fn jump_lands_copy_mode_on_the_match_typed() {
+    let Some(t) = Tmux::start("jump") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    let id = t.must(&["display-message", "-p", "-t", "=alpha:", "#{pane_id}"]);
+    assert!(
+        t.until(20, |t| {
+            t.must(&[
+                "send-keys",
+                "-t",
+                &id,
+                "clear; echo 'say needle-'$((40+2))",
+                "C-m",
+            ]);
+            std::thread::sleep(Duration::from_millis(300));
+            t.capture(&id).lines().any(|l| l == "say needle-42")
+        }),
+        "the needle never reached the screen: {:?}",
+        t.capture(&id)
+    );
+
+    let overlay = format!(
+        "{} jump --overlay --pane {id}; sleep 60",
+        t.binary.display()
+    );
+    t.must(&["new-window", "-d", "-t", "=alpha:", "-n", "jump", &overlay]);
+    assert!(
+        t.until(20, |t| t
+            .capture("=alpha:jump")
+            .lines()
+            .last()
+            .is_some_and(|l| l.ends_with(" jump"))),
+        "the overlay never drew: {:?}",
+        t.capture("=alpha:jump")
+    );
+    t.must(&["send-keys", "-t", "=alpha:jump", "-l", "needle-4"]);
+    t.must(&["send-keys", "-t", "=alpha:jump", "Enter"]);
+
+    let ask = |t: &Tmux| {
+        t.tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &id,
+            "#{pane_in_mode} #{copy_cursor_x} #{copy_cursor_line}",
+        ])
+    };
+    assert!(
+        t.until(10, |t| ask(t).starts_with("1 ")),
+        "the pane never went into copy mode: {:?}",
+        ask(&t)
+    );
+    let words: Vec<String> = ask(&t)
+        .split_whitespace()
+        .take(4)
+        .map(String::from)
+        .collect();
+    assert_eq!(words, ["1", "4", "say", "needle-42"], "{:?}", ask(&t));
+}
+
 /// A picker with nothing to show says so on tmux's message line as well as on
 /// stderr, because `display-popup -E` takes stderr away with the popup.
 /// `--print` keeps to stderr.

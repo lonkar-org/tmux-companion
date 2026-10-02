@@ -78,6 +78,7 @@ description they had.
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
 | `src/journal.rs` | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed |
+| `src/jump.rs` | jumping to any text on the screen: type a few of its characters, then the label that appears beside the one you meant |
 | `src/keyroute/mod.rs` | keys that tmux and the apps in its panes both want: what each layer binds, and where they collide |
 | `src/keyroute/collide.rs` | where the layers disagree: a key tmux's root table binds that an app in a pane binds too, and the keys in scope nobody has taken yet |
 | `src/keyroute/discover.rs` | what each layer binds, found without asking any app to do anything new |

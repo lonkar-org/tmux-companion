@@ -35,6 +35,8 @@ pub mod doctor;
 /// Key bindings, parsed out of tmux.
 pub mod inbox;
 pub mod journal;
+/// Jumping to any text on the screen, flash.nvim style.
+pub mod jump;
 pub mod keyroute;
 pub mod keys;
 /// Stopping what hangs in a pane: TERM, a wait, then KILL.

@@ -414,6 +414,20 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// Type a few characters of anything on screen, then the label beside
+    /// it: copy mode lands there, in whichever pane of the window it is
+    Jump {
+        /// The pane the binding was pressed in, as `#{pane_id}`
+        #[arg(long, value_name = "ID")]
+        pane: Option<String>,
+        /// The client to open the overlay on, as `#{client_name}`
+        #[arg(long, value_name = "NAME")]
+        client: Option<String>,
+        /// Be the overlay rather than open the popup it runs in
+        #[arg(long, hide = true)]
+        overlay: bool,
+    },
+
     /// Every line of every pane's scrollback, newest first; enter goes to
     /// the pane and the line
     Search {
@@ -1130,6 +1144,12 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        // Client-side for the same reasons as `panes`: see `jump::run`.
+        Cmd::Jump {
+            pane,
+            client,
+            overlay,
+        } => crate::jump::run(pane, client, overlay).await?,
         Cmd::Search {
             pattern,
             fixed,
@@ -3399,7 +3419,7 @@ async fn run_autosave(once: bool, status: bool) -> anyhow::Result<()> {
 }
 
 /// One `tmux display-message -p`, empty when tmux is not there.
-async fn tmux_display(format: &str) -> String {
+pub(crate) async fn tmux_display(format: &str) -> String {
     tmux_display_at(None, format).await
 }
 

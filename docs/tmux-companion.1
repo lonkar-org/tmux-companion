@@ -978,6 +978,37 @@ and
 .Ql prefix G
 with
 .Fl -agents .
+.It Ic jump Op Fl -pane Ar id , Fl -client Ar name
+Go to any text on the screen by typing a few of its characters and then the
+label that appears beside it, the motion
+.Lk https://github.com/folke/flash.nvim flash.nvim
+gives neovim, over every pane in the window.
+A borderless popup is laid exactly over the window and shows what each pane
+shows, greyed.
+As the search is typed, its matches light up in the theme's colour, nearest
+the cursor first, and each gets a letter on the cell after it.
+No label is ever a letter that would continue a match, so typing on narrows
+the search and typing a label jumps, and a match keeps its letter while the
+search narrows.
+The search ignores case until it holds a capital.
+Enter takes the nearest match; escape, or backspace on an empty search,
+closes it.
+The jump selects the pane, puts it in copy mode and moves the cursor to the
+match by row and column, so a selection already started extends to it.
+A pane already in copy mode is searched where its view is scrolled to.
+.Fl -pane
+is the pane the key was pressed in and
+.Fl -client
+the client to open the popup on, both from the binding.
+It replaces
+.Lk https://github.com/schasse/tmux-jump tmux-jump ,
+which took one character and, on tmux 3.5 and later, landed a column further
+right for every line above its target.
+Bound to
+.Ql prefix Space ,
+and to
+.Ql s
+in copy mode.
 .It Ic search Oo Ar pattern Oc Op Fl F , Fl -kind Ar kind , Fl t Ar session , Fl -pane Ar id , Fl -lines Ar n , Fl -print , Fl -first
 Every line of every pane's scrollback, one row each and the newest first:
 where it is as
