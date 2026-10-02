@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+## Companion first
+
+Read `docs/dev/companion-first.md` before changing anything somebody sees or
+hears: a picker, the bar, a popup, a message. The tool is a companion first,
+and second it has to work for everyone, including people who don't use their
+eyes. `docs/dev/accessibility-checklist-status.md` says where that stands.
+
 ## Build & test
 
 The justfile is the list of commands, and `just` alone prints it. Every recipe
