@@ -8,6 +8,14 @@
 //! names apart that a terminal without extended keys can't tell apart: `M-A`
 //! and `M-S-a`, `C-A` and `C-a` are separate bindings in `list-keys`. A
 //! comparison goes through [`canonical`], which folds each pair onto one name.
+//!
+//! ```
+//! use tmux_companion::keyroute::spell;
+//!
+//! assert_eq!(spell::from_nvim_key("<C-L>").as_deref(), Some("C-l"));
+//! assert_eq!(spell::from_zsh("^[f").as_deref(), Some("M-f"));
+//! assert_eq!(spell::canonical("M-S-a"), "M-A");
+//! ```
 
 /// nvim's names for special keys, lowercased, to tmux's.
 fn nvim_special(name: &str) -> Option<&'static str> {

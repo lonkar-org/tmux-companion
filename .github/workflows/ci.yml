@@ -202,3 +202,6 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
       - run: cargo doc --no-deps
+      # The examples in the library's docs are tests, and `--all-targets` in
+      # the test job leaves doctests out.
+      - run: cargo test --doc --locked

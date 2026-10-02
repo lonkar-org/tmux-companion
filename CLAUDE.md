@@ -74,6 +74,7 @@ description they had.
 | `src/click.rs` | a mouse click on a segment of the bar |
 | `src/close.rs` | closing a project session by letting every window exit on its own |
 | `src/config.rs` | the configuration file: where it lives, how it is parsed, and what happens when it cannot be |
+| `src/daemon.rs` | asking a running tmux-companion daemon for a segment, from another program |
 | `src/dirsource.rs` | where the project picker's directory list comes from |
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
@@ -142,6 +143,27 @@ description they had.
 | `src/tmux/format.rs` | colours, styles and the string builder every segment renders through |
 | `src/tmux/icons.rs` | Nerd Font codepoints the status bar draws with |
 | `src/window_names.rs` | naming windows after what is running in them, from the job table |
+
+## The library surface
+
+The crate ships on crates.io as a binary and a library, and docs.rs shows six
+modules: `daemon`, `proto`, `segments` (`git`, `network`), `keyroute`
+(`spell`), `sessions` (`capture`, `import`, `portable`, `store` and the
+snapshot types) and `tmux` (`format`, `icons`). Those follow semver, which
+before 1.0 means a breaking change to one bumps the minor version and gets a
+CHANGELOG line. Everything else is `#[doc(hidden)]` in `src/lib.rs`: public
+only so `tests/` links against it, with no promise attached.
+
+- A new module is hidden by default. Making one visible is a decision about
+  supporting it, made on purpose, with a doctest in its module docs.
+- A visible signature must not name a type from a hidden module. Re-export it
+  next to the item that uses it (`segments::git` re-exports `BranchType` and
+  `GitPart`, `sessions` re-exports `Confidence`) or hide the item.
+- Library code never spawns `current_exe()`: inside somebody else's program
+  that is their binary. `daemon::Daemon` connects and nothing else, which is
+  why it exists beside `client`.
+- The examples in the docs are tests. `just doc` and the rustdoc CI job run
+  `cargo test --doc`, which `--all-targets` skips.
 
 ## Key invariants
 

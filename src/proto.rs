@@ -1,3 +1,19 @@
+//! The daemon's protocol: one JSON [`Request`] line in, one JSON [`Response`]
+//! line out, and one arguments struct per command.
+//!
+//! [`crate::daemon::Daemon`] speaks it for you. The types are here for a
+//! client in another language, which needs only the shape of the two lines:
+//!
+//! ```text
+//! {"cmd":"gst","args":{"path":"/src/app"},"version":""}
+//! {"output":"#[fg=colour235,bg=colour209] main ...","error":null,"version":"0.7.0+..."}
+//! ```
+//!
+//! `args` is the command's struct from this module, serialised. Every field
+//! has a default, so `{}` is a whole request, and none takes a field it does
+//! not know: a misspelt or newer field is an error naming it, not a silently
+//! different answer. `version` is the sender's build and may be empty.
+
 use serde::{Deserialize, Serialize};
 
 /// This build, as `<version>+<seconds>.<commit>`, with `-dirty` on the end
@@ -14,6 +30,7 @@ pub fn build_id() -> String {
     BUILD_ID.to_string()
 }
 
+#[doc(hidden)]
 /// `agent`: what an agent says about itself, and which pane it is in.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +43,7 @@ pub struct AgentArgs {
     pub state: Option<crate::panes::Report>,
 }
 
+#[doc(hidden)]
 /// What the daemon knows that `setup` asks about: the answer to `__setup`.
 ///
 /// A response rather than an args struct, since the request carries nothing.
@@ -38,6 +56,7 @@ pub struct SetupFacts {
     pub agent_reported: bool,
 }
 
+#[doc(hidden)]
 /// `quiet`: how long to be quiet for, zero for off, nothing to only ask.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -214,6 +233,7 @@ pub struct ShJobsArgs {
     pub pane_pid: u32,
 }
 
+#[doc(hidden)]
 /// Arguments for `keys`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
@@ -230,6 +250,21 @@ pub struct KeysArgs {
 /// the wire types do not depend on the server.
 fn default_ttl_secs() -> f64 {
     5.0
+}
+
+/// The defaults are the ones a request that leaves every field out gets, read
+/// from the serde attributes rather than written a second time here.
+impl Default for GstArgs {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("every GstArgs field has a serde default")
+    }
+}
+
+/// As for [`GstArgs`]: the wire's defaults, from the serde attributes.
+impl Default for StatusRightArgs {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("every StatusRightArgs field has a serde default")
+    }
 }
 
 impl Request {

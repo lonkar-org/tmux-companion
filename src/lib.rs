@@ -1,100 +1,167 @@
-//! tmux-companion: one binary in two modes.
+//! tmux-companion: one daemon that draws the tmux status bar, and the tools
+//! around a tmux server that a plugin manager used to provide.
 //!
-//! `server` binds a Unix socket and answers requests forever; every other
-//! subcommand is a client that connects, writes one JSON line, reads one back
-//! and exits. The library exists so `tests/` can link against the same code
-//! the binary runs, which a `main.rs`-only crate cannot offer.
+//! Most people want the binary:
+//!
+//! ```sh
+//! cargo install --locked tmux-companion
+//! tmux-companion doctor
+//! ```
+//!
+//! and the manual, `man tmux-companion`, or the
+//! [README](https://github.com/lonkar-org/tmux-companion#readme) for what it
+//! does.
+//!
+//! # The library
+//!
+//! The same crate is a library, for a program that wants a part of what the
+//! binary does without running the binary for it. Three parts are meant to be
+//! used from outside, and the documentation shows only those:
+//!
+//! - **Asking the daemon.** [`daemon::Daemon`] sends one request to a running
+//!   `tmux-companion server` and returns its answer, with the request and
+//!   response types and each command's arguments in [`proto`]. It's
+//!   blocking, needs no async runtime, and never starts or replaces a daemon.
+//! - **Parsing and drawing.** [`segments::git`] parses `git status
+//!   --porcelain=v2 --branch` into [`segments::git::GitStatus`] and renders it
+//!   as a segment; [`tmux::format`] builds tmux style strings and turns them
+//!   into ANSI for a terminal; [`segments::network`] is the arithmetic behind
+//!   a transfer rate; [`keyroute::spell`] translates key names from nvim, fzf,
+//!   zsh, nano and Claude Code into tmux's spelling. None of these touch tmux
+//!   or a socket.
+//! - **Session snapshots.** [`sessions::Snapshot`] is a whole tmux server as
+//!   data: [`sessions::capture`] builds one from tmux's own listings,
+//!   [`sessions::render`] and [`sessions::parse`] write and read the file
+//!   format, [`sessions::store`] keeps generations of them,
+//!   [`sessions::portable`] moves one between machines, and
+//!   [`sessions::import`] reads what tmux-resurrect saved.
+//!
+//! ```
+//! use tmux_companion::segments::git::GitStatus;
+//!
+//! let porcelain = "\
+//! ## branch.oid 1f2e3d4c5b6a
+//! ## branch.head main
+//! ## branch.upstream origin/main
+//! ## branch.ab +2 -0
+//! 1 .M N... 100644 100644 100644 aaaa bbbb src/lib.rs
+//! ? notes.txt
+//! ";
+//! let status = GitStatus::parse_porcelain_v2(porcelain);
+//! assert_eq!(status.branch, "main");
+//! assert_eq!(status.ahead, 2);
+//! assert_eq!(status.unstaged.modified, 1);
+//! assert_eq!(status.untracked, 1);
+//! ```
+//!
+//! # Stability
+//!
+//! The parts above follow semver: before 1.0 a breaking change to them bumps
+//! the minor version and has a line in the changelog. Everything else in the
+//! crate is the binary's own code. It's public so the integration tests can
+//! link against it, it's hidden from these docs and it changes whenever the
+//! binary needs it to, in any release.
+//!
+//! The library pulls in everything the binary uses, tokio and ratatui
+//! included; there are no feature flags to trim it yet.
 
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-/// Fetching repositories in the background, so ahead and behind mean something.
-/// What an agent says about itself, and the hooks that make it say so.
-pub mod agent;
-pub mod autofetch;
-/// Sourcing tmux config when it changes on disk.
-pub mod autoreload;
-/// Timestamped map with a reader-supplied TTL.
-pub mod brief;
-pub mod cache;
-/// The cheat sheet of hand-written bindings.
-pub mod cheatsheet;
-/// The command-line surface and its dispatch.
-pub mod cli;
-/// Closing a project session politely.
-pub mod click;
-/// Talking to the server over the socket.
-pub mod client;
-pub mod close;
-/// The configuration file.
-pub mod config;
-/// Where the project picker's directory list comes from.
-pub mod dirsource;
-/// What to ask somebody to run before they open an issue.
-pub mod doctor;
-/// Key bindings, parsed out of tmux.
-pub mod inbox;
-pub mod journal;
-/// Jumping to any text on the screen, flash.nvim style.
-pub mod jump;
-pub mod keyroute;
-pub mod keys;
-/// Stopping what hangs in a pane: TERM, a wait, then KILL.
-pub mod kill;
+// ── The library ─────────────────────────────────────────────────────────────
 
-/// Running a segment in this process, with no daemon.
-pub mod local;
-/// Announcing a long command that finished out of sight.
-pub mod note;
-pub mod notify;
-/// Whether the network is there, for the health mark.
-pub mod online;
-/// Opening a URL or file found in text.
-pub mod open;
-/// Every pane on the server, as a list to jump from.
-pub mod panes;
-pub mod picker;
-/// The fuzzy picker and its state machine.
-/// A pocket pane: a shell pulled out beside the editor and put away again.
-pub mod pocket;
-/// Who is listening on which port, and which pane started it.
-pub mod ports;
-/// Rendering samples of every style, for eyeballing.
-pub mod preview;
-/// Asking the terminal what it does.
-pub mod probe;
-/// Projects: one session each.
-pub mod project;
-/// Giving a pane a session of its own.
-pub mod promote;
-/// The JSON request and response, and one args struct per command.
+pub mod daemon;
+pub mod keyroute;
 pub mod proto;
-/// Running a command from history in a side pane.
-pub mod quiet;
-/// The layout a checkout carries with it, and the trust it needs.
-pub mod repofile;
-/// What a restore will run in each pane, decided before anything runs.
-pub mod restore;
-pub mod run;
-/// Per-project layouts captured from a live session.
-pub mod saved;
-/// Searching the scrollback of every pane at once.
-pub mod search;
-/// The things the status bar can draw.
 pub mod segments;
-/// The daemon.
-pub mod server;
-/// Snapshots of the whole server, in generations.
 pub mod sessions;
-/// The checklist of what the tool offers and a way to add what is missing.
-pub mod setup;
-/// The OSC 133 prompt marks and the shell code that emits them.
-pub mod shell;
-/// Timed work and small tmux commands.
-pub mod tasks;
-/// Theme colour arithmetic and the files it writes.
-pub mod theme;
-/// tmux's own formatting language.
 pub mod tmux;
-/// Naming windows after what is running in them.
+
+// ── The binary's own code: public for tests/, hidden, no semver promise ────
+
+#[doc(hidden)]
+pub mod agent;
+#[doc(hidden)]
+pub mod autofetch;
+#[doc(hidden)]
+pub mod autoreload;
+#[doc(hidden)]
+pub mod brief;
+#[doc(hidden)]
+pub mod cache;
+#[doc(hidden)]
+pub mod cheatsheet;
+#[doc(hidden)]
+pub mod cli;
+#[doc(hidden)]
+pub mod click;
+#[doc(hidden)]
+pub mod client;
+#[doc(hidden)]
+pub mod close;
+#[doc(hidden)]
+pub mod config;
+#[doc(hidden)]
+pub mod dirsource;
+#[doc(hidden)]
+pub mod doctor;
+#[doc(hidden)]
+pub mod inbox;
+#[doc(hidden)]
+pub mod journal;
+#[doc(hidden)]
+pub mod jump;
+#[doc(hidden)]
+pub mod keys;
+#[doc(hidden)]
+pub mod kill;
+#[doc(hidden)]
+pub mod local;
+#[doc(hidden)]
+pub mod note;
+#[doc(hidden)]
+pub mod notify;
+#[doc(hidden)]
+pub mod online;
+#[doc(hidden)]
+pub mod open;
+#[doc(hidden)]
+pub mod panes;
+#[doc(hidden)]
+pub mod picker;
+#[doc(hidden)]
+pub mod pocket;
+#[doc(hidden)]
+pub mod ports;
+#[doc(hidden)]
+pub mod preview;
+#[doc(hidden)]
+pub mod probe;
+#[doc(hidden)]
+pub mod project;
+#[doc(hidden)]
+pub mod promote;
+#[doc(hidden)]
+pub mod quiet;
+#[doc(hidden)]
+pub mod repofile;
+#[doc(hidden)]
+pub mod restore;
+#[doc(hidden)]
+pub mod run;
+#[doc(hidden)]
+pub mod saved;
+#[doc(hidden)]
+pub mod search;
+#[doc(hidden)]
+pub mod server;
+#[doc(hidden)]
+pub mod setup;
+#[doc(hidden)]
+pub mod shell;
+#[doc(hidden)]
+pub mod tasks;
+#[doc(hidden)]
+pub mod theme;
+#[doc(hidden)]
 pub mod window_names;

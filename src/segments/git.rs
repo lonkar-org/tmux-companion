@@ -1,5 +1,25 @@
 //! Git status: running the command, parsing porcelain v2, and rendering it
 //! into a tmux segment.
+//!
+//! The pure half is [`GitStatus::parse_porcelain_v2`] and the
+//! `status_line_*` renderers; [`fetch_git_status`] runs git for you.
+//!
+//! ```
+//! use tmux_companion::segments::git::{GitStatus, status_line_styled};
+//! use tmux_companion::tmux::format::{Style, to_ansi};
+//!
+//! let status = GitStatus::parse_porcelain_v2("\
+//! ## branch.oid 1f2e3d4c5b6a
+//! ## branch.head main
+//! ## branch.upstream origin/main
+//! ## branch.ab +1 -0
+//! ");
+//! // tmux markup for the bar, then the same segment for a shell prompt.
+//! let markup = status_line_styled(&status, false, false, Style::Fill);
+//! assert!(markup.contains("main"));
+//! let prompt = to_ansi(&markup);
+//! assert!(!prompt.contains("#["));
+//! ```
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -9,7 +29,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::config::{BranchType, GitPart};
+/// Which branch prefixes get which glyph, and which parts a line draws: the
+/// `[git]` settings [`LineOpts`] takes.
+pub use crate::config::{BranchType, GitPart};
 use crate::server::state::{DEFAULT_GST_TTL, ServerState};
 use crate::tmux::{
     format::{
@@ -711,6 +733,7 @@ pub async fn fetch_git_status(path: &Path) -> anyhow::Result<GitStatus> {
     Ok(status)
 }
 
+#[doc(hidden)]
 /// Everything the git segment needs in order to render.
 ///
 /// A struct rather than seven positional arguments, so the standalone `gst`
@@ -772,6 +795,7 @@ impl Default for GstOptions {
     }
 }
 
+#[doc(hidden)]
 /// Render the git segment, serving from the cache unless `opts.force` is set.
 pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
@@ -843,6 +867,7 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
     })
 }
 
+#[doc(hidden)]
 /// `git rev-parse --is-inside-work-tree`, cached per canonicalized path.
 ///
 /// This fork ran on every call including cache hits — it sits ahead of the

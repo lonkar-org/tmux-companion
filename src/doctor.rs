@@ -457,7 +457,7 @@ fn key_routing_state() -> String {
     key_routing_line(config.keys.route, config.keys.hold_ms, version, wrapped)
 }
 
-/// The words for [`key_routing_state`].
+/// The words for `key_routing_state`.
 pub fn key_routing_line(
     on: bool,
     hold_ms: u64,

@@ -421,7 +421,7 @@ async fn nvim_panes() -> Vec<(String, u32)> {
     }
 }
 
-/// The parsing half of [`nvim_panes`].
+/// The parsing half of `nvim_panes`.
 pub fn parse_nvim_panes(listing: &str) -> Vec<(String, u32)> {
     listing
         .lines()
@@ -445,7 +445,7 @@ async fn process_tree() -> HashMap<u32, Vec<u32>> {
     }
 }
 
-/// The parsing half of [`process_tree`].
+/// The parsing half of `process_tree`.
 pub fn parse_process_tree(listing: &str) -> HashMap<u32, Vec<u32>> {
     let mut tree: HashMap<u32, Vec<u32>> = HashMap::new();
     for line in listing.lines() {

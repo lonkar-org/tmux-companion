@@ -7,12 +7,14 @@ edition = "2024"
 # 1.95. A number the lockfile contradicts is a promise nobody can keep, so the
 # lock decides and the msrv job in ci.yml checks it with the lock in place.
 rust-version = "1.95"
-description = "A singleton tmux status server: one process answers every status segment, so the bar costs one process spawn per refresh instead of five."
+description = "A tmux companion: one daemon draws the status bar, and one binary does projects, snapshots and restore, pickers and a flash-style jump. Also a library for its daemon client, git and tmux-format parsing, and session snapshots."
 license = "MIT"
 repository = "https://github.com/lonkar-org/tmux-companion"
+homepage = "https://github.com/lonkar-org/tmux-companion"
+documentation = "https://docs.rs/tmux-companion"
 readme = "README.md"
-keywords = ["tmux", "status-line", "statusline", "git", "cli"]
-categories = ["command-line-utilities"]
+keywords = ["tmux", "status-line", "session", "git", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
 # What `cargo publish` uploads: the source, the files it embeds with
 # include_str!, the manual and the example configs a user copies. Not the
 # demo recordings, the playground image, the workflows or the scripts, which
@@ -32,6 +34,12 @@ include = [
     "/docs/tmux.conf.full.example",
     "/tests/fixtures/**/*",
 ]
+
+# Unix sockets and nix make this a unix-only crate, and docs.rs would
+# otherwise try its whole default target list, Windows included.
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu"]
 
 [[bin]]
 name = "tmux-companion"

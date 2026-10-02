@@ -642,6 +642,9 @@ pub enum KeysAction {
     },
     /// Wrap tmux's root bindings so a key an app claims is held, or with
     /// [keys] route off, put them back; the last line of tmux.conf runs it
+    // The text is clap's --help, where `[keys]` is the config section and not
+    // a link, so rustdoc is told not to resolve it.
+    #[allow(rustdoc::broken_intra_doc_links)]
     Route {
         /// Print the tmux script and what it would do, and apply nothing
         #[arg(long)]

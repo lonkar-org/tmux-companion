@@ -187,6 +187,7 @@ review-marks:
 # Build the docs, the way the docs job does.
 doc:
     nice -n 15 cargo doc --no-deps -j 4
+    nice -n 15 cargo test --doc -j 4
 
 # Format everything.
 fmt:

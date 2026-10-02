@@ -1,5 +1,14 @@
 //! Network bandwidth: a counter read, the arithmetic that turns two reads
 //! into a rate, and the IEC formatting that keeps the segment narrow.
+//!
+//! ```
+//! use std::time::Duration;
+//! use tmux_companion::segments::network::rate;
+//!
+//! // 3 MB over a second and a half, the interval tmux actually refreshes at.
+//! assert_eq!(rate(3_000_000, Duration::from_millis(1500)), 2_000_000);
+//! assert_eq!(rate(1, Duration::ZERO), 0);
+//! ```
 use std::time::{Duration, Instant};
 
 use crate::tmux::icons::{ARROW_LEFT, RATE_GIB, RATE_KIB, RATE_MIB};
@@ -56,6 +65,7 @@ fn iec_fmt_styled(bytes_per_sec: u64, unit_colour: &str) -> String {
     format!("{num}#[fg={unit_colour},none,italics]{unit}#[none]")
 }
 
+#[doc(hidden)]
 /// Format bandwidth delta into tmux status segment(s).
 /// Returns empty string when both are below threshold.
 ///
@@ -120,6 +130,7 @@ pub fn rate(delta: u64, elapsed: Duration) -> u64 {
     (delta as f64 / secs) as u64
 }
 
+#[doc(hidden)]
 /// Fold a new counter reading into the running state and return what to draw.
 ///
 /// Pure apart from its two `&mut` arguments and an explicit `now`, so the whole

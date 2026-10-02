@@ -15,20 +15,46 @@
 //! arithmetic over data somebody else fetched, which is what lets it be tested
 //! without a server. The one exception is `idle`, which is a listing rather
 //! than a snapshot and asks tmux itself, with the parse kept pure.
+//!
+//! A snapshot is plain data, so one from tmux-resurrect, one captured live
+//! and one read from the store are the same type:
+//!
+//! ```
+//! use tmux_companion::sessions::{self, import};
+//!
+//! // Two lines of a tmux-resurrect save: one pane, then its window.
+//! let resurrect = "\
+//! pane\twork\t1\t1\t:*\t1\tvim\t:/src/app\t1\tnvim\t:nvim
+//! window\twork\t1\t:edit\t1\t:*\tb644,170x52,0,0,7\toff
+//! ";
+//! let snap = import::parse(resurrect, "last");
+//! assert_eq!((snap.window_count(), snap.pane_count()), (1, 1));
+//!
+//! // The format this crate keeps snapshots in, and back again.
+//! let text = sessions::render(&snap);
+//! assert_eq!(sessions::parse(&text)?, snap);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 pub mod capture;
+#[doc(hidden)]
 pub mod cli;
+#[doc(hidden)]
 pub mod idle;
 pub mod import;
 pub mod portable;
+#[doc(hidden)]
 pub mod restore;
 pub mod store;
+#[doc(hidden)]
 pub mod summary;
+#[doc(hidden)]
 pub mod timer;
 
 use serde::{Deserialize, Serialize};
 
-use crate::saved::Confidence;
+/// How sure a capture is of a pane's command; kept in every [`Pane`].
+pub use crate::saved::Confidence;
 
 /// The version this crate writes into every snapshot it creates.
 ///

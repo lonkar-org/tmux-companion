@@ -201,6 +201,26 @@ The picker rows are the honest part. Opening one is not faster: what a person
 waits through is `display-popup` at 21 ms, a process starting and a terminal
 painting, and none of that got cheaper. What halved is what it costs to do.
 
+## As a library
+
+<!-- @Yogesh(gap): two or three lines on who would use the crate as a library and for what. Facts to draw on: daemon::Daemon asks a running daemon for a segment, is blocking, and never starts or replaces a daemon; segments::git parses porcelain v2 and renders it, tmux::format::to_ansi turns tmux markup into terminal escapes, keyroute::spell translates key names; sessions reads, writes and stores snapshots and imports tmux-resurrect saves. Semver covers only those modules, everything else is hidden on docs.rs. -->
+
+```sh
+cargo add tmux-companion
+```
+
+```rust
+use tmux_companion::daemon::Daemon;
+use tmux_companion::proto::GstArgs;
+
+let segment = Daemon::new()?.git_status(&GstArgs {
+    path: Some("/path/to/repo".into()),
+    ..GstArgs::default()
+})?;
+```
+
+<!-- @Yogesh(gap): one line pointing at https://docs.rs/tmux-companion for the rest. -->
+
 ## Documentation
 
 |              |                                                                                    |                                                                                            |

@@ -195,6 +195,7 @@ pub fn map_rows(text: &str) -> Vec<MapRow> {
     rows
 }
 
+#[doc(hidden)]
 /// `sessions export`: the newest generation, or the one named, as a file.
 pub async fn export(stamp: Option<String>, file: Option<String>) -> anyhow::Result<()> {
     let state_dir = crate::server::state_dir()
@@ -250,6 +251,7 @@ pub async fn export(stamp: Option<String>, file: Option<String>) -> anyhow::Resu
     Ok(())
 }
 
+#[doc(hidden)]
 /// `sessions import`: a file from [`export`], stored here as a new generation.
 pub async fn import(file: String, no_map: bool) -> anyhow::Result<()> {
     let state_dir = crate::server::state_dir()

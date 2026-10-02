@@ -1,9 +1,8 @@
 //! Everything that knows about tmux's own formatting language.
-/// Colours, styles and the segment builder.
 pub mod format;
-/// Nerd Font codepoints.
 pub mod icons;
 
+#[doc(hidden)]
 /// The flag every tmux call here starts with.
 ///
 /// tmux decides per client whether it may print UTF-8: yes when `$TMUX` is
@@ -19,6 +18,7 @@ pub mod icons;
 /// call rather than on the one that starts the server.
 pub const UTF8_FLAG: &str = "-u";
 
+#[doc(hidden)]
 /// A `tmux` command with [`UTF8_FLAG`] already on it, for anything whose
 /// output gets read.
 pub fn command() -> tokio::process::Command {
@@ -27,6 +27,7 @@ pub fn command() -> tokio::process::Command {
     cmd
 }
 
+#[doc(hidden)]
 /// [`command`] for the places that run outside a runtime.
 pub fn command_sync() -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
@@ -34,6 +35,7 @@ pub fn command_sync() -> std::process::Command {
     cmd
 }
 
+#[doc(hidden)]
 /// A `tmux` command that attaches this terminal, without [`UTF8_FLAG`].
 ///
 /// On `attach-session` the flag means more than the output of one command: it

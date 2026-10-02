@@ -4,6 +4,23 @@
 //! `#[fg=colourN]` wants and converting back and forth buys nothing. The
 //! contrast figures in the comments are measured, not guessed: several of
 //! these were raised to clear 4.5:1 after a check against WCAG.
+//!
+//! A segment is tmux markup, and [`to_ansi`] turns the same string into
+//! escapes for a terminal, so one renderer serves a status bar and a prompt:
+//!
+//! ```
+//! use tmux_companion::tmux::format::{Segment, colored_segment, to_ansi};
+//!
+//! let mut seg = Segment::new();
+//! seg.add(colored_segment(false, "colour39", "colour233", "main"));
+//! seg.counter(2, "+");
+//! let markup = seg.join(" ");
+//! assert_eq!(markup, "#[fg=colour39,bg=colour233]main 2+");
+//! assert_eq!(
+//!     to_ansi("#[fg=colour39,bg=colour233]main"),
+//!     "\x1b[38;5;39m\x1b[48;5;233mmain\x1b[0m"
+//! );
+//! ```
 
 use super::icons::ARROW_RIGHT;
 

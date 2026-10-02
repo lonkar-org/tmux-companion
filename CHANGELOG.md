@@ -7,6 +7,13 @@ entry per phase of the comrades port.
 
 ### Added
 
+- The crate is a library as well as a binary. `daemon::Daemon` asks a
+  running daemon for a segment, blocking and with no runtime, and never starts
+  or replaces one. `segments::git`, `tmux::format`, `segments::network` and
+  `keyroute::spell` parse and render without tmux, and `sessions` reads,
+  writes and stores snapshots and imports tmux-resurrect saves. Those modules
+  follow semver; the rest of the crate is hidden from docs.rs and isn't
+  covered. `GstArgs` and `StatusRightArgs` implement `Default`.
 - crates.io: `cargo install --locked tmux-companion` builds a release, and the
   release workflow publishes each tag there after the approved GitHub release,
   signed in through trusted publishing rather than a stored token.

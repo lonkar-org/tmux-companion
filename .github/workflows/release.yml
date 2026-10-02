@@ -133,6 +133,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --no-fail-fast --all-targets --locked
+      - run: cargo test --doc --locked
 
   build:
     name: ${{ matrix.target }}
