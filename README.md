@@ -27,24 +27,24 @@ daemon that is already warm.
 
 ## What you get
 
-|                             |                                                                                                                      |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `status-right`              | git, bandwidth and battery in one call                                                                               |
-| `keys`                      | fuzzy search every binding, press enter to run it                                                                    |
-| `cheatsheet`                | the bindings you keep looking up, until you've learned them                                                          |
-| `project`                   | one session per project, sessions and your directory jumper in one list                                              |
-| `project save`              | capture this session's panes as the layout it reopens with                                                           |
-| `inbox`, `brief`, `journal` | the agents waiting on you and what each asked, a nudge when one waits too long, and what happened today              |
-| `sessions`                  | every session saved on a timer, and `sessions resurrect` brings them back after a reboot                             |
-| `panes`, `search`, `ports`  | jump to any pane, any line of any scrollback, or whatever's listening on that port                                   |
-| `pocket`, `zen`, `kill`     | a shell you pull out and put away, everything but this pane out of the way, a hung program stopped with the pane kept|
-| `promote`, `note`, `quiet`  | a pane into a session of its own, a note on a pane, an hour with nothing nagging                                     |
-| `run`                       | pick from shell history, run it in a pane that slides out                                                            |
-| `open`                      | open the URL or `file:line:col` under your cursor                                                                    |
-| `theme pick`                | your themes with a swatch each, applied on the spot; `theme init` writes six to start                                |
-| `shell-init`                | the prompt marks tmux's `next-prompt` has waited for since 3.3                                                       |
-| `sh-jobs`                   | what's suspended under this pane, with your icons                                                                    |
-| `doctor`                    | everything a bug report needs, in one screen                                                                         |
+|                             |                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `status-right`              | git, bandwidth and battery in one call                                                                                |
+| `keys`                      | fuzzy search every binding, press enter to run it                                                                     |
+| `cheatsheet`                | the bindings you keep looking up, until you've learned them                                                           |
+| `project`                   | one session per project, sessions and your directory jumper in one list                                               |
+| `project save`              | capture this session's panes as the layout it reopens with                                                            |
+| `inbox`, `brief`, `journal` | the agents waiting on you and what each asked, a nudge when one waits too long, and what happened today               |
+| `sessions`                  | every session saved on a timer, and `sessions resurrect` brings them back after a reboot                              |
+| `panes`, `search`, `ports`  | jump to any pane, any line of any scrollback, or whatever's listening on that port                                    |
+| `pocket`, `zen`, `kill`     | a shell you pull out and put away, everything but this pane out of the way, a hung program stopped with the pane kept |
+| `promote`, `note`, `quiet`  | a pane into a session of its own, a note on a pane, an hour with nothing nagging                                      |
+| `run`                       | pick from shell history, run it in a pane that slides out                                                             |
+| `open`                      | open the URL or `file:line:col` under your cursor                                                                     |
+| `theme pick`                | your themes with a swatch each, applied on the spot; `theme init` writes six to start                                 |
+| `shell-init`                | the prompt marks tmux's `next-prompt` has waited for since 3.3                                                        |
+| `sh-jobs`                   | what's suspended under this pane, with your icons                                                                     |
+| `doctor`                    | everything a bug report needs, in one screen                                                                          |
 
 Background tasks, all of them off till you turn them on: fetching your repositories so
 ahead and behind mean something, sourcing tmux's config when it changes, naming
@@ -203,7 +203,9 @@ painting, and none of that got cheaper. What halved is what it costs to do.
 
 ## As a library
 
-<!-- @Yogesh(gap): two or three lines on who would use the crate as a library and for what. Facts to draw on: daemon::Daemon asks a running daemon for a segment, is blocking, and never starts or replaces a daemon; segments::git parses porcelain v2 and renders it, tmux::format::to_ansi turns tmux markup into terminal escapes, keyroute::spell translates key names; sessions reads, writes and stores snapshots and imports tmux-resurrect saves. Semver covers only those modules, everything else is hidden on docs.rs. -->
+tmux-companion could also used as layer for your own UX in tmux, providing it as library would enable anyone interested to write functionality or features based on existing API or send PR or Issue to request new or fix existing.
+
+The list below might not be comprehensive, please report if you think something is missing here or should be made part of Public API.
 
 ```sh
 cargo add tmux-companion
@@ -219,7 +221,7 @@ let segment = Daemon::new()?.git_status(&GstArgs {
 })?;
 ```
 
-<!-- @Yogesh(gap): one line pointing at https://docs.rs/tmux-companion for the rest. -->
+**Official crate docs at [https://docs.rs/tmux-companion](https://docs.rs/tmux-companion).**
 
 ## Documentation
 
