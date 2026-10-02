@@ -2,10 +2,47 @@
 
 ## Companion first
 
-Read `docs/dev/companion-first.md` before changing anything somebody sees or
-hears: a picker, the bar, a popup, a message. The tool is a companion first,
-and second it has to work for everyone, including people who don't use their
-eyes. `docs/dev/accessibility-checklist-status.md` says where that stands.
+`docs/dev/companion-first.md` says why: a companion first, and second, every
+job it does channeled to people who don't use their eyes, or rely on them
+less. The rules below come out of it. They bind any change to something
+somebody sees or hears: a picker, the bar, a popup, a message, a key.
+
+**The primary focus now** is a screen reader and a keyboard in a terminal.
+For motor and attention, remove traps rather than designing a second
+interface: nothing timed, nothing mouse-only, no focus moved without saying
+so, no flashing or moving output.
+
+**Rules**
+
+1. Every job has a path a screen reader reads top to bottom: plain lines in a
+   stable order, and nothing said by colour, glyph or position alone. The
+   command (`inbox`, `brief`, `panes --print`, `read-bar`) is the source of
+   truth, and a popup is one view of it.
+2. A new surface drawn as a grid, a popup or with box drawing ships with that
+   path in the same change. When it can't, its manual entry and its
+   CHANGELOG line say `a11y: limited` and why.
+3. A limit is written down whatever its cause. No time is a reason to come
+   back to it, never a reason to leave the note out. A limit that comes from
+   the approach or the design stays an open issue.
+4. Screen-reader mode never reads chrome: no `─`, `│`, icons or column
+   padding in what it prints.
+5. Same job, different channel is the bar. A feature only for screen-reader
+   users is welcome, and not required.
+6. Design for information through speech, braille and keys, not for one
+   mental model of the screen. One closed-eyes session is a failure mode to
+   design against, not a picture of every screen-reader user.
+
+**Answer these in the commit message for any such change:**
+
+- What job does it serve?
+- Which command does that job with output a screen reader reads top to
+  bottom?
+- Does it depend on colour, an icon, pane geometry, a timer, or focus that
+  isn't announced?
+- If it does, what is the other path, or where is the limit written down?
+- Does screen-reader mode stay free of `─│`, icons and padding?
+
+`docs/dev/accessibility-checklist-status.md` says where the work stands.
 
 ## Build & test
 
