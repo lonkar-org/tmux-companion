@@ -264,6 +264,18 @@ snippet = '''bind -N "companion: copy jump to any text on screen" {key} run-shel
 goes = "tmux.conf"
 
 [[item]]
+id = "jump-copy"
+group = "Keys"
+kind = "binding"
+line = "Can I jump from copy mode without the prefix?"
+command = "jump"
+key = "s"
+table = "copy-mode-vi"
+fallback = ["S"]
+snippet = '''bind -N "companion: copy jump to any text on screen" -T copy-mode-vi {key} run-shell -b "tmux-companion jump --pane '#{pane_id}' --client '#{client_name}'"'''
+goes = "tmux.conf"
+
+[[item]]
 id = "open"
 group = "Keys"
 kind = "binding"
