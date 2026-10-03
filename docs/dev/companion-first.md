@@ -1,7 +1,7 @@
 # First be companion, second to everyone
 
-What is companion? A person, animal or a thing that frequently spends time with you, accompanies and tries to match with you in your slog.
-tmux-companion is a software thing, spends time with you and accompanies when you work in tmux, tries to match and provide answers you want.
+What is companion? A person, animal or a thing that frequently spends time with you, accompanies and tries to match with you, offers help when you ask and sometimes even if you didn't ask due to its habit.
+tmux-companion is a software thing, spends time with you and accompanies when you work in tmux, tries to match and provide answers you ask and it can schedule things so you don't have to ask frequently.
 You don't need tmux-companion for the answers you want, you can have it as a companion! so for tmux-companion 'First be companion'.
 
 On 2026-10-02 ~13:20 I first used VoiceOver and tried to use terminal, tmux with eyes closed, headphones on, trying to imagine what might be happening on the screen.
