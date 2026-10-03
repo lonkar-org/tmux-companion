@@ -62,6 +62,39 @@ impl Drop for Repo {
     }
 }
 
+const TAG: &str = "socket";
+
+/// Where every daemon and client this file starts keeps its state, config and
+/// home: a directory of its own, so a test run never writes `VERSION`, the
+/// crash marker or the journal into the developer's real state directory, or
+/// reads their config. `TMUX` goes and `TMUX_TMPDIR` points at an empty
+/// directory, so a test daemon started from inside tmux cannot find the
+/// developer's tmux server either, by `$TMUX` or by the default socket.
+fn isolated() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let d = std::env::temp_dir().join(format!("tc-iso-{}-{}", TAG, std::process::id()));
+        for sub in ["state", "config", "home", "tmux"] {
+            std::fs::create_dir_all(d.join(sub)).expect("create isolated dir");
+        }
+        d
+    })
+}
+
+/// The binary, with [`isolated`] for its environment.
+fn bin() -> Command {
+    let d = isolated();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tmux-companion"));
+    cmd.env("XDG_STATE_HOME", d.join("state"))
+        .env("XDG_CONFIG_HOME", d.join("config"))
+        .env("HOME", d.join("home"))
+        .env("TMUX_TMPDIR", d.join("tmux"))
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .env_remove("TMUX_COMPANION_CONFIG");
+    cmd
+}
+
 /// A server process on a socket of its own, killed when the test ends.
 struct TestServer {
     child: Child,
@@ -77,7 +110,7 @@ impl TestServer {
             Instant::now().elapsed().as_nanos()
         ));
         let _ = std::fs::remove_file(&sock);
-        let child = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+        let child = bin()
             .arg("server")
             .env("TMUX_COMPANION_SOCK", &sock)
             .spawn()
@@ -272,7 +305,7 @@ fn a_second_server_exits_quietly_and_leaves_the_first_serving() {
     // the exceptional one.
     let server = TestServer::start("singleton");
 
-    let second = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let second = bin()
         .arg("server")
         .env("TMUX_COMPANION_SOCK", &server.sock)
         .output()
@@ -295,7 +328,7 @@ fn a_stale_socket_file_does_not_stop_a_server_starting() {
     let sock = std::path::PathBuf::from(format!("/tmp/tc-test-stale-{}.sock", std::process::id()));
     std::fs::write(&sock, b"not a socket").expect("write stale file");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let mut child = bin()
         .arg("server")
         .env("TMUX_COMPANION_SOCK", &sock)
         .spawn()
@@ -326,7 +359,7 @@ fn the_binary_client_prints_what_the_server_returned() {
     // half: `connect_with_retry`, the response parse and the print.
     let server = TestServer::start("clientbin");
     let repo = Repo::new("clientbin");
-    let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let out = bin()
         .arg("gst")
         .arg(&repo.0)
         .env("TMUX_COMPANION_SOCK", &server.sock)
@@ -356,7 +389,7 @@ fn a_client_with_no_server_starts_one() {
     let _ = std::fs::remove_file(&sock);
     let repo = Repo::new("autostart");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let out = bin()
         .arg("gst")
         .arg(&repo.0)
         .env("TMUX_COMPANION_SOCK", &sock)
@@ -439,7 +472,7 @@ fn a_client_replaces_a_daemon_from_another_build() {
         let _ = std::fs::remove_file(&sock_for_thread);
     });
 
-    let out = Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let out = bin()
         .args(["gst", env!("CARGO_MANIFEST_DIR")])
         .env("TMUX_COMPANION_SOCK", &sock)
         .output()
@@ -478,7 +511,7 @@ fn starts_that_race_each_other_leave_one_daemon() {
 
     let mut started: Vec<Child> = (0..12)
         .map(|_| {
-            Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+            bin()
                 .arg("server")
                 .env("TMUX_COMPANION_SOCK", &sock)
                 .spawn()
@@ -520,4 +553,23 @@ fn starts_that_race_each_other_leave_one_daemon() {
         "eleven of the twelve starts should have stood down, not {exited}"
     );
     assert!(answered, "the surviving daemon answers");
+}
+
+/// A test daemon writes its state where [`bin`] says, not into the
+/// developer's own state directory. `just test` used to overwrite the real
+/// `VERSION` and leave a crash marker naming a test pid behind.
+#[test]
+fn a_test_daemon_keeps_its_state_in_the_isolated_directory() {
+    let server = TestServer::start("isolated");
+    let version = isolated().join("state/tmux-companion/VERSION");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !version.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        version.exists(),
+        "no VERSION under {}",
+        isolated().display()
+    );
+    drop(server);
 }

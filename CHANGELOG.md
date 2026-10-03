@@ -70,6 +70,12 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- `just test` no longer writes into the developer's own state directory or
+  reaches their tmux server. The daemons `socket_round_trip` and `config_file`
+  start had their own sockets but the real `XDG_STATE_HOME`, config and
+  `$TMUX`, so a run overwrote `VERSION` and left a crash marker naming a test
+  pid. Each suite now runs the binary with a temporary home, state, config and
+  `TMUX_TMPDIR`, and a test checks the daemon's state lands there.
 - The upload rate was written at 2.96:1 on its blue block and its unit at
   1.8:1, under the 4.5:1 WCAG asks of text. Each block now takes whichever of
   the bar's colour and near-white reads on it, and the unit takes the figure's

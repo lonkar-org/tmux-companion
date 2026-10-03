@@ -3,8 +3,39 @@
 
 use std::process::Command;
 
+const TAG: &str = "config";
+
+/// Where every daemon and client this file starts keeps its state, config and
+/// home: a directory of its own, so a test run never writes `VERSION`, the
+/// crash marker or the journal into the developer's real state directory, or
+/// reads their config. `TMUX` goes and `TMUX_TMPDIR` points at an empty
+/// directory, so a test daemon started from inside tmux cannot find the
+/// developer's tmux server either, by `$TMUX` or by the default socket.
+fn isolated() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let d = std::env::temp_dir().join(format!("tc-iso-{}-{}", TAG, std::process::id()));
+        for sub in ["state", "config", "home", "tmux"] {
+            std::fs::create_dir_all(d.join(sub)).expect("create isolated dir");
+        }
+        d
+    })
+}
+
+/// The binary, with [`isolated`] for its environment. A test that sets
+/// `XDG_STATE_HOME` or `TMUX_COMPANION_CONFIG` itself still wins, since a later
+/// `env` replaces an earlier one.
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_tmux-companion"))
+    let d = isolated();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tmux-companion"));
+    cmd.env("XDG_STATE_HOME", d.join("state"))
+        .env("XDG_CONFIG_HOME", d.join("config"))
+        .env("HOME", d.join("home"))
+        .env("TMUX_TMPDIR", d.join("tmux"))
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .env_remove("TMUX_COMPANION_CONFIG");
+    cmd
 }
 
 /// A temporary directory that cleans up after itself.
