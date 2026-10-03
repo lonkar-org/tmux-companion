@@ -24,4 +24,4 @@ This document does not bind or enforce anyone else strictly other than me and AI
 
 This is here as a philosophical reference point to keep me and AI aligned for what also matters as being companion.
 
-Operational checks for PRs and new features live in CLAUDE.md. This file is the why.
+Operational checks for PRs and new features live in [CLAUDE.md](../../CLAUDE.md). This file is the why.
