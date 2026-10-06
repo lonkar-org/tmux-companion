@@ -19,14 +19,14 @@ The chunk clock shows how long the aggregate of session has been in the focus of
 Status segment, right side, every window of an attached session:
 
 ```
-38m
-50m+12
-22m · run 1h14m
+󱫐 38m
+󱫌 50m+12
+󱫐 22m · 1h14m
 ```
 
-- Focus time in the sitting (`38m`, `1h06m`).
-- At or past budget: `50m+12` (budget, then overdue).
-- Agent pane only: dim process age after a middle dot (`run 1h14m`). Agents are the ones the bar's agent count already finds (`panes::is_agent`) which catches claude by its version-named process where a `^claude` pattern never would.
+- Focus time in the sitting (`38m`, `1h06m`), after `󱫐` (nf-md-timer_check).
+- At or past budget: `50m+12` (budget, then overdue), after `󱫌` (nf-md-timer_alert).
+- Agent pane only: dim process age after a middle dot (`1h14m`), unless `agent_age = false`. Agents are the ones the bar's agent count already finds (`panes::is_agent`) which catches claude by its version-named process where a `^claude` pattern never would.
 
 Colors:
 
@@ -96,6 +96,7 @@ boundary_grace = "5m"
 snooze = "5m"
 sound = true
 banner = false
+agent_age = true
 ```
 
 `chunk budget` overrides the file until `chunk reset` or daemon restart. File wins again after restart.
