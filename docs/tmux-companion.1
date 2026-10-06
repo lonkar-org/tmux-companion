@@ -1269,15 +1269,18 @@ The
 .Ic chunk
 segment of
 .Ic [[status.right.segments]]
-draws
+draws a timer and
 .Ql 38m ,
 amber past
 .Ic [chunk] warn_at
-of the budget and
+of the budget, and an alert timer and
 .Ql 50m+12
 in red past it, with
-.Ql \(bu run 1h14m
-when the pane in front runs an agent.
+.Ql \(bu 1h14m
+after either when the pane in front runs an agent, how long it has been
+running, unless
+.Ic [chunk] agent_age
+is off.
 At budget the daemon plays the
 .Ql chunk
 earcon once, at the next window switch, prompt coming back or agent finishing

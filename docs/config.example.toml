@@ -261,8 +261,10 @@ separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 # name = "health"
 # separator_before = " "
 
-# The chunk clock, with [chunk] below turned on: focus time this sitting,
-# `38m`, amber near the budget and `50m+12` in red past it. No I/O at draw
+# The chunk clock, with [chunk] below turned on: a timer and the focus time
+# this sitting, `38m`, amber near the budget, and an alert timer and `50m+12`
+# in red past it; ` · 1h14m` after either is the agent in front, see
+# [chunk] agent_age. No I/O at draw
 # time; the daemon's own look every five seconds keeps the number.
 #
 # [[status.right.segments]]
@@ -935,6 +937,11 @@ snooze = "5m"
 # the keyboard. The desktop banner is held by them, and off by default.
 sound = true
 banner = false
+
+# After the time, ` · 1h14m`: how long the agent in the pane in front has been
+# running. It spends no budget. Off saves a `ps` every five seconds while an
+# agent is in front.
+agent_age = true
 
 [clipboard]
 # The command to pipe a copy into. Unset picks one for the platform: pbcopy on

@@ -12,8 +12,8 @@ entry per phase of the comrades port.
   start: a client with the OS focus that saw a key in the last ten minutes.
   A shorter gap counts as work and a longer one is a break that starts the
   next sitting at 0. The `chunk` segment draws `38m`, amber near the 50
-  minute budget and `50m+12` in red past it, with the agent's run time when
-  one is in front. At budget it plays one sound, waiting up to five minutes
+  minute budget and `50m+12` in red past it, each behind a timer glyph, with
+  the agent's run time after it when one is in front (`[chunk] agent_age`). At budget it plays one sound, waiting up to five minutes
   for a window switch, a prompt or an agent finishing. `chunk snooze` (`M-z`
   in the example configs) grants one more five minutes, then the bar only.
   `chunk status` and `brief` say it in words, `38 min, 12 min for break`.

@@ -424,6 +424,9 @@ pub struct Chunk {
     pub sound: bool,
     /// A desktop banner as well, held by quiet hours.
     pub banner: bool,
+    /// Draw how long the agent in the pane in front has been running, after
+    /// the time. Costs a `ps` per look while an agent is in front.
+    pub agent_age: bool,
 }
 
 impl Default for Chunk {
@@ -437,6 +440,7 @@ impl Default for Chunk {
             snooze: "5m".to_string(),
             sound: true,
             banner: false,
+            agent_age: true,
         }
     }
 }

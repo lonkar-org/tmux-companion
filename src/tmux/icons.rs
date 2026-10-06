@@ -166,6 +166,12 @@ pub const SKIPPED: &str = "\u{f05e}";
 /// Cannot tell (fa-question).
 pub const UNKNOWN: &str = "\u{f128}";
 
+/// The chunk clock under its budget (md-timer_check), before the time.
+pub const TIMER_CHECK: &str = "\u{f1ad0} ";
+
+/// The chunk clock past its budget (md-timer_alert), before the time.
+pub const TIMER_ALERT: &str = "\u{f1acc} ";
+
 /// A time, or something that ran long (fa-clock_o).
 pub const CLOCK: &str = "\u{f017}";
 
@@ -264,6 +270,8 @@ pub fn by_name(name: &str) -> Option<&'static str> {
         "SKIPPED" => Some(SKIPPED),
         "UNKNOWN" => Some(UNKNOWN),
         "CLOCK" => Some(CLOCK),
+        "TIMER_CHECK" => Some(TIMER_CHECK),
+        "TIMER_ALERT" => Some(TIMER_ALERT),
         "RUN" => Some(RUN),
         "IDLE" => Some(IDLE),
         "CLOSED" => Some(CLOSED),

@@ -37,6 +37,7 @@ pub struct Settings {
     pub snooze: u64,
     pub sound: bool,
     pub banner: bool,
+    pub agent_age: bool,
 }
 
 impl Settings {
@@ -55,6 +56,7 @@ impl Settings {
             snooze: secs(&c.snooze, 5 * 60),
             sound: c.sound,
             banner: c.banner,
+            agent_age: c.agent_age,
         }
     }
 }
@@ -319,22 +321,32 @@ pub fn spoken(secs: u64) -> String {
     }
 }
 
-/// The bar's text: `38m`, `50m+12`, and `· run 1h14m` when the pane in front
-/// runs an agent.
+/// The bar's text: `󱫐 38m`, `󱫌 50m+12`, and ` · 1h14m` after either when
+/// the pane in front runs an agent and `agent_age` is on.
 pub fn bar_text(sitting: &Sitting, s: &Settings, process_age: Option<u64>) -> Option<String> {
+    use crate::tmux::icons::{TIMER_ALERT, TIMER_CHECK};
     if !sitting.running() {
         return None;
     }
     let budget = sitting.budget(s);
     let mut out = if sitting.focus_s >= budget {
-        format!("{}+{}", clock(budget), (sitting.focus_s - budget) / 60)
+        format!(
+            "{TIMER_ALERT}{}+{}",
+            clock(budget),
+            (sitting.focus_s - budget) / 60
+        )
     } else {
-        clock(sitting.focus_s)
+        format!("{TIMER_CHECK}{}", clock(sitting.focus_s))
     };
-    if let Some(age) = process_age {
-        out.push_str(&format!(" \u{b7} run {}", clock(age)));
+    if let Some(age) = process_age.filter(|_| s.agent_age) {
+        out.push_str(&age_text(age));
     }
     Some(out)
+}
+
+/// The agent's age as it follows the time: ` · 1h14m`.
+fn age_text(age: u64) -> String {
+    format!(" \u{b7} {}", clock(age))
 }
 
 /// The colour of the time when the sitting is under `warn_at`.
@@ -357,13 +369,8 @@ pub fn segment(sitting: &Sitting, s: &Settings, process_age: Option<u64>, bar_bg
         Standing::Overdue => OVERDUE_COLOUR,
     };
     let mut out = colored_segment(false, colour, bar_bg, &time);
-    if let Some(age) = process_age {
-        out.push_str(&colored_segment(
-            false,
-            AGE_COLOUR,
-            bar_bg,
-            &format!(" \u{b7} run {}", clock(age)),
-        ));
+    if let Some(age) = process_age.filter(|_| s.agent_age) {
+        out.push_str(&colored_segment(false, AGE_COLOUR, bar_bg, &age_text(age)));
     }
     out
 }
@@ -673,7 +680,7 @@ pub async fn chunk_loop(
             let st = state.lock().await;
             crate::panes::is_agent(&seen.command, &st.config.agents.programs)
         };
-        let age = if is_agent && seen.pane_pid != 0 {
+        let age = if settings.agent_age && is_agent && seen.pane_pid != 0 {
             match tokio::process::Command::new("ps")
                 .args(["-axo", "ppid=,etime="])
                 .output()
@@ -890,17 +897,31 @@ mod tests {
             last_active: Some(1),
             ..Default::default()
         };
-        assert_eq!(bar_text(&sitting, &s, None).as_deref(), Some("38m"));
+        assert_eq!(
+            bar_text(&sitting, &s, None).as_deref(),
+            Some("\u{f1ad0} 38m")
+        );
         assert_eq!(sitting.words(&s), "38 min, 12 min for break");
         assert_eq!(sitting.standing(&s), Standing::Ok);
         sitting.focus_s = 41 * 60;
         assert_eq!(sitting.standing(&s), Standing::Warn);
         sitting.focus_s = 67 * 60;
-        assert_eq!(bar_text(&sitting, &s, None).as_deref(), Some("50m+17"));
+        assert_eq!(
+            bar_text(&sitting, &s, None).as_deref(),
+            Some("\u{f1acc} 50m+17")
+        );
         assert_eq!(sitting.words(&s), "1 hr 7 min, 17 min passed break time");
         assert_eq!(
             bar_text(&sitting, &s, Some(74 * 60)).as_deref(),
-            Some("50m+17 \u{b7} run 1h14m")
+            Some("\u{f1acc} 50m+17 \u{b7} 1h14m")
+        );
+        let without = Settings {
+            agent_age: false,
+            ..s.clone()
+        };
+        assert_eq!(
+            bar_text(&sitting, &without, Some(74 * 60)).as_deref(),
+            Some("\u{f1acc} 50m+17")
         );
         assert_eq!(bar_text(&Sitting::default(), &s, None), None);
     }
