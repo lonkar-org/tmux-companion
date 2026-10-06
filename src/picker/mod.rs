@@ -38,6 +38,7 @@ pub mod style;
 use ratatui::style::Color;
 
 pub use paint::{Paint, Tone};
+pub use screen::show_framed;
 pub use style::{BorderKind, Edge, LabelPosition, Look, PreviewBorder};
 
 /// One row a picker can show.

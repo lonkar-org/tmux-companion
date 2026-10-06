@@ -146,10 +146,10 @@ fn drawn(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint, numbered
         for (i, e) in b.waiting.iter().take(SHOWN).enumerate() {
             // A `done` agent is here so you can read its answer, not because
             // it needs one, so its state is not amber.
-            let state = if e.state == "done" {
-                Tone::Dim
-            } else {
-                Tone::Waiting
+            let state = match e.state.as_str() {
+                "done" => Tone::Dim,
+                "asked" => Tone::Asked,
+                _ => Tone::Waiting,
             };
             out.push_str(&format!(
                 "  {}{} {} {} {} {}\n",
@@ -705,16 +705,15 @@ pub async fn run(print: bool, hook: bool) -> anyhow::Result<()> {
         let me = std::env::current_exe()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "tmux-companion".to_string());
-        crate::cli::tmux(&[
-            "display-popup",
-            "-E",
-            "-w",
-            "70%",
-            "-h",
-            "60%",
-            &format!("{me} brief"),
-        ])
-        .await;
+        // The brief draws its own frame, so tmux's border goes where tmux
+        // can leave it off, as it does for the pickers.
+        let command = format!("{me} brief");
+        let mut args = vec!["display-popup"];
+        if crate::setup::catalog::popups_take_b() {
+            args.push("-B");
+        }
+        args.extend(["-E", "-w", "90%", "-h", "75%", &command]);
+        crate::cli::tmux(&args).await;
         return Ok(());
     }
     let home = std::env::var("HOME").unwrap_or_default();
@@ -776,23 +775,20 @@ fn draw(
     pending: &str,
 ) -> anyhow::Result<()> {
     use crate::picker::Tone;
-    use ratatui::crossterm::{cursor::MoveTo, execute, terminal};
-    use std::io::Write;
-    let mut out = std::io::stdout();
-    execute!(out, terminal::Clear(terminal::ClearType::All), MoveTo(0, 0))?;
-    write!(
-        out,
-        "{}",
-        render_numbered(b, crate::panes::now_secs(), home, paint)
-    )?;
-    writeln!(out, "\n{}", paint.ink(&footer(b), Tone::Dim))?;
+    let mut text = render_numbered(b, crate::panes::now_secs(), home, paint);
+    text.push_str(&format!("\n{}\n", paint.ink(&footer(b), Tone::Dim)));
     if let Some(line) = pending_line(b, pending) {
-        writeln!(out, "{}", paint.ink(&line, Tone::Strong))?;
+        text.push_str(&format!("{}\n", paint.ink(&line, Tone::Strong)));
     } else if let Some(said) = said {
-        writeln!(out, "{}", paint.ink(said, Tone::Strong))?;
+        text.push_str(&format!("{}\n", paint.ink(said, Tone::Strong)));
     }
-    out.flush()?;
-    Ok(())
+    // Framed the way the inbox is, since the brief opens from the same bar
+    // and lists the same agents.
+    let look = crate::cli::config_or_default()
+        .picker
+        .resolved(crate::config::Picker::Panes)
+        .look;
+    crate::picker::show_framed(&text, "[ Brief ]", crate::tmux::icons::HEALTH, &look, paint)
 }
 
 /// One key, read in raw mode, with the terminal put back before returning so

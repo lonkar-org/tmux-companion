@@ -14,6 +14,7 @@
 //! | `Dim` | grey | detail: a pid, a time, a path, a repeat of the row above |
 //! | `Quote` | italic | words that are not ours: an agent's question, a note |
 //! | `Link` | underline | something `open` can open |
+//! | `Asked` | bright red, bold | an agent asked you something and is stopped on it |
 //! | `Waiting` | amber | wants you |
 //! | `Busy` | green | working, needs nothing |
 //! | `Ok` | green | on, fine |
@@ -40,6 +41,9 @@ pub enum Tone {
     Quote,
     /// Something `open` can open.
     Link,
+    /// An agent asked you something and is stopped on it: the one thing on
+    /// any screen here that is blocked on you, so the loudest tone there is.
+    Asked,
     /// Wants you.
     Waiting,
     /// Working, and needs nothing.
@@ -55,6 +59,9 @@ pub enum Tone {
 /// Amber: the colour the bar draws a waiting agent in, so the row that wants
 /// you here is the same colour as the count that sent you here.
 pub const WAITING: Color = Color::Indexed(214);
+/// Bright red, drawn bold: an agent stopped on a question. Brighter than
+/// `FAILED`, which is a thing broken rather than a thing waiting on you.
+pub const ASKED: Color = Color::Indexed(196);
 /// Green: the bar's busy count.
 pub const BUSY: Color = Color::Indexed(114);
 /// Red.
@@ -236,6 +243,7 @@ impl Paint {
             Tone::Dim => s.fg(DIM),
             Tone::Quote => s.add_modifier(Modifier::ITALIC),
             Tone::Link => s.add_modifier(Modifier::UNDERLINED),
+            Tone::Asked => s.fg(ASKED).add_modifier(Modifier::BOLD),
             Tone::Waiting => s.fg(WAITING),
             Tone::Busy | Tone::Ok => s.fg(BUSY),
             Tone::Failed => s.fg(FAILED),

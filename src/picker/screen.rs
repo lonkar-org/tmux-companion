@@ -516,6 +516,96 @@ fn draw_label(
         .set_stringn(x, y, text, area.width as usize, style);
 }
 
+/// A line cut to `width` cells, with `…` in the last one when anything was
+/// cut, so a row that is too long stays one row instead of wrapping into the
+/// next one's place.
+pub(super) fn ellipsized(line: &Line<'static>, width: usize) -> Line<'static> {
+    use unicode_width::UnicodeWidthChar;
+    if line.width() <= width {
+        return line.clone();
+    }
+    if width == 0 {
+        return Line::default();
+    }
+    let room = width - 1;
+    let mut used = 0;
+    let mut spans = Vec::new();
+    let mut last = Style::default();
+    'spans: for span in &line.spans {
+        let mut kept = String::new();
+        for c in span.content.chars() {
+            let w = c.width().unwrap_or(0);
+            if used + w > room {
+                if !kept.is_empty() {
+                    spans.push(Span::styled(kept, span.style));
+                }
+                last = span.style;
+                break 'spans;
+            }
+            used += w;
+            kept.push(c);
+        }
+        last = span.style;
+        spans.push(Span::styled(kept, span.style));
+    }
+    spans.push(Span::styled("\u{2026}", last));
+    Line::from(spans).style(line.style)
+}
+
+/// Text that is not a list, in a picker's frame: the same border, label and
+/// colours, a cell of space inside the border, and every line cut with `…`
+/// rather than wrapped. Draws once and leaves the cursor under the text,
+/// inside the frame, so a prompt printed next lands there until the next draw.
+pub fn show_framed(
+    text: &str,
+    title: &str,
+    icon: &str,
+    look: &super::Look,
+    paint: &Paint,
+) -> anyhow::Result<()> {
+    let lines = super::ansi::into_lines(text);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
+    terminal.clear()?;
+    terminal.draw(|frame| {
+        let area = frame.area();
+        let inner = match look.border.set() {
+            Some(set) => {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(set)
+                    .border_style(paint.frame());
+                let inner = block.inner(area);
+                frame.render_widget(block, area);
+                draw_label(
+                    frame,
+                    area,
+                    &labelled(title, &paint.glyph(icon)),
+                    look.label_position,
+                    look.label_offset,
+                    paint.style(Tone::Accent).add_modifier(Modifier::BOLD),
+                );
+                inner
+            }
+            None => area,
+        };
+        let content = Rect {
+            x: inner.x + 1,
+            width: inner.width.saturating_sub(2),
+            ..inner
+        };
+        let fitted: Vec<Line> = lines
+            .iter()
+            .take(content.height as usize)
+            .map(|l| ellipsized(l, content.width as usize))
+            .collect();
+        let below = (fitted.len() as u16).min(content.height.saturating_sub(1));
+        frame.render_widget(Paragraph::new(fitted), content);
+        frame.set_cursor_position((content.x, content.y + below));
+    })?;
+    Ok(())
+}
+
 /// A label with its icon inside the brackets: `[ Panes ]` becomes
 /// `[ <icon> Panes ]`. A label somebody configured without brackets gets the
 /// icon in front.
@@ -940,6 +1030,21 @@ pub(super) fn run_keyed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_too_long_is_cut_with_an_ellipsis_and_keeps_its_styles() {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let line = Line::from(vec![Span::styled("asked", bold), Span::raw(" what next?")]);
+        assert_eq!(ellipsized(&line, 40), line, "fits: untouched");
+        let cut = ellipsized(&line, 8);
+        assert_eq!(cut.width(), 8);
+        assert_eq!(cut.to_string(), "asked w\u{2026}");
+        assert_eq!(cut.spans[0].style, bold);
+        // A wide glyph that would straddle the edge goes whole.
+        let wide = Line::from("ab\u{4e2d}\u{4e2d}");
+        assert_eq!(ellipsized(&wide, 4).to_string(), "ab\u{2026}");
+        assert_eq!(ellipsized(&line, 0).width(), 0);
+    }
     use crate::picker::style::Look;
 
     #[test]

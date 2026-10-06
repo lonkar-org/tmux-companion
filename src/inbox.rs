@@ -523,10 +523,10 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
             let q = e.question_line();
             // A `done` agent answered: it is on the list so you can read
             // the answer, not because it needs one, so it is not amber.
-            let (icon, tone) = if e.state == "done" {
-                (icons::CHECK, Tone::Dim)
-            } else {
-                (icons::WAITING, Tone::Waiting)
+            let (icon, tone) = match e.state.as_str() {
+                "done" => (icons::CHECK, Tone::Dim),
+                "asked" => (icons::WAITING, Tone::Asked),
+                _ => (icons::WAITING, Tone::Waiting),
             };
             crate::picker::Item::with_preview(
                 format!("{} {} {} {} {}", e.at, e.program, e.state, age, q),

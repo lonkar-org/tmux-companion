@@ -334,7 +334,7 @@ command = "brief"
 key = "b"
 table = "prefix"
 fallback = ["B", "M-b"]
-snippet = '''bind -N "companion: help what needs me" {key} display-popup -E -w 70% -h 60% "tmux-companion brief"'''
+snippet = '''bind -N "companion: help what needs me" {key} display-popup -B -E -w 90% -h 75% "tmux-companion brief"'''
 goes = "tmux.conf"
 
 [[item]]

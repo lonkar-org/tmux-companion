@@ -131,8 +131,13 @@ bind -N "companion: project the agents waiting on you" M-g \
 # One screen of what needs you: the waiting agents, the health reasons, the
 # idle sessions, the numbers. The same screen opens by itself on attach when
 # there is news, through the client-attached hook below.
+%if "#{>=:#{version},3.3}"
 bind -N "companion: help what needs me" b \
-  display-popup -E -w 70% -h 60% "tmux-companion brief"
+  display-popup -B -E -w 90% -h 75% "tmux-companion brief"
+%else
+bind -N "companion: help what needs me" b \
+  display-popup -E -w 90% -h 75% "tmux-companion brief"
+%endif
 # A click on the right side of the bar: the agent count opens the inbox, the
 # health mark the brief. Needs `set -g mouse on`.
 bind -T root MouseDown1StatusRight \

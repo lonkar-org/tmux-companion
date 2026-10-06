@@ -435,10 +435,15 @@ mod tests {
         let old = panes.snippet_in(Some("g"), false);
         assert!(old.contains("display-popup -E"), "{old}");
         assert!(!old.contains("-B"), "{old}");
-        // The brief prints rather than draws, so tmux's border is its only
-        // frame and it keeps it on every version.
+        // The brief draws the pickers' frame itself, so it drops tmux's
+        // border the same way.
         let brief = items.iter().find(|i| i.id == "brief").unwrap();
-        assert!(!brief.snippet_in(Some("b"), true).contains("-B"));
+        assert!(
+            brief
+                .snippet_in(Some("b"), true)
+                .contains("display-popup -B -E")
+        );
+        assert!(!brief.snippet_in(Some("b"), false).contains("-B"));
     }
 
     #[test]

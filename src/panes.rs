@@ -570,7 +570,8 @@ pub fn state_look(state: State) -> (&'static str, crate::picker::Tone) {
     use crate::picker::Tone;
     use crate::tmux::icons;
     match state {
-        State::Asked(_) | State::Waiting(_) => (icons::WAITING, Tone::Waiting),
+        State::Asked(_) => (icons::WAITING, Tone::Asked),
+        State::Waiting(_) => (icons::WAITING, Tone::Waiting),
         State::Busy => (icons::BUSY, Tone::Busy),
         State::Done(_) => (icons::CHECK, Tone::Dim),
         State::Reading => (icons::SEARCH, Tone::Plain),
@@ -866,7 +867,7 @@ mod tests {
         }
         assert_eq!(Report::from_word("thinking"), None);
         use crate::picker::Tone;
-        assert_eq!(state_look(State::Asked(1)).1, Tone::Waiting);
+        assert_eq!(state_look(State::Asked(1)).1, Tone::Asked);
         assert_eq!(state_look(State::Waiting(1)).1, Tone::Waiting);
         assert_eq!(state_look(State::Busy).1, Tone::Busy);
         assert_eq!(state_look(State::Done(1)).1, Tone::Dim);

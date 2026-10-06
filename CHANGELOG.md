@@ -136,6 +136,14 @@ the picker's.
 
 ### Changed
 
+- An agent that asked you something is bright bold red in the brief, the
+  inbox and the panes picker, the one thing on any screen blocked on you;
+  amber stays for an agent that went quiet and for the rest of what wants
+  you.
+- The brief draws the pickers' frame, border and `[ Brief ]` label, in a
+  bigger popup (90% by 75%) with tmux's own border left off where tmux 3.3
+  can, and a row too long for it ends in `…` rather than wrapping, so each
+  agent stays one line.
 - Picker rows are built from cells that each carry a tone: bold for the thing
   you act on, grey for detail, italic for an agent's words, amber, green and
   red for state. The theme's `@theme-color-main-1` colours the cursor mark,
