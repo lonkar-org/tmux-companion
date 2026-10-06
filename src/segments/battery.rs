@@ -1,4 +1,4 @@
-//! Battery percentage and icon, read through the `battery` crate.
+//! Battery percentage and icon, read through `starship-battery`, the maintained fork of the `battery` crate.
 use crate::tmux::icons::{
     BATTERY_EMPTY, BATTERY_FULL, BATTERY_HALF, BATTERY_QUARTER, BATTERY_THREE_QUARTERS, PLUGGED,
 };

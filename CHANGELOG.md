@@ -93,6 +93,11 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- The battery is read through `starship-battery`, the maintained fork of the
+  `battery` crate, which was last released in 2020 and pulled in nix 0.19
+  with two advisories against it. Same readings.
+- `doctor` and the client say who owns a socket that isn't yours, `root` or
+  `another user`, rather than printing its uid.
 - Key routing needs tmux 3.5, not 3.4: tmux 3.4's `send-keys -K` drops a key
   nothing binds instead of handing it to the pane, so the key typed during a
   hold was lost. On 3.4 `keys route` and `doctor` say it needs 3.5 and nothing

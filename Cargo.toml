@@ -55,7 +55,10 @@ anyhow      = "1.0"
 libc        = "0.2"
 regex       = "1.11"
 sysinfo     = "0.39"
-battery     = "0.7"
+# starship-battery is the maintained fork of `battery`, which was last
+# released in 2020 and pulls nix 0.19, flagged for an out-of-bounds write.
+# The same API, renamed back so every `battery::` path stays as it was.
+battery     = { package = "starship-battery", version = "0.12" }
 toml = "1.1"
 ratatui = "0.30.0"
 nucleo-matcher = "0.3.1"

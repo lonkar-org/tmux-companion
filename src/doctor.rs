@@ -300,10 +300,15 @@ fn socket_state() -> String {
         Ok(m) => {
             let mode = m.permissions().mode() & 0o777;
             let us = nix::unistd::getuid().as_raw();
+            // Said as who rather than as the number: root is the case worth
+            // naming, a daemon somebody started under sudo, and a uid written
+            // out is what code scanning flags as logged identity data.
             let owner = if m.uid() == us {
-                "yours".to_string()
+                "yours"
+            } else if m.uid() == 0 {
+                "owned by root, NOT yours"
             } else {
-                format!("uid {}, NOT yours", m.uid())
+                "owned by another user, NOT yours"
             };
             format!("{path} (mode {mode:04o}, {owner})")
         }

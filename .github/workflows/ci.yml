@@ -44,6 +44,12 @@ on:
 #
 # Each `uses:` is pinned to a commit SHA with its version in a trailing
 # comment, the same as playground.yml, which says why. Dependabot moves them.
+# Read-only for every job: none of them writes to the repository, opens a
+# release or comments, and a token with less on it is less to lose. Code
+# scanning flagged the default, which on an older repository is read-write.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings

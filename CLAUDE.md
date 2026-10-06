@@ -170,7 +170,7 @@ description they had.
 | `src/search.rs` | searching the scrollback of every pane at once, and landing on the line |
 | `src/segments/mod.rs` | one module per thing the status bar can draw |
 | `src/segments/agents.rs` | how many coding agents are running, and how many are busy or waiting on you |
-| `src/segments/battery.rs` | battery percentage and icon, read through the `battery` crate |
+| `src/segments/battery.rs` | battery percentage and icon, read through `starship-battery`, the maintained fork of the `battery` crate |
 | `src/segments/clients.rs` | how many other clients are attached to this server, session and window |
 | `src/segments/health.rs` | one mark on the bar when the daemon knows something is wrong |
 | `src/segments/git.rs` | git status: running the command, parsing porcelain v2, and rendering it into a tmux segment |

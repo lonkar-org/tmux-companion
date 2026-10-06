@@ -1962,7 +1962,15 @@ fn ports_names_the_pane_that_started_the_listener() {
     // each, ubuntu-latest `ss` and macos-latest `lsof`; act's image has
     // neither, which ci.yml's tmux step now installs, and without this the
     // test spent thirty seconds retrying before saying so.
-    let on_path = |tool: &str| Command::new(tool).arg("-V").output().is_ok();
+    //
+    // Looked for on PATH rather than run: `lsof -V` is not a version flag but
+    // a verbose one, and with nothing else asked lsof listed every open file
+    // on the machine, which took 98 of this test's 101 seconds on a laptop
+    // and made it the slowest test in the suite on every leg of CI.
+    let on_path = |tool: &str| {
+        std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()))
+    };
     if !on_path("lsof") && !on_path("ss") {
         skipping("ports", "neither lsof nor ss is on PATH");
         return;

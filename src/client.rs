@@ -274,11 +274,15 @@ fn check_socket_owner(sock: &std::path::Path) -> anyhow::Result<()> {
     };
     let us = nix::unistd::getuid().as_raw();
     if meta.uid() != us {
+        // Who, not the number, for the reason doctor's socket line gives.
+        let owner = if meta.uid() == 0 {
+            "root"
+        } else {
+            "another user"
+        };
         anyhow::bail!(
-            "{} is owned by uid {}, not {}; refusing to use it",
-            sock.display(),
-            meta.uid(),
-            us
+            "{} is owned by {owner}, not you; refusing to use it",
+            sock.display()
         );
     }
     Ok(())
