@@ -3,7 +3,14 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.8.0 - 2026-10-06
+
+The chunk clock, a brief you can act from, one look per agent state, and the
+same behaviour on tmux 3.4 through 3.7. Three things to know on upgrade: key
+routing needs tmux 3.5 and turns itself off on 3.4 with a message saying so;
+the brief draws its own frame now, so on tmux 3.3 or later add `-B` to your
+own `brief` binding or copy it again from the examples; and the chunk clock is
+off until you set `[chunk] enabled = true`.
 
 ### Added
 
@@ -91,6 +98,24 @@ entry per phase of the comrades port.
   them.
 - `config check` names `keys.toml` too when it read one.
 
+### Changed
+
+- Every agent state has one icon and one colour wherever it shows, from one
+  function: busy the bar's green and busy mark, asked bright red with a
+  question mark, done a passive steel blue with a check, waiting amber with
+  the hourglass, reading a muted mauve with tmux's own mark. Asked and
+  waiting no longer share the hourglass. In the ascii preset waiting is
+  `w`, asked `?` and reading `r`. The journal takes the icons and stays
+  uncoloured, since its rows already happened.
+- An agent that asked you something is bright bold red in the brief, the
+  inbox and the panes picker, the one thing on any screen blocked on you;
+  amber stays for an agent that went quiet and for the rest of what wants
+  you.
+- The brief draws the pickers' frame, border and `[ Brief ]` label, in a
+  bigger popup (90% by 75%) with tmux's own border left off where tmux 3.3
+  can, and a row too long for it ends in `…` rather than wrapping, so each
+  agent stays one line.
+
 ### Fixed
 
 - The battery is read through `starship-battery`, the maintained fork of the
@@ -148,21 +173,6 @@ the picker's.
 
 ### Changed
 
-- Every agent state has one icon and one colour wherever it shows, from one
-  function: busy the bar's green and busy mark, asked bright red with a
-  question mark, done a passive steel blue with a check, waiting amber with
-  the hourglass, reading a muted mauve with tmux's own mark. Asked and
-  waiting no longer share the hourglass. In the ascii preset waiting is
-  `w`, asked `?` and reading `r`. The journal takes the icons and stays
-  uncoloured, since its rows already happened.
-- An agent that asked you something is bright bold red in the brief, the
-  inbox and the panes picker, the one thing on any screen blocked on you;
-  amber stays for an agent that went quiet and for the rest of what wants
-  you.
-- The brief draws the pickers' frame, border and `[ Brief ]` label, in a
-  bigger popup (90% by 75%) with tmux's own border left off where tmux 3.3
-  can, and a row too long for it ends in `…` rather than wrapping, so each
-  agent stays one line.
 - Picker rows are built from cells that each carry a tone: bold for the thing
   you act on, grey for detail, italic for an agent's words, amber, green and
   red for state. The theme's `@theme-color-main-1` colours the cursor mark,
