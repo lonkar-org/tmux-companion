@@ -28,9 +28,19 @@
 FROM rust:1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
-# Cargo.lock and the manifest first, so a source-only change does not refetch
-# the registry.
-COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
+# Cargo.lock and the manifest first, then every dependency fetched, so a
+# source-only change does not refetch the registry: the fetch is its own
+# layer, and only the COPY of src and the build after it change. Until
+# 2026-10-06 the comment said this and the file did not do it, since src was
+# copied straight after the manifest with nothing between. The stubs are
+# what `cargo fetch` needs to read the manifest's targets and are deleted
+# before the real sources land; the toolchain rust-toolchain.toml names is
+# installed in the same layer.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
+ && cargo fetch --locked \
+ && rm -rf src
+COPY build.rs ./
 COPY src ./src
 RUN cargo build --release --locked && strip target/release/tmux-companion
 

@@ -50,6 +50,19 @@ on:
 permissions:
   contents: read
 
+# Cargo's caches are Swatinem/rust-cache rather than actions/cache keyed on
+# Cargo.lock, since 2026-10-06. The hand-made keys had three faults, read off
+# the repository's cache list that day: a key saved once was never saved
+# again until Cargo.lock changed, so `target` aged with every commit; the
+# clippy entries on macOS were 2.1 to 2.5 GB of incremental build output; and
+# every pull request saved its own copies, Dependabot's alone 3.9 GB, which
+# only that pull request could read and which pushed main's out of the 10 GB
+# the repository gets. rust-cache keys on the compiler and the lockfile per
+# job, drops incremental output and the workspace's own artifacts before
+# saving, and with save-if a pull request restores main's cache and saves
+# nothing. One cache per kind of job and OS: the three tmux legs of `tests` on
+# an OS share one, and clippy, whose output is different, has its own.
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -96,15 +109,11 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ matrix.os }}-cargo-
+          shared-key: clippy
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo clippy --all-targets -- -D warnings
 
@@ -173,15 +182,11 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ matrix.os }}-tests-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ matrix.os }}-tests-cargo-
+          shared-key: tests
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # --no-fail-fast, the same as `just test`: cargo stops at the first test
       # binary that fails, and two red unit tests once hid the whole e2e suite
@@ -229,15 +234,15 @@ jobs:
           rustup toolchain install "$msrv" --profile minimal --no-self-update
         id: msrv
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # RUSTUP_TOOLCHAIN so the cache keys on the rustc this job checks with:
+      # in the repository rust-toolchain.toml answers instead, which would key
+      # on the pinned toolchain and install it for nothing.
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: msrv-${{ steps.msrv.outputs.version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: msrv-${{ steps.msrv.outputs.version }}-cargo-
+          shared-key: msrv
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # `+<version>` overrides rust-toolchain.toml, which would otherwise win
       # and make this a second run of the pinned toolchain. The lockfile is
@@ -264,6 +269,12 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           rustup show active-toolchain || rustup toolchain install
+      # It compiled every dependency from nothing on each run, about a minute
+      # of the job's own.
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          shared-key: docs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo doc --no-deps
       # The examples in the library's docs are tests, and `--all-targets` in
       # the test job leaves doctests out.

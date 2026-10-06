@@ -121,15 +121,17 @@ jobs:
           sudo apt-get install -y build-essential pkg-config libevent-dev libncurses-dev bison
       - run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # main's cache from ci.yml's tests job, restored and never saved. A run
+      # on a tag reads caches from its own ref and the default branch only,
+      # so what a release saved no later release could reach: the gate-cargo
+      # entries were space taken from main's for nothing. The same shared-key,
+      # key as that job, and the job's RUSTFLAGS matches ci.yml's, because
+      # rust-cache hashes all three in.
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: gate-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: gate-cargo-
+          shared-key: tests
+          key: ubuntu-latest
+          save-if: false
 
       # --locked, as the builds below are: the tree under test is the tree
       # that ships. --no-fail-fast so every test binary runs and the log names
@@ -180,13 +182,9 @@ jobs:
         if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      # No cache here. It saved under the tag, which the next release cannot
+      # read, and main never builds these targets in release mode, so there
+      # is nothing worth restoring either.
 
       - run: cargo build --release --locked --target ${{ matrix.target }}
 

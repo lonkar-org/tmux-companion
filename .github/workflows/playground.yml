@@ -90,9 +90,28 @@ jobs:
       # (read-only, no network, no capabilities), and with none, which is the
       # plain `docker run --rm -it` the README gives. Each is a way somebody
       # runs it, and a change can break one and not the other.
-      - name: Build and smoke test
+      #
+      # Built through buildx with its layers saved to the Actions cache, every
+      # stage of them (mode=max), one scope per runner, which is one per
+      # architecture. That is for the publish job below: it builds both
+      # architectures again, arm64 under qemu, and reading these scopes it
+      # finds the cargo build already done natively here instead of spending
+      # tens of minutes on it emulated. `load` puts the image in the runner's
+      # docker for the smoke test and the scan, as `docker build` did. The
+      # scopes live under the tag, which a later tag cannot read, so this pays
+      # off within one run and not across releases.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: playground/Dockerfile
+          load: true
+          tags: playground:test
+          cache-from: type=gha,scope=playground-${{ matrix.runner }}
+          cache-to: type=gha,scope=playground-${{ matrix.runner }},mode=max
+
+      - name: Smoke test
         run: |
-          docker build -f playground/Dockerfile -t playground:test .
           IMAGE=playground:test ./scripts/playground.sh smoke
           IMAGE=playground:test PLAIN=1 ./scripts/playground.sh smoke
 
@@ -186,6 +205,10 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
+          # The build job's layers, per architecture; see its Build step.
+          cache-from: |
+            type=gha,scope=playground-ubuntu-latest
+            type=gha,scope=playground-ubuntu-24.04-arm
           tags: |
             ${{ steps.name.outputs.image }}:playground
             ${{ steps.name.outputs.image }}:playground-${{ inputs.tag || github.ref_name }}
