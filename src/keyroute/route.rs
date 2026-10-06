@@ -25,8 +25,11 @@ pub const TMUX_TABLE: &str = "kc-tmux";
 /// The prefix of each key's hold table, `kc-hold-M-a`.
 pub const HOLD_TABLE: &str = "kc-hold-";
 
-/// The tmux the router needs: `send-keys -K` is 3.4.
-pub const MIN_TMUX: (u32, u32) = (3, 4);
+/// The tmux the router needs. `send-keys -K` arrived in 3.4, but 3.4 drops a
+/// key the table does not bind rather than handing it to the pane, so the key
+/// typed during a hold was lost; 3.5 hands it on. Found on CI's tmux 3.4 and
+/// checked against 3.4, 3.5a and 3.7c built from source.
+pub const MIN_TMUX: (u32, u32) = (3, 5);
 
 /// One binding as `list-keys` prints it, with the command kept byte for byte.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +120,7 @@ pub fn root_notes(notes_listing: &str, listing: &[Binding]) -> HashMap<String, S
         .filter(|b| b.table == "root")
         .map(|b| (b.key.as_str(), squash(&b.command)))
         .collect();
-    crate::keys::parse_notes(notes_listing)
+    crate::keys::parse_notes_in(notes_listing, |w| commands.contains_key(w))
         .into_iter()
         .filter(|(key, note)| commands.get(key.as_str()) != Some(&squash(note)))
         .collect()

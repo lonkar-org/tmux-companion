@@ -112,9 +112,13 @@ jobs:
       - run: ./scripts/check-review-marks.sh
 
       # tests/e2e.rs drives a real tmux and, with CI set, fails rather than
-      # skips when there is none.
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+      # skips when there is none. Not apt's: the same pinned versions ci.yml
+      # tests on, built by scripts/tmux-build.sh, so a release cannot pass on a
+      # tmux that CI never ran.
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libevent-dev libncurses-dev bison
       - run: rustup show active-toolchain || rustup toolchain install
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -132,7 +136,15 @@ jobs:
       # each one that went red rather than only the first.
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --no-fail-fast --all-targets --locked
+      - name: Tests on every pinned tmux
+        run: |
+          status=0
+          for v in $(scripts/tmux-build.sh --versions); do
+            bin=$(scripts/tmux-build.sh "$v")
+            echo "== tmux $v"
+            PATH="$bin:$PATH" cargo test --no-fail-fast --all-targets --locked || status=1
+          done
+          exit $status
       - run: cargo test --doc --locked
 
   build:

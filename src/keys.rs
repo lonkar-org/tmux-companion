@@ -53,13 +53,27 @@ pub fn with_current_prefix(note: &str) -> String {
     }
 }
 
-/// Parse a `list-keys -N -T <table>` listing into key-to-note.
-///
-/// Two shapes come back. The prefix table is padded into columns, so the note
-/// starts after a run of two or more spaces and the key is the last word of the
-/// chord before it. Every other table is single-spaced, where the key is the
-/// second field and the note is everything from the third on.
+/// Parse a `list-keys -N -T <table>` listing into key-to-note, with nothing
+/// known about which words are keys: read as tmux 3.7 prints it. Use
+/// [`parse_notes_in`] wherever the table's bindings are at hand.
 pub fn parse_notes(listing: &str) -> HashMap<String, String> {
+    parse_notes_in(listing, |_| false)
+}
+
+/// Parse a `list-keys -N -T <table>` listing into key-to-note, `is_key`
+/// saying whether a word is a key bound in that table.
+///
+/// tmux 3.7 prints the prefix key in front of every line. The prefix table is
+/// padded into columns, so the note starts after a run of two or more spaces
+/// and the key is the last word of the chord before it; every other table is
+/// single-spaced, the key the second field and the note the rest. tmux 3.4 to
+/// 3.6 print no prefix and no padding at all, `M-a the note`, so there the key
+/// is the first field. A single-spaced line alone cannot say which it is, and
+/// the bindings can: the first field is the key when it is bound in the table
+/// and the second is not. On 3.7 the first field is the prefix, which is bound
+/// in the root table almost nowhere, and where it is the second field is a
+/// key too and wins.
+pub fn parse_notes_in(listing: &str, is_key: impl Fn(&str) -> bool) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for line in listing.lines() {
         if line.trim().is_empty() {
@@ -75,9 +89,14 @@ pub fn parse_notes(listing: &str) -> HashMap<String, String> {
             }
             continue;
         }
-        let mut fields = line.split_whitespace();
-        let (_, key) = (fields.next(), fields.next());
-        let note: Vec<&str> = fields.collect();
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let key_first =
+            fields.first().is_some_and(|f| is_key(f)) && !fields.get(1).is_some_and(|s| is_key(s));
+        let (key, note) = if key_first {
+            (fields.first(), fields.get(1..).unwrap_or_default())
+        } else {
+            (fields.get(1), fields.get(2..).unwrap_or_default())
+        };
         if let Some(key) = key
             && !note.is_empty()
         {
@@ -157,9 +176,10 @@ pub fn shown_for(table: &str, key: &str) -> String {
 /// ships ninety-odd copy-mode keys with no note, and running one from a
 /// picker outside copy mode does nothing.
 pub fn rows_for_table(table: &str, notes: &str, commands: &str) -> Vec<KeyRow> {
-    let notes = parse_notes(notes);
+    let bound = parse_commands(commands, table);
+    let notes = parse_notes_in(notes, |w| bound.iter().any(|(k, _)| k == w));
     let keep_unnoted = matches!(table, "prefix" | "root");
-    parse_commands(commands, table)
+    bound
         .into_iter()
         .filter_map(|(key, command)| {
             let note = match notes.get(&key) {
@@ -656,6 +676,29 @@ bind-key    -T prefix M-x     display-popup -E something
         assert_eq!(
             notes.get("q").map(String::as_str),
             Some("Display pane numbers")
+        );
+    }
+
+    #[test]
+    fn tmux_before_3_7_prints_the_key_first_with_no_prefix() {
+        // tmux 3.4 to 3.6: `list-keys -N` has no prefix column and no padding.
+        let listing = "M-a block note\ny prefix note\nC-b Send the prefix key\n";
+        let bound = ["M-a", "y", "C-b"];
+        let notes = parse_notes_in(listing, |w| bound.contains(&w));
+        assert_eq!(notes.get("M-a").map(String::as_str), Some("block note"));
+        assert_eq!(notes.get("y").map(String::as_str), Some("prefix note"));
+        assert_eq!(
+            notes.get("C-b").map(String::as_str),
+            Some("Send the prefix key")
+        );
+        // The same lines from 3.7, prefix first, read the same keys.
+        let notes = parse_notes_in("C-b M-a block note\nC-b C-b Send the prefix key\n", |w| {
+            bound.contains(&w)
+        });
+        assert_eq!(notes.get("M-a").map(String::as_str), Some("block note"));
+        assert_eq!(
+            notes.get("C-b").map(String::as_str),
+            Some("Send the prefix key")
         );
     }
 

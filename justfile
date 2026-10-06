@@ -64,9 +64,9 @@ act-ci:
 # The slow one: a cold cargo build with no cache, plus tmux installed into the
 # container before anything runs.
 
-# ci.yml, the clippy and tests job.
+# ci.yml, the tests job: every OS and pinned tmux leg.
 act-check:
-    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -P macos-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push -j check
+    act --pull=false -P ubuntu-latest=catthehacker/ubuntu:act-latest -P macos-latest=catthehacker/ubuntu:act-latest -W .github/workflows/ci.yml push -j tests
 
 # ci.yml, the rustdoc job.
 act-docs:
@@ -100,7 +100,7 @@ build:
 # it is not one worth compiling.
 
 # Everything ci.yml runs, native.
-ci: review-marks fmt-check lint test doc
+ci: review-marks fmt-check lint test-matrix doc
     @echo "review marks, rustfmt, clippy, tests and rustdoc all passed"
 
 # Throw away the build output.
@@ -319,12 +319,55 @@ test-e2e:
     trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
     nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file
 
+# Every test on every tmux CI tests, one after another, each built once from
+# its pinned tarball by scripts/tmux-build.sh: the same legs as ci.yml's tests
+# job, which is why `ci` runs this rather than `test` on whatever tmux is
+# installed. On 2026-10-06 the laptop's 3.7c passed what CI's 3.4 failed three
+# attempts running; a version difference is meant to fail here first.
+
+# Every test on every pinned tmux: 3.4, 3.5a, 3.7c.
+test-matrix:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    status=0
+    for v in $(./scripts/tmux-build.sh --versions); do
+      echo "== tmux $v"
+      just test-tmux "$v" || status=1
+    done
+    exit $status
+
+# Flakes are races a fast machine never loses: this crowds the suites with
+# twice as many test threads as cores, runs them RUNS times on one pinned tmux,
+# and names every test that failed with a count. scripts/stress-e2e.sh says why.
+
+# The integration suites RUNS times under load, failures counted per test.
+test-stress RUNS="5" VERSION="3.7c":
+    ./scripts/stress-e2e.sh {{RUNS}} {{VERSION}}
+
+# One pinned tmux first on PATH, for the suite and for every tmux the binary
+# it starts runs. `tmux -V` is checked before anything runs, so a stale PATH
+# cannot quietly test the wrong one.
+
+# Every test on one pinned tmux, e.g. `just test-tmux 3.4`.
+test-tmux VERSION:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    bin=$(./scripts/tmux-build.sh "{{VERSION}}") || exit 1
+    export PATH="$bin:$PATH"
+    [ "$(tmux -V)" = "tmux {{VERSION}}" ] || { echo "PATH gives $(tmux -V), not {{VERSION}}" >&2; exit 1; }
+    trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
+    nice -n 15 cargo test -j 4 --all-targets --no-fail-fast
+
 # The fast half: no tmux, no daemon, no socket, so nothing to reap. This is
 # the loop to sit in while editing; `test` is the one to run before pushing.
 
 # Unit tests only: the library and the binary.
 test-unit:
     nice -n 15 cargo test -j 4 --no-fail-fast --lib --bins
+
+# Build an exact tmux from its pinned release tarball into the cache, once.
+tmux-build VERSION:
+    @./scripts/tmux-build.sh "{{VERSION}}"
 
 # A green run is not a quiet one. Four actions sat on Node 20 for weeks with
 # every run reporting success, because the warning lives in the annotations

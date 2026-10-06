@@ -358,6 +358,31 @@ impl Tmux {
         }
         false
     }
+
+    /// Type `line` into `pane` until `expect` shows on its screen.
+    ///
+    /// Keys sent before a new shell is reading are thrown away by its startup
+    /// on some machines: macOS CI's bash printed its zsh banner and two
+    /// prompts and nothing of what a test had typed 500 ms after the pane
+    /// opened, which no fixed sleep can promise. So this types, waits for
+    /// what the line prints, and types again if it never came, which a
+    /// line that prints its own marker can afford.
+    fn type_until(&self, pane: &str, line: &str, expect: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            self.must(&["send-keys", "-t", pane, line, "Enter"]);
+            if self.until(3, |t| {
+                t.tmux(&["capture-pane", "-p", "-t", pane]).contains(expect)
+            }) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{pane} never showed {expect:?}:\n{}",
+                self.tmux(&["capture-pane", "-p", "-t", pane])
+            );
+        }
+    }
 }
 
 impl Drop for Tmux {
@@ -444,6 +469,15 @@ fn target_binary() -> PathBuf {
 /// the suite still runs. On a runner it is the wrong one, and the comment in
 /// ci.yml that said so enforced nothing. `CI` is set on every GitHub runner,
 /// so with it set a skip panics and the job goes red instead of quiet.
+/// A test that needs a newer tmux than this one, which is expected rather than
+/// a suite going quiet: CI runs tmux 3.4 on purpose, beside 3.5a and 3.7c, so
+/// unlike [`skipping`] this does not fail with `CI` set. Said once, so a run
+/// on an old tmux says what it did not test.
+fn unsupported(name: &str, why: &str) {
+    static ANNOUNCED: std::sync::Once = std::sync::Once::new();
+    ANNOUNCED.call_once(|| eprintln!("not run on this tmux, starting with {name}: {why}"));
+}
+
 fn skipping(name: &str, why: &str) {
     assert!(
         std::env::var_os("CI").is_none(),
@@ -942,31 +976,12 @@ fn a_pocket_brought_back_still_shows_what_it_printed() {
     // hostname can run to sixty characters, and a shell redrawing a prompt
     // that wraps writes over the line above it on every resize, which is the
     // shell's doing and not the pocket's. macOS CI failed on exactly that.
-    t.must(&[
-        "send-keys",
-        "-t",
+    t.type_until(
         &pocket,
-        "PS1='$ '; PROMPT='$ '; clear",
-        "Enter",
-    ]);
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    t.must(&[
-        "send-keys",
-        "-t",
-        &pocket,
-        "seq 1 60; echo pocket-$((6*7))",
-        "Enter",
-    ]);
+        "PS1='$ '; PROMPT='$ '; clear; seq 1 60; echo pocket-$((6*7))",
+        "pocket-42",
+    );
     let visible = |t: &Tmux| t.tmux(&["capture-pane", "-p", "-t", &pocket]);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !visible(&t).contains("pocket-42") {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the pocket never printed: {}",
-            visible(&t)
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
 
     for round in ["away", "back", "away again", "back again"] {
         let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
@@ -1020,8 +1035,7 @@ fn a_pocket_parks_in_its_own_session_when_a_newer_one_exists() {
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
     assert!(ok, "{err}");
     let (pocket, _) = pocket_where(&t).expect("a pocket pane");
-    t.must(&["send-keys", "-t", &pocket, "echo pocket-$((6*7))", "Enter"]);
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    t.type_until(&pocket, "echo pocket-$((6*7))", "pocket-42");
 
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
     assert!(ok, "away: {err}");
@@ -3275,6 +3289,9 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
 /// How long the fixture holds, in milliseconds.
 const HOLD_MS: u64 = 400;
 
+/// The tables a held key waits in, `kc-hold-M-a` and so on.
+const HOLD_TABLE_PREFIX: &str = "kc-hold-";
+
 /// Two nested tmux servers and the file the inner pane writes to.
 struct KeyHold {
     outer: String,
@@ -3296,8 +3313,24 @@ impl KeyHold {
         Self::start_with(name, &fixture, claim)
     }
 
-    /// Start both servers with the inner one on `conf`.
+    /// Start both servers with the inner one on `conf`, on a tmux the router
+    /// supports.
     fn start_with(name: &str, conf_text: &str, claim: Option<(&str, &str)>) -> Option<Self> {
+        Self::start_on(name, conf_text, claim, true)
+    }
+
+    /// Start both servers whatever the tmux, for the test that checks the
+    /// router refuses one too old for it.
+    fn start_any(name: &str, conf_text: &str) -> Option<Self> {
+        Self::start_on(name, conf_text, None, false)
+    }
+
+    fn start_on(
+        name: &str,
+        conf_text: &str,
+        claim: Option<(&str, &str)>,
+        needs_router: bool,
+    ) -> Option<Self> {
         if std::env::var_os("TC_SKIP_E2E").is_some_and(|v| v == "1") {
             skipping(name, "TC_SKIP_E2E=1");
             return None;
@@ -3306,8 +3339,11 @@ impl KeyHold {
             skipping(name, "no tmux on this machine");
             return None;
         };
-        if !tmux_at_least(&String::from_utf8_lossy(&v.stdout), 3, 4) {
-            skipping(name, "the key hold needs tmux 3.4 for send-keys -K");
+        if needs_router && !tmux_at_least(&String::from_utf8_lossy(&v.stdout), 3, 5) {
+            unsupported(
+                name,
+                "the key hold needs tmux 3.5: 3.4's send-keys -K drops a key nothing binds",
+            );
             return None;
         }
 
@@ -3420,16 +3456,35 @@ impl KeyHold {
 
     /// Wait out any hold still open, then everything the pane got.
     fn settled(&self) -> Vec<u8> {
-        std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
-        std::fs::read(&self.out).unwrap()
+        self.quiet(|| std::fs::read(&self.out).unwrap())
     }
 
     /// How many times the tmux action ran, for a pane that can't show it.
     fn actions(&self) -> usize {
-        std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
-        self.inner_tmux(&["show", "-gv", "@log"])
+        self.quiet(|| self.inner_tmux(&["show", "-gv", "@log"]))
             .matches("T(")
             .count()
+    }
+
+    /// `read` once no client is inside a hold and two reads a beat apart
+    /// agree. Twice the hold first, as before; then on, because a fixed wait
+    /// was all this was, and a runner that stalls past it read the pane
+    /// before the held key's replay had landed.
+    fn quiet<T: PartialEq>(&self, read: impl Fn() -> T) -> T {
+        std::thread::sleep(Duration::from_millis(HOLD_MS * 2));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last = read();
+        loop {
+            let holding = self
+                .inner_tmux(&["list-clients", "-F", "#{client_key_table}"])
+                .contains(HOLD_TABLE_PREFIX);
+            std::thread::sleep(Duration::from_millis(150));
+            let now = read();
+            if (!holding && now == last) || Instant::now() > deadline {
+                return now;
+            }
+            last = now;
+        }
     }
 }
 
@@ -3696,6 +3751,31 @@ fn a_static_claim_holds_with_no_publisher_until_one_speaks() {
         h.settled(),
         [ESC_A, ACTION, ACTION].concat(),
         "the publisher's silence wins over the static list"
+    );
+}
+
+#[test]
+fn below_tmux_3_5_routing_refuses_and_leaves_every_binding_alone() {
+    let Ok(v) = Command::new("tmux").arg("-V").output() else {
+        return;
+    };
+    // On 3.5 and later the routing tests around this one are the check.
+    if tmux_at_least(&String::from_utf8_lossy(&v.stdout), 3, 5) {
+        return;
+    }
+    let Some(h) = KeyHold::start_any("route-old", ROUTE_CONF) else {
+        return;
+    };
+    let before = h.inner_tmux(&["list-keys", "-a", "-N", "-T", "root"]);
+    h.companion(&route_config(""), "keys route");
+    assert!(
+        !h.inner_tmux(&["list-keys"]).contains("kc-tmux"),
+        "nothing is wrapped on a tmux that would lose keys"
+    );
+    assert_eq!(
+        h.inner_tmux(&["list-keys", "-a", "-N", "-T", "root"]),
+        before,
+        "every binding and its note as it was"
     );
 }
 

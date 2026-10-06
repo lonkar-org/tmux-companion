@@ -93,6 +93,13 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- Key routing needs tmux 3.5, not 3.4: tmux 3.4's `send-keys -K` drops a key
+  nothing binds instead of handing it to the pane, so the key typed during a
+  hold was lost. On 3.4 `keys route` and `doctor` say it needs 3.5 and nothing
+  is wrapped.
+- Notes from `list-keys -N` are read on tmux 3.4 to 3.6 too, which print the
+  key first with no prefix column, so a wrapped binding keeps its note and the
+  `keys` picker shows descriptions there.
 - A saved project layout recorded claude as its version, because that's
   claude's process name, so the next `project` typed `2.1.289` into the ai
   window and zsh said command not found. The capture now reads each pane's

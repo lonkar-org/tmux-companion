@@ -56,12 +56,22 @@ just test-unit   # the fast half: --lib --bins, no tmux, no daemon, no socket
 just test-e2e    # the three integration suites; e2e drives a real tmux
 just test        # both, --no-fail-fast, with the daemon reaper on the way out
 just lint        # clippy --all-targets -D warnings, the way ci.yml runs it
-just ci          # review-marks, rustfmt, clippy, tests and rustdoc, native
+just test-tmux 3.4   # every test with one pinned tmux first on PATH
+just test-matrix # every test on each pinned tmux, 3.4, 3.5a and 3.7c
+just ci          # review-marks, rustfmt, clippy, test-matrix and rustdoc
 just install     # build, install to PREFIX, move the daemon onto the new binary
 ```
 
 `just lint` is the lint step, and CI fails on a warning, so run it before
-pushing. `TC_SKIP_E2E=1 cargo test` skips the tmux tests with one printed line;
+pushing.
+
+tmux is pinned, not installed. CI tests every OS against tmux 3.4 (the floor,
+Ubuntu 24.04's), 3.5a and 3.7c, each built from its release tarball by
+`scripts/tmux-build.sh`, whose list is the one list; `just ci` runs the same
+three here through `test-matrix`. A behaviour that differs between tmux
+versions has to fail on this machine before a push, not in CI after one. A
+feature that needs a newer tmux says so in the tool and gates its tests on it,
+as key routing does on 3.5. `TC_SKIP_E2E=1 cargo test` skips the tmux tests with one printed line;
 with `CI` set they fail instead of skipping, which is on purpose (see the note
 on `test-e2e` in the justfile).
 

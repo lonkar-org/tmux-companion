@@ -557,7 +557,7 @@ mod tests {
             "[keys] route off"
         );
         assert!(key_routing_line(false, 170, Some((3, 7)), 2).contains("still wrapped"));
-        assert!(key_routing_line(true, 170, Some((3, 3)), 0).contains("needs tmux 3.4"));
+        assert!(key_routing_line(true, 170, Some((3, 4)), 0).contains("needs tmux 3.5"));
         assert!(key_routing_line(true, 170, Some((3, 7)), 0).contains("last line of tmux.conf"));
         assert_eq!(
             key_routing_line(true, 200, Some((3, 7)), 5),
