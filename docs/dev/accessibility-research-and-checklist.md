@@ -1,6 +1,6 @@
 # tmux-companion accessibility research and checklist
 
-Oct 2, 2026 · @Yogesh Lonkar
+Oct 2, 2026 · Yogesh Lonkar
 
 ## Summary
 
@@ -29,25 +29,25 @@ The consistent finding is that a linear stream of text is accessible and a redra
 
 Most features help someone. The pickers and the bar are where it hurts screen reader users today.
 
-| Feature | Helps | Hurts or unverified |
-| --- | --- | --- |
-| Status bar (`status-right`) | Low vision: AAA themes, `ascii` preset | Screen reader: repaints every second at the recommended `status-interval 1`, and the net segment changes each tick. Powerline caps and the `+N` health token read as noise |
-| Pickers (ratatui, `display-popup`) | Motor: fuzzy matching saves keystrokes. Everyone: `--print` TSV | Screen reader: a redrawn grid with a preview pane beside the list, so a line read mixes row and preview. 0.7.0 added icons and colour-only tones (amber, green, red). Where the hardware cursor sits is unverified |
-| `notify` | ADHD and blind: finished-out-of-sight only, threshold and ignore list | Default output is `display-message`, which vanishes after `display-time` and isn't reliably spoken |
-| `brief`, `inbox`, `health` | ADHD: one "what needs me" screen. Blind: `--print` is linear | Popup layout, icons in the TTY form |
-| `agent` hooks, inbox capture | Blind: the agent's question is captured from a pane you're not in | Captured lines include box drawing and spinner frames from agent TUIs |
-| `search`, OSC 133 `shell-init` | Blind: scrollback search across panes. The prompt marks enable per-command output | No command yet to fetch the last command's output as clean text |
-| `zen`, `pocket`, `run` | ADHD: single focus. Blind: `zen` removes split-pane mixing | The pocket opens a split, so its lines interleave with the pane beside it |
-| `cheatsheet`, `keys`, `which-key` doc | Motor and ADHD: learn keys gradually; any binding can be run from search | Four-box layout reads poorly linearly; `--print` is fine |
-| `setup`, `doctor` | Everyone: clear state, nothing turns on silently | `doctor` recommends `status-interval 1`, which is wrong for screen reader users |
-| README, playground |  | The demo is a GIF and an asciinema cast with no text transcript |
+| Feature                               | Helps                                                                             | Hurts or unverified                                                                                                                                                                                                |
+| ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status bar (`status-right`)           | Low vision: AAA themes, `ascii` preset                                            | Screen reader: repaints every second at the recommended `status-interval 1`, and the net segment changes each tick. Powerline caps and the `+N` health token read as noise                                         |
+| Pickers (ratatui, `display-popup`)    | Motor: fuzzy matching saves keystrokes. Everyone: `--print` TSV                   | Screen reader: a redrawn grid with a preview pane beside the list, so a line read mixes row and preview. 0.7.0 added icons and colour-only tones (amber, green, red). Where the hardware cursor sits is unverified |
+| `notify`                              | ADHD and blind: finished-out-of-sight only, threshold and ignore list             | Default output is `display-message`, which vanishes after `display-time` and isn't reliably spoken                                                                                                                 |
+| `brief`, `inbox`, `health`            | ADHD: one "what needs me" screen. Blind: `--print` is linear                      | Popup layout, icons in the TTY form                                                                                                                                                                                |
+| `agent` hooks, inbox capture          | Blind: the agent's question is captured from a pane you're not in                 | Captured lines include box drawing and spinner frames from agent TUIs                                                                                                                                              |
+| `search`, OSC 133 `shell-init`        | Blind: scrollback search across panes. The prompt marks enable per-command output | No command yet to fetch the last command's output as clean text                                                                                                                                                    |
+| `zen`, `pocket`, `run`                | ADHD: single focus. Blind: `zen` removes split-pane mixing                        | The pocket opens a split, so its lines interleave with the pane beside it                                                                                                                                          |
+| `cheatsheet`, `keys`, `which-key` doc | Motor and ADHD: learn keys gradually; any binding can be run from search          | Four-box layout reads poorly linearly; `--print` is fine                                                                                                                                                           |
+| `setup`, `doctor`                     | Everyone: clear state, nothing turns on silently                                  | `doctor` recommends `status-interval 1`, which is wrong for screen reader users                                                                                                                                    |
+| README, playground                    |                                                                                   | The demo is a GIF and an asciinema cast with no text transcript                                                                                                                                                    |
 
 ## Things no one else is doing
 
 These build on what the daemon already knows. I found no tmux tool, and few CLIs of any kind, that do them.
 
 1. **Speak events through the user's own screen reader.** Add a `[speech]` sink beside `notify.command`. It sends the event text to VoiceOver over AppleScript, to Fenrir's socket (`command say`), or to Speech Dispatcher for Orca. It falls back to `say` or `spd-say` when no screen reader is running.
-   - Copy the web's `aria-live` semantics: *polite* events queue behind current speech (command finished, idle session), *assertive* ones interrupt (an agent asked, a build failed).
+   - Copy the web's `aria-live` semantics: _polite_ events queue behind current speech (command finished, idle session), _assertive_ ones interrupt (an agent asked, a build failed).
    - Coalesce bursts into one sentence, for example "3 commands finished: cargo test in api, …".
    - Use the screen reader's voice, rate and verbosity rather than a second voice talking over it.
 2. **A spoken "where am I".** One key gives the facts a sighted user glances at the bar for, in one short sentence: session, window name, pane 2 of 3, the program in front, directory, branch with ahead and behind, and the last command's exit status and duration. Speak it, or print it as one line. This replaces the bar for people who can't glance.
@@ -145,16 +145,16 @@ This is where tmux-companion is furthest ahead already: `brief`, `inbox`, `journ
 
 VoiceOver with Terminal.app is the right first target. The tool also runs on Linux, and Linux console screen reader users are the core terminal audience, so cover them before a launch post claims anything.
 
-| Screen reader | Terminal | Platform | Why it matters |
-| --- | --- | --- | --- |
-| VoiceOver | Terminal.app | macOS | Your current pass; Terminal.app tracks output better than iTerm2 |
-| VoiceOver | iTerm2 | macOS | Popular with developers; known review-cursor issues |
-| TDSR | any | macOS, Linux | Preferred by some Mac terminal users for automatic reading |
-| Orca | GNOME Terminal (VTE) | Linux desktop | Default Linux GUI reader |
-| Fenrir | Linux console or PTY | Linux | Console reader with a speech socket; the first target for the speech sink |
-| Speakup | Linux console | Linux | Kernel-level; the reader the stream-vs-grid essay is about |
-| NVDA | Windows Terminal over SSH | Windows to Linux | The most common screen reader overall, reaching your Linux binary remotely |
-| BRLTTY | Linux console | Linux | Braille users: check one-line displays against the bar and picker rows |
+| Screen reader | Terminal                  | Platform         | Why it matters                                                             |
+| ------------- | ------------------------- | ---------------- | -------------------------------------------------------------------------- |
+| VoiceOver     | Terminal.app              | macOS            | Your current pass; Terminal.app tracks output better than iTerm2           |
+| VoiceOver     | iTerm2                    | macOS            | Popular with developers; known review-cursor issues                        |
+| TDSR          | any                       | macOS, Linux     | Preferred by some Mac terminal users for automatic reading                 |
+| Orca          | GNOME Terminal (VTE)      | Linux desktop    | Default Linux GUI reader                                                   |
+| Fenrir        | Linux console or PTY      | Linux            | Console reader with a speech socket; the first target for the speech sink  |
+| Speakup       | Linux console             | Linux            | Kernel-level; the reader the stream-vs-grid essay is about                 |
+| NVDA          | Windows Terminal over SSH | Windows to Linux | The most common screen reader overall, reaching your Linux binary remotely |
+| BRLTTY        | Linux console             | Linux            | Braille users: check one-line displays against the bar and picker rows     |
 
 Who to involve, before and after building:
 
