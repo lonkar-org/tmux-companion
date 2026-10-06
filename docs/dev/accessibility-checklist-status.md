@@ -39,6 +39,7 @@ What each status means:
 | Every message can also go to a speech sink | build | Differentiator 1. On main, `message_ms = 0` keeps messages up until a key |
 | A `messages` command | easy | tmux's own `prefix ~` lists them, checked. A filtered `tmux-companion messages` would be a thin wrapper |
 | `brief` and `doctor` in a plain mode | easy | `brief --print` exists; `doctor` and the popup forms need a screen-reader branch |
+| Act from the brief, not only read it | done, drawn | Single keys in the drawn brief, on main. The same actions as a typed answer in screen-reader mode wait for that branch: `docs/backlog/brief-keys-screen-reader.md` |
 | Last command output, previous and next | build | Differentiator 3. The OSC 133 marks are already there |
 | Pocket and `run` as a window, not a split | build | Both use `split-window`; needs a setting and a second code path |
 | Agent questions without box drawing | easy | `inbox.rs:159` already drops rule lines. Box characters and spinner frames inside the question still get through |

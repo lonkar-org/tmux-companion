@@ -113,12 +113,56 @@ brief for the health mark, nothing for the rest.
 .It Ic brief Op Fl -print , Fl -hook
 What needs you, on one screen: the agents waiting and what each one asked,
 the reasons the health mark is up, the sessions nobody has touched for three
-days, and one line of numbers with when the last snapshot was.
+days, how long a sitting has run when the chunk clock is on, quiet hours when
+they are on, and one line of numbers with when the last snapshot was.
 Everything on it is a command of its own; this is the one look on sitting
-down.
-In a popup it waits for a key;
+down, and somewhere to act from.
+.Pp
+In a terminal it waits for keys, and a footer names the ones that do
+something right now:
+.Bl -tag -width Ds -compact
+.It Ar number
+go to that waiting agent's pane, or to that idle session; the numbers run on
+from the agents into the idle sessions, and with ten rows or more a digit
+that could start a longer number waits for the next digit or enter
+.It Ic c Ar number
+close that idle session, asking first, its layout saved, as
+.Ic sessions idle
+does
+.It Ic h
+acknowledge the health reasons, as
+.Ic health ack
+does
+.It Ic d
+show the
+.Ic doctor
+report, and come back on enter
+.It Ic i
+open the
+.Ic inbox
+picker
+.It Ic j
+open today's
+.Ic journal
+picker
+.It Ic s
+save a snapshot, as
+.Ic sessions save
+does
+.It Ic z
+an hour of quiet, or with quiet on, the end of it
+.It Ic q , Ic Esc , Ic Enter
+close
+.El
+.Pp
+Going somewhere, and
+.Ic i
+and
+.Ic j ,
+end the brief.
+The rest say one line about what they did and draw the brief again.
 .Fl -print
-prints and exits.
+prints and exits, with no numbers and no keys.
 .Fl -hook
 is for the
 .Ic client-attached

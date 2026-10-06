@@ -4202,7 +4202,7 @@ async fn run_open(
 }
 
 /// `project close`: ask every window to go, rather than killing the session.
-async fn run_close_project(
+pub(crate) async fn run_close_project(
     session: Option<String>,
     discard: bool,
     save: bool,

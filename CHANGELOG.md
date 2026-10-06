@@ -23,6 +23,13 @@ entry per phase of the comrades port.
   arrived, the platform's own sounds unless a command is set, held by quiet
   hours. Health is checked every ten seconds for this whether or not a bar
   shows it. `tmux-companion earcon asked` plays one now, on or off.
+- `brief` takes keys. A number goes to that waiting agent or idle session,
+  `c` and a number closes an idle session after asking, `h` acknowledges
+  health, `d` shows `doctor`, `i` and `j` hand over to the inbox and today's
+  journal, `s` saves a snapshot and `z` turns an hour of quiet on or off. The
+  footer names only the keys that do something, and an action that stays says
+  one line and draws the brief again. Quiet hours have their own line rather
+  than being a health reason.
 - Accessibility, a first round. The terminal's cursor sits on the selected
   row of every picker, the resurrect screen's row and the run dialog's
   button, and on the nearest match in `jump`, so a screen reader or a braille
