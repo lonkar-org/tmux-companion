@@ -1035,7 +1035,15 @@ fn a_pocket_parks_in_its_own_session_when_a_newer_one_exists() {
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
     assert!(ok, "{err}");
     let (pocket, _) = pocket_where(&t).expect("a pocket pane");
-    t.type_until(&pocket, "echo pocket-$((6*7))", "pocket-42");
+    // A short prompt, as the test above sets, and for its reason: a runner's
+    // sixty-character hostname wraps in a pocket this narrow, and the shell
+    // redrawing a wrapped prompt on the resize back wrote over pocket-42, so
+    // macOS CI saw the startup banner and two prompts and nothing else.
+    t.type_until(
+        &pocket,
+        "PS1='$ '; PROMPT='$ '; clear; echo pocket-$((6*7))",
+        "pocket-42",
+    );
 
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
     assert!(ok, "away: {err}");

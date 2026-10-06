@@ -14,7 +14,8 @@
 #
 # Needs a C compiler, make, pkg-config, libevent and ncurses headers, and a
 # yacc: configure refuses to run without one although the tarball ships
-# cmd-parse.c already generated. On macOS that is Homebrew's libevent; on
+# cmd-parse.c already generated. On macOS that is Homebrew's libevent and
+# jemalloc (see the configure line for why jemalloc); on
 # Ubuntu `build-essential pkg-config libevent-dev libncurses-dev bison`.
 #
 # Why this exists: CI installed whatever tmux apt and Homebrew shipped, 3.4 on
@@ -76,12 +77,30 @@ fi
 
 tar -xzf "$TARBALL" -C "$WORK"
 cd "$WORK/tmux-$VERSION"
-# Homebrew's libevent is not on the default pkg-config path on macOS.
-if command -v brew >/dev/null && brew --prefix libevent >/dev/null 2>&1; then
-  export PKG_CONFIG_PATH="$(brew --prefix libevent)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# Homebrew's libevent and jemalloc are not on the default pkg-config path.
+for lib in libevent jemalloc; do
+  if command -v brew >/dev/null && brew --prefix "$lib" >/dev/null 2>&1 \
+    && [ -d "$(brew --prefix "$lib")/lib/pkgconfig" ]; then
+    export PKG_CONFIG_PATH="$(brew --prefix "$lib")/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  fi
+done
+# tmux 3.6 and later refuse to configure on a macOS whose calloc(3) fails
+# their check until told --enable-jemalloc or --disable-jemalloc: the arm64
+# runners do, an Intel Mac did not, so a build that worked here stopped
+# there. Homebrew's tmux links jemalloc for this reason, so this does too,
+# where configure knows the option and Homebrew has it.
+EXTRA=()
+if [ "$(uname -s)" = "Darwin" ] && ./configure --help | grep -q jemalloc; then
+  if command -v brew >/dev/null && brew --prefix jemalloc >/dev/null 2>&1 \
+    && [ -d "$(brew --prefix jemalloc)/lib" ]; then
+    EXTRA+=(--enable-jemalloc)
+  else
+    echo "tmux-build: no Homebrew jemalloc, building tmux $VERSION without it" >&2
+    EXTRA+=(--disable-jemalloc)
+  fi
 fi
 echo "tmux-build: building tmux $VERSION into $PREFIX" >&2
-./configure --prefix="$PREFIX" --disable-utf8proc >"$WORK/configure.log" 2>&1 \
+./configure --prefix="$PREFIX" --disable-utf8proc ${EXTRA[@]+"${EXTRA[@]}"} >"$WORK/configure.log" 2>&1 \
   || { tail -30 "$WORK/configure.log" >&2; exit 1; }
 JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 make -j"$JOBS" >"$WORK/make.log" 2>&1 || { tail -30 "$WORK/make.log" >&2; exit 1; }
