@@ -271,6 +271,15 @@ plugin-release VERSION *ARGS: plugin-links
 # on the author's own shell for months while every byte was printed correctly.
 # Only driving a real tmux and watching the cursor catches it.
 
+# Merge pull requests on green, one at a time, after `@dependabot rebase`:
+# each waits for its head to move, gets another rebase if merging the one
+# before it caused a conflict, and is squash-merged only when every check on
+# its head passed. A red check stops it and leaves that pull request open.
+
+# Squash-merge pull requests once every check on their head passed.
+pr-merge-on-green +PRS:
+    ./scripts/pr-merge-on-green.sh {{PRS}}
+
 # Does shell-init give tmux prompts it can actually jump between?
 prompt-marks *SHELLS:
     ./scripts/check-prompt-marks.sh {{SHELLS}}
