@@ -33,6 +33,9 @@ pub struct Brief {
     /// How many `setup` items are open, asked only in the week after this
     /// build first ran; `None` outside that week.
     pub setup_open: Option<usize>,
+    /// The chunk clock's sitting in words, `38 min, 12 min for break`;
+    /// empty when the clock is off or no sitting runs.
+    pub sitting: String,
 }
 
 impl Brief {
@@ -182,6 +185,16 @@ pub fn render_in(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint) 
         ink(b.agents.2.to_string(), waiting),
         ink(format!(" waiting), {snapshot}"), Tone::Dim),
     ));
+    // Words rather than the bar's `50m+12`, so the same line is read aloud
+    // and looked at; amber once it is past the break.
+    if !b.sitting.is_empty() {
+        let tone = if b.sitting.ends_with("passed break time") {
+            Tone::Waiting
+        } else {
+            Tone::Dim
+        };
+        out.push_str(&format!("Sitting: {}\n", ink(b.sitting.clone(), tone)));
+    }
     if let Some(open) = b.setup_open.filter(|n| *n > 0) {
         out.push_str(&paint.icon(icons::SETUP, Tone::Dim));
         out.push_str(&format!(
@@ -203,13 +216,32 @@ pub async fn gather() -> Brief {
             .map(|r| r.output)
             .unwrap_or_default()
     };
-    let (inbox_json, health_text, reports, idle, sessions_text) = tokio::join!(
+    let chunk_status = async {
+        let args = crate::proto::ChunkArgs {
+            action: "status".to_string(),
+            ..Default::default()
+        };
+        crate::client::send(crate::proto::Request::build("chunk", &args))
+            .await
+            .ok()
+            .filter(|r| r.error.is_none())
+            .map(|r| r.output)
+            .unwrap_or_default()
+    };
+    let (inbox_json, health_text, reports, idle, sessions_text, sitting) = tokio::join!(
         ask("__inbox"),
         ask("__health"),
         crate::panes::reports(),
         crate::sessions::idle::list(IDLE_DAYS),
         crate::cli::tmux_capture(&["list-sessions", "-F", "#{session_name}"]),
+        chunk_status,
     );
+    // The clock being off is said by `chunk status`, not on every brief.
+    let sitting = if sitting.starts_with("The chunk clock is off") {
+        String::new()
+    } else {
+        sitting
+    };
     let waiting: Vec<Entry> = serde_json::from_str(&inbox_json).unwrap_or_default();
     let health: Vec<String> = health_text
         .lines()
@@ -252,6 +284,7 @@ pub async fn gather() -> Brief {
             .count(),
         agents: (sample.total, sample.busy, sample.waiting),
         last_snapshot,
+        sitting,
     }
 }
 
@@ -334,6 +367,21 @@ mod tests {
         );
         assert!(!text.contains("Idle for"), "{text}");
         assert!(!text.contains("setup"), "{text}");
+    }
+
+    #[test]
+    fn the_sitting_is_one_line_in_words_and_never_news() {
+        let b = Brief {
+            sitting: "1 hr 7 min, 17 min passed break time".to_string(),
+            ..Default::default()
+        };
+        assert!(!b.has_news());
+        let text = render(&b, 1000, "/home/me");
+        assert!(
+            text.contains("Sitting: 1 hr 7 min, 17 min passed break time\n"),
+            "{text}"
+        );
+        assert!(!render(&Brief::default(), 1000, "/home/me").contains("Sitting"));
     }
 
     #[test]

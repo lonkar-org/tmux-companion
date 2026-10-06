@@ -156,3 +156,10 @@ pid.
 - `keys route`, `keys claim` and `keys release` are new: step 3 of
   `docs/dev/design-key-routing.md`, tested against real tmux servers in
   `tests/e2e.rs` with the same nested-client harness as the hold itself.
+- `earcon` is new, with `[earcons]`: a sound per event, the research's
+  differentiator 8, for agents and health. Commands wait on tmux 3.8
+  (`docs/backlog/command-output-automatic.md`).
+- `chunk` is new, with `[chunk]` and a `chunk` segment: focus time per
+  sitting, one sound at the next boundary past budget, one snooze.
+  `docs/dev/design-chunk-clock.md` is the spec. The daemon polls
+  `list-clients` every five seconds; nothing to port.

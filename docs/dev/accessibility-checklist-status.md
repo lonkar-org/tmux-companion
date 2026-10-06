@@ -101,7 +101,7 @@ The research says these are reasoning, not findings, so most end in "user".
 | 5 | Agent questions read cleanly | easy |
 | 6 | A linear picker mode | done, on the branch |
 | 7 | Window titles for voice control | easy, then user |
-| 8 | Earcons | build, then user |
+| 8 | Earcons | agents and health done (`[earcons]`, `earcon`); commands wait on tmux 3.8; then user |
 | 9 | One-switch profiles (`setup --profile`) | build. Each setting exists; `setup` doesn't bundle them yet |
 
 ## Testing matrix

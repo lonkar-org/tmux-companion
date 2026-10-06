@@ -1,6 +1,7 @@
 //! The server half: bind the socket, accept forever, hand each line to a
 //! handler.
 mod handlers;
+pub(crate) use handlers::health_check;
 /// Server state and its caches.
 pub mod state;
 
@@ -221,8 +222,28 @@ pub async fn run() -> anyhow::Result<()> {
             config.agents.clone(),
             config.journal.clone(),
             config.notify.message_ms,
+            config.earcons.clone(),
             Arc::clone(&state),
         ));
+    }
+
+    // A sound when a health reason appears, on a timer of its own: the bar's
+    // check runs only while a bar draws the health mark, and somebody who
+    // hears the screen may have no bar.
+    if config.earcons.enabled
+        && config
+            .earcons
+            .on
+            .contains(&crate::config::EarconEvent::Health)
+    {
+        tokio::spawn(crate::earcons::health_loop(
+            config.earcons.clone(),
+            Arc::clone(&state),
+        ));
+    }
+
+    if config.chunk.enabled {
+        tokio::spawn(crate::chunk::chunk_loop(Arc::clone(&state)));
     }
 
     if config.autoreload.enabled {

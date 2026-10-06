@@ -92,6 +92,8 @@ pub mod cache;
 #[doc(hidden)]
 pub mod cheatsheet;
 #[doc(hidden)]
+pub mod chunk;
+#[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
 pub mod click;
@@ -105,6 +107,8 @@ pub mod config;
 pub mod dirsource;
 #[doc(hidden)]
 pub mod doctor;
+#[doc(hidden)]
+pub mod earcons;
 #[doc(hidden)]
 pub mod inbox;
 #[doc(hidden)]

@@ -83,6 +83,13 @@ pub struct Config {
     /// What happens when a file is opened out of copy mode.
     #[serde(default)]
     pub open: Open,
+    /// Short sounds for events: an agent that asked, one that finished, a
+    /// health reason that appeared.
+    #[serde(default)]
+    pub earcons: Earcons,
+    /// The chunk clock: focus time this sitting, and one sound past budget.
+    #[serde(default)]
+    pub chunk: Chunk,
     /// Keys tmux and the apps in its panes both want.
     #[serde(default)]
     pub keys: Keys,
@@ -336,6 +343,100 @@ impl Split {
         match self {
             Split::Right => "-h",
             Split::Bottom => "-v",
+        }
+    }
+}
+
+/// An event that can have a sound.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum EarconEvent {
+    /// An agent stopped on a question, or went quiet waiting on you.
+    Asked,
+    /// An agent said it finished its answer.
+    Done,
+    /// A health reason appeared that was not there before.
+    Health,
+    /// The chunk clock's budget is over: time for a break.
+    Chunk,
+}
+
+/// Short sounds for events, for somebody who hears the screen rather than
+/// glancing at it. Off by default, like every setting that changes how the
+/// tool presents itself, and held by quiet hours.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Earcons {
+    /// Whether any sound plays.
+    pub enabled: bool,
+    /// Which events have one.
+    pub on: Vec<EarconEvent>,
+    /// The command for each event, as a list of words. Empty plays the
+    /// platform's own sound for it; see `earcons::platform_command`.
+    pub asked: Vec<String>,
+    /// As `asked`, for an agent that finished.
+    pub done: Vec<String>,
+    /// As `asked`, for a health reason.
+    pub health: Vec<String>,
+    /// As `asked`, for the chunk clock's budget. `[chunk] sound` decides
+    /// whether it plays, not `enabled` or `on`.
+    pub chunk: Vec<String>,
+}
+
+impl Default for Earcons {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            on: vec![EarconEvent::Asked, EarconEvent::Health],
+            asked: Vec::new(),
+            done: Vec::new(),
+            health: Vec::new(),
+            chunk: Vec::new(),
+        }
+    }
+}
+
+/// The chunk clock: how long you have been at tmux this sitting, across every
+/// session, and one sound when that is past the budget. See
+/// `docs/dev/design-chunk-clock.md`.
+///
+/// Durations are written the way `quiet` takes them, `50m`, `1h`, `90s`, and
+/// checked when the file loads.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Chunk {
+    /// Whether the clock runs at all. Off by default, like every setting that
+    /// changes how the tool behaves.
+    pub enabled: bool,
+    /// How long a sitting is meant to last.
+    pub budget: String,
+    /// The share of the budget past which the bar turns amber.
+    pub warn_at: f64,
+    /// Away this long, out of the terminal or with no key, is a break: the
+    /// sitting ends. A shorter gap counts as work.
+    pub break_after: String,
+    /// How long past the budget the sound may wait for a boundary: a prompt
+    /// coming back, an agent finishing its turn, a window switch.
+    pub boundary_grace: String,
+    /// The one extension `chunk snooze` grants.
+    pub snooze: String,
+    /// Play `[earcons] chunk` at budget, quiet hours or not.
+    pub sound: bool,
+    /// A desktop banner as well, held by quiet hours.
+    pub banner: bool,
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            budget: "50m".to_string(),
+            warn_at: 0.8,
+            break_after: "10m".to_string(),
+            boundary_grace: "5m".to_string(),
+            snooze: "5m".to_string(),
+            sound: true,
+            banner: false,
         }
     }
 }
@@ -1415,6 +1516,8 @@ impl Default for Config {
             bar: Bar::default(),
             picker: PickerLayout::default(),
             open: Open::default(),
+            earcons: Earcons::default(),
+            chunk: Chunk::default(),
             keys: Keys::default(),
             quiet: Quiet::default(),
         }
@@ -1817,6 +1920,9 @@ pub enum SegmentName {
     Agents,
     /// One mark when the daemon knows something needs a look.
     Health,
+    /// The chunk clock: focus time this sitting, amber near the budget and
+    /// red past it. Draws nothing while `[chunk] enabled` is off.
+    Chunk,
 }
 
 impl SegmentName {
@@ -1829,6 +1935,7 @@ impl SegmentName {
             SegmentName::Battery => "battery",
             SegmentName::Agents => "agents",
             SegmentName::Health => "health",
+            SegmentName::Chunk => "chunk",
         }
     }
 
@@ -2521,6 +2628,34 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
                 "`[quiet] daily` has `{bad}`, and a window is two 24-hour times, like `22:00-08:00`"
             ),
             did_you_mean: None,
+        });
+    }
+
+    let chunk = &config.chunk;
+    for (key, value) in [
+        ("budget", &chunk.budget),
+        ("break_after", &chunk.break_after),
+        ("boundary_grace", &chunk.boundary_grace),
+        ("snooze", &chunk.snooze),
+    ] {
+        if crate::quiet::parse_duration(value).is_none_or(|secs| secs == 0) {
+            return Err(ConfigError {
+                path: path.to_path_buf(),
+                message: format!(
+                    "`[chunk] {key}` is `{value}`, and it has to be a duration, like `50m`, `1h` or `90s`"
+                ),
+                did_you_mean: None,
+            });
+        }
+    }
+    if !(chunk.warn_at > 0.0 && chunk.warn_at <= 1.0) {
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message: format!(
+                "`[chunk] warn_at` is {}, and it is a share of the budget, above 0 and at most 1",
+                chunk.warn_at
+            ),
+            did_you_mean: Some("0.8".to_string()),
         });
     }
 

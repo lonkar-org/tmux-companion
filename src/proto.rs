@@ -66,6 +66,20 @@ pub struct QuietArgs {
     pub secs: Option<u64>,
 }
 
+/// `chunk`: one action on the chunk clock's sitting.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ChunkArgs {
+    /// `status`, `snooze`, `reset`, `close` or `budget`.
+    pub action: String,
+    /// `status` as JSON.
+    #[serde(default)]
+    pub json: bool,
+    /// `budget`'s duration, in seconds.
+    #[serde(default)]
+    pub budget_secs: Option<u64>,
+}
+
 /// `health`: say why the mark is up, and forget the failures when asked to.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

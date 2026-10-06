@@ -279,6 +279,11 @@ bind -N "companion: help what happened today" J \
 # `quiet` while it lasts.
 bind -N "companion: config quiet hours, no nagging for a while" Q \
   command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""
+# The chunk clock's snooze, with [chunk] on: past the budget, one more five
+# minutes and one more sound, said on the message line. Root table, no
+# prefix: M-z is bound by nothing in tmux by default.
+bind -N "companion: config snooze the chunk clock, once a sitting" -n M-z \
+  run-shell 'tmux display-message "$(tmux-companion chunk snooze)"'
 %if "#{>=:#{version},3.3}"
 bind -N "companion: window jump to an agent" G \
   display-popup -B -E -w 80% -h 70% "tmux-companion panes --agents"

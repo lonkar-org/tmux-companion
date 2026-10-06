@@ -373,6 +373,18 @@ fallback = ["U", "M-q"]
 snippet = '''bind -N "companion: config quiet hours, no nagging for a while" {key} command-prompt -p "quiet for (45m, 2h, off):" "run-shell \"tmux-companion quiet %%\""'''
 goes = "tmux.conf"
 
+[[item]]
+id = "chunk-snooze"
+group = "Keys"
+kind = "binding"
+line = "Past my break, five more minutes to finish this?"
+command = "chunk snooze"
+key = "M-z"
+table = "root"
+fallback = ["M-Z"]
+snippet = '''bind -N "companion: config snooze the chunk clock, once a sitting" -n {key} run-shell 'tmux display-message "$(tmux-companion chunk snooze)"''''
+goes = "tmux.conf"
+
 # ── Hooks ────────────────────────────────────────────────────────────────────
 
 [[item]]

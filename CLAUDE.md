@@ -113,6 +113,7 @@ description they had.
 | `src/brief.rs` | one screen with the state of the server, for the moment you sit down |
 | `src/cache.rs` | in-memory TTL maps for the server's segment caches |
 | `src/cheatsheet.rs` | the cheat sheet: four boxes in a 2x2 grid, showing the bindings you keep having to look up, so you learn them and stop looking |
+| `src/chunk.rs` | the chunk clock: how long you have been at tmux this sitting, and one sound when that is past the budget |
 | `src/cli.rs` | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server |
 | `src/client.rs` | find the socket, start a server if nothing answers, send one JSON line and read one back |
 | `src/click.rs` | a mouse click on a segment of the bar |
@@ -121,6 +122,7 @@ description they had.
 | `src/daemon.rs` | asking a running tmux-companion daemon for a segment, from another program |
 | `src/dirsource.rs` | where the project picker's directory list comes from |
 | `src/doctor.rs` | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger |
+| `src/earcons.rs` | short sounds for events: an agent that asked, one that finished, a health reason that appeared |
 | `src/inbox.rs` | the agents waiting on you, with the question each one asked |
 | `src/journal.rs` | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed |
 | `src/jump.rs` | jumping to any text on the screen: type a few of its characters, then the label that appears beside the one you meant |

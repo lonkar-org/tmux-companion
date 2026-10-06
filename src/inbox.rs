@@ -333,6 +333,7 @@ pub async fn inbox_loop(
     config: crate::config::Agents,
     journal: crate::config::Journal,
     message_ms: u64,
+    earcons: crate::config::Earcons,
     state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
 ) {
     let interval = std::time::Duration::from_secs(config.interval_secs.max(1));
@@ -380,6 +381,25 @@ pub async fn inbox_loop(
                     .get(id)
                     .is_none_or(|r| r.state != panes::Report::Busy)
         });
+        // One sound per pass, not one per agent: three arriving at once are
+        // one thing to go and look at, and three tones on top of each other
+        // are noise.
+        // An agent that stopped, for whatever reason, ended a turn: a
+        // boundary the chunk clock's cue may wait for.
+        if !arrived.is_empty() {
+            state.lock().await.chunk_boundary_at = crate::panes::now_secs();
+        }
+        if !arrived.is_empty() && earcons.enabled {
+            let quiet = state.lock().await.is_quiet();
+            if arrived
+                .iter()
+                .any(|(_, how)| !matches!(how, State::Done(_)))
+            {
+                crate::earcons::sound(&earcons, crate::config::EarconEvent::Asked, quiet);
+            } else {
+                crate::earcons::sound(&earcons, crate::config::EarconEvent::Done, quiet);
+            }
+        }
         for (pane, how) in &arrived {
             let lines = panes::tail_of(&pane.id).await;
             let e = entry(

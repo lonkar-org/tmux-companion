@@ -1212,6 +1212,57 @@ turns it on at the same local times every day, such as
 .Ql 22:00-08:00 ;
 a timer and a window together last until the later one ends.
 The daemon keeps the clock, so every timer and every client agree.
+.It Ic chunk Op Cm status Oo Fl -json Oc | Cm snooze | Cm reset | Cm close | Cm budget Ar duration
+The chunk clock: how long you have been at tmux this sitting, across every
+session, with nothing to start.
+Time counts while an attached client has the OS focus, which needs
+.Ic focus-events on ,
+and saw a key or click within
+.Ic [chunk] break_after ;
+a shorter gap counts as work, and one that reaches it is a break that ends the
+sitting.
+The
+.Ic chunk
+segment of
+.Ic [[status.right.segments]]
+draws
+.Ql 38m ,
+amber past
+.Ic [chunk] warn_at
+of the budget and
+.Ql 50m+12
+in red past it, with
+.Ql \(bu run 1h14m
+when the pane in front runs an agent.
+At budget the daemon plays the
+.Ql chunk
+earcon once, at the next window switch, prompt coming back or agent finishing
+its turn, and at most
+.Ic [chunk] boundary_grace
+late; quiet hours keep the sound and drop the
+.Ic [chunk] banner .
+.Cm status ,
+the default, says the sitting in words,
+.Ql 38 min, 12 min for break
+or
+.Ql 1 hr 7 min, 17 min passed break time ,
+and nothing when no sitting runs;
+.Ic brief
+says the same line.
+.Cm snooze ,
+past the budget, grants one extension of
+.Ic [chunk] snooze
+and one more sound, once a sitting.
+.Cm reset
+starts a new sitting at 0,
+.Cm close
+ends this one until you have been away and back, and
+.Cm budget
+sets this sitting's budget until a reset or a daemon restart.
+The sitting survives a daemon restart in
+.Pa $XDG_STATE_HOME/tmux-companion/chunk.toml .
+A terminal that does not report focus reads as focused forever, and there only
+the key counts.
 .It Ic journal Oo Fl -print Oc Oo Fl t Ar session Oc Op Fl -days Ar n
 What happened in each project, newest first: a command that ran past
 .Ic [journal] min_secs
@@ -1542,6 +1593,36 @@ is one name per line with no swatch, for piping somewhere;
 .Fl -plain
 is the old spelling and still works.
 .El
+.Sh SOUNDS
+A short sound for something a sighted person would see on the bar, for
+somebody who hears the screen rather than glancing at it.
+.Bl -tag -width Ds
+.It Ic earcon Ar event
+Play the sound
+.Ar event
+makes,
+.Ql asked ,
+.Ql done ,
+.Ql health
+or
+.Ql chunk ,
+now, whether sounds are on or not, and say which command it ran.
+With
+.Ic [earcons] enabled ,
+the daemon plays them itself: once per pass when agents start waiting on you
+or finish, and when a health reason appears that was not there before, checked
+every ten seconds whether or not a bar draws the health mark.
+.Ic [earcons] on
+says which events sound, and
+.Ic asked ,
+.Ic done ,
+.Ic health
+and
+.Ic chunk
+the command each runs, the platform's own sound when empty.
+Quiet hours hold them; a health reason that appeared during them sounds when
+they end.
+.El
 .Sh CONFIGURATION
 TOML, read from the first of:
 .Bl -bullet -offset indent -compact
@@ -1562,7 +1643,7 @@ The sections are
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
-.Ic [picker] , [journal] , [online] , [open]
+.Ic [picker] , [journal] , [online] , [open] , [earcons] , [chunk]
 and
 .Ic [keys] .
 .Bl -tag -width Ds

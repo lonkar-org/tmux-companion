@@ -419,6 +419,12 @@ pub enum Cmd {
         target: Option<String>,
     },
 
+    /// Play the sound an event makes, now, whether sounds are on or not
+    Earcon {
+        /// asked, done or health
+        event: crate::config::EarconEvent,
+    },
+
     /// Type a few characters of anything on screen, then the label beside
     /// it: copy mode lands there, in whichever pane of the window it is
     Jump {
@@ -577,6 +583,14 @@ pub enum Cmd {
         /// End quiet hours now
         #[arg(long, conflicts_with = "duration")]
         off: bool,
+    },
+
+    /// The chunk clock: how long you've been at tmux this sitting, and
+    /// how long until, or since, the break; with no action, `status`
+    Chunk {
+        /// status, snooze, reset, close or budget
+        #[command(subcommand)]
+        action: Option<ChunkAction>,
     },
 
     /// Why the health mark is up, a reason a line, or `ok`; `ack` forgets
@@ -1152,6 +1166,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             print,
             target,
         } => crate::panes::run(agents, print, target).await?,
+        Cmd::Earcon { event } => crate::earcons::run(event)?,
         // Client-side for the same reasons as `panes`: see `jump::run`.
         Cmd::Jump {
             pane,
@@ -1204,6 +1219,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             days,
         } => crate::journal::run(print, target, days).await?,
         Cmd::Quiet { duration, off } => crate::quiet::run(duration, off).await?,
+        Cmd::Chunk { action } => crate::chunk::run(action).await?,
         Cmd::Health { action } => run_health(action.is_some()).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
@@ -1937,6 +1953,29 @@ async fn nothing_noted(rows: &[crate::keys::KeyRow], print: bool) -> bool {
 fn usage_path(config: &crate::config::Config) -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     config.usage.log_path(&home, crate::server::state_dir())
+}
+
+/// What `chunk` can be told to do.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ChunkAction {
+    /// The sitting in words, `38 min, 12 min for break`, or nothing when
+    /// no sitting is running
+    Status {
+        /// Every number, as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Past the budget, one extension of `[chunk] snooze`, once a sitting
+    Snooze,
+    /// A new sitting at 0, the budget back to the file's
+    Reset,
+    /// End the sitting; nothing counts until you've been away and back
+    Close,
+    /// This sitting's budget, until `reset` or a daemon restart
+    Budget {
+        /// `45m`, `1h`, `90s`
+        duration: String,
+    },
 }
 
 /// What `health` can be told to do.

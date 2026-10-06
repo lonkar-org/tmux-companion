@@ -156,7 +156,8 @@ pub fn advice(options: &std::collections::HashMap<String, String>) -> Vec<Advice
     if get("focus-events") == Some("off") {
         say(
             "focus-events off".to_string(),
-            "an editor in a pane isn't told when you come back to it, so it can't reread a file"
+            "an editor in a pane isn't told when you come back to it, so it can't reread a file, \
+             and the chunk clock can't tell you've gone to another app"
                 .to_string(),
             "set -s focus-events on",
         );

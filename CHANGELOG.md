@@ -7,6 +7,22 @@ entry per phase of the comrades port.
 
 ### Added
 
+- The chunk clock. With `[chunk] enabled = true` the daemon counts how long
+  you've been at tmux this sitting, across every session, with nothing to
+  start: a client with the OS focus that saw a key in the last ten minutes.
+  A shorter gap counts as work and a longer one is a break that starts the
+  next sitting at 0. The `chunk` segment draws `38m`, amber near the 50
+  minute budget and `50m+12` in red past it, with the agent's run time when
+  one is in front. At budget it plays one sound, waiting up to five minutes
+  for a window switch, a prompt or an agent finishing. `chunk snooze` (`M-z`
+  in the example configs) grants one more five minutes, then the bar only.
+  `chunk status` and `brief` say it in words, `38 min, 12 min for break`.
+- Earcons: `[earcons] enabled = true` plays a short sound when an agent
+  starts waiting on you and when a health reason appears, and when an agent
+  finishes if `on` lists `done`. One sound per pass however many agents
+  arrived, the platform's own sounds unless a command is set, held by quiet
+  hours. Health is checked every ten seconds for this whether or not a bar
+  shows it. `tmux-companion earcon asked` plays one now, on or off.
 - Accessibility, a first round. The terminal's cursor sits on the selected
   row of every picker, the resurrect screen's row and the run dialog's
   button, and on the nearest match in `jump`, so a screen reader or a braille

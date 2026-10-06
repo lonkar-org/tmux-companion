@@ -81,6 +81,14 @@ pub struct ServerState {
     pub nudged: std::collections::HashSet<String>,
     /// When quiet hours end, in unix seconds; none or past means not quiet.
     pub quiet_until: Option<u64>,
+    /// The chunk clock's sitting, kept by `chunk::chunk_loop`.
+    pub chunk: crate::chunk::Sitting,
+    /// When the inbox last saw an agent finish its turn or stop on a
+    /// question, which is a boundary the chunk clock's cue may wait for.
+    pub chunk_boundary_at: u64,
+    /// How long the agent in the focused pane has been running, from the
+    /// last look; `None` when that pane is no agent.
+    pub chunk_process_age: Option<u64>,
     /// What each agent last said about itself, keyed by pane id, from
     /// `tmux-companion agent` run out of its hooks. Dropped when the pane
     /// goes or stops running an agent.
@@ -146,6 +154,9 @@ impl ServerState {
             inbox: std::collections::HashMap::new(),
             nudged: std::collections::HashSet::new(),
             quiet_until: None,
+            chunk: crate::chunk::Sitting::default(),
+            chunk_boundary_at: 0,
+            chunk_process_age: None,
             reports: crate::panes::Reports::new(),
             agent_reported: false,
             git_cache: TtlMap::new(),

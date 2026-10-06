@@ -54,6 +54,7 @@ pub fn assemble_right(gst: &str, net: &str, battery: &str) -> String {
         battery,
         "",
         "",
+        "",
     )
 }
 
@@ -75,6 +76,7 @@ pub fn assemble_right_with(
     battery: &str,
     agents: &str,
     health: &str,
+    chunk: &str,
 ) -> String {
     use crate::config::SegmentName;
 
@@ -86,6 +88,7 @@ pub fn assemble_right_with(
             SegmentName::Battery => battery,
             SegmentName::Agents => agents,
             SegmentName::Health => health,
+            SegmentName::Chunk => chunk,
         };
         if rendered.is_empty() {
             continue;
@@ -216,6 +219,14 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         },
         // Quiet hours: set, clear or ask. The daemon keeps the clock so every
         // timer and every client agree on it.
+        "chunk" => match req.parse_args::<crate::proto::ChunkArgs>() {
+            Ok(args) => {
+                let now = crate::panes::now_secs();
+                let mut st = state.lock().await;
+                crate::chunk::answer(&args, &mut st, now)
+            }
+            Err(e) => Err(e),
+        },
         "__quiet" => match req.parse_args::<crate::proto::QuietArgs>() {
             Ok(args) => {
                 let now = crate::panes::now_secs();
@@ -342,6 +353,7 @@ pub(crate) struct Computed {
     pub battery: bool,
     pub agents: bool,
     pub health: bool,
+    pub chunk: bool,
 }
 
 /// [`Computed`] for a configured side.
@@ -353,6 +365,7 @@ pub(crate) fn computed(right: &crate::config::StatusRight) -> Computed {
         battery: right.draws(SegmentName::Battery),
         agents: right.draws(SegmentName::Agents),
         health: right.draws(SegmentName::Health),
+        chunk: right.draws(SegmentName::Chunk),
     }
 }
 
@@ -463,8 +476,13 @@ async fn render_right(
             st.note_failure(&source, what);
         }
     }
+    let chunk = if wanted.chunk {
+        chunk_segment(state).await
+    } else {
+        String::new()
+    };
     Ok(assemble_right_with(
-        &right, &gst, &net, &battery, &agents, &health,
+        &right, &gst, &net, &battery, &agents, &health, &chunk,
     ))
 }
 
@@ -473,6 +491,22 @@ async fn render_right(
 /// Same shape as `agents`: read under one lock, the two stats outside it,
 /// stored under another. Nothing is checked when no configured segment is
 /// `health`; `__health` asks the same question for `doctor` regardless.
+/// The chunk clock's segment, from the sitting the daemon keeps. No I/O: the
+/// loop did the looking, so this is one lock and a format.
+async fn chunk_segment(state: &Arc<Mutex<ServerState>>) -> String {
+    let st = state.lock().await;
+    let settings = crate::chunk::Settings::from_config(&st.config.chunk);
+    if !settings.enabled {
+        return String::new();
+    }
+    crate::chunk::segment(
+        &st.chunk,
+        &settings,
+        st.chunk_process_age,
+        &st.config.bar.background,
+    )
+}
+
 async fn health(state: &Arc<Mutex<ServerState>>) -> String {
     let (wanted, cached, bar_bg) = {
         let s = state.lock().await;
@@ -497,7 +531,9 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
 }
 
 /// The three questions, answered now.
-async fn health_check(state: &Arc<Mutex<ServerState>>) -> segments::health::HealthSample {
+pub(crate) async fn health_check(
+    state: &Arc<Mutex<ServerState>>,
+) -> segments::health::HealthSample {
     let (started, failures, quiet, offline) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
@@ -814,7 +850,7 @@ mod tests {
         // so this is the test that keeps those two from drifting apart.
         let right = crate::config::StatusRight::default();
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B", "", ""),
+            assemble_right_with(&right, "G", "N", "B", "", "", ""),
             assemble_right("G", "N", "B")
         );
     }
@@ -830,7 +866,7 @@ mod tests {
             }],
             trailing_space: true,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "G ");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", "", ""), "G ");
     }
 
     #[test]
@@ -851,7 +887,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "BG");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", "", ""), "BG");
     }
 
     #[test]
@@ -872,7 +908,7 @@ mod tests {
             ],
             trailing_space: false,
         };
-        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", ""), "NB");
+        assert_eq!(assemble_right_with(&right, "G", "N", "B", "", "", ""), "NB");
     }
 
     #[test]
@@ -887,7 +923,7 @@ mod tests {
             trailing_space: false,
         };
         assert_eq!(
-            assemble_right_with(&right, "G", "N", "B", "", ""),
+            assemble_right_with(&right, "G", "N", "B", "", "", ""),
             format!("<{}>B", crate::tmux::icons::ARROW_RIGHT)
         );
     }
@@ -899,7 +935,7 @@ mod tests {
             ..Default::default()
         };
         let with = assemble_right("G", "N", "B");
-        let without = assemble_right_with(&right, "G", "N", "B", "", "");
+        let without = assemble_right_with(&right, "G", "N", "B", "", "", "");
         assert_eq!(with, format!("{without} "));
     }
 
@@ -1176,6 +1212,7 @@ mod tests {
                 battery: true,
                 agents: false,
                 health: false,
+                chunk: false,
             }
         );
     }
@@ -1192,10 +1229,13 @@ mod tests {
                 battery: false,
                 agents: false,
                 health: true,
+                chunk: false,
             }
         );
         let none = computed(&side(&[]));
-        assert!(!(none.git || none.net || none.battery || none.agents || none.health));
+        assert!(
+            !(none.git || none.net || none.battery || none.agents || none.health || none.chunk)
+        );
     }
 
     #[tokio::test]

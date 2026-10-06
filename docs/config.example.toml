@@ -261,6 +261,14 @@ separator_before = "#[reverse,fg=color237]{ARROW_RIGHT}#[bg=color237,none]"
 # name = "health"
 # separator_before = " "
 
+# The chunk clock, with [chunk] below turned on: focus time this sitting,
+# `38m`, amber near the budget and `50m+12` in red past it. No I/O at draw
+# time; the daemon's own look every five seconds keeps the number.
+#
+# [[status.right.segments]]
+# name = "chunk"
+# separator_before = " "
+
 # Jobs stopped or running under a pane, drawn by `tmux-companion sh-jobs`.
 #
 # This was `vim-bg`, which asked one question with one answer baked in: is
@@ -869,6 +877,64 @@ slide_ms = 150
 # This used to be `zsh`, so on a machine without zsh -- most Linux boxes -- the
 # pane slid out and the command never ran.
 shell = ""
+
+[earcons]
+# A short sound when something happens that a sighted person would see on the
+# bar: an agent that asked, one that finished, a health reason that appeared.
+# For somebody who hears the screen rather than glancing at it. A tone says
+# something happened, not what: inbox, brief and read-bar say what. Off by
+# default, held by quiet hours, and one sound per pass however many agents
+# arrived in it. `tmux-companion earcon asked` plays one, on or off, so you can
+# hear it first.
+enabled = false
+
+# Which events sound. `done` is left out because an agent finishing is not
+# something waiting on you.
+on = ["asked", "health"]
+
+# The command for each, as a list of words. Empty plays the platform's own:
+# macOS's Glass, Pop and Basso through afplay, or the freedesktop theme's
+# message-new-instant, complete and dialog-warning through paplay.
+#
+#   asked = ["afplay", "/System/Library/Sounds/Ping.aiff"]
+asked = []
+done = []
+health = []
+# The chunk clock's sound, Hero on macOS. Whether it plays is [chunk] sound,
+# not `enabled` or `on` here.
+chunk = []
+
+[chunk]
+# How long you've been at tmux this sitting, across every session, with
+# nothing to start: time counts while a client has the OS focus (focus-events
+# on) and saw a key within break_after. At budget, one sound at the next
+# boundary, a window switch, a prompt coming back or an agent finishing its
+# turn, at most boundary_grace late. `tmux-companion chunk snooze` grants one
+# extension, then one more sound, then only the bar. Off by default.
+# docs/dev/design-chunk-clock.md is the design.
+enabled = false
+
+# 45m, 1h, 90s. Nothing proves one length best; 50m is a choice.
+budget = "50m"
+
+# The share of the budget past which the bar turns amber.
+warn_at = 0.8
+
+# Away this long, in another app or with no key, is a break: the sitting
+# ends and the next one starts at 0. A shorter gap counts as work, so reading
+# an agent's long reply doesn't stop the clock.
+break_after = "10m"
+
+# How long the sound may wait past the budget for a boundary.
+boundary_grace = "5m"
+
+# The one extension `chunk snooze` grants.
+snooze = "5m"
+
+# The sound plays through quiet hours, since it only comes while you're at
+# the keyboard. The desktop banner is held by them, and off by default.
+sound = true
+banner = false
 
 [clipboard]
 # The command to pipe a copy into. Unset picks one for the platform: pbcopy on
