@@ -570,13 +570,30 @@ pub fn state_look(state: State) -> (&'static str, crate::picker::Tone) {
     use crate::picker::Tone;
     use crate::tmux::icons;
     match state {
-        State::Asked(_) => (icons::WAITING, Tone::Asked),
-        State::Waiting(_) => (icons::WAITING, Tone::Waiting),
-        State::Busy => (icons::BUSY, Tone::Busy),
-        State::Done(_) => (icons::CHECK, Tone::Dim),
-        State::Reading => (icons::SEARCH, Tone::Plain),
+        State::Asked(_) => word_look("asked"),
+        State::Waiting(_) => word_look("waiting"),
+        State::Busy => word_look("busy"),
+        State::Done(_) => word_look("done"),
+        State::Reading => word_look("reading"),
         State::Active => (icons::PANE, Tone::Plain),
         State::Idle(_) => (icons::PANE, Tone::Dim),
+    }
+}
+
+/// The icon and tone of an agent state by its word, the one place they are
+/// decided, so the bar, the panes picker, the inbox, the brief and the
+/// journal draw a state the same way: busy green with the bar's busy mark,
+/// asked bright red with a question mark, done steel blue with a check,
+/// waiting amber with the hourglass, reading mauve with tmux's own mark.
+pub fn word_look(word: &str) -> (&'static str, crate::picker::Tone) {
+    use crate::picker::Tone;
+    use crate::tmux::icons;
+    match word {
+        "busy" => (icons::BUSY, Tone::Busy),
+        "asked" => (icons::ASKED, Tone::Asked),
+        "done" => (icons::CHECK, Tone::Done),
+        "reading" => (icons::READING, Tone::Reading),
+        _ => (icons::WAITING, Tone::Waiting),
     }
 }
 
@@ -870,7 +887,12 @@ mod tests {
         assert_eq!(state_look(State::Asked(1)).1, Tone::Asked);
         assert_eq!(state_look(State::Waiting(1)).1, Tone::Waiting);
         assert_eq!(state_look(State::Busy).1, Tone::Busy);
-        assert_eq!(state_look(State::Done(1)).1, Tone::Dim);
+        assert_eq!(state_look(State::Done(1)).1, Tone::Done);
+        assert_eq!(state_look(State::Reading).1, Tone::Reading);
+        assert_ne!(
+            state_look(State::Asked(1)).0,
+            state_look(State::Waiting(1)).0
+        );
         assert_eq!(state_look(State::Idle(1)).1, Tone::Dim);
         // Asked and busy must not share an icon: the colour is not the only
         // way to tell them apart, which matters under NO_COLOR.

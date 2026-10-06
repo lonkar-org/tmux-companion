@@ -136,6 +136,13 @@ the picker's.
 
 ### Changed
 
+- Every agent state has one icon and one colour wherever it shows, from one
+  function: busy the bar's green and busy mark, asked bright red with a
+  question mark, done a passive steel blue with a check, waiting amber with
+  the hourglass, reading a muted mauve with tmux's own mark. Asked and
+  waiting no longer share the hourglass. In the ascii preset waiting is
+  `w`, asked `?` and reading `r`. The journal takes the icons and stays
+  uncoloured, since its rows already happened.
 - An agent that asked you something is bright bold red in the brief, the
   inbox and the panes picker, the one thing on any screen blocked on you;
   amber stays for an agent that went quiet and for the rest of what wants

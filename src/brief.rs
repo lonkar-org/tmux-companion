@@ -144,13 +144,9 @@ fn drawn(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint, numbered
         ));
         out.push('\n');
         for (i, e) in b.waiting.iter().take(SHOWN).enumerate() {
-            // A `done` agent is here so you can read its answer, not because
-            // it needs one, so its state is not amber.
-            let state = match e.state.as_str() {
-                "done" => Tone::Dim,
-                "asked" => Tone::Asked,
-                _ => Tone::Waiting,
-            };
+            // Each state its one look, as everywhere: a `done` agent is here
+            // to be read, not answered, so it is passive blue, not amber.
+            let state = crate::panes::word_look(&e.state).1;
             out.push_str(&format!(
                 "  {}{} {} {} {} {}\n",
                 number(i + 1),

@@ -16,6 +16,12 @@ pub const AGENT: &str = "\u{f06a9} ";
 pub const AGENT_TO: &str = "\u{f432} ";
 /// nf-fa-hourglass_start, the agents segment's "waiting" in its glyph style.
 pub const WAITING: &str = "\u{f251} ";
+
+/// nf-fa-question_circle: an agent stopped on a question for you.
+pub const ASKED: &str = "\u{f059} ";
+
+/// nf-cod-terminal_tmux: a pane somebody is reading in copy mode.
+pub const READING: &str = "\u{ebc8} ";
 /// `nf-md-progress_check`: the busy count on the `agents` segment.
 pub const BUSY: &str = "\u{f0996} ";
 /// nf-md-alert, the mark the health segment draws.
@@ -270,6 +276,8 @@ pub fn by_name(name: &str) -> Option<&'static str> {
         "SKIPPED" => Some(SKIPPED),
         "UNKNOWN" => Some(UNKNOWN),
         "CLOCK" => Some(CLOCK),
+        "ASKED" => Some(ASKED),
+        "READING" => Some(READING),
         "TIMER_CHECK" => Some(TIMER_CHECK),
         "TIMER_ALERT" => Some(TIMER_ALERT),
         "RUN" => Some(RUN),

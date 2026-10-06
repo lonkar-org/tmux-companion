@@ -17,6 +17,8 @@
 //! | `Asked` | bright red, bold | an agent asked you something and is stopped on it |
 //! | `Waiting` | amber | wants you |
 //! | `Busy` | green | working, needs nothing |
+//! | `Done` | steel blue | an agent answered and waits for the next prompt |
+//! | `Reading` | muted mauve | somebody is reading the pane in copy mode |
 //! | `Ok` | green | on, fine |
 //! | `Failed` | red | broken |
 //! | `Accent` | the theme's colour | the cursor, the query's matches, a label |
@@ -48,6 +50,10 @@ pub enum Tone {
     Waiting,
     /// Working, and needs nothing.
     Busy,
+    /// An agent answered and waits for the next prompt: nothing blocked.
+    Done,
+    /// Somebody is reading the pane in copy mode.
+    Reading,
     /// On, fine.
     Ok,
     /// Broken.
@@ -62,6 +68,11 @@ pub const WAITING: Color = Color::Indexed(214);
 /// Bright red, drawn bold: an agent stopped on a question. Brighter than
 /// `FAILED`, which is a thing broken rather than a thing waiting on you.
 pub const ASKED: Color = Color::Indexed(196);
+/// Steel blue: an agent that answered. Passive, and apart from `DIM`, which
+/// is detail rather than a state.
+pub const DONE: Color = Color::Indexed(67);
+/// Muted mauve: a pane in copy mode, being read.
+pub const READING: Color = Color::Indexed(139);
 /// Green: the bar's busy count.
 pub const BUSY: Color = Color::Indexed(114);
 /// Red.
@@ -246,6 +257,8 @@ impl Paint {
             Tone::Asked => s.fg(ASKED).add_modifier(Modifier::BOLD),
             Tone::Waiting => s.fg(WAITING),
             Tone::Busy | Tone::Ok => s.fg(BUSY),
+            Tone::Done => s.fg(DONE),
+            Tone::Reading => s.fg(READING),
             Tone::Failed => s.fg(FAILED),
             Tone::Accent => s.fg(self.accent),
         };

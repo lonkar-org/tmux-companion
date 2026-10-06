@@ -517,17 +517,12 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
     let items: Vec<crate::picker::Item> = entries
         .iter()
         .map(|e| {
-            use crate::picker::{Cell, Tone};
-            use crate::tmux::icons;
+            use crate::picker::Cell;
             let age = panes::age(now.saturating_sub(e.since));
             let q = e.question_line();
-            // A `done` agent answered: it is on the list so you can read
-            // the answer, not because it needs one, so it is not amber.
-            let (icon, tone) = match e.state.as_str() {
-                "done" => (icons::CHECK, Tone::Dim),
-                "asked" => (icons::WAITING, Tone::Asked),
-                _ => (icons::WAITING, Tone::Waiting),
-            };
+            // Each state its one look, as everywhere: a `done` agent is here
+            // to be read, not answered, so it is passive blue, not amber.
+            let (icon, tone) = panes::word_look(&e.state);
             crate::picker::Item::with_preview(
                 format!("{} {} {} {} {}", e.at, e.program, e.state, age, q),
                 e.lines.clone(),

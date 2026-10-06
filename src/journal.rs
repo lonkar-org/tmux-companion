@@ -194,8 +194,8 @@ fn look(kind: Kind) -> (&'static str, bool) {
     use crate::tmux::icons;
     match kind {
         Kind::Ran => (icons::CLOCK, false),
-        Kind::Asked => (icons::WAITING, true),
-        Kind::Answered => (icons::CHECK, true),
+        Kind::Asked => (crate::panes::word_look("asked").0, true),
+        Kind::Answered => (crate::panes::word_look("done").0, true),
         Kind::Opened => (icons::SESSION, false),
         Kind::Closed => (icons::CLOSED, false),
     }
