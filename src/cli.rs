@@ -3300,7 +3300,7 @@ async fn capture_session(
         "-t",
         &target,
         "-F",
-        "#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}",
+        crate::saved::PANE_FORMAT,
     ])
     .await?;
 
@@ -3342,6 +3342,21 @@ async fn capture_session(
     let real = std::fs::canonicalize(path)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| path.to_string());
+    // The arguments of what each pane runs, which tmux has no format for. Only
+    // read when commands are being recorded; an unreadable table leaves each
+    // pane to its process name.
+    let processes = if with_commands {
+        match tokio::process::Command::new("ps")
+            .args(crate::sessions::capture::PS_ARGS)
+            .output()
+            .await
+        {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+            Err(_) => String::new(),
+        }
+    } else {
+        String::new()
+    };
     Ok(crate::saved::capture(&crate::saved::Capture {
         windows: &windows,
         panes: &panes,
@@ -3352,6 +3367,7 @@ async fn capture_session(
         home: &home,
         at: &at,
         with_commands,
+        processes: &processes,
     }))
 }
 

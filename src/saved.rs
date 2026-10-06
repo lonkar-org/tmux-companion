@@ -448,13 +448,27 @@ fn fields(line: &str, n: usize) -> Option<Vec<&str>> {
     (parts.len() == n).then_some(parts)
 }
 
-/// Parse `list-panes -F '#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_start_command}'`.
+/// `list-panes -s -F` in the shape [`parse_panes`] expects.
+///
+/// `#{pane_pid}` is the key into the process table, and optional to the
+/// parser: a listing without it still parses, guessing from the process name
+/// as captures did before it was asked for. The start command stays last
+/// because it can hold a tab, and everything after the fourth tab is it.
+pub const PANE_FORMAT: &str = "#{window_index}\t#{pane_index}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_pid}\t#{pane_start_command}";
+
+/// Parse `list-panes -F` in [`PANE_FORMAT`].
 pub fn parse_panes(text: &str) -> Vec<PaneReport> {
     parse_panes_reporting(text).0
 }
 
 /// [`parse_panes`], also answering with the lines it could not read.
 pub fn parse_panes_reporting(text: &str) -> (Vec<PaneReport>, Vec<String>) {
+    let (panes, skipped) = parse_panes_with_pids(text);
+    (panes.into_iter().map(|(p, _)| p).collect(), skipped)
+}
+
+/// [`parse_panes_reporting`], with each pane's pid when the listing had one.
+fn parse_panes_with_pids(text: &str) -> (Vec<(PaneReport, Option<u32>)>, Vec<String>) {
     let mut out = Vec::new();
     let mut skipped = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -463,19 +477,28 @@ pub fn parse_panes_reporting(text: &str) -> (Vec<PaneReport>, Vec<String>) {
             None => skipped.push(line.to_string()),
         }
     }
-    out.sort_by_key(|p| (p.window, p.index));
+    out.sort_by_key(|(p, _)| (p.window, p.index));
     (out, skipped)
 }
 
-fn parse_pane(line: &str) -> Option<PaneReport> {
+fn parse_pane(line: &str) -> Option<(PaneReport, Option<u32>)> {
     let f = fields(line, 5)?;
-    Some(PaneReport {
+    // A pid is digits and nothing else; anything else in the fifth field is
+    // the start command of a listing that did not ask for one.
+    let (pid, start) = match f[4].split_once('\t') {
+        Some((pid, start)) if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) => {
+            (pid.parse().ok(), start)
+        }
+        _ => (None, f[4]),
+    };
+    let pane = PaneReport {
         window: f[0].parse().ok()?,
         index: f[1].parse().ok()?,
         cwd: f[2].to_string(),
         current: f[3].to_string(),
-        start: f[4].to_string(),
-    })
+        start: start.to_string(),
+    };
+    Some((pane, pid))
 }
 
 /// The last component of a path, or the whole thing when it has no separator.
@@ -602,6 +625,13 @@ pub struct Capture<'a> {
     pub at: &'a str,
     /// Whether to record what each pane was running.
     pub with_commands: bool,
+    /// `ps` in the shape [`crate::sessions::capture::parse_process_table`]
+    /// expects, empty when it could not be read.
+    ///
+    /// Without it an agent is recorded by its process name, and claude's
+    /// process name is its version: a layout saved with `2.1.289` in it typed
+    /// `2.1.289` into the window it restored, and zsh said command not found.
+    pub processes: &'a str,
 }
 
 /// Turn what tmux reported into a layout, plus the panes it had to guess at.
@@ -610,7 +640,8 @@ pub struct Capture<'a> {
 /// layout, because the layout is a config type that a person may also write by
 /// hand and it should not grow a field that only a capture ever sets.
 pub fn capture(c: &Capture) -> Captured {
-    let (panes, mut skipped) = parse_panes_reporting(c.panes);
+    let (panes, mut skipped) = parse_panes_with_pids(c.panes);
+    let processes = crate::sessions::capture::parse_process_table(c.processes);
     let mut layout = SavedLayout {
         path: c.project.to_string(),
         format: FORMAT,
@@ -632,7 +663,8 @@ pub fn capture(c: &Capture) -> Captured {
         layout.width = layout.width.max(f[2].parse().unwrap_or(0));
         layout.height = layout.height.max(f[3].parse().unwrap_or(0));
 
-        let mine: Vec<&PaneReport> = panes.iter().filter(|p| p.window == index).collect();
+        let mine: Vec<&(PaneReport, Option<u32>)> =
+            panes.iter().filter(|(p, _)| p.window == index).collect();
         let w = layout.window.len();
         let mut window = LayoutWindow {
             name: f[1].to_string(),
@@ -643,9 +675,14 @@ pub fn capture(c: &Capture) -> Captured {
             pane: Vec::new(),
         };
 
-        for (i, p) in mine.iter().enumerate() {
+        for (i, (p, pid)) in mine.iter().enumerate() {
             let (command, how) = if c.with_commands {
-                command_for(p, c.shell, c.default_command)
+                crate::sessions::capture::command_for_pane(
+                    p,
+                    pid.and_then(|pid| processes.get(&pid)).map(String::as_str),
+                    c.shell,
+                    c.default_command,
+                )
             } else {
                 (String::new(), Confidence::Shell)
             };
@@ -866,6 +903,7 @@ mod tests {
             home: "/home/me",
             at: "2026-09-22 10:00:00 UTC",
             with_commands: true,
+            processes: "",
         }
     }
 
@@ -1322,6 +1360,31 @@ mod tests {
             vec![(0, 0)],
             "only the one with no start command"
         );
+    }
+
+    #[test]
+    fn an_agent_named_by_its_version_is_recorded_by_its_arguments() {
+        // claude's process name is its version. Saved as that, the restore
+        // typed `2.1.289` into the ai window and zsh said command not found.
+        let mut c = cap(
+            "0\tedit\t80\t24\tx\n1\tai\t80\t24\tx\n",
+            "0\t0\t/w/proj\tnvim\t100\t\n1\t0\t/w/proj\t2.1.289\t200\t\n",
+        );
+        c.processes = "100 nvim src/main.rs\n200 claude --resume abc\n";
+        let c = capture(&c);
+        assert_eq!(c.layout.window[0].command, "nvim src/main.rs");
+        assert_eq!(c.layout.window[1].command, "claude --resume abc");
+        assert!(c.guessed.is_empty(), "the process table answered for both");
+    }
+
+    #[test]
+    fn a_listing_without_pids_still_parses_and_guesses_from_the_name() {
+        let mut c = cap("0\tai\t80\t24\tx\n", "0\t0\t/w/proj\tnvim\t\n");
+        c.processes = "100 claude\n";
+        let c = capture(&c);
+        assert!(c.skipped.is_empty());
+        assert_eq!(c.layout.window[0].command, "nvim");
+        assert_eq!(c.guessed, vec![(0, 0)]);
     }
 
     #[test]

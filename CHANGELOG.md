@@ -86,6 +86,12 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- A saved project layout recorded claude as its version, because that's
+  claude's process name, so the next `project` typed `2.1.289` into the ai
+  window and zsh said command not found. The capture now reads each pane's
+  arguments from `ps` the way session snapshots already did, and records
+  `claude` (or `claude --resume <id>`). A layout saved before this still has
+  the number in it: edit the line or save the layout again.
 - `just test` no longer writes into the developer's own state directory or
   reaches their tmux server. The daemons `socket_round_trip` and `config_file`
   start had their own sockets but the real `XDG_STATE_HOME`, config and
