@@ -43,22 +43,18 @@ name: Release
 # after the approved publish job, so the one approval covers both. It signs in
 # with trusted publishing: GitHub vouches for this workflow over OIDC and
 # crates.io hands back a token that lasts thirty minutes, so no long-lived
-# crates.io token sits on the repository. Configure it once on crates.io under
+# crates.io token sits on the repository. It is configured on crates.io under
 # the crate's Settings, Trusted Publishing: owner lonkar-org, repository
-# tmux-companion, workflow release.yml.
+# tmux-companion, workflow release.yml, and no environment, since this job
+# runs in none.
 #
-# Trusted publishing only exists for a crate that already exists, so the very
-# first version needs an ordinary API token instead. Either run `cargo publish`
-# from a clean checkout of the tag, or put a token with the publish-new scope
-# on the repository for one release:
-#
-#   gh secret set CARGO_REGISTRY_TOKEN --repo lonkar-org/tmux-companion
-#
-# The job uses that secret when it is set and trusted publishing when it is
-# not. Delete the secret once the trusted publisher is configured. A version
-# already on crates.io is skipped, so rerunning the job after a failure later
-# in the workflow is safe: a published version can be yanked but never
-# replaced.
+# It is the only way in. Up to 0.8.0 a CARGO_REGISTRY_TOKEN secret, there for
+# the crate's first version, took precedence when set; on 2026-10-06 the
+# trusted publisher was configured, the secret and its token deleted, and the
+# fallback taken out with them, so a secret added back later cannot quietly
+# become the path again. A version already on crates.io is skipped, so
+# rerunning the job after a failure later in the workflow is safe: a published
+# version can be yanked but never replaced.
 #
 # Each `uses:` is pinned to a commit SHA with its version in a trailing
 # comment, the same as playground.yml, which says why: this job holds that key.
@@ -312,28 +308,15 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Is CARGO_REGISTRY_TOKEN set
-        id: secret
-        if: steps.exists.outputs.already == 'false'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          if [ -n "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "have=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::publishing with the CARGO_REGISTRY_TOKEN secret; delete it once trusted publishing is configured"
-          else
-            echo "have=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
-        if: steps.exists.outputs.already == 'false' && steps.secret.outputs.have == 'false'
+        if: steps.exists.outputs.already == 'false'
 
       # --locked, so the build cargo verifies is the tree the gate tested.
       - name: cargo publish
         if: steps.exists.outputs.already == 'false'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked
 
   tap:
