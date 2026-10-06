@@ -124,12 +124,13 @@ jobs:
       # main's cache from ci.yml's tests job, restored and never saved. A run
       # on a tag reads caches from its own ref and the default branch only,
       # so what a release saved no later release could reach: the gate-cargo
-      # entries were space taken from main's for nothing. The same shared-key,
-      # key as that job, and the job's RUSTFLAGS matches ci.yml's, because
-      # rust-cache hashes all three in.
+      # entries were space taken from main's for nothing. The same shared-key
+      # and key as that job, with the environment hash off as it is there
+      # (ci.yml says why), so the two compute the same key.
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
           shared-key: tests
+          add-rust-environment-hash-key: false
           key: ubuntu-latest
           save-if: false
 

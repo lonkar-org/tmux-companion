@@ -62,6 +62,15 @@ permissions:
 # saving, and with save-if a pull request restores main's cache and saves
 # nothing. One cache per kind of job and OS: the three tmux legs of `tests` on
 # an OS share one, and clippy, whose output is different, has its own.
+#
+# add-rust-environment-hash-key is off everywhere. The hash it adds covers
+# every Rust toolchain installed on the runner, not the one rust-toolchain.toml
+# pins, and GitHub rotates ubuntu-24.04 images that ship different stables
+# (1.98.1 on one, 1.99.0 on the next), so each Linux cache had two keys and a
+# job missed whenever it drew the other image; macOS hit every time. The key
+# still turns over when it should: rust-toolchain.toml, Cargo.toml (which has
+# rust-version, the msrv job's toolchain) and Cargo.lock are hashed in as
+# files, and RUSTFLAGS is fixed per workflow.
 
 env:
   CARGO_TERM_COLOR: always
@@ -112,6 +121,7 @@ jobs:
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
           shared-key: clippy
+          add-rust-environment-hash-key: false
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -185,6 +195,7 @@ jobs:
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
           shared-key: tests
+          add-rust-environment-hash-key: false
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -242,6 +253,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
           shared-key: msrv
+          add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # `+<version>` overrides rust-toolchain.toml, which would otherwise win
@@ -274,6 +286,7 @@ jobs:
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
           shared-key: docs
+          add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo doc --no-deps
       # The examples in the library's docs are tests, and `--all-targets` in
