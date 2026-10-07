@@ -48,6 +48,26 @@ stable and an edge channel (Snap has them built in, an apt or rpm repository
 can carry two suites) let every release reach edge and only chosen ones reach
 stable.
 
+**Verdict, 2026-10-07: not yet, except two cheap pieces.** Nobody has asked:
+crates.io shows 7 downloads and no issue mentions packaging. Linux is already
+covered by the install script, which checks checksums, by Homebrew on Linux
+and by `cargo install`, and the people this is for, developers running coding
+agents, use any of those without trouble. A repository we host doesn't bring
+anybody new, since they still have to find the project and add the
+repository first; only the official archives do that, and those aren't ours
+to join. Against that sit the signing keys and the distribution-specific
+install problems, for a tool that changes several times a day.
+
+The two worth doing when there's a spare hour or two, since neither needs a
+key or a host:
+
+- a Nix flake, half a day: `nix profile install github:lonkar-org/tmux-companion`
+  is what Nix users expect of a repository, and they are common among the
+  people this is for;
+- `.deb` and `.rpm` attached to each GitHub release with nfpm, about two
+  hours: `apt install ./tmux-companion_<version>_amd64.deb` with no repository
+  to run, and the first step toward one if it's ever wanted.
+
 **What brings it back.** Somebody asking for one of these, or Linux users
 showing up in issues with an install that the script or Homebrew made awkward.
 Start with nfpm in `release.yml`, the apt and rpm repositories on R2, the AUR

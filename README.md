@@ -116,7 +116,8 @@ Every setting with its default is in
 ## What it doesn't do
 
 - macOS and Linux. Not Windows, and not planned: the whole thing is a unix
-  socket and a `SIGWINCH`.
+  socket and a `SIGWINCH`. WSL2 may work but is untested, see
+  [docs/how-to/install.md](docs/how-to/install.md).
 - The pickers need tmux 3.2 for `display-popup -E`. The bar is happy on 3.0.
 - It won't restore your sessions on its own. It saves them on a timer, and
   restoring stays on a key you press, cause an automatic restore would

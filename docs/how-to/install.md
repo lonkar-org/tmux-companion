@@ -38,6 +38,12 @@ There are four archives:
 The Linux builds are static against musl, so one binary runs on any
 distribution rather than tracking whichever glibc the build machine had.
 
+There's no Windows build. Under WSL2, which runs a real Linux, the install
+script and the Linux binary should work as they do on any Linux, but it
+hasn't been tested there yet and some features might not work. If you try it,
+please [open an issue](https://github.com/lonkar-org/tmux-companion/issues)
+saying what worked and what didn't.
+
 ## Through Homebrew
 
 ```sh
