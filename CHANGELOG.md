@@ -26,6 +26,11 @@ entry per phase of the comrades port.
   `enter jump   ctrl-a clear   esc cancel`. Too wide for the popup, a line
   drops whole groups from the right and keeps the first and the leaving
   key, where it used to run off the edge.
+- A GitHub release opens with its version's CHANGELOG.md section and a link
+  to the whole file, where it had only the install lines, the checksums and
+  GitHub's list of merged PRs. The release gate stops a tag whose changelog
+  has no section for it. `just changelog-section 0.8.0` prints what a
+  release would say.
 
 ## 0.8.0 - 2026-10-06
 

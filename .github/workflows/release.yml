@@ -7,7 +7,8 @@ name: Release
 #   git tag -a v0.1.0 -m "0.1.0" && git push origin v0.1.0
 #
 # or run it by hand from the Actions tab with a tag name. A gate runs first:
-# the tag has to match the version in Cargo.toml, the tree has to hold no
+# the tag has to match the version in Cargo.toml, CHANGELOG.md has to have a
+# section for it, which the release notes open with, the tree has to hold no
 # review marker, and rustfmt, clippy and the whole test suite have to pass on
 # the locked tree, the same checks ci.yml runs on every push. The four builds
 # wait on it, so a tag pushed on a red tree produces no binaries rather than
@@ -104,6 +105,14 @@ jobs:
             exit 1
           fi
           echo "Cargo.toml says $version and the tag is $TAG"
+
+      # The release notes open with this section, so a tag whose changelog
+      # was never cut from `## Unreleased` stops here rather than publishing
+      # a release that says nothing about what changed.
+      - name: The changelog has a section for the tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: ./scripts/changelog-section.sh "$TAG" > /dev/null
 
       - run: ./scripts/check-review-marks.sh
 
@@ -249,6 +258,10 @@ jobs:
           set -euo pipefail
           notes=$(mktemp)
           {
+            ./scripts/changelog-section.sh "$TAG"
+            echo
+            echo "The whole history is in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$TAG/CHANGELOG.md)."
+            echo
             echo "## Install"
             echo
             echo '```sh'
