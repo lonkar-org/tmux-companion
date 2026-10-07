@@ -1,26 +1,28 @@
 # tmux-companion
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-with--love.lonkar.org-8250df?logo=astro&logoColor=white)](https://with-love.lonkar.org/tmux-companion/)
-[![Release](https://img.shields.io/github/v/release/lonkar-org/tmux-companion?logo=github&logoColor=white&color=success)](https://github.com/lonkar-org/tmux-companion/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/tmux-companion?logo=rust&logoColor=white)](https://crates.io/crates/tmux-companion)
+[![Docs](https://img.shields.io/badge/docs-with--love.lonkar.org-8250df?logo=astro&logoColor=white)](https://with-love.lonkar.org/tmux-companion/)
 [![docs.rs](https://img.shields.io/docsrs/tmux-companion?logo=docsdotrs&label=docs.rs)](https://docs.rs/tmux-companion)
 [![Homebrew](https://img.shields.io/badge/brew-lonkar--org%2Ftap-fbb040?logo=homebrew&logoColor=white)](https://github.com/lonkar-org/homebrew-tap)
-[![Playground](https://img.shields.io/docker/image-size/lonkarorg/tmux-companion/playground?logo=docker&logoColor=white&label=playground)](https://hub.docker.com/r/lonkarorg/tmux-companion)
-[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
-[![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
-[![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
+[![Playground](https://img.shields.io/docker/image-size/lonkarorg/tmux-companion/playground?logo=docker&logoColor=white&label=playground)](https://hub.docker.com/r/lonkarorg/tmux-companion)
+[![Release](https://img.shields.io/github/v/release/lonkar-org/tmux-companion?logo=github&logoColor=white&color=success)](https://github.com/lonkar-org/tmux-companion/releases/latest)
+[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
 
 One binary behind your whole tmux config. It draws the status bar, runs the
 pickers behind your keybindings, and builds your project sessions, out of a
 daemon that is already warm.
 
 <p align="center">
-  <img src="https://media.lonkar.org/tmux-companion/panes-2026-10-07.jpg" width="48%"
-       alt="The panes picker: every Claude Code pane on the server in one list, each marked asked, waiting or done with how long ago and its last line">
-  <img src="https://media.lonkar.org/tmux-companion/brief-2026-10-07.jpg" width="48%"
-       alt="The brief: the four agents waiting on you, numbered to jump to, then health, the session and agent count, and how long you have been sitting">
+  <a href="https://media.lonkar.org/tmux-companion/panes-2026-10-07.jpg" target="_blank" rel="noopener">
+    <img src="https://media.lonkar.org/tmux-companion/panes-2026-10-07.jpg" width="48%"
+         alt="The panes picker: every Claude Code pane on the server in one list, each marked asked, waiting or done with how long ago and its last line"></a>
+  <a href="https://media.lonkar.org/tmux-companion/brief-2026-10-07.jpg" target="_blank" rel="noopener">
+    <img src="https://media.lonkar.org/tmux-companion/brief-2026-10-07.jpg" width="48%"
+         alt="The brief: the four agents waiting on you, numbered to jump to, then health, the session and agent count, and how long you have been sitting"></a>
 </p>
 
 <p align="center">“who is waiting” / “what needs me.”</p>
