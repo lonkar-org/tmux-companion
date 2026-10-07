@@ -377,6 +377,13 @@ lists the rows and exits, and opens nothing; it cannot be combined with a
 directory.
 Bound to
 .Ql M-s .
+Sessions are listed most recently attached first, so the second row is the
+session you were in before this one, and
+.Ql M-s
+in the picker switches to it at once:
+.Ql M-s M-s
+goes back.
+It does nothing when there is no other session.
 .It Ic project save Op Fl -no-commands
 Capture this session's windows and panes as the layout this project opens
 with.

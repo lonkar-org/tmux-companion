@@ -286,6 +286,13 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
     )
 }
 
+/// The row a second press of the picker's key goes to: the session you were
+/// in before this one, which [`sessions_from`] puts second. Nothing when the
+/// second row is a directory, since then there is no previous session.
+pub fn previous_session(rows: &[Row]) -> Option<usize> {
+    rows.get(1).filter(|r| r.kind == Kind::Session).map(|_| 1)
+}
+
 /// `tmux list-sessions`, with the fields the rows need.
 async fn tmux_sessions() -> String {
     let out = crate::tmux::command()
@@ -542,6 +549,27 @@ fn args(parts: &[&str]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alt_s_again_goes_to_the_second_row_only_when_it_is_a_session() {
+        let row = |kind: Kind, label: &str| Row {
+            kind,
+            label: label.into(),
+            path: format!("/w/{label}"),
+            colour: None,
+            idle: None,
+        };
+        let here = row(Kind::Session, "api");
+        let before = row(Kind::Session, "web");
+        let dir = row(Kind::Directory, "docs");
+        assert_eq!(
+            previous_session(&[here.clone(), before, dir.clone()]),
+            Some(1)
+        );
+        assert_eq!(previous_session(&[here.clone(), dir]), None);
+        assert_eq!(previous_session(&[here]), None);
+        assert_eq!(previous_session(&[]), None);
+    }
 
     #[test]
     fn a_session_name_cannot_hold_a_dot_or_a_colon() {

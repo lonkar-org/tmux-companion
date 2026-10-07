@@ -356,6 +356,11 @@ pub struct Chrome {
     /// The glyph inside the title's brackets, one of the constants in
     /// `src/tmux/icons.rs`. Empty draws the title alone.
     pub icon: String,
+    /// Letters that pick a row straight away when pressed with alt, each with
+    /// the row it picks, by index into the list as given. For the key that
+    /// opened the picker, so pressing it twice does the usual thing: alt-s
+    /// twice goes back to the previous session.
+    pub alt_picks: Vec<(char, usize)>,
 }
 
 impl Default for Chrome {
@@ -369,6 +374,7 @@ impl Default for Chrome {
             prompt: "> ".into(),
             look: Look::default(),
             icon: String::new(),
+            alt_picks: Vec::new(),
         }
     }
 }

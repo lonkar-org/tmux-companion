@@ -993,6 +993,12 @@ pub(super) fn run_keyed(
                 // two keys too many.
                 KeyCode::Char('p') if ctrl => state.cycle_preview(),
                 KeyCode::Tab => state.cycle_preview(),
+                KeyCode::Char(c)
+                    if alt
+                        && let Some(&(_, i)) = chrome.alt_picks.iter().find(|(k, _)| *k == c) =>
+                {
+                    return Ok(Ended::Chosen(i));
+                }
                 KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
                     if let Some(row) = state.current() {
                         return Ok(Ended::Key(c, row.index));

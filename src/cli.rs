@@ -2279,8 +2279,12 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     let chrome = crate::picker::Chrome {
         title: "[ Project ]".into(),
         icon: crate::tmux::icons::SESSION.into(),
-        footer: "up = last session   type a path for a new one   esc cancels".into(),
+        footer: "alt-s = last session   type a path for a new one   esc cancels".into(),
         preview_title: "[ Where ]".into(),
+        // M-s opens this picker, so M-s again goes back where you were.
+        alt_picks: crate::project::previous_session(&rows)
+            .map(|i| vec![('s', i)])
+            .unwrap_or_default(),
         ..Default::default()
     }
     .configured(&config.picker, crate::config::Picker::Project);

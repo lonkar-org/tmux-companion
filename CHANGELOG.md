@@ -3,6 +3,14 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+### Added
+
+- `M-s` in the project picker switches straight to the session you were in
+  before this one, so `M-s M-s` goes back, where it was up and enter. It
+  does nothing when there is no other session.
+
 ## 0.8.0 - 2026-10-06
 
 The chunk clock, a brief you can act from, one look per agent state, and the
