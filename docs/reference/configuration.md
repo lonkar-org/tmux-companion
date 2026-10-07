@@ -482,7 +482,7 @@ which ran `ping` from a `#()` and was last pushed in September 2023.
 
 ```toml
 [agents]
-programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
+programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode", "grok", "agy"]
 waiting_secs = 10
 interval_secs = 2
 inbox = true
@@ -944,7 +944,7 @@ bring this back" without leaving it to fall through to the unknown pile and be
 asked about every time.
 
 The rows that ship, in order: the agents, `claude` and then `codex`, `gemini`,
-`cursor-agent`, `aider` and `opencode`, replay their arguments verbatim,
+`cursor-agent`, `aider`, `opencode`, `grok` and `agy`, replay their arguments verbatim,
 because an agent keeps which conversation it's in inside those arguments and
 a bare `claude` stays bare. `vim` and `nvim` come back as a bare `nvim`, since
 the saved arguments are a file list from an hour ago and reopening buffers is

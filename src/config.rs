@@ -1047,7 +1047,8 @@ impl Default for Notify {
             message_ms: 4000,
             ignore: [
                 "nvim", "vim", "vi", "emacs", "nano", "less", "more", "man", "top", "htop", "btop",
-                "watch", "ssh", "tmux", "claude", "codex", "gemini", "lazygit", "tig", "fzf",
+                "watch", "ssh", "tmux", "claude", "codex", "gemini", "grok", "agy", "lazygit",
+                "tig", "fzf",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -1147,6 +1148,8 @@ impl Default for Agents {
                 "cursor-agent",
                 "aider",
                 "opencode",
+                "grok",
+                "agy",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -1718,7 +1721,7 @@ impl Default for Restore {
                 // conversation back. A bare `claude` stays bare.
                 row("^claude( |$)", "{command}"),
                 row(
-                    "^(codex|gemini|cursor-agent|aider|opencode)( |$)",
+                    "^(codex|gemini|cursor-agent|aider|opencode|grok|agy)( |$)",
                     "{command}",
                 ),
                 // An editor with a session plugin restores itself from the

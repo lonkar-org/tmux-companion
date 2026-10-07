@@ -505,7 +505,7 @@ message_ms = 4000
 ignore = [
   "nvim", "vim", "vi", "emacs", "nano", "less", "more", "man",
   "top", "htop", "btop", "watch", "ssh", "tmux",
-  "claude", "codex", "gemini", "lazygit", "tig", "fzf",
+  "claude", "codex", "gemini", "grok", "agy", "lazygit", "tig", "fzf",
 ]
 
 [quiet]
@@ -560,7 +560,7 @@ timeout_ms = 2000
 # and a command that is only a version number, `2.1.283`, counts as well:
 # that is what tmux reports for claude, which names its process after its
 # version, and nothing else names a process that way.
-programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode"]
+programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode", "grok", "agy"]
 # Seconds without output after which an agent counts as waiting for you, when
 # it has said nothing better through `tmux-companion agent` and rung no bell.
 # tmux has no per-pane activity time, so this is measured on the window the
@@ -816,7 +816,7 @@ match = "^claude( |$)"
 command = "{command}"
 
 [[restore.program]]
-match = "^(codex|gemini|cursor-agent|aider|opencode)( |$)"
+match = "^(codex|gemini|cursor-agent|aider|opencode|grok|agy)( |$)"
 command = "{command}"
 
 [[restore.program]]

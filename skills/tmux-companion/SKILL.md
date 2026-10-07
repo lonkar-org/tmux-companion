@@ -181,7 +181,7 @@ agent and a shell watching something.
 
 ```sh
 tmux list-panes -a -F '#S:#I.#P #{pane_current_path} #{pane_current_command}' |
-  grep -E ' (claude|codex|gemini|cursor-agent|aider|opencode)$'
+  grep -E ' (claude|codex|gemini|cursor-agent|aider|opencode|grok|agy)$'
 ```
 
 That list is the one `sessions` itself counts for its restore headline, so it is
@@ -289,7 +289,7 @@ match = "^claude( |$)"
 command = "{command}"
 
 [[restore.program]]
-match = "^(codex|gemini|cursor-agent|aider|opencode)( |$)"
+match = "^(codex|gemini|cursor-agent|aider|opencode|grok|agy)( |$)"
 command = "{command}"
 ```
 

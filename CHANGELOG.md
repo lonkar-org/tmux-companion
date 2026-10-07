@@ -10,6 +10,10 @@ entry per phase of the comrades port.
 - `M-s` in the project picker switches straight to the session you were in
   before this one, so `M-s M-s` goes back, where it was up and enter. It
   does nothing when there is no other session.
+- `grok` and `agy`, Antigravity's CLI, are agents by default: on the bar,
+  in the agents picker and the inbox, restored with their arguments, and
+  left out of the long-command notice. Without hooks of their own they are
+  told waiting by the window going quiet, as codex and gemini are.
 - `[picker] hint_across = true` draws the line of keys as a row across the
   whole popup, with the list and the preview side by side under it, rather
   than as a line in the list's column.
