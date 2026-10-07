@@ -252,10 +252,10 @@ playground-tourpass:
 plugin-check:
     ./scripts/release-plugin.sh check
 
-# One version's CHANGELOG.md section, as the release notes print it. The
-# release gate fails a tag that has none.
-changelog-section VERSION:
-    ./scripts/changelog-section.sh {{VERSION}}
+# One version's CHANGELOG.md section; `--details 0.8.0` is what the release
+# notes print, each part collapsed. The release gate fails a tag that has none.
+changelog-section *ARGS:
+    ./scripts/changelog-section.sh {{ARGS}}
 
 # Needs `gh`, authenticated, and makes about thirty API calls. Non-zero on a
 # plugin that is archived or gone, which is what makes it a gate: the docs

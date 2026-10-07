@@ -258,7 +258,7 @@ jobs:
           set -euo pipefail
           notes=$(mktemp)
           {
-            ./scripts/changelog-section.sh "$TAG"
+            ./scripts/changelog-section.sh --details "$TAG"
             echo
             echo "The whole history is in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$TAG/CHANGELOG.md)."
             echo
