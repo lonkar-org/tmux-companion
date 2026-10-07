@@ -12,6 +12,8 @@ entry per phase of the comrades port.
   as a squash; main can't be force-pushed or deleted. Only a maintainer can
   push a `v*` or `tmux-companion--v*` tag, and the release workflow and
   `scripts/release-plugin.sh` refuse a tag that isn't on main.
+  CodeQL runs on every pull request, Markdown-only ones too, since the rule
+  waits for its results.
 - `markdown.yml` and `just lint-md`: markdownlint's default rules over every
   Markdown file, less line length for now
   (`docs/backlog/markdown-line-length.md`).

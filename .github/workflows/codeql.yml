@@ -18,8 +18,11 @@ on:
   push:
     branches: [main]
     paths-ignore: ["**.md"]
+  # Every pull request, Markdown-only ones included. The ruleset on main
+  # requires code scanning results from CodeQL, and a pull request this
+  # workflow skipped has none, so it sat blocked waiting for them (PR #8,
+  # 2026-10-07). Pushes to main still skip Markdown.
   pull_request:
-    paths-ignore: ["**.md"]
   # Weekly as well, the default setup's schedule: new queries find old code.
   schedule:
     - cron: "17 4 * * 1"
