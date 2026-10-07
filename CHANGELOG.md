@@ -5,6 +5,10 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-07
+
+The documentation's address. Nothing in the binary changed.
+
 ### Changed
 
 - The documentation moved to https://with-love.lonkar.org/tmux-companion/,
