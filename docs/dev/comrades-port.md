@@ -1,6 +1,6 @@
-> Planning record from the port, kept for history; the current behaviour is in the reference docs.
-
 # Porting comrades into tmux-companion
+
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
 
 `~/.config/tmux/comrades` is 1,495 lines of zsh across 13 scripts, plus 294
 lines of generators and probes in `mysetup/scripts`. This is the inventory of
@@ -552,7 +552,7 @@ font or which version supplies the glyphs.
 
 ### Target tree
 
-```
+```text
 README.md            front door: what it is, the screenshots, one link per mode
 CONTRIBUTING.md      how to build, test, lint and open a pull request
 CHANGELOG.md         keep-a-changelog, one entry per phase

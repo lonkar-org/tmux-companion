@@ -1,6 +1,6 @@
-> Planning record from the port, kept for history; the current behaviour is in the reference docs.
-
 # After the port
+
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
 
 The port replaces `~/.config/tmux/comrades` and stops. Nothing in this file
 starts before that is done, and it exists so the survey behind it does not have
@@ -347,7 +347,7 @@ Once a window can hold panes, the layout worth starting a project with is the
 one you ended up with last time, and arranging it by hand and transcribing it
 into TOML is the part nobody does twice. So a binding that captures it:
 
-```
+```sh
 tmux-companion project save      # capture this session, write it for this project
 tmux-companion project forget    # drop it, fall back to the named layout
 tmux-companion project show      # which layout would this directory get, and from where
@@ -356,7 +356,7 @@ tmux-companion project show      # which layout would this directory get, and fr
 Capture is two calls, and `-a` means the count does not depend on how many
 sessions are open:
 
-```
+```sh
 tmux list-windows -a -F '#{session_path}|#{window_index}|#{window_name}|#{window_layout}'
 tmux list-panes   -a -F '#{session_path}|#{window_index}|#{pane_index}|#{pane_current_command}|#{pane_current_path}|#{pane_start_command}'
 ```
@@ -371,7 +371,7 @@ directory was resolved through zoxide rather than typed.
 Resolution is three sources, most specific wins, and `save` writes to the middle
 one:
 
-```
+```text
 [[layout]] + [project] layout + [[project.override]]      what exists today
   <  $XDG_STATE_HOME/tmux-companion/projects/<project>.toml
   <  .tmux-companion.toml in the project root             opt-in, see below
@@ -417,7 +417,7 @@ Nothing watches for this and nothing runs on a timer. Every trigger is somebody
 pressing a key: `project save` when you want to keep the arrangement you just
 built, and a close binding that captures before it exits.
 
-```
+```tmux
 bind X run-shell 'tmux-companion project close'
 ```
 

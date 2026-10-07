@@ -1,6 +1,6 @@
-> Planning record from the port, kept for history; the current behaviour is in the reference docs.
-
 # Porting tmux-resurrect into tmux-companion
+
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
 
 A pane running an AI agent doesn't come back after a reboot, and the reason is
 one line of configuration that cannot be written correctly. tmux-resurrect
@@ -20,7 +20,7 @@ The last save tmux-resurrect wrote is 2,690 bytes across 14 panes, with a
 24 KB `pane_contents.tar.gz` beside it. Seven of those panes are nvim, six are
 claude, one is a bare shell. The file records the full command:
 
-```
+```text
 :claude --resume cfba62df-ffde-43e2-944b-5fc36aec3ed5
 ```
 
@@ -123,7 +123,7 @@ forget` deletes a catalog entry and touches no snapshot.
 
 ## The commands
 
-```
+```sh
 tmux-companion start                         # the way in, unchanged
 
 tmux-companion project save                  # the catalog
@@ -168,7 +168,7 @@ captured, so `--exclude y` there means `y` is not saved and `y` does not come
 back. That's a footgun with a plain fix: the command names what it is dropping
 before it does anything.
 
-```
+```text
 not saving: y (excluded) -- it will not come back
 saving: icf-c_com, lekhani, lonkar_org, mysetup, tmux-companion, yogesh_lonkar_org
 ```
@@ -200,7 +200,7 @@ that either: they write different files, and `[project] autosave` is off.
 
 ## The restore flow
 
-```
+```text
 sessions resurrect
   refuse if a server is already running with sessions in it
   start a server, create a bootstrap session
@@ -233,7 +233,7 @@ header, which records the one that was attached when it was taken, and
 A server with live sessions in it is a person's working state. `resurrect`
 prints what is live and stops:
 
-```
+```text
 4 sessions already running: mysetup, lekhani, y, tmux-companion
 nothing restored. --merge adds the missing ones, --only picks some
 ```
@@ -301,7 +301,7 @@ opt-in per row, and the summary screen says which one it is about to use.
 
 ### The summary
 
-```
+```text
 restoring 7 sessions · 14 panes · 6 agents     from 09:23, clean shutdown
 2 panes need a decision            [enter] go  [tab] choose  [q] cancel   4...
 ```

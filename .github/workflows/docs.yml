@@ -97,3 +97,16 @@ jobs:
     steps:
       - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         id: deploy
+
+  # The check the ruleset on main requires, for a pull request that touches
+  # only the site; ci.yml says why three workflows share the name.
+  required:
+    needs: [build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          echo "$RESULT"
+          [ "$RESULT" = success ]

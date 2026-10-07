@@ -12,7 +12,6 @@ figures it quotes are the ones every commit message from that period cites.
 
 ---
 
-
 ## What actually costs anything
 
 The status bar's cost is set by **how many processes tmux spawns**, not by what
@@ -73,7 +72,7 @@ Hardware: Apple Intel MacBook, 16 cores, macOS 25.5.0 Darwin. Measured
 ## Headline: 15.4% of a core → 1.8%
 
 | | before | after |
-|---|---|---|
+| --- | --- | --- |
 | `#()` calls per second | 5.00 | **0.98** |
 | server CPU | 80.90 ms/s | **7.39 ms/s** |
 | spawn CPU | 72.88 ms/s | **11.04 ms/s** |
@@ -87,7 +86,7 @@ An 8.3x reduction. "Before" is the five-call configuration — `clients`,
 ## Where the win comes from
 
 | Change | Saved | Kind |
-|---|---|---|
+| --- | --- | --- |
 | Five `#()` calls → one | ~58 ms/s of spawn | spawn count |
 | Parse args before building the tokio runtime | 3.3 ms per spawn | per-spawn cost |
 | Drop `#{pane_pid}` from the gst path | 18.5 ms per gst call | server |
@@ -98,7 +97,7 @@ An 8.3x reduction. "Before" is the five-call configuration — `clients`,
 ### Server CPU per request
 
 | Segment | before | after | note |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `status-right` (combined) | — | **2.59** | all three segments, concurrently |
 | `gst` (no pane_pid) | 7.55 | **0.09** | rev-parse fork now cached |
 | `gst` (with pane_pid) | 26.01 | 16.00 | process scan, only when asked by hand |
@@ -117,7 +116,7 @@ server restarts.
 ### Spawn CPU per fork/exec
 
 | Shape | before | after | change |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `/bin/echo` (floor) | 2.32 | 2.43 | — |
 | client round trip | 9.78 | **6.56** | −32.9% |
 | client via `sh -c` (as tmux runs it) | 14.58 | **11.29** | −22.6% |
@@ -138,7 +137,7 @@ problem.
 What it actually buys:
 
 | | before | after |
-|---|---|---|
+| --- | --- | --- |
 | crates in the dependency graph | 156 | **120** (−36) |
 | clean release build (`-j 4`) | 59.8 s | **39.1 s** (−35%) |
 | binary size | 6.33 MB | **4.01 MB** (−37%) |
@@ -158,7 +157,7 @@ The cost is that the cache no longer survives a server restart. That is one
 Measured against the server's own CPU time, 30-second windows, alternating, two
 rounds each:
 
-```
+```text
 interval=1 -> 5.60%, 5.76% of one core
 interval=5 -> 5.63%, 5.90% of one core
 ```
@@ -177,7 +176,7 @@ continuity with earlier versions; the CPU figures above are the ones that
 matter, since wall clock on an idle machine hides the cost that a busy one pays.
 
 | Segment | min | avg | max | Notes |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `gst` (cached) | 29ms | 30ms | 35ms | pre-rework, SQLite TTL hit |
 | `gst --force` (cache miss) | 47ms | 48ms | 51ms | full `git status --porcelain=v2` |
 | `battery` (cached ≤30s) | 38ms | 43ms | 44ms | IOKit pre-warmed at server start |
@@ -194,7 +193,7 @@ crate. The headline there was not CPU but a stall: the old `net` segment hit a
 >1100 ms to 57 ms.
 
 | Change | Benefit |
-|---|---|
+| --- | --- |
 | `sysinfo::Networks` replaces `netstat` | eliminates the ~1-in-3 netstat stall |
 | `sysinfo::System` replaces `pgrep`+`ps` | two fewer sequential subprocesses per vim-bg |
 | `battery` crate replaces `ioreg`+`plist` | with a 30 s cache, ~14x less server CPU |

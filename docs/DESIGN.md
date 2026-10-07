@@ -20,7 +20,7 @@ send a line, read a line and exit.
 
 Same binary, two modes.
 
-```
+```sh
 tmux-companion server        # binds the socket, serves until killed
 tmux-companion <cmd> [args]  # connects, sends one line, prints, exits
 ```
@@ -29,7 +29,7 @@ The client starts the server on first use. It tries to connect; on failure it
 forks the server as a detached child and retries with backoff, ten attempts at
 50 ms.
 
-```
+```text
    tmux status-interval                    a keybinding
    #(tmux-companion status-right …)        display-popup -E "tmux-companion keys"
               │                                        │

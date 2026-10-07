@@ -5,11 +5,22 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Added
+
+- Rulesets on the repository. A pull request into main needs a maintainer's
+  approval, a passing `required` check and no new CodeQL errors, and merges
+  as a squash; main can't be force-pushed or deleted. Only a maintainer can
+  push a `v*` or `tmux-companion--v*` tag, and the release workflow and
+  `scripts/release-plugin.sh` refuse a tag that isn't on main.
+- `markdown.yml` and `just lint-md`: markdownlint's default rules over every
+  Markdown file, less line length for now
+  (`docs/backlog/markdown-line-length.md`).
+
 ### Changed
 
 - The documentation site follows main and no longer waits for a release:
   a change to `docs/` or the README is on
-  https://with-love.lonkar.org/tmux-companion/ a minute or two after it's
+  <https://with-love.lonkar.org/tmux-companion/> a minute or two after it's
   pushed. While main has changes no release carries yet, every page says
   so in a banner and names the latest release.
 
@@ -19,14 +30,14 @@ The documentation's address. Nothing in the binary changed.
 
 ### Changed
 
-- The documentation moved to https://with-love.lonkar.org/tmux-companion/,
+- The documentation moved to <https://with-love.lonkar.org/tmux-companion/>,
   where every lonkar-org project's site lives; the address 0.9.0 gave,
   tmux-companion.lonkar.org, is gone. The README links it from a badge.
 
 ## 0.9.0 - 2026-10-07
 
 Popups that agree with each other, M-s twice to go back a session, a docs
-website at https://tmux-companion.lonkar.org, and grok and agy counted as
+website at <https://tmux-companion.lonkar.org>, and grok and agy counted as
 agents. One thing to know on upgrade: `[picker] hint_position = "hidden"`
 now hides the line of keys on the brief, the restore screen, the run dialog
 and the cheat sheet too, and a `hint` of your own in `[picker.*]` still
@@ -37,7 +48,7 @@ replaces the shipped line, which is now shorter and in one order.
 - `M-s` in the project picker switches straight to the session you were in
   before this one, so `M-s M-s` goes back, where it was up and enter. It
   does nothing when there is no other session.
-- The documentation is a website, https://tmux-companion.lonkar.org, with a
+- The documentation is a website, <https://tmux-companion.lonkar.org>, with a
   search across every page, the manual page and the example configs. It is
   built from `docs/` at each release, so it says what the release you can
   install does.
@@ -225,7 +236,6 @@ off until you set `[chunk] enabled = true`.
   `[1, 0, 2]` now: filing, chord, then the description, last because its
   column is as wide as the longest one. A config that copied the old line
   wants the same change.
-
 
 ## 0.7.0 - 2026-09-30
 
@@ -827,6 +837,27 @@ it by accident while chasing an `M-a` bug.
   popup is stays with `display-popup` in tmux.conf, which is the only place
   that knows.
 
+- `[picker]` is a layer rather than a set of values. A setting nobody wrote is
+  now telling apart from one somebody wrote to the value that happens to be the
+  default, which it was not: writing `preview_label_position = "bottom-center"`
+  under `[picker]` quietly stopped every picker using its own answer for the
+  other settings too. Four layers now, narrowest last: the tool's defaults, the
+  shape that picker is built for, `[picker]`, then `[picker.<name>]`.
+
+- Each picker has its own preview shape before anybody configures it, because
+  what goes in a preview is not the same thing twice: three lines of tmux
+  command, a screen of whatever another session is doing, a directory listing,
+  a theme card, nothing at all. `keys` gets 30% underneath, `project` 80%
+  beside, `window` 40% beside, `theme` 70% beside and framed, `run` none.
+  `[picker] preview` and `preview_percent` are now unset by default and
+  override all six at once when written, which is almost never what anybody
+  wants; `[picker.<name>]` is the place.
+
+- `preview_border` says how much of a border the preview gets — `none`, `edge`
+  or `full` — rather than whether it gets one. fzf has the same three, and
+  which is right depends on what is in the pane: a directory listing wants a
+  divider, a theme card wants a frame.
+
 ### Added
 
 - The playground image has a description on Docker Hub, pushed from the release
@@ -861,28 +892,44 @@ it by accident while chasing an `M-a` bug.
   one-line prompt is still there for a client too small or too detached for a
   popup, which is when `display-popup` fails.
 
-### Changed
+- `scripts/reap-daemons.sh`, and `just reap`, which kills the daemons nothing
+  can reach any more and leaves the live one alone. It classifies by the
+  socket a process holds rather than by its command line, because
+  `pkill -f 'tmux-companion server'` matches the live daemon too, and a
+  leftover socket file does not mean a live daemon, so each one is probed by
+  connecting rather than stat'ed. `just test` runs it on the way out however
+  the run ends, since the runs that leak a daemon are the ones that failed or
+  were interrupted.
 
-- `[picker]` is a layer rather than a set of values. A setting nobody wrote is
-  now telling apart from one somebody wrote to the value that happens to be the
-  default, which it was not: writing `preview_label_position = "bottom-center"`
-  under `[picker]` quietly stopped every picker using its own answer for the
-  other settings too. Four layers now, narrowest last: the tool's defaults, the
-  shape that picker is built for, `[picker]`, then `[picker.<name>]`.
+- The end-to-end tests told the tool which config to read and which daemon
+  socket to use, but never which tmux to talk to, so every tmux command the
+  binary ran under test went to the default socket rather than to the server
+  the test had started. `scripts/repro-ci.sh` runs the suite under the CI
+  job's conditions and is what found it.
 
-- Each picker has its own preview shape before anybody configures it, because
-  what goes in a preview is not the same thing twice: three lines of tmux
-  command, a screen of whatever another session is doing, a directory listing,
-  a theme card, nothing at all. `keys` gets 30% underneath, `project` 80%
-  beside, `window` 40% beside, `theme` 70% beside and framed, `run` none.
-  `[picker] preview` and `preview_percent` are now unset by default and
-  override all six at once when written, which is almost never what anybody
-  wants; `[picker.<name>]` is the place.
+- A broken config reached the person as `Connection reset by peer (os error
+104)` instead of the name of the key that was wrong, on a machine loaded
+  enough to lose a race. The daemon bound its socket before it parsed the
+  config, so it was reachable for as long as the parse took: a client that
+  connected inside that window was accepted and then dropped when the daemon
+  gave up, and the client only consulted the recorded error when the _connect_
+  had failed. The daemon parses before it binds now, so a refusal leaves no
+  socket at all, and a connection that dies mid-request is explained by the
+  daemon's own last words wherever it left any.
 
-- `preview_border` says how much of a border the preview gets — `none`, `edge`
-  or `full` — rather than whether it gets one. fzf has the same three, and
-  which is right depends on what is in the pane: a directory listing wants a
-  divider, a theme card wants a frame.
+- `project save` and the save `close-project` does on the way out are all or
+  nothing. Three things could each lose part of a layout while reporting
+  success: a pane or window line tmux answered with that did not parse was
+  dropped silently, so a smaller layout replaced a larger one; a tmux command
+  that failed outright returned an empty string, which parsed as a session with
+  no windows and was written over a good file, and because a saved layout wins
+  over the config that empty file then shadowed the `[[layout]]` the project
+  used to open with; and the write truncated the old file before writing the
+  new one, so an interruption left half a layout. Now a failed tmux read is an
+  error, a line that cannot be parsed is quoted back and nothing is written, a
+  layout with no windows is refused, and the file is written under a temporary
+  name and renamed over the old one. A layout file with no windows that is
+  already on disk reads as no layout rather than as an empty one.
 
 ### Fixed
 
@@ -1004,47 +1051,6 @@ it by accident while chasing an `M-a` bug.
   and left the file behind read as a live daemon to anything that stats the
   path rather than connecting to it, and an interrupted suite left one such
   file per test.
-
-### Added
-
-- `scripts/reap-daemons.sh`, and `just reap`, which kills the daemons nothing
-  can reach any more and leaves the live one alone. It classifies by the
-  socket a process holds rather than by its command line, because
-  `pkill -f 'tmux-companion server'` matches the live daemon too, and a
-  leftover socket file does not mean a live daemon, so each one is probed by
-  connecting rather than stat'ed. `just test` runs it on the way out however
-  the run ends, since the runs that leak a daemon are the ones that failed or
-  were interrupted.
-
-- The end-to-end tests told the tool which config to read and which daemon
-  socket to use, but never which tmux to talk to, so every tmux command the
-  binary ran under test went to the default socket rather than to the server
-  the test had started. `scripts/repro-ci.sh` runs the suite under the CI
-  job's conditions and is what found it.
-
-- A broken config reached the person as `Connection reset by peer (os error
-104)` instead of the name of the key that was wrong, on a machine loaded
-  enough to lose a race. The daemon bound its socket before it parsed the
-  config, so it was reachable for as long as the parse took: a client that
-  connected inside that window was accepted and then dropped when the daemon
-  gave up, and the client only consulted the recorded error when the _connect_
-  had failed. The daemon parses before it binds now, so a refusal leaves no
-  socket at all, and a connection that dies mid-request is explained by the
-  daemon's own last words wherever it left any.
-
-- `project save` and the save `close-project` does on the way out are all or
-  nothing. Three things could each lose part of a layout while reporting
-  success: a pane or window line tmux answered with that did not parse was
-  dropped silently, so a smaller layout replaced a larger one; a tmux command
-  that failed outright returned an empty string, which parsed as a session with
-  no windows and was written over a good file, and because a saved layout wins
-  over the config that empty file then shadowed the `[[layout]]` the project
-  used to open with; and the write truncated the old file before writing the
-  new one, so an interruption left half a layout. Now a failed tmux read is an
-  error, a line that cannot be parsed is quoted back and nothing is written, a
-  layout with no windows is refused, and the file is written under a temporary
-  name and renamed over the old one. A layout file with no windows that is
-  already on disk reads as no layout rather than as an empty one.
 
 ## 0.1.0 - 2026-09-23
 

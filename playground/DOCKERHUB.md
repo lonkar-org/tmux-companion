@@ -93,4 +93,4 @@ Everything the playground runs is a file in the image, so a shell in it
 | `~/.config/tmux-companion/config.toml` | the layout the projects open with            |
 | `/opt/playground/config.example.toml`  | every option, annotated                      |
 
-Source, docs and issues: https://github.com/lonkar-org/tmux-companion
+Source, docs and issues: <https://github.com/lonkar-org/tmux-companion>

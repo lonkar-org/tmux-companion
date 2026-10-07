@@ -1,0 +1,15 @@
+// markdownlint's default rules, run by .github/workflows/markdown.yml and
+// `just lint-md`. Each change from the defaults says why.
+{
+  // Most long-form docs are one paragraph per line, and rewrapping them now
+  // collides with screen-reader-mode. docs/backlog/markdown-line-length.md.
+  "MD013": false,
+  // CHANGELOG.md repeats Added, Changed and Fixed under every release.
+  "MD024": { "siblings_only": true },
+  // README's side-by-side screenshots and collapsed sections, and <br> for a
+  // line break inside a table cell, have no Markdown spelling.
+  "MD033": { "allowed_elements": ["a", "br", "code", "details", "img", "p", "summary"] },
+  // `companion: ` and `custom: ` are prefixes, and the trailing space is part
+  // of what the reader types.
+  "MD038": false
+}

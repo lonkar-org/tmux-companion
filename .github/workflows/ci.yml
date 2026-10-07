@@ -17,10 +17,13 @@ name: CI
 # allows one or the other and only `paths` can carve an exception back out;
 # later patterns win, so the file is re-included after the markdown is dropped.
 #
-# If a required status check is ever turned on for this repository, take this
-# out: GitHub leaves the check pending rather than passing it on a pull request
-# that only touches ignored paths, so a documentation-only pull request would
-# never become mergeable.
+# The ruleset on main requires one check, `required`, and three workflows end
+# in a job of that name: this one, docs.yml and markdown.yml. Between their
+# paths every file starts at least one of them, so a pull request always gets
+# a `required`, and one that starts two has to pass both. GitHub leaves a
+# required check pending rather than passing it when its workflow is skipped
+# by paths, which is why the ruleset can't name this workflow's jobs. A new
+# workflow with a paths filter of its own ends in `required` the same way.
 on:
   push:
     branches: [main]
@@ -296,3 +299,16 @@ jobs:
       # The examples in the library's docs are tests, and `--all-targets` in
       # the test job leaves doctests out.
       - run: cargo test --doc --locked
+
+  # The one check the ruleset on main requires; see the note on `on:`. A
+  # matrix leg added or renamed changes nothing in the ruleset this way.
+  required:
+    needs: [format, clippy, tests, marks, msrv, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done

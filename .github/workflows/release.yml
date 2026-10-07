@@ -85,6 +85,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # The tag ruleset lets only an admin push a v* tag, and cannot say which
+      # commit it may point at, so this is where "released from main" is held.
+      # A tag on a branch that never merged stops here, before anything builds.
+      - name: The tag is on main
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$TAG points at $(git rev-parse --short HEAD), which is not on main; merge it and tag main"
+            exit 1
+          fi
+          echo "$TAG is on main"
 
       # First, because it fails in a second and is the one a release most
       # often gets wrong. `cargo pkgid` prints

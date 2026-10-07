@@ -1,0 +1,6 @@
+// Issue and pull request templates are form bodies rather than documents, so
+// they open on a comment or a checklist instead of a heading.
+{
+  "extends": "../.markdownlint.jsonc",
+  "MD041": false
+}

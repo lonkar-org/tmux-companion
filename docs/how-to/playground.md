@@ -89,7 +89,7 @@ config uses the Alt keys.
 Two tmux sessions. You start in `playground`, a shell in
 `~/projects/orchard-api`, and the tour waits in `instructions`.
 
-```
+```text
 prefix then i     the tour            (prefix is Ctrl-b)
 Alt-s             the project picker
 ```

@@ -18,7 +18,7 @@ The chunk clock shows how long the aggregate of session has been in the focus of
 
 Status segment, right side, every window of an attached session:
 
-```
+```text
 󱫐 38m
 󱫌 50m+12
 󱫐 22m · 1h14m
@@ -67,7 +67,7 @@ Fired by the daemon, not by the status redraw.
 
 ## Commands
 
-```
+```sh
 tmux-companion chunk status            # one line, or nothing if no sitting is running
 tmux-companion chunk status --json
 tmux-companion chunk snooze            # one extension of `snooze`, once per sitting

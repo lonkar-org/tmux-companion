@@ -13,7 +13,6 @@ Everything below is one machine on one day: a MacBookPro16,1, 16 cores, macOS
 26.6.2, tmux 3.7c, zsh 5.9, fzf 0.74.3, measured 2026-09-23. Reproduce it with
 `just bench`.
 
-
 ## What it costs
 
 Measured from inside tmux on one machine, against the zsh this replaced, with
@@ -52,7 +51,7 @@ machine that does not have them, measures the new arm alone and says so.
 45 seconds, one attached client, `status-interval 1`, idle session.
 
 | | before | after |
-|---|---|---|
+| --- | --- | --- |
 | `#()` spawns per second | 4.87 | **1.00** |
 | spawn CPU | 335.78 ms/s | **19.02 ms/s** |
 | tmux server CPU | 8.22 ms/s | **3.11 ms/s** |
@@ -70,7 +69,7 @@ daemon's own `getrusage`.
 ### What each call cost
 
 | call | per spawn | per second |
-|---|---|---|
+| --- | --- | --- |
 | `battery-life.zsh` | 118.49 ms | 115.90 ms/s |
 | `net-monitor.zsh` | 83.60 ms | 79.91 ms/s |
 | `yrl gst` | 72.66 ms | 71.07 ms/s |
@@ -97,7 +96,7 @@ window either side of a 45 second sample.
 returns and stops when the bytes for the first result row reach the client.
 
 | | before | after |
-|---|---|---|
+| --- | --- | --- |
 | project picker, keypress to first row | 102.2 ms | 103.3 ms |
 | new-window picker, keypress to first row | 81.8 ms | 86.0 ms |
 | project picker, CPU per press | 96.7 ms | **47.3 ms** |
@@ -131,7 +130,7 @@ Per request, from the daemon's own `getrusage`, sent straight down the socket
 so no process spawn is counted. `just bench-segments`.
 
 | request | CPU |
-|---|---|
+| --- | --- |
 | `status-right` (all three segments, concurrently) | **1.43 ms** |
 | `gst`, no `pane_pid` | 0.14 ms |
 | `gst`, with `pane_pid` | 18.25 ms |
@@ -143,7 +142,7 @@ so no process spawn is counted. `just bench-segments`.
 And what a client costs before it has asked anything:
 
 | shape | CPU |
-|---|---|
+| --- | --- |
 | `/bin/echo`, the floor | 2.52 ms |
 | client round trip | 8.03 ms |
 | client via `sh -c`, as tmux runs it | 13.07 ms |

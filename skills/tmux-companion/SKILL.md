@@ -67,7 +67,7 @@ beside it.
 
 ## Two stores
 
-|  | `project` | `sessions` |
+| | `project` | `sessions` |
 | --- | --- | --- |
 | Question | what does this project look like | what was I doing at 09:23 |
 | Key | directory path | timestamp |
@@ -226,7 +226,7 @@ away after a release.
 
 ## sessions resurrect
 
-```
+```text
 refuse if a server already has sessions
 start a server, create a bootstrap session
 read the newest snapshot, or STAMP
@@ -245,7 +245,7 @@ session early takes the server down with it.
 
 Against a live server the default is to refuse:
 
-```
+```text
 4 sessions already running: mysetup, lekhani, y, tmux-companion
 nothing restored. --merge adds the missing ones, --only picks some
 ```
@@ -313,7 +313,7 @@ this". On `sessions shutdown` it means the session is not saved **and** stopping
 the server takes it anyway, so it does not come back. The command prints that
 before it acts:
 
-```
+```text
 not saving: y (excluded) -- it will not come back
 saving: icf-c_com, lekhani, lonkar_org, mysetup, tmux-companion, yogesh_lonkar_org
 ```

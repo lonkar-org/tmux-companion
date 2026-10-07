@@ -840,7 +840,7 @@ still works, and it still wins over anything else in the section, so a config
 written before this had more than one source keeps behaving as it did. It goes
 away in the next release, and `tmux-companion config check` names it until then:
 
-```
+```text
 ~/.config/tmux-companion/config.toml: ok
   `[project] zoxide = false` is deprecated; use `dirs_source = "none"`
 ```
@@ -914,7 +914,7 @@ where `[sessions]` keeps generations of its own and knows what each pane was
 running. It's off since `[sessions]` arrived, a config that still asks for it
 keeps it for now, and `tmux-companion config check` names it:
 
-```
+```text
   `[autosave]` is deprecated; `[sessions] autosave` keeps generations of its own and records what each pane was running
 ```
 

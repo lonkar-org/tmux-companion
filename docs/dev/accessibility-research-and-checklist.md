@@ -63,7 +63,7 @@ These build on what the daemon already knows. I found no tmux tool, and few CLIs
 
 Each item is a test or a change. Tick off whatever your VoiceOver work has already covered.
 
-**The bar**
+### The bar
 
 - [ ] A static bar mode that renders only when a value changes. No per-second segments: net off or coarse, no clock seconds.
 - [ ] `doctor` and `setup` recommend `status-interval 0` or a long interval when the screen-reader profile is on, not `1`.
@@ -71,7 +71,7 @@ Each item is a test or a change. Tick off whatever your VoiceOver work has alrea
 - [ ] The health mark says what failed ("health: sessions timer failed"), not `timer +2`.
 - [ ] No powerline caps or separators in the screen-reader preset; a plain separator like " | " reads as a pause.
 
-**Pickers**
+### Pickers
 
 - [ ] Verify where the hardware cursor sits while a picker is open. Pin it to the selected row, the way `menuconfig` does, or to the query line. Never let it jump to the preview.
 - [ ] Preview off by default in the screen-reader profile (`[picker] preview = "none"`).
@@ -81,19 +81,19 @@ Each item is a test or a change. Tick off whatever your VoiceOver work has alrea
 - [ ] A linear picker mode (differentiator 6) for all seven pickers.
 - [ ] Escape and Enter behave the same in every picker, and closing a picker announces where focus landed ("switched to api").
 
-**Messages and popups**
+### Messages and popups
 
 - [ ] Every `display-message` the tool emits can also go to the speech sink, since `display-time` makes them vanish.
 - [ ] A `messages` command that lists the tool's recent messages in order, so a missed one can be reread.
 - [ ] `brief` and `doctor` in a popup have a plain mode: no boxes, one fact per line, headings as text lines.
 
-**Panes and output**
+### Panes and output
 
 - [ ] "Last command output" and previous/next command navigation (differentiator 3).
 - [ ] The pocket and `run` can open as a window, not a split, so their lines don't interleave.
 - [ ] Agent questions captured without box drawing (differentiator 5).
 
-**Docs and launch**
+### Docs and launch
 
 - [ ] A text transcript of the demo cast, step by step, linked beside the GIF.
 - [ ] An accessibility page in `docs/how-to/` that says plainly what works with which screen reader and what doesn't yet.

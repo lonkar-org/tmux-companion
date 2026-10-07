@@ -6,10 +6,9 @@ labels: bug
 
 <!-- What you did, and what happened instead. A screenshot helps for anything drawn. -->
 
-
 <details><summary><code>tmux-companion doctor</code></summary>
 
-```
+```text
 paste here
 ```
 

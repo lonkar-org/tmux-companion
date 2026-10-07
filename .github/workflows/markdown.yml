@@ -1,0 +1,46 @@
+name: Markdown
+
+# Lints the Markdown that ci.yml leaves out, with markdownlint's default rules
+# less the few .markdownlint.jsonc turns off and says why. This is the one
+# workflow that runs on Markdown rather than ignoring it, since Markdown is
+# what it checks.
+#
+# It ends in `required`, the check the ruleset on main asks for, so a pull
+# request that touches only Markdown gets that check from here; the note on
+# `on:` in ci.yml has the rest.
+on:
+  push:
+    branches: [main]
+    paths: &markdown
+      - '**/*.md'
+      - '.markdownlint.jsonc'
+      - '.markdownlint-cli2.jsonc'
+      - '.github/.markdownlint.jsonc'
+      - '.github/workflows/markdown.yml'
+  pull_request:
+    paths: *markdown
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The same version `just lint-md` runs, pinned so a new release's new
+      # rule fails here on purpose rather than on an unrelated pull request.
+      - run: npx --yes markdownlint-cli2@0.23.0
+
+  required:
+    needs: [lint]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.lint.result }}
+        run: |
+          echo "$RESULT"
+          [ "$RESULT" = success ]

@@ -35,6 +35,6 @@ Nothing, until `[usage] enabled = true`. With it off the sheet lists your
 bindings unranked, the fourth box stays empty and one line says it learns only
 with the log on. With it on each pick writes one line to
 `$XDG_STATE_HOME/tmux-companion/keys-usage.tsv` with the key table, the key and
-the time, as `prefix	%	@1790000000`. It's a plain file on your machine that
+the time, as `prefix	%	@1790000000`. It's a plain file on your machine that <!-- markdownlint-disable-line MD010 -->
 nothing else reads. Past five thousand lines it's rewritten as one line per
 binding with the count and the first and last time.

@@ -90,6 +90,12 @@ fi
   die "$VERSION is not a semantic version"
 [ "$VERSION" != "$current" ] || die "$PLUGIN is already at $VERSION"
 
+# The tag ruleset lets only an admin push tmux-companion--v* and says nothing
+# about where the commit came from, so this is the half that keeps a skill
+# release on main. --force does not skip it.
+[ "$DRY" = 1 ] || [ "$(git branch --show-current)" = main ] ||
+  die "the skill is released from main, and this is $(git branch --show-current)"
+
 if [ "$FORCE" = 0 ] && [ "$DRY" = 0 ]; then
   [ -z "$(git status --porcelain)" ] ||
     die "the working tree is dirty. Commit or stash first, or pass --force."

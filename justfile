@@ -100,7 +100,7 @@ build:
 # it is not one worth compiling.
 
 # Everything ci.yml runs, native.
-ci: review-marks fmt-check lint test-matrix doc
+ci: review-marks fmt-check lint lint-md test-matrix doc
     @echo "review marks, rustfmt, clippy, tests and rustdoc all passed"
 
 # Throw away the build output.
@@ -212,6 +212,11 @@ install:
 # Clippy with -D warnings, the way the check job does.
 lint:
     nice -n 15 cargo clippy --all-targets -j 4 -- -D warnings
+
+# markdownlint over every Markdown file, the way the markdown job does. The
+# version is the one markdown.yml pins; .markdownlint.jsonc has the rules.
+lint-md:
+    npx --yes markdownlint-cli2@0.23.0
 
 # Read the manual page as it will ship.
 man:

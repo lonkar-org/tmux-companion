@@ -12,7 +12,7 @@ For motor and attention, remove traps rather than designing a second
 interface: nothing timed, nothing mouse-only, no focus moved without saying
 so, no flashing or moving output.
 
-**Rules**
+### Rules
 
 1. Every job has a path a screen reader reads top to bottom: plain lines in a
    stable order, and nothing said by colour, glyph or position alone. The
@@ -56,6 +56,7 @@ just test-unit   # the fast half: --lib --bins, no tmux, no daemon, no socket
 just test-e2e    # the three integration suites; e2e drives a real tmux
 just test        # both, --no-fail-fast, with the daemon reaper on the way out
 just lint        # clippy --all-targets -D warnings, the way ci.yml runs it
+just lint-md     # markdownlint over every .md, the way markdown.yml runs it
 just test-tmux 3.4   # every test with one pinned tmux first on PATH
 just test-matrix # every test on each pinned tmux, 3.4, 3.5a and 3.7c
 just ci          # review-marks, rustfmt, clippy, test-matrix and rustdoc
@@ -116,7 +117,7 @@ source and this is the index; four files have no module doc yet and keep the
 description they had.
 
 | Path | Owns |
-|------|------|
+| ------ | ------ |
 | `src/agent.rs` | what an agent says about itself, and the hooks that make it say so |
 | `src/autofetch.rs` | fetching in the background, so ahead and behind mean something |
 | `src/autoreload.rs` | sourcing tmux's config when it changes |
@@ -313,7 +314,7 @@ all three.
 
 ## The docs site
 
-https://with-love.lonkar.org/tmux-companion/ is `docs/` built with Starlight
+<https://with-love.lonkar.org/tmux-companion/> is `docs/` built with Starlight
 from `site/`. It is a project site under the org's Pages domain, so it has a
 base path, `/tmux-companion`, set once in `site/scripts/sync.mjs`. `site/scripts/sync.mjs` turns the docs into pages at build time: each
 H1 becomes the page title, relative links become routes or GitHub links, the

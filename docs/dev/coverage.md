@@ -1,6 +1,6 @@
-> Planning record from the port, kept for history; the current behaviour is in the reference docs.
-
 # What it covers, and what it does not
+
+> Planning record from the port, kept for history; the current behaviour is in the reference docs.
 
 Checked on 2026-09-22 against `~/.config/tmux/tmux.conf` and the 14 scripts in
 `~/.config/tmux/comrades`, by reading each binding and running its replacement.

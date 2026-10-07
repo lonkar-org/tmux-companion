@@ -15,7 +15,7 @@ upgrading is the fix.
 Please don't open a public issue for it. Report it privately through GitHub
 instead:
 
-https://github.com/lonkar-org/tmux-companion/security/advisories/new
+<https://github.com/lonkar-org/tmux-companion/security/advisories/new>
 
 Tell me what you found, the version (`tmux-companion --version`), your OS and
 tmux version, and the steps to reproduce it. The output of

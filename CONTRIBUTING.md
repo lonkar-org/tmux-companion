@@ -81,7 +81,7 @@ The Actions tab can run the same workflow by hand against an existing tag.
 
 ## If rustc cannot find core for a cross target
 
-```
+```text
 error[E0463]: can't find crate for `core`
   = note: the `x86_64-unknown-linux-musl` target may not be installed
 ```
