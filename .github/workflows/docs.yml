@@ -1,7 +1,10 @@
 name: Docs
 
-# The documentation site at https://tmux-companion.lonkar.org, built with
-# Starlight from site/ and published on GitHub Pages.
+# The documentation site at https://with-love.lonkar.org/tmux-companion/,
+# built with Starlight from site/ and published on GitHub Pages. It is a
+# project site: with-love.lonkar.org is the custom domain of the org's own
+# Pages repository, lonkar-org/lonkar-org.github.io, and every lonkar-org
+# repository's Pages answers under it at its name.
 #
 # The words come from the latest release, so the site never documents a
 # feature brew can't install yet: docs/ and README.md are checked out at that
@@ -20,8 +23,8 @@ name: Docs
 # rule about ignoring it makes for a docs site.
 #
 # Pages has to be set up once, by hand: Settings, Pages, Source "GitHub
-# Actions", custom domain tmux-companion.lonkar.org, Enforce HTTPS. The DNS
-# record is in lonkar-org/lonkar.org, infra/.
+# Actions", and no custom domain of its own, so the org's applies. The DNS
+# record for with-love.lonkar.org is in lonkar-org/lonkar.org, infra/.
 #
 # Each `uses:` is pinned to a commit SHA with its version in a trailing
 # comment, the same as ci.yml and release.yml.

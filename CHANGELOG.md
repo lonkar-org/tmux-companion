@@ -5,6 +5,12 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Changed
+
+- The documentation moved to https://with-love.lonkar.org/tmux-companion/,
+  where every lonkar-org project's site lives; the address 0.9.0 gave,
+  tmux-companion.lonkar.org, is gone. The README links it from a badge.
+
 ## 0.9.0 - 2026-10-07
 
 Popups that agree with each other, M-s twice to go back a session, a docs

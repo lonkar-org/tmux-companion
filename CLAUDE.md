@@ -313,8 +313,9 @@ all three.
 
 ## The docs site
 
-https://tmux-companion.lonkar.org is `docs/` built with Starlight from
-`site/`. `site/scripts/sync.mjs` turns the docs into pages at build time: each
+https://with-love.lonkar.org/tmux-companion/ is `docs/` built with Starlight
+from `site/`. It is a project site under the org's Pages domain, so it has a
+base path, `/tmux-companion`, set once in `site/scripts/sync.mjs`. `site/scripts/sync.mjs` turns the docs into pages at build time: each
 H1 becomes the page title, relative links become routes or GitHub links, the
 man page goes through mandoc, and the example configs get a page each. Nothing
 it generates is committed, so `docs/` stays the one source and reads the same

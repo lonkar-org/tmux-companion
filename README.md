@@ -1,6 +1,7 @@
 # tmux-companion
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-with--love.lonkar.org-8250df?logo=astro&logoColor=white)](https://with-love.lonkar.org/tmux-companion/)
 [![Release](https://img.shields.io/github/v/release/lonkar-org/tmux-companion?logo=github&logoColor=white&color=success)](https://github.com/lonkar-org/tmux-companion/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/tmux-companion?logo=rust&logoColor=white)](https://crates.io/crates/tmux-companion)
 [![docs.rs](https://img.shields.io/docsrs/tmux-companion?logo=docsdotrs&label=docs.rs)](https://docs.rs/tmux-companion)

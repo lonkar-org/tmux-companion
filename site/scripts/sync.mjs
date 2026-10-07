@@ -24,6 +24,10 @@ const ref = process.env.DOCS_REF || 'main';
 const blob = `https://github.com/lonkar-org/tmux-companion/blob/${ref}/`;
 
 const SECTIONS = ['tutorial', 'how-to', 'reference', 'explanation'];
+
+/** Where the site sits under with-love.lonkar.org. Astro prefixes its own
+ * links with it; a link written in Markdown gets it here. */
+export const BASE = '/tmux-companion';
 // The example files, each a page of its own: the page name, the title and
 // the language its code block is highlighted as.
 const EXAMPLES = {
@@ -36,12 +40,12 @@ const EXAMPLES = {
 /** The site route for a repository path, or null when it isn't published. */
 export function route(repoPath) {
   const p = repoPath.replace(/\\/g, '/');
-  if (p === 'README.md' || p === 'docs/README.md') return '/';
+  if (p === 'README.md' || p === 'docs/README.md') return `${BASE}/`;
   const m = p.match(/^docs\/([^/]+)\/(.+)\.md$/);
-  if (m && SECTIONS.includes(m[1])) return `/${m[1]}/${m[2].toLowerCase()}/`;
+  if (m && SECTIONS.includes(m[1])) return `${BASE}/${m[1]}/${m[2].toLowerCase()}/`;
   const ex = p.match(/^docs\/([^/]+)$/);
-  if (ex && EXAMPLES[ex[1]]) return `/reference/examples/${EXAMPLES[ex[1]][0]}/`;
-  if (p === 'docs/tmux-companion.1') return '/reference/manual/';
+  if (ex && EXAMPLES[ex[1]]) return `${BASE}/reference/examples/${EXAMPLES[ex[1]][0]}/`;
+  if (p === 'docs/tmux-companion.1') return `${BASE}/reference/manual/`;
   return null;
 }
 
