@@ -10,6 +10,9 @@ entry per phase of the comrades port.
 - `M-s` in the project picker switches straight to the session you were in
   before this one, so `M-s M-s` goes back, where it was up and enter. It
   does nothing when there is no other session.
+- `[picker] hint_across = true` draws the line of keys as a row across the
+  whole popup, with the list and the preview side by side under it, rather
+  than as a line in the list's column.
 
 ## 0.8.0 - 2026-10-06
 

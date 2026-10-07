@@ -261,6 +261,9 @@ pub(super) struct Panes {
     pub hint: Option<Rect>,
     /// The rule under the hint.
     pub top_rule: Option<Rect>,
+    /// The rule between a hint drawn across the popup and the columns under
+    /// it, as wide as the hint.
+    pub hint_rule: Option<Rect>,
     /// The rows.
     pub list: Rect,
     /// The rule above the query.
@@ -278,7 +281,39 @@ pub(super) fn panes(
     preview: Option<Preview>,
     preview_percent: u16,
 ) -> Panes {
-    // The preview comes off first, because everything else shares whatever is
+    let look = &chrome.look;
+    let hint_shown = look.hint_position != Edge::Hidden && !chrome.footer.trim().is_empty();
+    let rules = look.rules;
+
+    // A hint drawn across comes off before anything else, so it is a row of
+    // its own over both columns rather than a line in the list's.
+    let across = hint_shown && look.hint_across;
+    let (inner, hint_row, hint_rule) = if across {
+        let on_top = look.hint_position == Edge::Top;
+        let mut rows = vec![Constraint::Length(1)];
+        if rules {
+            rows.push(Constraint::Length(1));
+        }
+        rows.push(Constraint::Min(1));
+        if !on_top {
+            rows.reverse();
+        }
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(rows)
+            .split(inner);
+        let last = parts.len() - 1;
+        if on_top {
+            (parts[last], Some(parts[0]), rules.then(|| parts[1]))
+        } else {
+            (parts[0], Some(parts[last]), rules.then(|| parts[1]))
+        }
+    } else {
+        (inner, None, None)
+    };
+    let hint_shown = hint_shown && !across;
+
+    // The preview comes off next, because everything else shares whatever is
     // left and a preview beside the list shortens nothing.
     let (column, preview_area) = match preview {
         Some(side) if preview_percent > 0 => {
@@ -307,9 +342,6 @@ pub(super) fn panes(
         _ => (inner, None),
     };
 
-    let look = &chrome.look;
-    let hint_shown = look.hint_position != Edge::Hidden && !chrome.footer.trim().is_empty();
-    let rules = look.rules;
     let prompt_first = look.prompt_position == Edge::Top;
 
     // One row each for the hint, the two rules and the query; the list takes
@@ -363,8 +395,9 @@ pub(super) fn panes(
         .split(column);
 
     let mut out = Panes {
-        hint: None,
+        hint: hint_row,
         top_rule: None,
+        hint_rule,
         list: column,
         bottom_rule: None,
         prompt: column,
@@ -780,7 +813,10 @@ pub(super) fn draw(
     // Inset by one, so a rule reads as a line under the list rather than as a
     // row that has grown into the border on both sides.
     let rule = look.border.horizontal();
-    for area in [panes.top_rule, panes.bottom_rule].into_iter().flatten() {
+    for area in [panes.top_rule, panes.bottom_rule, panes.hint_rule]
+        .into_iter()
+        .flatten()
+    {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {}", rule.repeat(area.width.saturating_sub(1) as usize)),
@@ -1159,6 +1195,32 @@ mod tests {
         let under = bottom.preview.expect("a pane");
         assert_eq!(under.height, 8);
         assert!(under.y > bottom.list.y);
+    }
+
+    #[test]
+    fn a_hint_across_is_a_row_over_both_columns() {
+        let area = Rect::new(0, 0, 100, 20);
+        let mut across = chrome();
+        across.look.hint_across = true;
+        let p = panes(area, &across, Some(Preview::Right), 40);
+        assert_eq!(p.hint, Some(Rect::new(0, 0, 100, 1)));
+        assert_eq!(p.hint_rule, Some(Rect::new(0, 1, 100, 1)));
+        let preview = p.preview.expect("a pane");
+        assert_eq!((preview.y, preview.height), (2, 18));
+        assert_eq!(preview.width, 40);
+        assert_eq!(p.list.y, 2, "the list starts under the hint, not beside it");
+        assert_eq!(p.list.height, 16, "18 rows less the query and its rule");
+
+        across.look.hint_position = Edge::Bottom;
+        let p = panes(area, &across, Some(Preview::Right), 40);
+        assert_eq!(p.hint, Some(Rect::new(0, 19, 100, 1)));
+        assert_eq!(p.hint_rule, Some(Rect::new(0, 18, 100, 1)));
+        assert_eq!(p.preview.expect("a pane").height, 18);
+
+        across.look.hint_position = Edge::Hidden;
+        let p = panes(area, &across, Some(Preview::Right), 40);
+        assert_eq!((p.hint, p.hint_rule), (None, None));
+        assert_eq!(p.preview.expect("a pane").height, 20);
     }
 
     #[test]

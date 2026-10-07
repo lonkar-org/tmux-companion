@@ -174,6 +174,9 @@ pub struct Look {
     pub label_offset: u16,
     /// Which end the line naming the keys sits at.
     pub hint_position: Edge,
+    /// Whether that line is a row across the whole popup, over the list and
+    /// the preview both, rather than a line in the list's column.
+    pub hint_across: bool,
     /// Which end the query sits at. `bottom` is fzf's default layout and
     /// `top` is its `--reverse`.
     pub prompt_position: Edge,
@@ -222,6 +225,7 @@ impl Default for Look {
             label_position: LabelPosition::BottomRight,
             label_offset: 2,
             hint_position: Edge::Top,
+            hint_across: false,
             prompt_position: Edge::Bottom,
             list_from: Edge::Top,
             counter: false,

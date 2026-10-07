@@ -545,6 +545,8 @@ pub struct PickerOverride {
     pub label_offset: Option<u16>,
     /// Which end the line explaining the keys sits at.
     pub hint_position: Option<crate::picker::Edge>,
+    /// Whether that line runs across the whole popup, over the preview too.
+    pub hint_across: Option<bool>,
     /// Which end the query sits at.
     pub prompt_position: Option<crate::picker::Edge>,
     /// Which end the first row sits at.
@@ -706,6 +708,9 @@ impl PickerOverride {
         }
         if let Some(v) = self.hint_position {
             look.hint_position = v;
+        }
+        if let Some(v) = self.hint_across {
+            look.hint_across = v;
         }
         if let Some(v) = self.prompt_position {
             look.prompt_position = v;

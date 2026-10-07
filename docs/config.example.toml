@@ -1087,6 +1087,10 @@ colour = true
 # Which end the line explaining the keys sits at: top, bottom or hidden.
 # hint_position = "top"
 
+# Whether that line is a row across the whole popup, over the list and the
+# preview both, rather than a line in the list's column.
+# hint_across = false
+
 # Which end the query sits at: top or bottom. `bottom` is fzf's default layout,
 # with the list growing up towards it; `top` is what `--reverse` does.
 # prompt_position = "bottom"
