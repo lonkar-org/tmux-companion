@@ -160,7 +160,9 @@ this time instead of writing scripts add feature to companion for handling multi
 ### Contributing
 
 The code and features are stable enough that I have not done lot of fixes,
-I do use it everyday so the DX could be improved.
+I do use it everyday so changes I make could be very opinionated.
+The whole idea for this was to have tailored DX.
+Now that the code is public the DX could be improved, generalised.
 
 Patches welcome, including the ones that tell me I got something wrong.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the three commands CI runs.
