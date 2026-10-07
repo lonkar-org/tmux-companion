@@ -17,6 +17,15 @@ pickers behind your keybindings, and builds your project sessions, out of a
 daemon that is already warm.
 
 <p align="center">
+  <img src="https://media.lonkar.org/tmux-companion/panes-2026-10-07.jpg" width="48%"
+       alt="The panes picker: every Claude Code pane on the server in one list, each marked asked, waiting or done with how long ago and its last line">
+  <img src="https://media.lonkar.org/tmux-companion/brief-2026-10-07.jpg" width="48%"
+       alt="The brief: the four agents waiting on you, numbered to jump to, then health, the session and agent count, and how long you have been sitting">
+</p>
+
+<p align="center">“who is waiting” / “what needs me.”</p>
+
+<p align="center">
   <a href="https://asciinema.org/a/1267082">
     <img src="https://media.lonkar.org/tmux-companion/usage-2026-09-30-popups.gif"
          alt="tmux-companion: the project picker, a new window and run">
