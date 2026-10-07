@@ -322,17 +322,20 @@ it generates is committed, so `docs/` stays the one source and reads the same
 on GitHub. Only tutorial, how-to, reference and explanation are published;
 `dev/` and `backlog/` are not.
 
-`.github/workflows/docs.yml` deploys it to GitHub Pages when the Release
-workflow finishes, with the words of that release and the site from main, so
-the site never documents what brew can't install yet. A pull request that
-touches the docs builds it without deploying. `just docs-dev` serves it with
-live reload; `just docs-build` builds it the way CI does.
+`.github/workflows/docs.yml` deploys it to GitHub Pages on every push to
+main that touches `docs/`, the README, the changelog or `site/`, so a docs fix
+needs no release. While CHANGELOG.md's Unreleased section has entries, every
+page carries a banner naming the latest release, since the site can describe
+what brew can't install yet; cutting a release empties Unreleased and the
+banner goes. A pull request that touches the docs builds the site without
+deploying. `just docs-dev` serves it with live reload; `just docs-build`
+builds it the way CI does.
 
 A new page needs its file under one of the four directories, with an H1 on
 its first line. The tutorial, how-to and explanation sidebars are generated
 from their directories; reference lists its pages in `site/astro.config.mjs`,
 so a new reference page gets a line there too. A link to a file outside the
-four becomes a GitHub link at the release's tag.
+four becomes a GitHub link at the commit the site was built from.
 
 ## The skill
 

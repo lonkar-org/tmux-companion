@@ -2,7 +2,7 @@
 //
 // usage: node scripts/sync.mjs        (npm run sync; `build` and `dev` run it)
 //   env DOCS_REF   the git ref links to files outside the site point at,
-//                  `main` by default; the release workflow sets the tag
+//                  `main` by default; docs.yml sets the commit it builds
 //
 // docs/ is written to be read on GitHub, so it has no frontmatter and links
 // to files by relative path. Each page's H1 becomes its `title:`, a link to
@@ -11,6 +11,10 @@
 // rendered with mandoc. Only the user docs are published: tutorial, how-to,
 // reference and explanation, the manual and the example configs. dev/ and
 // backlog/ stay in the repository.
+//
+// The site is built from main, so a page can describe something no release
+// has yet. While CHANGELOG.md's Unreleased section has entries, every page
+// carries a banner saying so and naming the latest release.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,7 +77,22 @@ export function titled(markdown) {
   return { title: m[1].trim(), body: markdown.slice(m[0].length) };
 }
 
+/** The latest release in a changelog, and whether Unreleased has anything
+ * under it: { latest: '0.9.1', ahead: true }. */
+export function releaseState(changelog) {
+  const m = changelog.match(/^## Unreleased\n([\s\S]*?)^## (\d+\.\d+\.\d+)/m);
+  if (!m) return { latest: null, ahead: false };
+  return { latest: m[2], ahead: /^- /m.test(m[1]) };
+}
+
+const state = releaseState(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
+const NOTICE = state.ahead
+  ? `These pages follow main: some of what they describe is newer than ${state.latest}, the latest ` +
+    `<a href="https://github.com/lonkar-org/tmux-companion/releases/latest">release</a>.`
+  : null;
+
 function frontmatter(fields) {
+  if (NOTICE) fields = { ...fields, banner: { content: NOTICE } };
   const lines = Object.entries(fields).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
   return `---\n${lines.join('\n')}\n---\n\n`;
 }
@@ -144,4 +163,5 @@ function sync() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   sync();
   console.log(`synced docs/ into ${path.relative(process.cwd(), out)} with links at ${ref}`);
+  console.log(state.ahead ? `main is ahead of ${state.latest}: every page says so` : `main is ${state.latest}, no banner`);
 }

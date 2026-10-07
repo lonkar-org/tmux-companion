@@ -5,6 +5,14 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Changed
+
+- The documentation site follows main and no longer waits for a release:
+  a change to `docs/` or the README is on
+  https://with-love.lonkar.org/tmux-companion/ a minute or two after it's
+  pushed. While main has changes no release carries yet, every page says
+  so in a banner and names the latest release.
+
 ## 0.9.1 - 2026-10-07
 
 The documentation's address. Nothing in the binary changed.

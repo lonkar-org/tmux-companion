@@ -6,18 +6,17 @@ name: Docs
 # Pages repository, lonkar-org/lonkar-org.github.io, and every lonkar-org
 # repository's Pages answers under it at its name.
 #
-# The words come from the latest release, so the site never documents a
-# feature brew can't install yet: docs/ and README.md are checked out at that
-# tag, over a checkout of main that has site/ in it. site/ comes from main
-# because a tag older than the site has none, and a fix to how the site is
-# built shouldn't wait for a release.
+# The words come from main: a push that changes docs/, the README, the
+# changelog or site/ is on the site a minute or two later, with no release.
+# While CHANGELOG.md's Unreleased section has entries, every page carries a
+# banner naming the latest release, so a page that describes something brew
+# can't install yet says so; site/scripts/sync.mjs writes it. The changelog
+# is watched because cutting a release empties Unreleased and takes the
+# banner down.
 #
-# It deploys when the Release workflow finishes, rather than on the release
-# being published: that workflow creates the release with GITHUB_TOKEN, and
-# an event GITHUB_TOKEN causes starts no other workflow. It deploys again on a
-# push to main that changes site/, and by hand from the Actions tab, with a
-# tag or the latest release. A pull request that touches the docs or the site
-# builds it and deploys nothing, so a broken page shows up before it merges.
+# A pull request that touches the same files builds the site and deploys
+# nothing, so a broken page shows up before it merges. The Run button on the
+# Actions tab deploys main again.
 #
 # This is the one workflow that watches Markdown, which is the exception the
 # rule about ignoring it makes for a docs site.
@@ -30,25 +29,17 @@ name: Docs
 # comment, the same as ci.yml and release.yml.
 
 on:
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
   push:
     branches: [main]
-    paths:
+    paths: &docs
+      - "docs/**"
+      - "README.md"
+      - "CHANGELOG.md"
       - "site/**"
       - ".github/workflows/docs.yml"
   pull_request:
-    paths:
-      - "docs/**"
-      - "README.md"
-      - "site/**"
-      - ".github/workflows/docs.yml"
+    paths: *docs
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to build the docs from; empty for the latest release"
-        required: false
 
 permissions:
   contents: read
@@ -62,34 +53,8 @@ jobs:
   build:
     name: Build the site
     runs-on: ubuntu-latest
-    # A release that failed published nothing, so there is nothing new to say.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      # A pull request builds the words it changes; everything else builds
-      # the release's.
-      - name: The docs from the release
-        if: github.event_name != 'pull_request'
-        id: tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
-          INPUT_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          # A Release run started by hand names main, not its tag, so only
-          # a v-tag is taken from it and anything else means the latest.
-          case "${RUN_TAG:-}" in v*) ;; *) RUN_TAG="" ;; esac
-          tag="${INPUT_TAG:-$RUN_TAG}"
-          if [ -z "$tag" ]; then
-            tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
-          fi
-          git checkout "$tag" -- docs README.md
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "building the docs of $tag with the site from $(git rev-parse --short HEAD)"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -105,7 +70,7 @@ jobs:
       - name: Build
         working-directory: site
         env:
-          DOCS_REF: ${{ steps.tag.outputs.tag || github.sha }}
+          DOCS_REF: ${{ github.sha }}
         run: |
           npm ci
           npm run build
