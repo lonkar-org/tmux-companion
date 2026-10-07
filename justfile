@@ -308,6 +308,15 @@ prompt-marks *SHELLS:
 reap *ARGS:
     ./scripts/reap-daemons.sh {{ARGS}}
 
+# The same for tmux: servers tests and spikes started with `-L` and left
+# running. Lists by default; `just reap-tmux --force --sweep-files` stops them
+# and deletes the socket files nothing answers on. Never touches the default
+# socket or the one $TMUX names.
+
+# Stop the `tmux -L` servers tests and spikes left behind.
+reap-tmux *ARGS:
+    ./scripts/reap-tmux-servers.sh {{ARGS}}
+
 # --no-fail-fast is not a preference. See the note at the top of this file.
 
 # The reap afterwards is not tidiness. The suite gives every test binary its
