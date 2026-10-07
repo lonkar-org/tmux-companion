@@ -20,6 +20,14 @@ export default defineConfig({
       description:
         'One binary behind your whole tmux config: the status bar, the pickers and your project sessions.',
       social: [{ icon: 'github', label: 'GitHub', href: repo }],
+      // The icon is with-love.lonkar.org's own, in lonkar-org.github.io, and
+      // not a copy here: one heart for every project's site. Without this
+      // Starlight links a favicon.svg under the base, which this site doesn't
+      // ship, and a page that names an icon never falls back to the root one.
+      favicon: 'https://with-love.lonkar.org/favicon.svg',
+      head: [
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: 'https://with-love.lonkar.org/apple-touch-icon.png' } },
+      ],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       // tmux.conf has no grammar of its own in Shiki, and shell is close.
       expressiveCode: { shiki: { langAlias: { tmux: 'shellscript' } } },
