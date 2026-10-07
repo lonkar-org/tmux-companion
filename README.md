@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/lonkar-org/tmux-companion?logo=github&logoColor=white&color=success)](https://github.com/lonkar-org/tmux-companion/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/tmux-companion?logo=rust&logoColor=white)](https://crates.io/crates/tmux-companion)
+[![docs.rs](https://img.shields.io/docsrs/tmux-companion?logo=docsdotrs&label=docs.rs)](https://docs.rs/tmux-companion)
 [![Homebrew](https://img.shields.io/badge/brew-lonkar--org%2Ftap-fbb040?logo=homebrew&logoColor=white)](https://github.com/lonkar-org/homebrew-tap)
 [![Playground](https://img.shields.io/docker/image-size/lonkarorg/tmux-companion/playground?logo=docker&logoColor=white&label=playground)](https://hub.docker.com/r/lonkarorg/tmux-companion)
 [![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-dea584?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/reference/requirements.md)
 [![tmux 3.2+](https://img.shields.io/badge/tmux-3.2%2B-1BB91F?logo=tmux&logoColor=white)](docs/reference/requirements.md)
-[![Demo](https://img.shields.io/badge/demo-asciinema-d40000?logo=asciinema&logoColor=white)](https://asciinema.org/a/1267082)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 One binary behind your whole tmux config. It draws the status bar, runs the
