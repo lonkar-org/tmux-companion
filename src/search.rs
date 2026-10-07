@@ -476,7 +476,7 @@ pub async fn run(asked: Asked) -> anyhow::Result<()> {
     let chrome = crate::picker::Chrome {
         title: "[ Scrollback ]".into(),
         icon: crate::tmux::icons::SEARCH.into(),
-        footer: "enter goes to the line   ctrl-a clears the filter   esc cancels".into(),
+        footer: "enter go to line   ctrl-a clear   esc cancel".into(),
         preview_title: "[ Around it ]".into(),
         ..Default::default()
     }

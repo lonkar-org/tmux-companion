@@ -459,9 +459,9 @@ pub async fn run(
         }
         .into(),
         footer: if stop.is_some() {
-            "enter stops the program   ctrl-a clears the filter   esc cancels"
+            "enter stop it   ctrl-a clear   esc cancel"
         } else {
-            "enter jumps to the pane   ctrl-a clears the filter   esc cancels"
+            "enter jump   ctrl-a clear   esc cancel"
         }
         .into(),
         preview_title: "[ Screen ]".into(),

@@ -174,7 +174,7 @@ pub async fn run(days: u64, print: bool) -> anyhow::Result<Option<String>> {
     let chrome = crate::picker::Chrome {
         title: "[ Idle sessions ]".into(),
         icon: crate::tmux::icons::IDLE.into(),
-        footer: "enter picks one to close (asks first, layout saved)   esc cancels".into(),
+        footer: "enter close (asks first)   esc cancel".into(),
         ..Default::default()
     }
     .laid_out_by(&config.picker.resolved(crate::config::Picker::Project));

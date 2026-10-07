@@ -533,8 +533,7 @@ fn chrome(config: &crate::config::Config) -> crate::picker::Chrome {
     crate::picker::Chrome {
         title: "[ Setup ]".into(),
         icon: crate::tmux::icons::SETUP.into(),
-        footer: "enter copies and offers to add   ctrl-x skip   ctrl-e set the key   esc closes"
-            .into(),
+        footer: "enter copy or add   ctrl-x skip   ctrl-e set key   esc close".into(),
         preview_title: "[ What it adds ]".into(),
         ..crate::picker::Chrome::default()
     }

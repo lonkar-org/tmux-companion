@@ -452,6 +452,31 @@ pub fn hint_parts(hint: &str) -> Vec<(String, bool)> {
     out
 }
 
+/// A key hint cut to fit `width` cells by whole groups.
+///
+/// Every hint is written in one order: enter first, then the picker's own
+/// keys, then `ctrl-a`, then the key that leaves, then anything that is only
+/// information. So when it is too wide the groups go from the right, the
+/// information first and then keys from the middle, and the first group and
+/// the one that leaves (`esc` or `q`) stay: what picks and what gets you out
+/// are the two a hint can't lose.
+pub fn fitted_hint(hint: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    const GAP: &str = "   ";
+    let mut groups: Vec<&str> = hint.trim().split(GAP).map(str::trim).collect();
+    let leaves = |g: &str| {
+        let first = g.split(' ').next().unwrap_or("");
+        matches!(first, "esc" | "q")
+    };
+    while groups.join(GAP).width() > width {
+        let Some(at) = (1..groups.len()).rev().find(|&i| !leaves(groups[i])) else {
+            break;
+        };
+        groups.remove(at);
+    }
+    groups.join(GAP)
+}
+
 /// Whether a word names a key: a named key, a chord, or one character, with
 /// or without the `[enter]` brackets the resurrect screen writes them in.
 pub fn is_key(word: &str) -> bool {
@@ -477,6 +502,14 @@ pub fn is_key(word: &str) -> bool {
     if NAMED.contains(&lower.as_str()) {
         return true;
     }
+    // A range of number keys, the brief's `1-3`.
+    if let Some((a, b)) = lower.split_once('-')
+        && !a.is_empty()
+        && !b.is_empty()
+        && a.chars().chain(b.chars()).all(|c| c.is_ascii_digit())
+    {
+        return true;
+    }
     if let Some((mods, key)) = lower.rsplit_once('-') {
         return !key.is_empty()
             && mods
@@ -489,6 +522,23 @@ pub fn is_key(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hint_too_wide_loses_groups_from_the_middle_and_keeps_enter_and_esc() {
+        let hint = "enter open   alt-s last session   esc cancel   type a path for a new one";
+        assert_eq!(fitted_hint(hint, 200), hint);
+        assert_eq!(
+            fitted_hint(hint, 45),
+            "enter open   alt-s last session   esc cancel"
+        );
+        assert_eq!(fitted_hint(hint, 25), "enter open   esc cancel");
+        // Nothing left to drop: the caller cuts what still does not fit.
+        assert_eq!(fitted_hint(hint, 5), "enter open   esc cancel");
+        assert_eq!(
+            fitted_hint("1-3 go   d doctor   s save   q close", 20),
+            "1-3 go   q close"
+        );
+    }
 
     #[test]
     fn a_dark_accent_is_lifted_until_it_reads_as_text() {
@@ -685,10 +735,12 @@ mod tests {
             "enter",
             "[tab]",
             "[q]",
+            "1-3",
+            "alt-enter",
         ] {
             assert!(is_key(k), "{k}");
         }
-        for w in ["type", "jumps", "rate-limit", "-", "ctrl-"] {
+        for w in ["type", "jumps", "rate-limit", "-", "ctrl-", "1-", "3-a"] {
             assert!(!is_key(w), "{w}");
         }
     }

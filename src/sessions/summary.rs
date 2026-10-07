@@ -145,6 +145,11 @@ pub fn confirm(
     let mut counting = !countdown.is_zero();
 
     let paint = crate::picker::Paint::detect();
+    // The keys sit where every picker's do, from the same setting.
+    let look = crate::cli::config_or_default()
+        .picker
+        .resolved(crate::config::Picker::Panes)
+        .look;
     let mut terminal = ratatui::init();
     // Whatever happens below, the terminal goes back to how it was found. A
     // screen that panics with raw mode still on leaves the pane unusable.
@@ -162,6 +167,7 @@ pub fn confirm(
                     cursor,
                     counting.then_some(left),
                     &paint,
+                    &look,
                 );
             })?;
 
@@ -229,6 +235,7 @@ fn draw(
     cursor: usize,
     counting: Option<u64>,
     paint: &crate::picker::Paint,
+    look: &crate::picker::Look,
 ) {
     use crate::picker::Tone;
     use ratatui::layout::{Constraint, Layout};
@@ -236,13 +243,37 @@ fn draw(
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{Block, Borders, Paragraph};
 
-    let area = frame.area();
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(1),
-        Constraint::Length(2),
-    ])
-    .split(area);
+    // The clock is never hidden with the keys: a screen that goes ahead on
+    // its own has to say so, so with the hint hidden the countdown keeps the
+    // row at the bottom by itself.
+    let mut look = look.clone();
+    let keys = if look.hint_position == crate::picker::Edge::Hidden {
+        look.hint_position = crate::picker::Edge::Bottom;
+        counting
+            .map(|left| format!("goes ahead in {left}\u{2026}"))
+            .unwrap_or_default()
+    } else {
+        match counting {
+            Some(left) => format!(
+                "enter go   tab run or skip   a all   q cancel   goes ahead in {left}\u{2026}"
+            ),
+            None => "enter go   tab run or skip   a all   q cancel".to_string(),
+        }
+    };
+    let (area, hint_row, rule_row) = crate::picker::hint_rows(frame.area(), &look, &keys);
+    if let Some(row) = hint_row {
+        frame.render_widget(
+            Paragraph::new(crate::picker::hint_line(&keys, paint, row.width)),
+            row,
+        );
+    }
+    if let Some(row) = rule_row {
+        frame.render_widget(
+            Paragraph::new(crate::picker::rule_line(&look, paint, row.width)),
+            row,
+        );
+    }
+    let chunks = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).split(area);
 
     frame.render_widget(
         Paragraph::new(vec![
@@ -316,25 +347,6 @@ fn draw(
     {
         frame.set_cursor_position((chunks[1].x, chunks[1].y + row));
     }
-
-    let keys = match counting {
-        Some(left) => {
-            format!("[enter] go   [tab] run this one   [a] all   [q] cancel        {left}\u{2026}")
-        }
-        None => "[enter] go   [tab] run this one   [a] all   [q] cancel".to_string(),
-    };
-    let keys: Vec<Span> = crate::picker::paint::hint_parts(&keys)
-        .into_iter()
-        .map(|(w, key)| Span::styled(w, paint.style(if key { Tone::Strong } else { Tone::Dim })))
-        .collect();
-    frame.render_widget(
-        Paragraph::new(Line::from(keys)).block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(paint.frame()),
-        ),
-        chunks[2],
-    );
 }
 
 #[cfg(test)]

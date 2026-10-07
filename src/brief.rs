@@ -377,7 +377,7 @@ pub fn footer(b: &Brief) -> String {
         .map(|o| match o {
             Offer::Go(n) => format!("{} go there", range(1, n)),
             Offer::Close(..) => "c close idle".into(),
-            Offer::Ack => "h acknowledge health".into(),
+            Offer::Ack => "h ack health".into(),
             Offer::Doctor => "d doctor".into(),
             Offer::Inbox => "i inbox".into(),
             Offer::Journal => "j journal".into(),
@@ -772,7 +772,9 @@ fn draw(
 ) -> anyhow::Result<()> {
     use crate::picker::Tone;
     let mut text = render_numbered(b, crate::panes::now_secs(), home, paint);
-    text.push_str(&format!("\n{}\n", paint.ink(&footer(b), Tone::Dim)));
+    // The keys go on the frame's own hint row, where every picker has them;
+    // what the last key did stays under the brief, nearest where you read.
+    text.push('\n');
     if let Some(line) = pending_line(b, pending) {
         text.push_str(&format!("{}\n", paint.ink(&line, Tone::Strong)));
     } else if let Some(said) = said {
@@ -784,7 +786,14 @@ fn draw(
         .picker
         .resolved(crate::config::Picker::Panes)
         .look;
-    crate::picker::show_framed(&text, "[ Brief ]", crate::tmux::icons::HEALTH, &look, paint)
+    crate::picker::show_framed(
+        &text,
+        &footer(b),
+        "[ Brief ]",
+        crate::tmux::icons::HEALTH,
+        &look,
+        paint,
+    )
 }
 
 /// One key, read in raw mode, with the terminal put back before returning so
@@ -1219,7 +1228,7 @@ mod tests {
     fn the_footer_names_only_the_keys_that_do_something_now() {
         assert_eq!(
             footer(&busy()),
-            "1-3 go there   c close idle   h acknowledge health   d doctor   i inbox   j journal   s save   z quiet 1h   q close"
+            "1-3 go there   c close idle   h ack health   d doctor   i inbox   j journal   s save   z quiet 1h   q close"
         );
         let quiet = Brief {
             quiet: Some("quiet for 40m more".into()),

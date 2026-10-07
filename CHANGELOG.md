@@ -14,6 +14,19 @@ entry per phase of the comrades port.
   whole popup, with the list and the preview side by side under it, rather
   than as a line in the list's column.
 
+### Changed
+
+- Every popup puts its line of keys where the pickers do, from the same
+  `[picker] hint_position`: the brief, the restore screen, the run dialog
+  and the cheat sheet had theirs at the bottom. `hint_position = "hidden"`
+  now takes the line off all of them; a restore counting down still says
+  when it goes ahead.
+- The lines of keys are shorter and in one order everywhere: enter, the
+  picker's own keys, `ctrl-a`, the key that leaves, then plain words, as
+  `enter jump   ctrl-a clear   esc cancel`. Too wide for the popup, a line
+  drops whole groups from the right and keeps the first and the leaving
+  key, where it used to run off the edge.
+
 ## 0.8.0 - 2026-10-06
 
 The chunk clock, a brief you can act from, one look per agent state, and the

@@ -585,12 +585,75 @@ pub(super) fn ellipsized(line: &Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans).style(line.style)
 }
 
+/// Where the line of keys goes on a screen that is not a picker: the rest of
+/// the area, the hint's row and the rule between them, at the end
+/// `hint_position` names. Nothing is taken when the hint is hidden or empty,
+/// so a screen that asks gets the same answer a picker does.
+pub fn hint_rows(area: Rect, look: &super::Look, hint: &str) -> (Rect, Option<Rect>, Option<Rect>) {
+    if look.hint_position == Edge::Hidden || hint.trim().is_empty() || area.height < 2 {
+        return (area, None, None);
+    }
+    let rule = look.rules && area.height > 2;
+    let taken = 1 + u16::from(rule);
+    let row = |y: u16| Rect {
+        y,
+        height: 1,
+        ..area
+    };
+    if look.hint_position == Edge::Top {
+        let rest = Rect {
+            y: area.y + taken,
+            height: area.height - taken,
+            ..area
+        };
+        (rest, Some(row(area.y)), rule.then(|| row(area.y + 1)))
+    } else {
+        let rest = Rect {
+            height: area.height - taken,
+            ..area
+        };
+        let bottom = area.y + area.height - 1;
+        (rest, Some(row(bottom)), rule.then(|| row(bottom - 1)))
+    }
+}
+
+/// The line of keys as every picker draws it, fitted to `width`: the keys in
+/// bold and what they do in grey, so the eye finds the key first and reads
+/// the verb only when it needs to. Too wide, it loses whole groups by
+/// [`super::paint::fitted_hint`], and only a hint whose kept groups still
+/// don't fit is cut with `…`.
+pub fn hint_line(text: &str, paint: &Paint, width: u16) -> Line<'static> {
+    let room = usize::from(width).saturating_sub(1);
+    let text = super::paint::fitted_hint(text, room);
+    let mut words = vec![Span::raw(" ")];
+    words.extend(
+        super::paint::hint_parts(&text).into_iter().map(|(w, key)| {
+            Span::styled(w, paint.style(if key { Tone::Strong } else { Tone::Dim }))
+        }),
+    );
+    ellipsized(&Line::from(words), usize::from(width))
+}
+
+/// A rule the width of `width`, inset by one the way a picker's rules are.
+pub fn rule_line(look: &super::Look, paint: &Paint, width: u16) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(
+            " {}",
+            look.border
+                .horizontal()
+                .repeat(width.saturating_sub(1) as usize)
+        ),
+        paint.frame(),
+    ))
+}
+
 /// Text that is not a list, in a picker's frame: the same border, label and
 /// colours, a cell of space inside the border, and every line cut with `…`
 /// rather than wrapped. Draws once and leaves the cursor under the text,
 /// inside the frame, so a prompt printed next lands there until the next draw.
 pub fn show_framed(
     text: &str,
+    hint: &str,
     title: &str,
     icon: &str,
     look: &super::Look,
@@ -622,6 +685,13 @@ pub fn show_framed(
             }
             None => area,
         };
+        let (inner, hint_row, rule_row) = hint_rows(inner, look, hint);
+        if let Some(row) = hint_row {
+            frame.render_widget(Paragraph::new(hint_line(hint, paint, row.width)), row);
+        }
+        if let Some(row) = rule_row {
+            frame.render_widget(Paragraph::new(rule_line(look, paint, row.width)), row);
+        }
         let content = Rect {
             x: inner.x + 1,
             width: inner.width.saturating_sub(2),
@@ -797,17 +867,10 @@ pub(super) fn draw(
     let panes = panes(inner, chrome, previewing, state.preview_percent);
 
     if let Some(hint) = panes.hint {
-        // The keys in bold and what they do in grey, so the eye finds the
-        // key first and reads the verb only when it needs to.
-        let mut words = vec![Span::raw(" ")];
-        words.extend(
-            super::paint::hint_parts(&chrome.footer)
-                .into_iter()
-                .map(|(w, key)| {
-                    Span::styled(w, paint.style(if key { Tone::Strong } else { Tone::Dim }))
-                }),
+        frame.render_widget(
+            Paragraph::new(hint_line(&chrome.footer, paint, hint.width)),
+            hint,
         );
-        frame.render_widget(Paragraph::new(Line::from(words)), hint);
     }
 
     // Inset by one, so a rule reads as a line under the list rather than as a

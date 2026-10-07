@@ -1084,7 +1084,13 @@ colour = true
 # label that has eaten the corner.
 # label_offset = 2
 
-# Which end the line explaining the keys sits at: top, bottom or hidden.
+# Which end the line explaining the keys sits at: top, bottom or hidden. The
+# brief, the restore screen, the run dialog and the cheat sheet follow it too,
+# so "hidden" takes the line off every popup; a restore that is counting down
+# still says when it goes ahead. A hint of your own is best written the way the
+# shipped ones are: enter first, the picker's own keys, ctrl-a, the key that
+# leaves, then plain words, three spaces apart. Too wide for the popup, groups
+# drop from the right and the first and the leaving key stay.
 # hint_position = "top"
 
 # Whether that line is a row across the whole popup, over the list and the
@@ -1195,7 +1201,7 @@ colour = true
 #
 #   [picker.keys]
 #   label = "[ Keys ]"
-#   hint = "enter runs it   ctrl-a clears the filter   ctrl-d cancel"
+#   hint = "enter run   ctrl-a show all   esc cancel"
 #   preview_label = "[ What it runs ]"
 #   preview = "bottom"
 #   preview_percent = 30

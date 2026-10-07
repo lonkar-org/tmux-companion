@@ -674,7 +674,7 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
             crate::tmux::icons::PANE
         }
         .into(),
-        footer: "enter jumps there   ctrl-a clears the filter   esc cancels".into(),
+        footer: "enter jump   ctrl-a clear   esc cancel".into(),
         preview_title: "[ Screen ]".into(),
         ..Default::default()
     }

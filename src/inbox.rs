@@ -541,7 +541,7 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
     let chrome = crate::picker::Chrome {
         title: "[ Inbox ]".into(),
         icon: crate::tmux::icons::WAITING.into(),
-        footer: "enter jumps there   esc leaves them waiting".into(),
+        footer: "enter jump   esc leave waiting".into(),
         preview_title: "[ Where it stopped ]".into(),
         ..Default::default()
     }

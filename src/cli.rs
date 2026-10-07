@@ -1459,7 +1459,7 @@ async fn run_keys(
     let chrome = crate::picker::Chrome {
         title: "[ Keys ]".into(),
         icon: crate::tmux::icons::KEY.into(),
-        footer: "enter runs it   ctrl-a clears the filter, tmux's own too   esc cancels".into(),
+        footer: "enter run   ctrl-a show all   esc cancel".into(),
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
     }
@@ -1526,7 +1526,7 @@ async fn run_keys_unused(
     }
     .configured(&config.picker, crate::config::Picker::Keys);
     chrome.title = "[ Keys never used ]".into();
-    chrome.footer = format!("{summary}   enter runs it   esc cancels");
+    chrome.footer = format!("enter run   esc cancel   {summary}");
 
     let Some(index) = crate::picker::run(key_items(never.iter().copied()), "", &chrome)? else {
         return Ok(());
@@ -1621,7 +1621,7 @@ async fn run_keys_action(action: KeysAction) -> anyhow::Result<()> {
             chrome.title = "[ Key collisions ]".into();
             chrome.preview_title = "[ Who wants it ]".into();
             chrome.footer = format!(
-                "{} collisions   {} drift   {} free   esc closes",
+                "esc close   {} collisions   {} drift   {} free",
                 report.collisions.len(),
                 report.drift.len(),
                 report.free.len()
@@ -2079,16 +2079,32 @@ async fn run_cheatsheet(print: bool) -> anyhow::Result<()> {
 
     let (cols, lines) = terminal_size();
     let paint = crate::picker::Paint::for_stdout(false);
+    // The keys where every picker has them, from the same setting. The two
+    // lines the sheet holds back are this one and the footer.
+    let hint_at = config
+        .picker
+        .resolved(crate::config::Picker::Keys)
+        .look
+        .hint_position;
+    let hint = "any key to close";
+    if hint_at == crate::picker::Edge::Top {
+        println!(" {}", paint.ink(hint, crate::picker::Tone::Dim));
+    }
     print!(
         "{}",
         crate::cheatsheet::render_in(&sheet.boxes, cols, lines, &paint)
     );
 
     use std::io::Write;
-    if footer.is_empty() {
-        print!("\n  any key to close ");
-    } else {
-        print!("\n  {footer}   any key to close ");
+    let mut tail: Vec<&str> = Vec::new();
+    if !footer.is_empty() {
+        tail.push(&footer);
+    }
+    if hint_at == crate::picker::Edge::Bottom {
+        tail.push(hint);
+    }
+    if !tail.is_empty() {
+        print!("\n  {} ", tail.join("   "));
     }
     let _ = std::io::stdout().flush();
     wait_for_a_key();
@@ -2279,7 +2295,7 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     let chrome = crate::picker::Chrome {
         title: "[ Project ]".into(),
         icon: crate::tmux::icons::SESSION.into(),
-        footer: "alt-s = last session   type a path for a new one   esc cancels".into(),
+        footer: "enter open   alt-s last session   esc cancel   type a path for a new one".into(),
         preview_title: "[ Where ]".into(),
         // M-s opens this picker, so M-s again goes back where you were.
         alt_picks: crate::project::previous_session(&rows)
@@ -2682,9 +2698,7 @@ async fn run_new_window(print: bool) -> anyhow::Result<()> {
     let chrome = crate::picker::Chrome {
         title: "[ New window at ]".into(),
         icon: crate::tmux::icons::FOLDER.into(),
-        footer:
-            "enter opens a window   ctrl-a clears the filter   type a path that is not listed   esc cancels"
-                .into(),
+        footer: "enter open window   ctrl-a clear   esc cancel   type a path not listed".into(),
         preview_title: "[ Directory ]".into(),
         ..Default::default()
     }
@@ -3571,7 +3585,7 @@ async fn run_command(
     let chrome = crate::picker::Chrome {
         title: "[ Run command ]".into(),
         icon: crate::tmux::icons::RUN.into(),
-        footer: "enter runs it in a side pane   esc cancels".into(),
+        footer: "enter run beside   alt-enter run typed   esc cancel".into(),
         preview_title: String::new(),
         ..Default::default()
     }
@@ -3652,7 +3666,7 @@ async fn open_with_chosen(
     let chrome = crate::picker::Chrome {
         title: "[ Open with ]".into(),
         icon: crate::tmux::icons::RUN.into(),
-        footer: "enter opens it   esc cancels".into(),
+        footer: "enter open   esc cancel".into(),
         preview_title: "[ What it runs ]".into(),
         ..Default::default()
     }
@@ -3891,7 +3905,7 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
     use crate::run::{BUTTONS, Choice, button_label, default_button, step_button};
     use ratatui::{
         crossterm::event::{self, Event, KeyCode, KeyEventKind},
-        layout::{Alignment, Constraint, Direction, Layout},
+        layout::{Constraint, Direction, Layout},
         text::{Line, Span},
         widgets::Paragraph,
     };
@@ -3908,10 +3922,30 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
         )
     };
 
+    // The keys sit where every picker's do, from the same setting.
+    let look = config_or_default()
+        .picker
+        .resolved(crate::config::Picker::Run)
+        .look;
+    let hint = "enter selected   c close   v view   r restart   tab next   esc view";
     let mut terminal = ratatui::init();
     let result = (|| -> anyhow::Result<Choice> {
         loop {
             terminal.draw(|frame| {
+                let (area, hint_row, rule_row) =
+                    crate::picker::hint_rows(frame.area(), &look, hint);
+                if let Some(row) = hint_row {
+                    frame.render_widget(
+                        Paragraph::new(crate::picker::hint_line(hint, &paint, row.width)),
+                        row,
+                    );
+                }
+                if let Some(row) = rule_row {
+                    frame.render_widget(
+                        Paragraph::new(crate::picker::rule_line(&look, &paint, row.width)),
+                        row,
+                    );
+                }
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -3919,9 +3953,8 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
                         Constraint::Length(1),
                         Constraint::Length(1),
                         Constraint::Min(0),
-                        Constraint::Length(1),
                     ])
-                    .split(frame.area());
+                    .split(area);
 
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![Span::raw("  "), said.clone()])),
@@ -3947,15 +3980,6 @@ fn draw_dialog(code: i32) -> anyhow::Result<crate::run::Choice> {
                 let x = rows[2].x + u16::try_from(2 + before).unwrap_or(0);
                 frame.set_cursor_position((x.min(rows[2].right().saturating_sub(1)), rows[2].y));
                 frame.render_widget(Paragraph::new(Line::from(buttons)), rows[2]);
-
-                frame.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        "  Enter=default  c/v/r/q  \u{2190}/\u{2192}/Tab  Esc=view",
-                        paint.style(Tone::Dim),
-                    )))
-                    .alignment(Alignment::Left),
-                    rows[4],
-                );
             })?;
 
             let Event::Key(key) = event::read()? else {

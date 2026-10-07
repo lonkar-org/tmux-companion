@@ -274,7 +274,7 @@ fn theme_pick(
             Some(s) => format!("[ Theme for {s} ]"),
             None => "[ Theme ]".to_string(),
         },
-        footer: "enter applies it   esc cancels".into(),
+        footer: "enter apply   esc cancel".into(),
         preview_title: "[ Colours ]".into(),
         icon: crate::tmux::icons::THEME.into(),
         ..Default::default()

@@ -38,7 +38,7 @@ pub mod style;
 use ratatui::style::Color;
 
 pub use paint::{Paint, Tone};
-pub use screen::show_framed;
+pub use screen::{hint_line, hint_rows, rule_line, show_framed};
 pub use style::{BorderKind, Edge, LabelPosition, Look, PreviewBorder};
 
 /// One row a picker can show.
@@ -367,7 +367,7 @@ impl Default for Chrome {
     fn default() -> Self {
         Self {
             title: "[ Pick ]".into(),
-            footer: "enter picks   ctrl-a clears the filter   esc cancels".into(),
+            footer: "enter pick   ctrl-a clear   esc cancel".into(),
             preview_title: String::new(),
             preview: Preview::Right,
             preview_percent: 55,
