@@ -6,9 +6,9 @@
   "MD013": false,
   // CHANGELOG.md repeats Added, Changed and Fixed under every release.
   "MD024": { "siblings_only": true },
-  // README's side-by-side screenshots and collapsed sections, and <br> for a
-  // line break inside a table cell, have no Markdown spelling.
-  "MD033": { "allowed_elements": ["a", "br", "code", "details", "img", "p", "summary"] },
+  // README's banner heading, side-by-side screenshots and collapsed sections,
+  // and <br> for a line break inside a table cell, have no Markdown spelling.
+  "MD033": { "allowed_elements": ["a", "br", "code", "details", "h1", "img", "p", "picture", "source", "summary"] },
   // `companion: ` and `custom: ` are prefixes, and the trailing space is part
   // of what the reader types.
   "MD038": false

@@ -1,4 +1,9 @@
-# tmux-companion
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://media.lonkar.org/tmux-companion/banner-dark-2026-10-07.png">
+    <img alt="tmux-companion" src="https://media.lonkar.org/tmux-companion/banner-light-2026-10-07.png" width="1280">
+  </picture>
+</h1>
 
 [![CI](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml/badge.svg)](https://github.com/lonkar-org/tmux-companion/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/tmux-companion?logo=rust&logoColor=white)](https://crates.io/crates/tmux-companion)

@@ -119,7 +119,7 @@ function sync() {
   // The landing page is the README, less its H1 and badges: the site has
   // its own title, and the badges are for the repository page.
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  const body = readme.replace(/^# .+\n+/, '').replace(/^(\[!\[.*\n)+\n*/, '');
+  const body = readme.replace(/^(# .+|<h1>[\s\S]*?<\/h1>)\n+/, '').replace(/^(\[!\[.*\n)+\n*/, '');
   write('index.md', frontmatter({ title: 'tmux-companion', editUrl: false }) + relink(body, 'README.md'));
 
   for (const [name, [page, title, lang]] of Object.entries(EXAMPLES)) {
