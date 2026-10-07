@@ -3282,9 +3282,25 @@ fn setup_writes_through_the_link_sources_the_block_and_merges_the_config() {
     );
     t.must(&["send-keys", "-t", "write", "Escape"]);
 
-    let rows = setup_rows(&t);
-    assert_eq!(rows["inbox"].0, "on");
-    assert_eq!(rows["window-names"].0, "on");
+    // Read until both say on rather than once. macOS CI on tmux 3.4 once
+    // read window-names as cant-tell here (2026-10-07, passed on rerun),
+    // which is the config failing to load in the `setup --print` process,
+    // and neither 300 runs on the final file nor 25 of this test under load
+    // reproduced it. A failure prints the file and `config check`, so the
+    // next one says what it read.
+    let both_on = |rows: &std::collections::HashMap<String, (String, String)>| {
+        rows["inbox"].0 == "on" && rows["window-names"].0 == "on"
+    };
+    if !t.until(10, |t| both_on(&setup_rows(t))) {
+        let rows = setup_rows(&t);
+        let (out, err, _) = t.run(&["config", "check"]);
+        panic!(
+            "inbox {:?}, window-names {:?}\nconfig.toml:\n{}\nconfig check:\n{out}{err}",
+            rows["inbox"],
+            rows["window-names"],
+            std::fs::read_to_string(&config).unwrap_or_default()
+        );
+    }
 }
 
 // ── The key hold ───────────────────────────────────────────────────────
