@@ -10,6 +10,10 @@ entry per phase of the comrades port.
 - `M-s` in the project picker switches straight to the session you were in
   before this one, so `M-s M-s` goes back, where it was up and enter. It
   does nothing when there is no other session.
+- The documentation is a website, https://tmux-companion.lonkar.org, with a
+  search across every page, the manual page and the example configs. It is
+  built from `docs/` at each release, so it says what the release you can
+  install does.
 - `grok` and `agy`, Antigravity's CLI, are agents by default: on the bar,
   in the agents picker and the inbox, restored with their arguments, and
   left out of the long-command notice. Without hooks of their own they are

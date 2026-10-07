@@ -27,11 +27,15 @@ on:
     paths:
       - '**'
       - '!**/*.md'
+      - '!site/**'
+      - '!.github/workflows/docs.yml'
       - 'skills/tmux-companion/SKILL.md'
   pull_request:
     paths:
       - '**'
       - '!**/*.md'
+      - '!site/**'
+      - '!.github/workflows/docs.yml'
       - 'skills/tmux-companion/SKILL.md'
   workflow_dispatch:
 

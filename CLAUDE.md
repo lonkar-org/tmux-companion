@@ -311,6 +311,28 @@ in the container.
 `docs/tmux.conf.full.example`, and the e2e checks in `tests/e2e.rs` run over
 all three.
 
+## The docs site
+
+https://tmux-companion.lonkar.org is `docs/` built with Starlight from
+`site/`. `site/scripts/sync.mjs` turns the docs into pages at build time: each
+H1 becomes the page title, relative links become routes or GitHub links, the
+man page goes through mandoc, and the example configs get a page each. Nothing
+it generates is committed, so `docs/` stays the one source and reads the same
+on GitHub. Only tutorial, how-to, reference and explanation are published;
+`dev/` and `backlog/` are not.
+
+`.github/workflows/docs.yml` deploys it to GitHub Pages when the Release
+workflow finishes, with the words of that release and the site from main, so
+the site never documents what brew can't install yet. A pull request that
+touches the docs builds it without deploying. `just docs-dev` serves it with
+live reload; `just docs-build` builds it the way CI does.
+
+A new page needs its file under one of the four directories, with an H1 on
+its first line. The tutorial, how-to and explanation sidebars are generated
+from their directories; reference lists its pages in `site/astro.config.mjs`,
+so a new reference page gets a line there too. A link to a file outside the
+four becomes a GitHub link at the release's tag.
+
 ## The skill
 
 `skills/tmux-companion/SKILL.md` is the instruction sheet a coding agent loads

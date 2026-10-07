@@ -5,6 +5,9 @@
 #                   digest; a new digest behind the same tag is a pull request
 #   github-actions  every `uses:` pinned to a commit SHA, with the version in a
 #                   trailing comment that Dependabot rewrites alongside it
+#   npm             site/package-lock.json, the docs site's Astro and
+#                   Starlight; one pull request a week, majors included,
+#                   because the site's own build in docs.yml tests them
 #   cargo           Cargo.lock, now that the crate is on crates.io and the lock
 #                   is what `cargo install --locked` builds; minor and patch
 #                   bumps in one pull request, a major on its own, because a
@@ -38,3 +41,11 @@ updates:
     groups:
       crates:
         update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    groups:
+      site:
+        patterns: ['*']

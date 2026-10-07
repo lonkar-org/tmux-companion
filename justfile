@@ -252,6 +252,15 @@ playground-tourpass:
 plugin-check:
     ./scripts/release-plugin.sh check
 
+# Needs Node 22 or later and mandoc; docs/ is read at whatever is checked out.
+# The documentation site with live reload, at http://localhost:4321.
+docs-dev:
+    cd site && npm ci && npm run dev
+
+# The documentation site built into site/dist, the way docs.yml builds it.
+docs-build:
+    cd site && npm ci && npm run build
+
 # One version's CHANGELOG.md section; `--details 0.8.0` is what the release
 # notes print, each part collapsed. The release gate fails a tag that has none.
 changelog-section *ARGS:
