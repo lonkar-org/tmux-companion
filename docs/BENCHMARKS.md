@@ -13,6 +13,25 @@ Everything below is one machine on one day: a MacBookPro16,1, 16 cores, macOS
 26.6.2, tmux 3.7c, zsh 5.9, fzf 0.74.3, measured 2026-09-23. Reproduce it with
 `just bench`.
 
+
+## What it costs
+
+Measured from inside tmux on one machine, against the zsh this replaced, with
+the method beside the numbers below.
+
+|                                    |                                   |
+| ---------------------------------- | --------------------------------- |
+| the bar                            | 29.71 ms/s, 3.0% of a core        |
+| the zsh bar it replaced            | 344.01 ms/s, 34.4% of a core      |
+| a picker, keypress to first row    | 86 ms, and the zsh took 82        |
+| a picker, CPU per press            | 33.3 ms, against 66.7 for the zsh |
+| the whole right side, computed     | 1.43 ms                           |
+| one fork and exec, as tmux runs it | 13.07 ms                          |
+
+The picker rows are the honest part. Opening one is not faster: what a person
+waits through is `display-popup` at 21 ms, a process starting and a terminal
+painting, and none of that got cheaper. What halved is what it costs to do.
+
 ## The before arm is the real thing
 
 Both arms are the code that actually ran, not a reconstruction of it.

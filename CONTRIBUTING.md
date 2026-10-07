@@ -101,3 +101,20 @@ only the host target, so every cross build fails while the host one works. Put
 
 MIT, the same as the rest of the repository. By sending a patch you're agreeing
 it can ship under that licence.
+
+## Building
+
+Rust 1.95 or newer, which is what the locked dependencies build on. No system
+libraries.
+
+```sh
+cargo build --release      # target/release/tmux-companion, about 4 MB
+cargo test                 # 1179 unit, 32 integration, 45 end-to-end against a real tmux
+
+# on a machine somebody is using, keep off every core
+nice -n 15 cargo build --release -j 4
+```
+
+Releases carry four binaries: macOS on Apple silicon and Intel, Linux on ARM and
+on Intel or AMD. The Linux pair link statically against musl, so one binary runs
+on any distribution.
