@@ -24,7 +24,7 @@ If you run multi agents in terminal and use tmux, this makes it easy to be on to
          alt="The brief: the four agents waiting on you, numbered to jump to, then health, the session and agent count, and how long you have been sitting"></a>
 </p>
 
-<p align="center">What each agent is doing at glance | What's brief status across sessions</p>
+<p align="center">What each agent is doing at a glance | What's brief status across sessions</p>
 
 <p align="center">
   <a href="https://asciinema.org/a/1267082">
@@ -69,6 +69,11 @@ machine. [docs/how-to/playground.md](docs/how-to/playground.md).
 
 ## Install
 
+**All five paths**, with the flags and how to remove it again, are in
+[docs/how-to/install.md](docs/how-to/install.md).
+
+### Quick
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lonkar-org/tmux-companion/main/scripts/install.sh | bash
 tmux-companion doctor
@@ -77,9 +82,6 @@ tmux-companion doctor
 That downloads the binary for your machine, checks it against the checksums the
 release published, and puts it on PATH. Nothing to compile. Read the script
 first if you'd rather not pipe it, which is a fair thing to want.
-
-All five paths, with the flags and how to remove it again, are in
-[docs/how-to/install.md](docs/how-to/install.md).
 
 Then the way in, from a shell that is not in tmux yet:
 
@@ -126,13 +128,14 @@ My tmux config shelled out for everything. The bar spawned five processes a
 second. Every binding that needed to think ran a zsh script that started a
 shell, read some config, called `fzf`, and exited. I'd built it that way over
 years, a script at a time, and never added it up.
+That's how this repository started, I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts/ten-years-of-tmux/).
 
-So there's one process now. It holds its caches, answers over a unix socket, and
-everything my tmux used to shell out for talks to it instead.
-
-I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts/ten-years-of-tmux/).
+Then multi agent workspace became difficult to context-switch and focus,
+this time instead of writing scripts add feature to companion for handling multiple agents.
 
 ## Documentation
+
+<img src="https://with-love.lonkar.org/favicon.svg" height="18" alt="With love"/> [https://with-love.lonkar.org/tmux-companion/](https://with-love.lonkar.org/tmux-companion/) for easy search and navigation.
 
 |              |                                                                                    |                                                                                            |
 | ------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -155,6 +158,9 @@ I wrote a post about it too: [ten years of tmux](https://yogesh.lonkar.org/posts
 | contributing | [CHANGELOG.md](CHANGELOG.md)                                                       | what changed                                                                               |
 
 ### Contributing
+
+The code and features are stable enough that I have not done lot of fixes,
+I do use it everyday so the DX could be improved.
 
 Patches welcome, including the ones that tell me I got something wrong.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the three commands CI runs.
