@@ -5,6 +5,15 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-07
+
+Popups that agree with each other, M-s twice to go back a session, a docs
+website at https://tmux-companion.lonkar.org, and grok and agy counted as
+agents. One thing to know on upgrade: `[picker] hint_position = "hidden"`
+now hides the line of keys on the brief, the restore screen, the run dialog
+and the cheat sheet too, and a `hint` of your own in `[picker.*]` still
+replaces the shipped line, which is now shorter and in one order.
+
 ### Added
 
 - `M-s` in the project picker switches straight to the session you were in
