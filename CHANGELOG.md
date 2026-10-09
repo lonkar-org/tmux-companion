@@ -91,6 +91,13 @@ entry per phase of the comrades port.
   pushed. While main has changes no release carries yet, every page says
   so in a banner and names the latest release.
 
+### Fixed
+
+- The project picker opens a directory typed in full that its source has
+  never listed, as its footer and the manual said it would: enter on a path
+  that matches no row, or alt-enter on any path. It used to close and do
+  nothing. A path that is not a directory says so rather than closing quietly.
+
 ## 0.9.1 - 2026-10-07
 
 The documentation's address. Nothing in the binary changed.

@@ -2339,18 +2339,59 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         ..chrome
     };
 
-    let Some(index) = crate::picker::run(items, "", &chrome)? else {
-        return Ok(());
-    };
-    let Some(row) = rows.get(index) else {
-        return Ok(());
-    };
-
-    match row.kind {
+    let outcome = crate::picker::run_with_query(items, "", &chrome)?;
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    match project_pick(&outcome, &rows, &cwd, &home) {
         // Switched to by its own name: deriving one from the path is wrong for
         // any session whose path is not a project directory.
-        Kind::Session => focus_session(&row.label).await,
-        Kind::Directory => open_project(&row.path, &config, &home).await,
+        ProjectPick::Session(name) => focus_session(&name).await,
+        ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
+        ProjectPick::Missing(typed) => {
+            crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
+            Ok(())
+        }
+        ProjectPick::Nothing => Ok(()),
+    }
+}
+
+/// What the project picker's answer opens.
+#[derive(Debug, PartialEq, Eq)]
+enum ProjectPick {
+    /// A live session, by name.
+    Session(String),
+    /// A directory, listed or typed, to open a session in.
+    Directory(String),
+    /// A typed path that is not a directory, as it was typed.
+    Missing(String),
+    /// Cancelled, or enter on an empty query.
+    Nothing,
+}
+
+/// A row picked, or the query when enter matched nothing (or alt-enter asked
+/// for the query itself): the one way into a directory the source has never
+/// listed, which the footer has always promised.
+fn project_pick(
+    outcome: &crate::picker::Outcome,
+    rows: &[crate::project::Row],
+    cwd: &str,
+    home: &str,
+) -> ProjectPick {
+    use crate::picker::Outcome;
+    use crate::project::Kind;
+    match outcome {
+        Outcome::Chosen(i) => match rows.get(*i) {
+            Some(r) if r.kind == Kind::Session => ProjectPick::Session(r.label.clone()),
+            Some(r) => ProjectPick::Directory(r.path.clone()),
+            None => ProjectPick::Nothing,
+        },
+        Outcome::Typed(q) if q.trim().is_empty() => ProjectPick::Nothing,
+        Outcome::Typed(q) => match crate::project::resolve_typed(q, cwd, home) {
+            Some(path) => ProjectPick::Directory(path),
+            None => ProjectPick::Missing(q.trim().to_string()),
+        },
+        Outcome::Cancelled => ProjectPick::Nothing,
     }
 }
 
@@ -4621,6 +4662,43 @@ async fn run_zen(pane: Option<String>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_project_picker_opens_a_typed_directory_it_never_listed() {
+        use crate::picker::Outcome;
+        use crate::project::{Kind, Row};
+        let home = tempfile::tempdir().unwrap();
+        let unlisted = home.path().join("w/never-visited");
+        std::fs::create_dir_all(&unlisted).unwrap();
+        let home = home.path().canonicalize().unwrap().display().to_string();
+        let row = |kind, label: &str, path: &str| Row {
+            kind,
+            label: label.into(),
+            path: path.into(),
+            colour: None,
+            idle: None,
+        };
+        let rows = vec![
+            row(Kind::Session, "api", "/w/api"),
+            row(Kind::Directory, "web", "/w/web"),
+        ];
+        let pick = |o: Outcome| project_pick(&o, &rows, "/", &home);
+        assert_eq!(pick(Outcome::Chosen(0)), ProjectPick::Session("api".into()));
+        assert_eq!(
+            pick(Outcome::Chosen(1)),
+            ProjectPick::Directory("/w/web".into())
+        );
+        assert_eq!(
+            pick(Outcome::Typed("~/w/never-visited".into())),
+            ProjectPick::Directory(format!("{home}/w/never-visited")),
+        );
+        assert_eq!(
+            pick(Outcome::Typed(" ~/w/nowhere ".into())),
+            ProjectPick::Missing("~/w/nowhere".into()),
+        );
+        assert_eq!(pick(Outcome::Typed("  ".into())), ProjectPick::Nothing);
+        assert_eq!(pick(Outcome::Cancelled), ProjectPick::Nothing);
+    }
     use clap::CommandFactory;
 
     #[test]
