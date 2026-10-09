@@ -96,6 +96,55 @@ pub struct Config {
     /// Quiet hours that come round every day.
     #[serde(default)]
     pub quiet: Quiet,
+    /// Which way `toggle` moves through a session's windows.
+    #[serde(default)]
+    pub toggle: Toggle,
+}
+
+/// Which way `toggle` moves through a session's windows.
+///
+/// The default is the Alt-Tab shape: the first press goes to the window you
+/// were on before, and presses that follow inside `chain_ms` keep going the
+/// way that first jump went, by index. A terminal never sees a key released,
+/// so the time between presses stands in for letting go of Alt.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Toggle {
+    /// `recent`, the Alt-Tab shape, or `right` or `left` for a plain cycle by
+    /// index with no timing in it at all.
+    pub order: ToggleOrder,
+    /// How soon a press has to follow the last one to carry on the sweep
+    /// rather than start again from the last window, in milliseconds.
+    pub chain_ms: u64,
+    /// Put the window's name and place on tmux's message line once the
+    /// presses stop, `chain_ms` after the last one, since the key moves focus
+    /// and nothing else says where it went. Not on every press: a message
+    /// covers the whole status line, window list included.
+    pub announce: bool,
+}
+
+impl Default for Toggle {
+    fn default() -> Self {
+        Self {
+            order: ToggleOrder::Recent,
+            // 800 ms: time for the eye to land on the bar and decide to go on.
+            chain_ms: 800,
+            announce: true,
+        }
+    }
+}
+
+/// The orders [`Toggle::order`] takes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToggleOrder {
+    /// The last window first, then on by index the way that jump went.
+    #[default]
+    Recent,
+    /// The next window by index, wrapping from the last to the first.
+    Right,
+    /// The previous window by index, wrapping from the first to the last.
+    Left,
 }
 
 /// Quiet hours on a schedule, beside the timer `tmux-companion quiet` sets.
@@ -1532,6 +1581,7 @@ impl Default for Config {
             chunk: Chunk::default(),
             keys: Keys::default(),
             quiet: Quiet::default(),
+            toggle: Toggle::default(),
         }
     }
 }

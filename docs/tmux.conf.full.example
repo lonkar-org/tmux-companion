@@ -296,6 +296,8 @@ bind -N "companion: window jump to an agent" G \
 bind -N "companion: window jump to an agent" G \
   display-popup -E -w 80% -h 70% "tmux-companion panes --agents"
 %endif
+# The window you were on before; keep pressing within 800 ms to sweep on by
+# index the way that went. [toggle] in config.toml makes it a plain cycle.
 bind -N "companion: project toggle the tools in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
 # The flip between the two most recent windows, for a session with more than two.

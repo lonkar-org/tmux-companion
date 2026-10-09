@@ -1341,15 +1341,51 @@ The daemon writes it to
 in the state directory as it happens.
 It is off by default.
 .It Ic toggle Oo Ar session Oc Op Fl -last
-Move to the next window in this session, in index order, wrapping from the
-last to the first.
+Move to another window in this session, in the order
+.Ic [toggle] order
+gives.
+The default,
+.Ql recent ,
+is the Alt-Tab shape: the first press goes to the window the session was on
+before, and each press within
+.Ic [toggle] chain_ms
+of the last one, 800 milliseconds unless set, goes on by index in the
+direction that first jump went, wrapping at the ends.
+When the presses stop, the window the sweep started from is tmux's last
+window again, so the next first press goes back there.
+.Ql right
+and
+.Ql left
+move to the next or previous window by index every time, with no timing.
 Windows are told apart by index, so two windows with the same name are two
-stops.
+stops, and the window pockets are parked in is passed over.
+With
+.Ic [toggle] announce ,
+on by default, the window's name and its place, such as
+.Ql ai, 2 of 4 ,
+go on the message line once the presses stop, at
+.Ic chain_ms
+after the last one.
+It waits because a tmux message covers the whole status line, and one on
+every press would hide the window list during a sweep.
+.Pp
+The sweep is timed: a terminal never reports a key being released, so the
+gap between presses stands in for letting go of Alt.
+Somebody who presses slower than
+.Ic chain_ms
+gets the flip every time and never the sweep; a longer
+.Ic chain_ms ,
+.Ql right
+or
+.Ql left ,
+or
 .Fl -last
-flips to the window the session was on before instead, which is tmux's own
-.Ic last-window :
-with two windows the two are the same key, and with four the flip is what a
-toggle means and the cycle is a tour.
+are the paths with no clock in them.
+.Pp
+.Fl -last
+flips to the window the session was on before, which is tmux's own
+.Ic last-window ,
+with no sweep and no timing.
 A
 .Ar window
 after the session is accepted and ignored, so older bindings that pass
@@ -1697,9 +1733,10 @@ The sections are
 .Ic [status] , [sh_jobs] , [usage] , [[layout]] , [autoreload] ,
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
-.Ic [picker] , [journal] , [online] , [open] , [earcons] , [chunk]
+.Ic [picker] , [journal] , [online] , [open] , [earcons] , [chunk] ,
+.Ic [keys]
 and
-.Ic [keys] .
+.Ic [toggle] .
 .Bl -tag -width Ds
 .It Ic config path
 Which file is being read.

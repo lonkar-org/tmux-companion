@@ -836,6 +836,93 @@ fn project_builds_the_windows_the_layout_asks_for() {
     assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
 }
 
+/// `toggle` says where it landed once the presses stop, not on each one.
+///
+/// tmux draws a message over the whole status line, so the message every
+/// press used to put up hid the window list a sweep is watched on, until a
+/// key cleared it. The inner server here has a real client, drawn in the
+/// outer pane, so the status line is read off the screen the way it is seen.
+#[test]
+fn toggle_says_where_it_landed_after_the_presses_stop() {
+    let Some(h) = KeyHold::start_any("toggle-say", "set -g display-time 60000\n") else {
+        return;
+    };
+    for _ in 0..2 {
+        h.inner_tmux(&["new-window", "-d", "-t", "i:"]);
+    }
+    let bar = |h: &KeyHold| {
+        let screen = h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"]);
+        screen.lines().last().unwrap_or_default().to_string()
+    };
+    h.companion("[toggle]\nchain_ms = 3000\n", "toggle i");
+    // Straight after the press the bar is still the window list.
+    let first = bar(&h);
+    assert!(!first.contains(" of 3"), "said before the delay: {first:?}");
+    h.wait_for("the announcement", || bar(&h).contains(", 2 of 3"));
+}
+
+/// `toggle` goes to the last window, sweeps on the way that jump went, and
+/// leaves the window the sweep began in as tmux's last, the Alt-Tab shape.
+///
+/// The unit tests in `src/toggle.rs` model what tmux does with two
+/// `select-window`s in one call; this is tmux doing it, on every pinned
+/// version. The delay is a minute so a slow runner is never between presses
+/// for longer than it.
+#[test]
+fn toggle_sweeps_the_way_the_first_jump_went_and_remembers_where_it_began() {
+    let Some(t) = Tmux::start("toggle-sweep") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[toggle]\nchain_ms = 60000\nannounce = false\n",
+    )
+    .unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("sweep", &dir);
+    for _ in 0..3 {
+        t.must(&["new-window", "-d", "-t", "=sweep:"]);
+    }
+    let ids: Vec<String> = t
+        .tmux(&["list-windows", "-t", "=sweep", "-F", "#{window_id}"])
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(ids.len(), 4, "{ids:?}");
+    let (a, b, c, d) = (&ids[0], &ids[1], &ids[2], &ids[3]);
+    // On a, then over to c by hand: c active, a last.
+    t.must(&["select-window", "-t", &format!("=sweep:{c}")]);
+    let state = |t: &Tmux| {
+        t.tmux(&[
+            "list-windows",
+            "-t",
+            "=sweep",
+            "-F",
+            "#{window_id} #{window_active}#{window_last_flag}",
+        ])
+    };
+    let active = |t: &Tmux| {
+        let s = state(t);
+        s.lines()
+            .find(|l| l.ends_with(" 10"))
+            .and_then(|l| l.split(' ').next())
+            .unwrap_or_else(|| panic!("no active window in {s:?}"))
+            .to_string()
+    };
+    // a is to the left of c, so the sweep goes left: a, d, c, b.
+    for want in [a, d, c, b] {
+        let (_, err, ok) = t.run(&["toggle", "sweep"]);
+        assert!(ok, "{err}");
+        assert_eq!(&active(&t), want, "{}", state(&t));
+    }
+    // c, where it began, is tmux's last window, so `--last` goes back there.
+    let s = state(&t);
+    assert!(s.lines().any(|l| l == format!("{c} 01")), "{s:?}");
+    let (_, err, ok) = t.run(&["toggle", "--last", "sweep"]);
+    assert!(ok, "{err}");
+    assert_eq!(&active(&t), c, "{}", state(&t));
+}
+
 /// Three presses of the pocket key: out, away, and back, the same pane
 /// throughout.
 #[test]
@@ -3352,7 +3439,7 @@ impl KeyHold {
     }
 
     /// Start both servers whatever the tmux, for the test that checks the
-    /// router refuses one too old for it.
+    /// router refuses one too old for it and for tests that need no router.
     fn start_any(name: &str, conf_text: &str) -> Option<Self> {
         Self::start_on(name, conf_text, None, false)
     }

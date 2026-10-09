@@ -69,7 +69,8 @@ bind -N "companion: project pick a project" -n M-s \
   display-popup -E -w 80% -h 70% "tmux-companion project"
 %endif
 
-# The next window in this session, wrapping at the end.
+# The window you were on before; keep pressing within 800 ms to sweep on by
+# index the way that went. [toggle] in config.toml makes it a plain cycle.
 bind -N "companion: project toggle the windows in this session" -n M-a \
   run-shell "tmux-companion toggle '#{session_name}'"
 # The flip between the two most recent windows, for a session with more than two.

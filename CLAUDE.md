@@ -196,6 +196,7 @@ description they had.
 | `src/tasks.rs` | background work the daemon does on a timer, and the small tmux commands that do not need one |
 | `src/theme/mod.rs` | theme arithmetic: the readable text colour for a theme, a visible border colour, and the lighter and darker siblings of a cube colour |
 | `src/theme/cli.rs` | the client half of `theme`: the subcommands that read a themes directory, run the picker and source a file into tmux, which talk to the terminal and so run in the client rather than the daemon |
+| `src/toggle.rs` | which window `toggle` moves to: the one you were on before, then on by index the way that jump went |
 | `src/tmux/mod.rs` | everything that knows about tmux's own formatting language |
 | `src/tmux/format.rs` | colours, styles and the string builder every segment renders through |
 | `src/tmux/icons.rs` | Nerd Font codepoints the status bar draws with |

@@ -333,7 +333,8 @@ pub enum Cmd {
         out: Option<String>,
     },
 
-    /// Move to the next window in this session, wrapping at the end
+    /// Move to the window you were on before, and on by index while the key
+    /// keeps coming; `[toggle] order` makes it a plain cycle
     Toggle {
         /// The session to act on, which the binding passes so the key acts on
         /// the pane it was pressed in
@@ -3457,15 +3458,15 @@ pub(crate) async fn tmux(args: &[&str]) {
     let _ = crate::tmux::command().args(args).status().await;
 }
 
-/// `toggle`: move to the next window in this session.
+/// `toggle`: move to another window in this session, in the order
+/// `[toggle] order` says; [`crate::toggle`] has the rule.
 ///
 /// The window argument is accepted and not used. The session's own active
 /// window is the one the key was pressed in, and it is an index where the
 /// binding could only pass a name, which two windows can share.
 ///
 /// `--last` is tmux's own `last-window`: the flip between the two most recent
-/// windows, which is what a toggle means once a session has four windows and
-/// cycling through all of them stops being a toggle at all.
+/// windows, with no clock and no sweep.
 async fn run_toggle(
     session: Option<String>,
     _window: Option<String>,
@@ -3479,21 +3480,7 @@ async fn run_toggle(
         tmux(&["last-window", "-t", &format!("={session}")]).await;
         return Ok(());
     }
-    let out = crate::tmux::command()
-        .args([
-            "list-windows",
-            "-t",
-            &format!("={session}"),
-            "-F",
-            "#{window_index} #{window_active} #{window_name}",
-        ])
-        .output()
-        .await?;
-    let list = String::from_utf8_lossy(&out.stdout);
-    if let Some(target) = crate::tasks::toggle_target(&list) {
-        tmux(&["select-window", "-t", &format!("={session}:{target}")]).await;
-    }
-    Ok(())
+    crate::toggle::run(&session, &config_or_default().toggle).await
 }
 
 /// `autosave`: the timer lives in the daemon, so this is the manual half.

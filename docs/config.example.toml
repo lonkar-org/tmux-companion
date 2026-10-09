@@ -1312,3 +1312,26 @@ hold_ms = 170
 # intent = "tree"
 # tmux = "choose-tree"
 # nvim = "NvimTree"
+
+[toggle]
+# Which way `toggle`, M-a in the example tmux.conf, moves through a session's
+# windows. "recent" is the Alt-Tab shape: the first press goes to the window
+# you were on before, and each press inside chain_ms of the last one keeps
+# going by index the way that first jump went, wrapping at the ends. When you
+# stop, the window you started from is tmux's last window again. "right" and
+# "left" are a plain cycle by index with no clock in it, the way toggle used
+# to work. `toggle --last` (M-A) is the flip on its own, untimed.
+order = "recent"
+
+# How soon a press has to follow the one before to carry the sweep on, in
+# milliseconds. A slower press starts again from the last window, so anybody
+# who presses slowly gets the flip and never the sweep: raise it, or use
+# "right" or "left". Zero makes every press the flip.
+chain_ms = 800
+
+# Say where the key landed, the window's name and its place, `ai, 2 of 4`, on
+# tmux's message line, chain_ms after the last press, for tmux's display-time.
+# It waits because a message covers the whole status line, window list too,
+# and one per press hid the list a sweep is watched on. The key moves focus;
+# this says where.
+announce = true

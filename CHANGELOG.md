@@ -20,6 +20,15 @@ entry per phase of the comrades port.
 
 ### Changed
 
+- `toggle`, `M-a`, works like Alt-Tab: the first press goes to the window
+  you were on before, and presses within 800 ms go on by index the way that
+  jump went, leaving the window you started from as the last one. Where it
+  landed, the window's name and place, goes on the message line once the
+  presses stop, so the message never covers the window list mid-sweep. `[toggle] order =
+  "right"` is the old left-to-right cycle and `"left"` the reverse;
+  `chain_ms` and `announce` tune the rest. a11y: limited, the sweep is timed,
+  so slow presses only flip; `chain_ms`, `order` and `toggle --last` are the
+  untimed paths.
 - The documentation site follows main and no longer waits for a release:
   a change to `docs/` or the README is on
   <https://with-love.lonkar.org/tmux-companion/> a minute or two after it's

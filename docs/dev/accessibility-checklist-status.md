@@ -67,7 +67,7 @@ What each status means:
 | --- | --- | --- |
 | A modal "companion mode" key table | build | A tmux key table entered once with single keys inside. A tmux-side design, small code |
 | Every binding reachable from that table; `keys` shows the table | build | Part of the above. `keys` already shows the table a binding lives in |
-| No timing requirements | done | No `-r` bindings shipped, pickers have no timeouts, resurrect can wait (`confirm_wait`), `hold_ms` can be raised. Advice on `escape-time` is easy to add |
+| No timing requirements | done | No `-r` bindings shipped, pickers have no timeouts, resurrect can wait (`confirm_wait`), `hold_ms` can be raised. Advice on `escape-time` is easy to add. One limit: `toggle`'s sweep (`M-a`) needs presses within `[toggle] chain_ms`, 800 ms; slower presses always get the flip. `chain_ms` can be raised, `order = "right"` or `"left"` has no clock, and `toggle --last` is the flip alone |
 | Confirmations take one key | done | `confirm-before` y/n for kill, close and forget; `sessions idle` asks on a line |
 | Wide click targets on the bar | done | The click range covers the whole segment, not one glyph |
 | Pickers take numbers and arrows | done | Arrows on main, numbers in line mode on the branch |

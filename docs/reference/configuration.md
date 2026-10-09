@@ -88,6 +88,7 @@ one is explained on this page:
 | `[bar]`                                                     | the background the segments draw against                          | [The bar's own background](#the-bars-own-background)                               |
 | `[picker]`, `[picker.<name>]`                               | how every picker is laid out, and one picker's exceptions         | [How the pickers are drawn](#how-the-pickers-are-drawn)                            |
 | `[open]`, `[[open.application]]`                            | what `open` does with a file, and what `open --choose` offers     | [What open does with a file](#what-open-does-with-a-file)                          |
+| `[toggle]`                                                  | which way `toggle` moves through a session's windows              | [Which way toggle goes](#which-way-toggle-goes)                                    |
 
 There are no tmux user options. A mapping of this tree onto `@` options would
 cost a `show-options` round trip per option per render, and would produce
@@ -1125,3 +1126,34 @@ left alone. An editor wants a pane and a browser doesn't, and the wrong answer
 is either a browser holding a pane open forever or an editor with nowhere to
 draw. Empty means no chooser, and `--choose` then opens what it would have
 opened anyway rather than showing a picker with nothing in it.
+
+## Which way toggle goes
+
+```toml
+[toggle]
+order = "recent"
+chain_ms = 800
+announce = true
+```
+
+`toggle`, `M-a` in the example tmux.conf, works the way Alt-Tab does by
+default. The first press goes to the window you were on before. Press again
+within `chain_ms` and it keeps going by index in the direction that first jump
+went, wrapping at the ends: on `c` with `a` as the last window, presses go
+`a`, `d`, `c`, `b`, and with the last window to the right they sweep right.
+When you stop, the window you started from is tmux's last window again, so the
+next first press takes you back there.
+
+A terminal never tells tmux a key was let go, so the gap between presses
+stands in for letting go of Alt, and that makes the sweep timed. Anybody who
+presses slower than `chain_ms` gets the flip every time and never the sweep.
+Raise `chain_ms`, or set `order` to `"right"` or `"left"` for a plain cycle by
+index that has no clock in it at all. `toggle --last`, `M-A`, is the flip on
+its own. `chain_ms = 0` makes every press the flip.
+
+`announce` puts the window's name and its place, `ai, 2 of 4`, on tmux's
+message line once the presses stop, `chain_ms` after the last one, for as long
+as tmux's `display-time` says. The key moves focus, and nothing else says
+where it went. It waits because a tmux message covers the whole status line,
+window list included, and a message on every press hid the list you watch a
+sweep on until a key cleared it.

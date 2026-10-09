@@ -168,4 +168,6 @@ pub mod tasks;
 #[doc(hidden)]
 pub mod theme;
 #[doc(hidden)]
+pub mod toggle;
+#[doc(hidden)]
 pub mod window_names;

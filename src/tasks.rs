@@ -122,37 +122,6 @@ pub async fn autosave_loop(
     }
 }
 
-/// Which window a toggle should move to, as a `#{window_index}`.
-///
-/// Takes the session's live windows as `#{window_index} #{window_active}`
-/// lines and cycles through them in index order, so three windows move through
-/// three. Windows are told apart by index, never by name: two windows called
-/// `zsh` or `editor` are two windows, and a name matched against a saved layout
-/// found the first one every time and went nowhere. `None` means there is
-/// nowhere to go, one window or no active one.
-pub fn toggle_target(list: &str) -> Option<u32> {
-    let mut windows: Vec<(u32, bool)> = list
-        .lines()
-        .filter_map(|l| {
-            let mut f = l.trim().splitn(3, ' ');
-            let index = f.next()?.parse().ok()?;
-            let active = f.next()? == "1";
-            // The window pockets are parked in is not one to cycle into,
-            // unless that is where the key was pressed.
-            if !active && f.next() == Some(crate::pocket::WINDOW) {
-                return None;
-            }
-            Some((index, active))
-        })
-        .collect();
-    if windows.len() < 2 {
-        return None;
-    }
-    windows.sort_by_key(|w| w.0);
-    let here = windows.iter().position(|w| w.1)?;
-    Some(windows[(here + 1) % windows.len()].0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,52 +148,6 @@ mod tests {
         // 2000-03-01T00:00:00Z: 1900 was not a leap year and 2000 was, which is
         // where a hand-rolled calendar usually goes wrong.
         assert_eq!(format_unix(951_868_800), "2000-03-01 00:00:00 UTC");
-    }
-
-    #[test]
-    fn toggling_passes_the_pocket_window_unless_it_is_where_you_are() {
-        // Three windows and a parked pocket: the cycle is the three.
-        let list = "1 0 edit\n2 1 ai\n3 0 _pocket\n4 0 my logs\n";
-        assert_eq!(toggle_target(list), Some(4));
-        let at_the_end = "1 0 edit\n2 1 ai\n3 0 _pocket\n";
-        assert_eq!(toggle_target(at_the_end), Some(1));
-        // Pressed inside it, the key still leaves.
-        let inside = "1 0 edit\n3 1 _pocket\n";
-        assert_eq!(toggle_target(inside), Some(1));
-        // The old two-field listing still reads.
-        assert_eq!(toggle_target("1 1\n2 0\n"), Some(2));
-    }
-
-    #[test]
-    fn toggling_moves_to_the_other_window() {
-        assert_eq!(toggle_target("1 1\n2 0\n"), Some(2));
-        assert_eq!(toggle_target("1 0\n2 1\n"), Some(1));
-    }
-
-    #[test]
-    fn three_windows_cycle_through_three() {
-        let at = |active: u32| {
-            let list: String = (1..=3)
-                .map(|i| format!("{i} {}\n", u32::from(i == active)))
-                .collect();
-            toggle_target(&list)
-        };
-        assert_eq!(at(1), Some(2));
-        assert_eq!(at(2), Some(3));
-        assert_eq!(at(3), Some(1));
-    }
-
-    #[test]
-    fn gaps_in_the_numbering_are_followed_in_order() {
-        // A closed window leaves a hole, and tmux lists in its own order.
-        assert_eq!(toggle_target("7 0\n0 1\n3 0\n"), Some(3));
-        assert_eq!(toggle_target("7 1\n0 0\n3 0\n"), Some(0));
-    }
-
-    #[test]
-    fn one_window_has_nothing_to_toggle_to() {
-        assert_eq!(toggle_target("1 1\n"), None);
-        assert_eq!(toggle_target(""), None);
     }
 
     #[tokio::test]
