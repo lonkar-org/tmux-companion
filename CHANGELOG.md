@@ -7,6 +7,13 @@ entry per phase of the comrades port.
 
 ### Added
 
+- `[bar] mode = "push"`: the daemon renders each attached session's right
+  side once a second and sets it as the session option `@tc-right`, so
+  `status-right` expands it without starting a process. The recommended line
+  falls back to the call while the option is unset, which the daemon makes
+  it when it stops. With one client the bar costs 34.5 ms of CPU a second
+  instead of 41.5, and each further client adds nothing, where a call costs
+  about 11 ms a second per client.
 - Rulesets on the repository. A pull request into main needs a maintainer's
   approval, a passing `required` check and no new CodeQL errors, and merges
   as a squash; main can't be force-pushed or deleted. Only a maintainer can
@@ -14,11 +21,60 @@ entry per phase of the comrades port.
   `scripts/release-plugin.sh` refuse a tag that isn't on main.
   CodeQL runs on every pull request, Markdown-only ones too, since the rule
   waits for its results.
+- `just bench-capped`: the pickers and the daemon's idle cost under a fixed
+  CPU load, in a throwaway home with its own tmux server and daemon, split
+  into phases through `TMUX_COMPANION_TRACE`. The setup it builds is a
+  working day's: sessions of agents, editors and shells, and 166 directories.
 - `markdown.yml` and `just lint-md`: markdownlint's default rules over every
   Markdown file, less line length for now
   (`docs/backlog/markdown-line-length.md`).
 
 ### Changed
+
+- The example `tmux.conf` files draw the right side with a line that shows
+  the pushed `@tc-right` while the daemon's heartbeat is fresh and runs
+  `#(tmux-companion status-right ...)` otherwise, so a crashed daemon costs
+  the bar 30 seconds at most and the call starts a new one; an unclean stop
+  is logged, written to `crashes.tsv`, and put on the health mark, and
+  twice within a minute says so too. And
+  `[bar] mode` defaults to `auto`: the daemon pushes when `status-right`
+  reads `@tc-right` on tmux 3.4 or newer, and otherwise leaves the bar to the
+  call, which a `status-right` on the old line keeps doing at no extra cost.
+  `doctor` has a `bar` line saying which and why; the health mark says so
+  when tmux is too old to push.
+- The project, new-window and panes pickers build a row's preview when the
+  row is selected instead of every preview before the list appears. The
+  project picker opens in 79 ms rather than 249 on an idle machine and in
+  121 ms rather than 446 under load; the panes picker in 47 and 82 rather
+  than 86 and 194. The list is on screen while the first preview is made.
+- The project and new-window pickers draw their frame, prompt and a
+  `loading` line before collecting their rows, so the popup is the picker
+  at once: about 45 ms after the key on an idle machine and 60 under load,
+  where the rows take 90 and 120. Keys typed meanwhile reach the picker.
+- Keys typed faster than a picker draws are handled together and drawn
+  once, and a row's preview is built only once no key is waiting. Five keys
+  typed at once into the panes picker show in 19 ms under load, from 38.
+- A popup asks tmux for its theme's accent on a thread of its own while it
+  collects rows, and reads the configuration once rather than two or three
+  times. The panes picker's first row comes 66 ms after the key under load,
+  from 82.
+- The key list asks tmux for every binding in one listing plus the notes of
+  each table, all at once, rather than nine listings one after another: the
+  first `?` after a daemon start or a tmux.conf edit takes 36 ms, from about
+  90.
+- The daemon reads the pane list once for the inbox, notify and journal
+  loops and the agent count on the bar, where each ran its own `list-panes`
+  on its own timer. The processes the daemon starts while idle cost 21 ms of
+  CPU a second, from 26.
+- The project picker reads the session list, the theme files and the
+  directory source side by side rather than one after another; its first
+  row comes 99 ms after the key under load, from 119.
+- A charging battery is read every 10 seconds rather than every second, the
+  network rate keeps one interface list instead of building one a second,
+  two bars missing the git cache together run `git status` once, and the
+  agent count trusts the inbox loop's last read for a second longer.
+- `just bench-ab REV`: a revision against the working tree through
+  `bench-capped`, alternated so thermal drift lands on both.
 
 - `toggle`, `M-a`, works like Alt-Tab: the first press goes to the window
   you were on before, and presses within 800 ms go on by index the way that

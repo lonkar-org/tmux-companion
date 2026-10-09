@@ -270,16 +270,29 @@ pub fn resolve_typed(query: &str, cwd: &str, home: &str) -> Option<String> {
 
 /// Every row the picker should show: sessions first, then the directory source.
 pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
-    let sessions = sessions_from(&tmux_sessions().await, crate::sessions::idle::now());
     let source = crate::dirsource::DirsSource::from_config(&config.project);
     if source == crate::dirsource::DirsSource::None {
-        return sessions;
+        return sessions_from(&tmux_sessions().await, crate::sessions::idle::now());
     }
-    let map = std::fs::read_to_string(project_map_path(home))
-        .map(|t| parse_project_map(&t))
-        .unwrap_or_default();
-    let colours = theme_colours(&read_theme_files(home));
-    let listing = source.list(home).await.join("\n");
+    // The three are independent and were done one after another: the session
+    // list (a tmux process), every theme file (a hundred and more reads), and
+    // the directory source (a zoxide process). Side by side, the wait is the
+    // longest of them rather than their sum, which on a capped CPU is most of
+    // what this picker took to collect.
+    let themes_home = home.to_string();
+    let (sessions, themes, listing) = tokio::join!(
+        tmux_sessions(),
+        tokio::task::spawn_blocking(move || {
+            let map = std::fs::read_to_string(project_map_path(&themes_home))
+                .map(|t| parse_project_map(&t))
+                .unwrap_or_default();
+            (map, theme_colours(&read_theme_files(&themes_home)))
+        }),
+        source.list(home),
+    );
+    let sessions = sessions_from(&sessions, crate::sessions::idle::now());
+    let (map, colours) = themes.unwrap_or_default();
+    let listing = listing.join("\n");
     merge(
         sessions,
         directories_from(&listing, &map, &colours, &config.theme.default),

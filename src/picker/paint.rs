@@ -136,10 +136,17 @@ impl Paint {
     /// One `list-clients` and one config read, once per picker. Anything that
     /// fails leaves the default rather than stopping the picker: a popup in
     /// the wrong colour is still a popup.
+    ///
+    /// Asked once per process and kept: a picker that drew a loading frame
+    /// before its rows has already paid for it, and the frame with the rows
+    /// must not pay a second time.
     pub fn detect() -> Self {
-        let glyphs = crate::config::load()
-            .map(|(c, _)| crate::config::GlyphMap::new(&c.glyphs))
-            .unwrap_or_default();
+        static ONCE: std::sync::OnceLock<Paint> = std::sync::OnceLock::new();
+        ONCE.get_or_init(Self::detect_now).clone()
+    }
+
+    fn detect_now() -> Self {
+        let glyphs = crate::config::GlyphMap::new(&crate::cli::config_or_default().glyphs);
         let ask = |args: &[&str]| -> String {
             crate::tmux::command_sync()
                 .args(args)

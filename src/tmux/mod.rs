@@ -22,6 +22,9 @@ pub const UTF8_FLAG: &str = "-u";
 /// A `tmux` command with [`UTF8_FLAG`] already on it, for anything whose
 /// output gets read.
 pub fn command() -> tokio::process::Command {
+    // Counted by the benchmark: how many tmux processes a process starts is
+    // what a capped CPU charges for.
+    crate::trace::mark("tmux");
     let mut cmd = tokio::process::Command::new("tmux");
     cmd.arg(UTF8_FLAG);
     cmd

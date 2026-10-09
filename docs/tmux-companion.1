@@ -1766,6 +1766,27 @@ is what the segments draw their caps against and has to match
 it used to be a compiled-in
 .Ql colour233 ,
 which is one person's bar and nobody else's.
+.Ic [bar] mode
+is
+.Ql call ,
+tmux starting a client from
+.Ql #()
+every
+.Ic status-interval ;
+.Ql push ,
+the daemon setting the session option
+.Ql @tc-right
+once a second for
+.Ic status-right
+to expand without starting anything; or
+.Ql auto ,
+the default, which pushes when the global
+.Ic status-right
+reads
+.Ql @tc-right
+and tmux is 3.4 or newer.
+.Ic doctor
+says which it chose and why.
 .Ic [picker] preview
 is where every picker puts its preview pane, or
 .Ql none
@@ -2066,6 +2087,14 @@ A client replaces a daemon from an older build and leaves a newer one alone,
 saying so once, so a development build run beside the installed one wants a
 socket of its own here rather than the two taking turns replacing each other's
 daemon
+.It Ev TMUX_COMPANION_TRACE
+a file each process appends timing marks to, one line per mark: its pid, what
+happened
+.Pq Li main , chrome , rows , paint , drawn , key , tmux
+and the wall-clock time.
+.Pa scripts/bench-capped.sh
+reads it to split a picker's opening into phases and to count the tmux
+processes the daemon starts; unset, nothing is written
 .It Ev TMUX_COMPANION_TMUX_CONF
 the tmux configuration the daemon watches for key bindings and
 .Ic [autoreload] ,

@@ -66,10 +66,14 @@ pub fn count(
     sample
 }
 
-/// Read the pane list and count.
-pub async fn sample(programs: &[String], reports: &Reports, waiting_secs: u64) -> AgentsSample {
-    let panes = panes::list().await;
-    count(&panes, programs, reports, panes::now_secs(), waiting_secs)
+/// Count from a pane list already read.
+pub fn sample(
+    panes: &[panes::Pane],
+    programs: &[String],
+    reports: &Reports,
+    waiting_secs: u64,
+) -> AgentsSample {
+    count(panes, programs, reports, panes::now_secs(), waiting_secs)
 }
 
 /// The segment: `N agents`, then `· M busy`, `· M waiting`, or both, or

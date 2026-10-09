@@ -69,6 +69,7 @@ pub async fn report_in(paint: &crate::picker::Paint) -> String {
         Tone::Waiting
     };
     line(&mut out, "health", health, tone);
+    line(&mut out, "bar", bar_state(), Tone::Plain);
     line(&mut out, "setup", setup_state().await, Tone::Plain);
     line(&mut out, "tmux", tmux_version(), Tone::Plain);
     line(&mut out, "platform", platform(), Tone::Plain);
@@ -537,6 +538,20 @@ fn state_dir_state() -> String {
         ),
         _ => dir.display().to_string(),
     }
+}
+
+/// Push or call, and why, worked out the way the daemon works it out.
+fn bar_state() -> String {
+    let mode = crate::cli::config_or_default().bar.mode;
+    let status_right = tmux_options()
+        .and_then(|o| o.get("status-right").cloned())
+        .unwrap_or_default();
+    let tmux_v = crate::tmux::command_sync()
+        .arg("-V")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    crate::push::describe(mode, &crate::push::decide(mode, &status_right, &tmux_v))
 }
 
 fn tmux_version() -> String {

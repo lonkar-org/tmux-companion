@@ -50,6 +50,8 @@ pub(super) struct Row {
     pub swatch: Option<Color>,
     /// What the preview pane shows for this row.
     pub preview: String,
+    /// Builds `preview` the first time this row is selected, then goes.
+    pub lazy: Option<super::LazyPreview>,
 }
 
 /// A row that survived the query, and where it matched.
@@ -83,6 +85,9 @@ pub(super) struct State {
     preview_scroll: u16,
     /// The preview's share, which ctrl-p cycles.
     preview_percent: u16,
+    /// The selected row's preview parsed into lines, by row index, so a
+    /// frame that did not change the selection does not parse it again.
+    preview_lines: Option<(usize, Vec<Line<'static>>)>,
     matcher: Matcher,
 }
 
@@ -123,6 +128,7 @@ impl State {
                 icon: item.icon.clone(),
                 swatch: item.swatch.as_deref().and_then(super::colour_of),
                 preview: item.preview.clone(),
+                lazy: item.lazy.clone(),
             })
             .collect();
         let icon_width = icon_width(&rows);
@@ -138,6 +144,7 @@ impl State {
             offset: 0,
             preview_scroll: 0,
             preview_percent,
+            preview_lines: None,
             matcher: Matcher::new(Config::DEFAULT),
         };
         state.refilter();
@@ -226,6 +233,47 @@ impl State {
 
     fn current(&self) -> Option<&Row> {
         self.hits.get(self.selected).map(|h| &self.rows[h.row])
+    }
+
+    /// The selected row's preview as lines, parsed once per row.
+    ///
+    /// Keyed on the row, and dropped when a lazy preview fills in, since that
+    /// is the one way a row's preview text changes after the picker opens.
+    fn preview_lines(&mut self) -> Vec<Line<'static>> {
+        let Some(h) = self.hits.get(self.selected) else {
+            return Vec::new();
+        };
+        let row = h.row;
+        match &self.preview_lines {
+            Some((at, lines)) if *at == row => lines.clone(),
+            _ => {
+                let lines = super::ansi::into_lines(&self.rows[row].preview);
+                self.preview_lines = Some((row, lines.clone()));
+                lines
+            }
+        }
+    }
+
+    /// Build the selected row's preview if it is lazy and not built yet.
+    ///
+    /// True when it built one, so the loop draws again before it waits for a
+    /// key: the frame before this one showed the list with the preview pane
+    /// empty, which is the point -- the list is on screen while the preview is
+    /// being made, not after. Built once per row and kept, including when it
+    /// comes back empty, so moving back over a row costs nothing.
+    fn fill_preview(&mut self) -> bool {
+        let Some(h) = self.hits.get(self.selected) else {
+            return false;
+        };
+        let row = &mut self.rows[h.row];
+        match row.lazy.take() {
+            Some(lazy) => {
+                row.preview = lazy.build();
+                self.preview_lines = None;
+                true
+            }
+            None => false,
+        }
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -863,7 +911,13 @@ pub(super) fn draw(
         None => area,
     };
 
-    let previewing = preview.filter(|_| state.current().is_some_and(|r| !r.preview.is_empty()));
+    // A lazy row not built yet keeps its pane, empty for one frame, so the
+    // list does not change width under the cursor when the preview arrives.
+    let previewing = preview.filter(|_| {
+        state
+            .current()
+            .is_some_and(|r| !r.preview.is_empty() || r.lazy.is_some())
+    });
     let panes = panes(inner, chrome, previewing, state.preview_percent);
 
     if let Some(hint) = panes.hint {
@@ -966,7 +1020,7 @@ pub(super) fn draw(
 
     // The preview, in its own box.
     if let Some(area) = panes.preview
-        && let Some(row) = state.current()
+        && state.current().is_some()
     {
         // The line the preview is drawn with is the outer box's when there is
         // one, and rounded when there is not. Taking it from the outer border
@@ -1000,13 +1054,87 @@ pub(super) fn draw(
         // than the pane on purpose, so they reach its edge -- and folded the
         // overhang onto the next line as a stray block of colour.
         frame.render_widget(
-            Paragraph::new(super::ansi::into_lines(&row.preview)).scroll((state.preview_scroll, 0)),
+            Paragraph::new(state.preview_lines()).scroll((state.preview_scroll, 0)),
             body,
         );
     }
 }
 
 // ── The loop ─────────────────────────────────────────────────────────────────
+
+/// The terminal a loading frame took, kept for the picker that follows.
+///
+/// Kept rather than set up again: a second `ratatui::init` would enter the
+/// alternate screen twice, and a fresh `Terminal` diffs against an empty
+/// buffer, so the loading line would stay on screen wherever the real frame
+/// has a blank.
+static EARLY: std::sync::Mutex<Option<Term>> = std::sync::Mutex::new(None);
+
+/// The picker's terminal: ratatui's, writing through a buffer.
+///
+/// `ratatui::init` writes to `Stdout`, a `LineWriter` with a 1 KiB buffer, so
+/// one frame of a popup with colour in it went out as dozens of writes, and
+/// the tmux server parsed and redrew each one; on a capped CPU that server is
+/// short of time too. Through a 64 KiB buffer a frame is one write, flushed
+/// by `Terminal::draw` at its end.
+type Term =
+    ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::BufWriter<std::io::Stdout>>>;
+
+/// Raw mode, the alternate screen and the panic hook that undoes them, from
+/// `ratatui::init`; then a terminal of our own over a buffered stdout.
+fn init_terminal() -> Term {
+    drop(ratatui::init());
+    let out = std::io::BufWriter::with_capacity(64 << 10, std::io::stdout());
+    match ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(out)) {
+        Ok(t) => t,
+        Err(e) => {
+            ratatui::restore();
+            panic!("could not set up the terminal: {e}");
+        }
+    }
+}
+
+/// Draw the picker's chrome, with one static line where the rows will go,
+/// before the caller collects them.
+///
+/// The line is a row like any other so the terminal's cursor sits on it and
+/// a screen reader reads it, and it is replaced once, by the rows, never
+/// updated in place.
+pub(super) fn draw_loading(chrome: &Chrome, query: &str) -> anyhow::Result<()> {
+    let items = [Item::new("loading")];
+    let mut state = State::new(
+        &items,
+        query,
+        chrome.preview_percent,
+        &chrome.look.column_order,
+    );
+    let paint = Paint::detect();
+    state.apply_glyphs(&paint);
+    let mut terminal = init_terminal();
+    terminal.draw(|frame| draw(frame, &mut state, chrome, None, &paint))?;
+    crate::trace::mark("chrome");
+    if let Ok(mut early) = EARLY.lock() {
+        *early = Some(terminal);
+    }
+    Ok(())
+}
+
+/// Give the terminal back when a loading frame was drawn and no picker
+/// followed it: no rows, an error, `--print` decided late.
+pub(super) fn abandon_loading() {
+    let taken = EARLY.lock().ok().and_then(|mut e| e.take());
+    if taken.is_some() {
+        ratatui::restore();
+    }
+}
+
+fn take_terminal() -> Term {
+    EARLY
+        .lock()
+        .ok()
+        .and_then(|mut e| e.take())
+        .unwrap_or_else(init_terminal)
+}
 
 /// Show the picker and wait for a decision.
 pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Result<Ended> {
@@ -1026,8 +1154,12 @@ pub(super) fn run_keyed(
     keys: &[char],
     start_at: Option<usize>,
 ) -> anyhow::Result<Ended> {
-    use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    use std::time::Duration;
 
+    // Every row and every preview exists by now; what came before this was
+    // the caller collecting them.
+    crate::trace::mark("rows");
     let mut state = State::new(
         items,
         query,
@@ -1039,7 +1171,8 @@ pub(super) fn run_keyed(
     }
     let paint = Paint::detect();
     state.apply_glyphs(&paint);
-    let mut terminal = ratatui::init();
+    crate::trace::mark("paint");
+    let mut terminal = take_terminal();
     // Whatever happens below, the terminal goes back to how it was found. A
     // picker that panics with raw mode still on leaves the pane unusable and
     // the person with no way to read the panic.
@@ -1052,79 +1185,32 @@ pub(super) fn run_keyed(
                 chrome.look.min_list_width,
             );
             terminal.draw(|frame| draw(frame, &mut state, chrome, preview, &paint))?;
-
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if key.kind != KeyEventKind::Press {
+            crate::trace::mark("drawn");
+            // Built only when nothing is waiting: keys typed faster than a
+            // frame would otherwise each build the preview of a row the next
+            // key moves away from.
+            if !event::poll(Duration::ZERO)? && state.fill_preview() {
                 continue;
             }
-            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-            let alt = key.modifiers.contains(KeyModifiers::ALT);
 
-            match key.code {
-                KeyCode::Esc => return Ok(Ended::Cancelled),
-                KeyCode::Char('d') if ctrl => return Ok(Ended::Cancelled),
-                KeyCode::Char('c') if ctrl => return Ok(Ended::Cancelled),
-                KeyCode::Enter if alt => return Ok(Ended::Typed(state.query.clone())),
-                KeyCode::Enter => {
-                    return Ok(match state.current() {
-                        Some(row) => Ended::Chosen(row.index),
-                        None => Ended::Typed(state.query.clone()),
-                    });
-                }
-                // Down and Up mean down and up the screen, which is not the
-                // same as forwards and backwards through the list once the
-                // list is drawn from the bottom.
-                KeyCode::Down => state.move_by(arrow_step(true, 1, chrome.look.list_from)),
-                KeyCode::Up => state.move_by(arrow_step(false, 1, chrome.look.list_from)),
-                KeyCode::PageDown => state.move_by(arrow_step(true, 10, chrome.look.list_from)),
-                KeyCode::PageUp => state.move_by(arrow_step(false, 10, chrome.look.list_from)),
-                // ctrl-j and ctrl-k scroll the preview rather than the list,
-                // which is what the fzf bindings this replaces did.
-                KeyCode::Char('k') if ctrl => {
-                    state.preview_scroll = state.preview_scroll.saturating_sub(1);
-                }
-                KeyCode::Char('j') if ctrl => {
-                    state.preview_scroll = state.preview_scroll.saturating_add(1);
-                }
-                // Tab does the same with one key, for anybody a chord is
-                // two keys too many.
-                KeyCode::Char('p') if ctrl => state.cycle_preview(),
-                KeyCode::Tab => state.cycle_preview(),
-                KeyCode::Char(c)
-                    if alt
-                        && let Some(&(_, i)) = chrome.alt_picks.iter().find(|(k, _)| *k == c) =>
+            // Every event already waiting is handled before the next frame, so
+            // a burst of keys typed while a frame was being drawn costs one
+            // more frame, not one each. Nothing waits for keys that might
+            // come: what is there is drained, and the loop draws.
+            let mut ev = event::read()?;
+            loop {
+                if let Event::Key(key) = ev
+                    && key.kind == KeyEventKind::Press
                 {
-                    return Ok(Ended::Chosen(i));
-                }
-                KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
-                    if let Some(row) = state.current() {
-                        return Ok(Ended::Key(c, row.index));
+                    crate::trace::mark("key");
+                    if let Some(end) = apply_key(&mut state, key, chrome, keys) {
+                        return Ok(end);
                     }
                 }
-                // ctrl-a and ctrl-u both clear. They are one key in most
-                // people's hands and two in fzf's, and a picker is not the
-                // place to be strict about which.
-                // Delete as well, the one key on a full keyboard that says
-                // "take this away" without a modifier.
-                KeyCode::Char('a') | KeyCode::Char('u') if ctrl => {
-                    state.query.clear();
-                    state.refilter();
+                if !event::poll(Duration::ZERO)? {
+                    break;
                 }
-                KeyCode::Delete => {
-                    state.query.clear();
-                    state.refilter();
-                }
-                KeyCode::Backspace => {
-                    state.query.pop();
-                    state.refilter();
-                }
-                KeyCode::Char(c) if !ctrl => {
-                    state.query.push(c);
-                    state.refilter();
-                }
-                _ => {}
+                ev = event::read()?;
             }
         }
     })();
@@ -1132,9 +1218,196 @@ pub(super) fn run_keyed(
     result
 }
 
+/// One key applied to the picker: `Some` when it ends it.
+fn apply_key(
+    state: &mut State,
+    key: ratatui::crossterm::event::KeyEvent,
+    chrome: &Chrome,
+    keys: &[char],
+) -> Option<Ended> {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+    match key.code {
+        KeyCode::Esc => return Some(Ended::Cancelled),
+        KeyCode::Char('d') if ctrl => return Some(Ended::Cancelled),
+        KeyCode::Char('c') if ctrl => return Some(Ended::Cancelled),
+        KeyCode::Enter if alt => return Some(Ended::Typed(state.query.clone())),
+        KeyCode::Enter => {
+            return Some(match state.current() {
+                Some(row) => Ended::Chosen(row.index),
+                None => Ended::Typed(state.query.clone()),
+            });
+        }
+        // Down and Up mean down and up the screen, which is not the
+        // same as forwards and backwards through the list once the
+        // list is drawn from the bottom.
+        KeyCode::Down => state.move_by(arrow_step(true, 1, chrome.look.list_from)),
+        KeyCode::Up => state.move_by(arrow_step(false, 1, chrome.look.list_from)),
+        KeyCode::PageDown => state.move_by(arrow_step(true, 10, chrome.look.list_from)),
+        KeyCode::PageUp => state.move_by(arrow_step(false, 10, chrome.look.list_from)),
+        // ctrl-j and ctrl-k scroll the preview rather than the list,
+        // which is what the fzf bindings this replaces did.
+        KeyCode::Char('k') if ctrl => {
+            state.preview_scroll = state.preview_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('j') if ctrl => {
+            state.preview_scroll = state.preview_scroll.saturating_add(1);
+        }
+        // Tab does the same with one key, for anybody a chord is
+        // two keys too many.
+        KeyCode::Char('p') if ctrl => state.cycle_preview(),
+        KeyCode::Tab => state.cycle_preview(),
+        KeyCode::Char(c)
+            if alt && let Some(&(_, i)) = chrome.alt_picks.iter().find(|(k, _)| *k == c) =>
+        {
+            return Some(Ended::Chosen(i));
+        }
+        KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
+            if let Some(row) = state.current() {
+                return Some(Ended::Key(c, row.index));
+            }
+        }
+        // ctrl-a and ctrl-u both clear. They are one key in most
+        // people's hands and two in fzf's, and a picker is not the
+        // place to be strict about which.
+        // Delete as well, the one key on a full keyboard that says
+        // "take this away" without a modifier.
+        KeyCode::Char('a') | KeyCode::Char('u') if ctrl => {
+            state.query.clear();
+            state.refilter();
+        }
+        KeyCode::Delete => {
+            state.query.clear();
+            state.refilter();
+        }
+        KeyCode::Backspace => {
+            state.query.pop();
+            state.refilter();
+        }
+        KeyCode::Char(c) if !ctrl => {
+            state.query.push(c);
+            state.refilter();
+        }
+        _ => {}
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_parsed_preview_follows_the_row_and_a_lazy_fill() {
+        let items = vec![
+            Item::with_preview("a", "first"),
+            Item::with_lazy_preview("b", || "built later".into()),
+        ];
+        let mut state = State::new(&items, "", 0, &[]);
+        let text = |lines: Vec<Line<'static>>| -> String {
+            lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(text(state.preview_lines()), "first");
+        assert_eq!(
+            text(state.preview_lines()),
+            "first",
+            "a second frame reuses it"
+        );
+        state.move_by(1);
+        assert_eq!(text(state.preview_lines()), "", "not built yet");
+        assert!(state.fill_preview());
+        assert_eq!(
+            text(state.preview_lines()),
+            "built later",
+            "the fill drops the old parse"
+        );
+    }
+
+    fn press(c: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
+        ratatui::crossterm::event::KeyEvent::new(c, ratatui::crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_burst_of_keys_applied_together_ends_where_one_at_a_time_would() {
+        use ratatui::crossterm::event::KeyCode;
+        let items: Vec<Item> = ["alpha", "beta", "gamma"]
+            .iter()
+            .map(|n| Item::new(*n))
+            .collect();
+        let chrome = Chrome::default();
+        let mut state = State::new(&items, "", 0, &[]);
+        // "gam" then Enter, as one drained burst: the Enter sees the
+        // filtered list, the same as if a frame had been drawn between.
+        for c in ['g', 'a', 'm'] {
+            assert!(apply_key(&mut state, press(KeyCode::Char(c)), &chrome, &[]).is_none());
+        }
+        match apply_key(&mut state, press(KeyCode::Enter), &chrome, &[]) {
+            Some(Ended::Chosen(i)) => assert_eq!(i, 2),
+            _ => panic!("enter on a match chooses it"),
+        }
+    }
+
+    #[test]
+    fn escape_in_a_burst_ends_the_picker_whatever_came_before() {
+        use ratatui::crossterm::event::KeyCode;
+        let items = vec![Item::new("alpha")];
+        let chrome = Chrome::default();
+        let mut state = State::new(&items, "", 0, &[]);
+        assert!(apply_key(&mut state, press(KeyCode::Char('x')), &chrome, &[]).is_none());
+        assert!(matches!(
+            apply_key(&mut state, press(KeyCode::Esc), &chrome, &[]),
+            Some(Ended::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn a_lazy_preview_is_built_for_the_selected_row_only_and_only_once() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let built = Arc::new(AtomicUsize::new(0));
+        let items: Vec<Item> = ["alpha", "beta", "gamma"]
+            .iter()
+            .map(|name| {
+                let (built, name) = (built.clone(), name.to_string());
+                Item::with_lazy_preview(name.clone(), move || {
+                    built.fetch_add(1, Ordering::SeqCst);
+                    format!("inside {name}")
+                })
+            })
+            .collect();
+        let mut state = State::new(&items, "", 0, &[]);
+        assert_eq!(
+            built.load(Ordering::SeqCst),
+            0,
+            "nothing before the first frame"
+        );
+
+        assert!(state.fill_preview());
+        assert_eq!(built.load(Ordering::SeqCst), 1);
+        let first = state.current().unwrap().preview.clone();
+        assert!(first.starts_with("inside "), "{first:?}");
+        assert!(!state.fill_preview(), "the same row is not built twice");
+
+        state.move_by(1);
+        assert!(state.fill_preview());
+        state.move_by(-1);
+        assert!(!state.fill_preview(), "moving back costs nothing");
+        assert_eq!(built.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn an_empty_lazy_preview_is_not_built_again() {
+        let items = vec![Item::with_lazy_preview("a", String::new)];
+        let mut state = State::new(&items, "", 0, &[]);
+        assert!(state.fill_preview());
+        assert!(!state.fill_preview());
+    }
 
     #[test]
     fn a_line_too_long_is_cut_with_an_ellipsis_and_keeps_its_styles() {

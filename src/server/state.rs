@@ -32,6 +32,14 @@ pub const REPO_CHECK_TTL: Duration = Duration::from_secs(300);
 /// does not move fast enough to matter.
 pub const BATTERY_TTL: Duration = Duration::from_secs(30);
 
+/// How long a render that shows the battery charging is trusted.
+///
+/// It used not to be cached at all, so on mains power the bar asked the
+/// battery every second, through IOKit on the blocking pool, for a figure
+/// that moves one percent in a minute or so. Ten seconds keeps the charging
+/// figure close to live and drops nine reads in ten.
+pub const BATTERY_CHARGING_TTL: Duration = Duration::from_secs(10);
+
 /// Everything the server keeps between requests: the bandwidth previous
 /// sample, the directory aliases, and the three caches.
 ///
@@ -63,6 +71,17 @@ pub struct ServerState {
     /// The count rather than the render, because the render depends on the
     /// bar background and the count is the part that costs a tmux call.
     pub agents_cache: Option<(AgentsSample, Instant)>,
+    /// The last `list-panes -a`, and when it was read: one listing for the
+    /// inbox, notify and journal loops and the agents segment, each taking
+    /// it when it is younger than its own interval. See `panes::shared`.
+    pub pane_list: Option<(Vec<crate::panes::Pane>, Instant)>,
+    /// Why the bar cannot be pushed, when that is worth the health mark: a
+    /// tmux too old under `[bar] mode = "auto"`. See `push::health_reason`.
+    pub bar_note: Option<String>,
+    /// Unclean stops of the daemon before this one, as the health mark says
+    /// them; see `push::note_unclean_stop`. Kept for the failure window or
+    /// until `health ack`, like a failure, but not worded as one.
+    pub unclean: Vec<(String, Instant)>,
     /// When this daemon came up, for telling a file edited since from one
     /// edited before.
     pub started_at: std::time::SystemTime,
@@ -101,6 +120,11 @@ pub struct ServerState {
     pub agent_reported: bool,
     /// Parsed `git status`, keyed by canonicalized repository path.
     git_cache: TtlMap<PathBuf, GitStatus>,
+    /// One lock per repository a `git status` is being run for, so two bar
+    /// requests that miss the cache together run git once: the second waits
+    /// for the first and reads what it stored. Bounded by the repositories
+    /// the bar has shown, the same as `git_cache`.
+    git_flights: HashMap<PathBuf, std::sync::Arc<tokio::sync::Mutex<()>>>,
     /// Whether a path is inside a git work tree, keyed by canonicalized path.
     repo_check: TtlMap<PathBuf, bool>,
     /// Repository roots the bar has drawn, for the autofetch task.
@@ -147,6 +171,9 @@ impl ServerState {
             },
             battery_cache: None,
             agents_cache: None,
+            pane_list: None,
+            bar_note: None,
+            unclean: Vec::new(),
             started_at: std::time::SystemTime::now(),
             failures: std::collections::BTreeMap::new(),
             health_cache: None,
@@ -160,6 +187,7 @@ impl ServerState {
             reports: crate::panes::Reports::new(),
             agent_reported: false,
             git_cache: TtlMap::new(),
+            git_flights: HashMap::new(),
             repo_check: TtlMap::new(),
             seen_repos: TtlMap::new(),
             keys: None,
@@ -202,6 +230,11 @@ impl ServerState {
     /// A parsed status for `path`, if one was stored less than `ttl` ago.
     pub fn git_cached(&self, path: &PathBuf, ttl: Duration) -> Option<GitStatus> {
         self.git_cache.get(path, ttl)
+    }
+
+    /// The lock a `git status` for `path` is run under; see `git_flights`.
+    pub fn git_flight(&mut self, path: &std::path::Path) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        std::sync::Arc::clone(self.git_flights.entry(path.to_path_buf()).or_default())
     }
 
     /// Store a freshly parsed status.
@@ -250,13 +283,35 @@ impl ServerState {
     pub fn battery_cached(&self) -> Option<String> {
         self.battery_cache
             .as_ref()
-            .filter(|(_, t)| t.elapsed() < self.battery_ttl())
+            .filter(|(s, t)| {
+                let ttl = if s.contains(crate::segments::battery::CHARGING_ICON) {
+                    self.battery_ttl().min(BATTERY_CHARGING_TTL)
+                } else {
+                    self.battery_ttl()
+                };
+                t.elapsed() < ttl
+            })
             .map(|(s, _)| s.clone())
     }
 
     /// Store a battery render with the time it was computed.
     pub fn battery_store(&mut self, rendered: String) {
         self.battery_cache = Some((rendered, Instant::now()));
+    }
+
+    // ── the pane list ────────────────────────────────────────────────────────
+
+    /// The shared pane list, if it was read less than `max_age` ago.
+    pub fn panes_fresh(&self, max_age: Duration) -> Option<Vec<crate::panes::Pane>> {
+        self.pane_list
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < max_age)
+            .map(|(p, _)| p.clone())
+    }
+
+    /// Keep a pane list just read, for the next reader.
+    pub fn panes_store(&mut self, panes: Vec<crate::panes::Pane>) {
+        self.pane_list = Some((panes, Instant::now()));
     }
 
     // ── agents ───────────────────────────────────────────────────────────────
@@ -277,11 +332,19 @@ impl ServerState {
         Duration::from_secs(self.config.agents.interval_secs)
     }
 
+    /// How long the bar trusts a count, or a pane list, the inbox loop left:
+    /// its interval and a second. Exactly the interval expired a beat before
+    /// the loop's next read had landed (the loop sleeps the interval, then
+    /// lists), so the bar ran a `list-panes` of its own every so often.
+    pub fn agents_trust(&self) -> Duration {
+        self.agents_interval() + Duration::from_secs(1)
+    }
+
     /// The last count, if it is still fresh.
     pub fn agents_cached(&self) -> Option<AgentsSample> {
         self.agents_cache
             .as_ref()
-            .filter(|(_, t)| t.elapsed() < self.agents_interval())
+            .filter(|(_, t)| t.elapsed() < self.agents_trust())
             .map(|(s, _)| *s)
     }
 
@@ -349,6 +412,21 @@ impl ServerState {
         recent.into_iter().map(|(what, _)| what.clone()).collect()
     }
 
+    /// Note an unclean stop of the daemon before this one.
+    pub fn note_unclean(&mut self, what: String) {
+        self.unclean.push((what, Instant::now()));
+        self.health_cache = None;
+    }
+
+    /// The unclean stops inside the health window.
+    pub fn recent_unclean(&self) -> Vec<String> {
+        self.unclean
+            .iter()
+            .filter(|(_, t)| t.elapsed() < crate::segments::health::FAILURE_WINDOW)
+            .map(|(w, _)| w.clone())
+            .collect()
+    }
+
     /// Forget every failure, because somebody has read them, and say which
     /// ones there were.
     ///
@@ -356,8 +434,10 @@ impl ServerState {
     /// binary, quiet hours and a network that is gone are how things are, and
     /// the mark would put them back on its next check.
     pub fn acknowledge_failures(&mut self) -> Vec<String> {
-        let seen = self.recent_failures();
+        let mut seen = self.recent_failures();
+        seen.extend(self.recent_unclean());
         self.failures.clear();
+        self.unclean.clear();
         self.health_cache = None;
         seen
     }
@@ -425,6 +505,57 @@ fn load_dir_aliases() -> HashMap<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unclean_stop_is_said_until_acknowledged() {
+        let mut st = ServerState::new();
+        st.note_unclean("stopped uncleanly".into());
+        assert_eq!(st.recent_unclean(), ["stopped uncleanly"]);
+        assert_eq!(st.acknowledge_failures(), ["stopped uncleanly"]);
+        assert!(st.recent_unclean().is_empty());
+    }
+
+    #[test]
+    fn two_requests_for_one_repository_share_one_git_flight() {
+        let mut st = ServerState::new();
+        let a = st.git_flight(std::path::Path::new("/repo/a"));
+        let again = st.git_flight(std::path::Path::new("/repo/a"));
+        let other = st.git_flight(std::path::Path::new("/repo/b"));
+        assert!(std::sync::Arc::ptr_eq(&a, &again));
+        assert!(!std::sync::Arc::ptr_eq(&a, &other));
+    }
+
+    #[test]
+    fn a_charging_battery_is_cached_but_for_less_time() {
+        let mut st = ServerState::new();
+        let charging = format!("{} 80%", crate::segments::battery::CHARGING_ICON);
+        st.battery_store(charging.clone());
+        assert_eq!(
+            st.battery_cached(),
+            Some(charging),
+            "cached, not read every second"
+        );
+        st.battery_cache = Some(("x".into(), Instant::now() - BATTERY_CHARGING_TTL));
+        assert!(st.battery_cached().is_some(), "not charging: the long TTL");
+        let charging = format!("{} 80%", crate::segments::battery::CHARGING_ICON);
+        st.battery_cache = Some((charging, Instant::now() - BATTERY_CHARGING_TTL));
+        assert!(st.battery_cached().is_none(), "charging: the short TTL");
+    }
+
+    #[test]
+    fn the_shared_pane_list_is_served_only_while_younger_than_the_asker_wants() {
+        let mut st = ServerState::new();
+        assert!(
+            st.panes_fresh(Duration::from_secs(5)).is_none(),
+            "nothing read yet"
+        );
+        st.panes_store(Vec::new());
+        assert!(st.panes_fresh(Duration::from_secs(5)).is_some());
+        assert!(
+            st.panes_fresh(Duration::ZERO).is_none(),
+            "an asker that wants it fresher than now reads it again"
+        );
+    }
 
     fn status(branch: &str) -> GitStatus {
         GitStatus {

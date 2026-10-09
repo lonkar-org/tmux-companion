@@ -1051,6 +1051,34 @@ daemon's environment does the same. Each rate gets an arrow, since the two
 blocks are told apart by colour otherwise. The one thing still said by colour
 alone is a branch with no upstream, which without it looks like a clean one.
 
+`mode` is how the right side reaches tmux. `call` is the
+`#(tmux-companion status-right ...)` line: every `status-interval` tmux starts
+a shell and a client for each attached client. `push` has the daemon render
+each attached session's right side once a second and set it as the session
+option `@tc-right`, so tmux starts nothing:
+
+```tmux
+set -g status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
+```
+
+`auto`, the default, pushes when the global `status-right` reads `@tc-right`
+and tmux is 3.4 or newer, and leaves the bar to the call otherwise, looking
+again once a minute; so the line above is all it takes, and a `status-right`
+still on the call-only line costs nothing extra. `tmux-companion doctor` has a
+`bar` line saying which it chose and why, and the health mark says so when tmux
+is too old to push.
+
+Push is the cheaper of the two (`docs/BENCHMARKS.md` has the numbers). While
+the option is unset, or the daemon's heartbeat in `@tc-alive` (written every
+10 seconds) is more than 30 seconds old, the line falls back to the call,
+which also starts a daemon. A clean stop unsets both at once; a crash or a
+`kill -9` costs the bar at most 30 seconds of old figures. A daemon that finds
+a heartbeat left behind writes the unclean stop to the daemon log and to
+`crashes.tsv` in the state directory, and puts it on the health mark; twice
+within a minute says so too, for an hour or until `health ack`. Push renders with the
+`[git]` settings; the `--branch-max-len` and `--style` on the call line apply
+to the fallback only.
+
 ## How the pickers are drawn
 
 Everything under `[picker]` is the answer for every picker at once, and every

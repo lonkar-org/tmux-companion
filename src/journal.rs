@@ -218,7 +218,7 @@ pub async fn journal_loop(
     let home = std::env::var("HOME").unwrap_or_default();
     loop {
         tokio::time::sleep(interval).await;
-        let panes = crate::panes::list().await;
+        let panes = crate::panes::shared(&state, interval).await;
         let rows: Vec<PaneRow> = panes
             .iter()
             .map(|p| PaneRow {

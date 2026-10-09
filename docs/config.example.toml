@@ -179,7 +179,8 @@ unit_colour = ""
 
 [battery]
 # How long a battery reading stays fresh, in seconds. Reading it is expensive
-# and the number does not move fast enough to matter.
+# and the number does not move fast enough to matter. While charging it is
+# read at least every 10 seconds, whatever this says.
 ttl_secs = 30.0
 
 [glyphs]
@@ -1009,6 +1010,21 @@ current_window_background = "color236"
 # environment does. The one thing colour alone says is that a branch has no
 # upstream yet; without colour that branch looks clean.
 colour = true
+# How the right side reaches tmux. "call": status-right runs
+# `#(tmux-companion status-right ...)` every status-interval, one shell and one
+# client process per attached client each time. "push": the daemon renders
+# each attached session's right side once a second and sets it as the session
+# option @tc-right, which status-right expands without starting anything:
+#   set -g status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
+# The fallback keeps the bar working, and starts the daemon, while the option
+# is unset or the daemon's heartbeat (@tc-alive, every 10 seconds) is more
+# than 30 seconds old; the daemon unsets both when it stops, and one that
+# finds a heartbeat left behind logs an unclean stop. "auto" pushes when the global
+# status-right reads @tc-right and tmux is 3.4 or newer, and leaves the bar to
+# the call otherwise, so a status-right still on the call-only line pays for
+# nothing; it looks again once a minute. `tmux-companion doctor` says which it
+# chose and why, and the health mark says so when tmux is too old to push.
+mode = "auto"
 
 [picker]
 # Everything under here is the answer for every picker at once, and every one

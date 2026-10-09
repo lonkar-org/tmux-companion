@@ -1265,6 +1265,29 @@ fn local_config() -> crate::config::Config {
 /// reason as [`local_config`]: a key somebody already pressed should do
 /// something.
 pub(crate) fn config_or_default() -> crate::config::Config {
+    if CACHE_CONFIG.load(std::sync::atomic::Ordering::Relaxed) {
+        static ONCE: std::sync::OnceLock<crate::config::Config> = std::sync::OnceLock::new();
+        return ONCE.get_or_init(config_or_default_now).clone();
+    }
+    config_or_default_now()
+}
+
+/// Whether [`config_or_default`] reads the file once for the whole process.
+///
+/// Set by a client, which lives for one command and read the same file two
+/// and three times on the way to a picker's first frame (the command, the
+/// paint, the picker's look). Never set in the daemon: its loops call
+/// `config_or_default` on every tick precisely so an edit takes effect
+/// without a restart.
+static CACHE_CONFIG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Read the configuration once for the rest of this process; see
+/// [`config_or_default`].
+pub fn cache_config_for_this_process() {
+    CACHE_CONFIG.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn config_or_default_now() -> crate::config::Config {
     static SAID: std::sync::Once = std::sync::Once::new();
     match crate::config::load() {
         Ok((c, _)) => c,
@@ -2232,6 +2255,18 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         return open_project(&path, &config, &home).await;
     }
 
+    let chrome = crate::picker::Chrome {
+        title: "[ Project ]".into(),
+        icon: crate::tmux::icons::SESSION.into(),
+        footer: "enter open   alt-s last session   esc cancel   type a path for a new one".into(),
+        preview_title: "[ Where ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Project);
+    // The picker on screen before its rows: collecting them reads the session
+    // list, the directory source and every theme file.
+    let _loading = (!print).then(|| crate::picker::loading(&chrome, ""));
+
     let rows = crate::project::collect(&config, &home).await;
 
     if print {
@@ -2279,11 +2314,14 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
             label.push_str(&idle);
             cells.push(Cell::dim(idle));
         }
+        // Built when the row is selected, not here: two tmux calls per session
+        // and a listing per directory, awaited one after another for every
+        // row, were most of the time this picker took to open.
+        let (row, preferred) = (r.clone(), config.project.preview_window.clone());
         items.push(
-            crate::picker::Item::with_preview(
-                label,
-                project_preview(r, &config.project.preview_window).await,
-            )
+            crate::picker::Item::with_lazy_preview(label, move || {
+                project_preview(&row, &preferred)
+            })
             .in_cells(cells)
             .with_icon(icon, Tone::Dim)
             // The project's own theme colour as a block in front of the row.
@@ -2294,17 +2332,12 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     }
 
     let chrome = crate::picker::Chrome {
-        title: "[ Project ]".into(),
-        icon: crate::tmux::icons::SESSION.into(),
-        footer: "enter open   alt-s last session   esc cancel   type a path for a new one".into(),
-        preview_title: "[ Where ]".into(),
         // M-s opens this picker, so M-s again goes back where you were.
         alt_picks: crate::project::previous_session(&rows)
             .map(|i| vec![('s', i)])
             .unwrap_or_default(),
-        ..Default::default()
-    }
-    .configured(&config.picker, crate::config::Picker::Project);
+        ..chrome
+    };
 
     let Some(index) = crate::picker::run(items, "", &chrome)? else {
         return Ok(());
@@ -2572,7 +2605,7 @@ pub enum SessionsAction {
 /// the reason the preview is worth having at all. Anything else falls back to
 /// a directory listing, which is all there is to say about a project that is
 /// not open yet.
-async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
+fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
     use crate::project::Kind;
     if row.kind == Kind::Session {
         let target = format!("={}", row.label);
@@ -2587,8 +2620,7 @@ async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
         let named = if preferred.is_empty() {
             false
         } else {
-            tmux_capture(&["list-windows", "-t", &target, "-F", "#{window_name}"])
-                .await
+            tmux_capture_sync(&["list-windows", "-t", &target, "-F", "#{window_name}"])
                 .lines()
                 .any(|w| w.trim() == preferred)
         };
@@ -2605,7 +2637,7 @@ async fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
             format!("={}:", row.label)
         };
         // -e keeps whatever colours are on that screen.
-        let screen = tmux_capture(&["capture-pane", "-p", "-e", "-t", &pane]).await;
+        let screen = tmux_capture_sync(&["capture-pane", "-p", "-e", "-t", &pane]);
         let tail = crate::project::tail_of_screen(&screen, 40);
         if !tail.is_empty() {
             return tail;
@@ -2631,6 +2663,19 @@ async fn run_new_window(print: bool) -> anyhow::Result<()> {
     // inside a popup: it answers for the session the server touched last, so
     // the query came up prefilled with a directory from the project you had
     // just switched away from.
+    let config = config_or_default();
+    let chrome = crate::picker::Chrome {
+        title: "[ New window at ]".into(),
+        icon: crate::tmux::icons::FOLDER.into(),
+        footer: "enter open window   ctrl-a clear   esc cancel   type a path not listed".into(),
+        preview_title: "[ Directory ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Window);
+    // On screen before the directory source and the pane's directory are
+    // asked for; the query fills in when the rows arrive.
+    let _loading = (!print).then(|| crate::picker::loading(&chrome, ""));
+
     let client = client_target().await;
     let pane_dir = {
         let d = tmux_display_at(client.as_deref(), "#{pane_current_path}").await;
@@ -2643,7 +2688,6 @@ async fn run_new_window(print: bool) -> anyhow::Result<()> {
         }
     };
 
-    let config = config_or_default();
     let paths: Vec<String> = crate::project::source_dirs(&config, &home).await;
 
     let prefill = crate::project::short_path(&pane_dir, &home);
@@ -2675,10 +2719,14 @@ async fn run_new_window(print: bool) -> anyhow::Result<()> {
     // What is in the directory, which is what `--preview="ls -A1 {2}"` showed.
     // The preview used to be the path itself, which the row already says: a
     // pane of one line repeating the line you are looking at.
-    let listing = |path: &str| crate::project::listing_of(std::path::Path::new(path), 200);
+    // Listed when the row is selected rather than all before the first frame.
+    let listing = |path: &str| {
+        let path = path.to_string();
+        move || crate::project::listing_of(std::path::Path::new(&path), 200)
+    };
     if !paths.iter().any(|p| p == &pane_dir) {
         items.push(
-            crate::picker::Item::with_preview(prefill.clone(), listing(&pane_dir))
+            crate::picker::Item::with_lazy_preview(prefill.clone(), listing(&pane_dir))
                 .in_cells(vec![
                     crate::picker::Cell::dim("here"),
                     crate::picker::Cell::plain(prefill.clone()),
@@ -2690,21 +2738,12 @@ async fn run_new_window(print: bool) -> anyhow::Result<()> {
     for p in &paths {
         let short = crate::project::short_path(p, &home);
         items.push(
-            crate::picker::Item::with_preview(short.clone(), listing(p))
+            crate::picker::Item::with_lazy_preview(short.clone(), listing(p))
                 .in_columns(vec![String::new(), short])
                 .with_icon(crate::tmux::icons::FOLDER, crate::picker::Tone::Dim),
         );
         targets.push(p.clone());
     }
-    let chrome = crate::picker::Chrome {
-        title: "[ New window at ]".into(),
-        icon: crate::tmux::icons::FOLDER.into(),
-        footer: "enter open window   ctrl-a clear   esc cancel   type a path not listed".into(),
-        preview_title: "[ Directory ]".into(),
-        ..Default::default()
-    }
-    .configured(&config.picker, crate::config::Picker::Window);
-
     let outcome = crate::picker::run_with_query(items, &prefill, &chrome)?;
     match crate::project::window_target(&outcome, &targets, &prefill, &pane_dir, &home) {
         crate::project::WindowTarget::Cancelled => Ok(()),
@@ -4410,6 +4449,15 @@ async fn tmux_capture_checked(args: &[&str]) -> anyhow::Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// [`tmux_capture`] for code that runs outside the runtime: a picker's lazy
+/// preview is built inside its draw loop, which is synchronous.
+pub(crate) fn tmux_capture_sync(args: &[&str]) -> String {
+    match crate::tmux::command_sync().args(args).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(_) => String::new(),
+    }
 }
 
 pub(crate) async fn tmux_capture(args: &[&str]) -> String {

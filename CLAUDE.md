@@ -197,6 +197,7 @@ description they had.
 | `src/theme/mod.rs` | theme arithmetic: the readable text colour for a theme, a visible border colour, and the lighter and darker siblings of a cube colour |
 | `src/theme/cli.rs` | the client half of `theme`: the subcommands that read a themes directory, run the picker and source a file into tmux, which talk to the terminal and so run in the client rather than the daemon |
 | `src/toggle.rs` | which window `toggle` moves to: the one you were on before, then on by index the way that jump went |
+| `src/trace.rs` | timing marks for the benchmark: when `TMUX_COMPANION_TRACE` names a file, each mark appends one line saying what happened and when |
 | `src/tmux/mod.rs` | everything that knows about tmux's own formatting language |
 | `src/tmux/format.rs` | colours, styles and the string builder every segment renders through |
 | `src/tmux/icons.rs` | Nerd Font codepoints the status bar draws with |
@@ -267,6 +268,49 @@ only so `tests/` links against it, with no promise attached.
   rate.  A cached assembly would replay one measurement window's average for as
   long as the entry lived, which looks like a frozen bar rather than a quiet
   network.
+
+## Performance under a capped CPU
+
+The pickers are judged on a throttled machine, not an idle one: at 32 busy
+loops the project picker took 446 ms to its first row against 249 idle, and
+381 of those were spent collecting rows before anything was drawn.
+`docs/dev/design-capped-cpu.md` has the measurements and the reasoning; these
+are the rules that come out of it, for any picker, loop or segment.
+
+1. **No process and no file read per row before the first frame.** Per-row
+   work (a preview, a capture, a listing) is done for the selected row when
+   the selection lands on it, and cached for the picker's life, or it comes
+   from a daemon cache. A loop of `.await`s over rows before `picker::run`
+   is the bug this rule exists for.
+2. **Chrome before rows.** When collecting rows can take longer than the
+   floor, the picker draws its border, title and prompt first, with one
+   static loading line where the rows go. Nothing animates and the line is
+   replaced once.
+3. **One poll per tmux listing.** The daemon runs `list-panes -a` once on a
+   timer and every consumer reads that. A new loop does not add its own
+   `list-panes`, `list-windows` or `list-clients` on a timer, and a picker
+   asks the socket before it asks tmux for something the daemon already has.
+4. **Fewer processes, not lower-priority ones.** Background work costs what
+   it starts, so the fix for a loop is starting less: a shared listing, a
+   change-only write, a longer cache. Two obvious fixes were measured and
+   made things worse: lowering children's priority (a `pre_exec` hook stops
+   `posix_spawn`, so every child forks the whole daemon, and a lowered tmux
+   client holds tmux's one thread longer), and stretching a loop's interval
+   under pressure (the inbox reads an agent's silence in its own intervals,
+   so a slower inbox saw working agents stop). A loop is slowed only once
+   what it detects no longer depends on how often it looks.
+5. **A frame is one write.** Input already waiting is read before the next
+   frame; nothing is re-parsed when it has not changed. No debounce timer:
+   draining what is there is not waiting for what might come.
+6. **Measured, not argued.** A new picker or loop adds itself to
+   `scripts/bench-capped.py`, and its commit carries `just bench-capped 0 32`
+   before and after against the budgets in the design doc. A miss says by
+   how much and why.
+
+`just bench-capped` is isolated: its own HOME, XDG directories, daemon socket
+and tmux socket. Run nothing by hand against the live server instead; a bare
+`tmux` from inside a pane talks to that pane's server whatever `TMUX_TMPDIR`
+says, and that has killed a live server once.
 
 ## Adding a new segment
 
@@ -390,6 +434,8 @@ bytes for the bar.  The steps are the same shape, with one extra.
    **client** process, not the daemon.  The daemon has no terminal; it answers
    with rows and the client draws them.
 7. Add a row to `docs/reference/cli.md` and a line to `docs/dev/port-checklist.md`.
+8. A picker meets "Performance under a capped CPU" above: nothing per row
+   before its first frame, and a line in `scripts/bench-capped.py`.
 
 ## Changing icon codepoints
 

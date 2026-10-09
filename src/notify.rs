@@ -5,8 +5,10 @@
 //! that trains people to ignore the ones that matter.
 //!
 //! This is a poll rather than a hook because tmux has no event for "the
-//! foreground process in this pane changed". One `list-panes -a` per interval
-//! is the entire cost, and it happens inside a daemon that is already running.
+//! foreground process in this pane changed". The pane list it reads is the
+//! daemon's shared one (`panes::shared`), which the inbox and journal loops and
+//! the agents segment read too, so the scan costs at most one `list-panes -a`
+//! per interval for all of them together.
 //!
 //! Credit: `rickstaa/tmux-notify` is this idea, it is alive, and somebody not
 //! running tmux-companion should install theirs.
@@ -59,35 +61,6 @@ pub struct Finished {
     pub command: String,
     /// How long it ran, as far as a poll can tell.
     pub ran_for: Duration,
-}
-
-/// The `-F` string the scan asks for.
-pub fn pane_format() -> &'static str {
-    "#{pane_id}\t#{pane_current_command}\t#{pane_active}\t#{window_active}\t#{session_attached}"
-}
-
-/// Parse what [`pane_format`] produces.
-///
-/// A pane is visible when it is the active pane of the active window of a
-/// session somebody is attached to. Any of those being false means nobody saw
-/// what it printed.
-pub fn parse_panes(text: &str) -> Vec<PaneRow> {
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| {
-            let f: Vec<&str> = l.splitn(5, '\t').collect();
-            if f.len() != 5 {
-                return None;
-            }
-            let on = |s: &str| s.trim() == "1";
-            let attached: u32 = f[4].trim().parse().unwrap_or(0);
-            Some(PaneRow {
-                id: f[0].to_string(),
-                command: f[1].to_string(),
-                visible: on(f[2]) && on(f[3]) && attached > 0,
-            })
-        })
-        .collect()
 }
 
 /// Whether a command is one worth timing.
@@ -236,14 +209,15 @@ pub async fn notify_loop(
     let mut watched: HashMap<String, Watched> = HashMap::new();
     loop {
         tokio::time::sleep(interval).await;
-        let listing = crate::tmux::command()
-            .args(["list-panes", "-a", "-F", pane_format()])
-            .stderr(std::process::Stdio::null())
-            .output()
+        let rows: Vec<PaneRow> = crate::panes::shared(&state, interval)
             .await
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default();
+            .into_iter()
+            .map(|p| PaneRow {
+                id: p.id,
+                command: p.command,
+                visible: p.visible,
+            })
+            .collect();
         let rules = Rules {
             shell: &shell,
             ignore: &settings.ignore,
@@ -253,7 +227,7 @@ pub async fn notify_loop(
         // The scan still runs while quiet, so nothing finishes twice when it
         // ends; only the announcement is held back.
         let quiet = state.lock().await.is_quiet();
-        for f in step(&mut watched, &parse_panes(&listing), &rules, Instant::now()) {
+        for f in step(&mut watched, &rows, &rules, Instant::now()) {
             if quiet {
                 continue;
             }
@@ -460,22 +434,6 @@ mod tests {
         assert!(!interesting("/bin/zsh", "/bin/zsh", &[]));
         assert!(!interesting("", "/bin/zsh", &[]));
         assert!(interesting("cargo", "/bin/zsh", &[]));
-    }
-
-    #[test]
-    fn visibility_needs_the_pane_the_window_and_a_client() {
-        let rows = parse_panes(
-            "%1\tcargo\t1\t1\t1\n%2\tcargo\t0\t1\t1\n%3\tcargo\t1\t0\t1\n%4\tcargo\t1\t1\t0\n",
-        );
-        assert!(rows[0].visible, "active pane, active window, attached");
-        assert!(!rows[1].visible, "not the active pane");
-        assert!(!rows[2].visible, "not the active window");
-        assert!(!rows[3].visible, "nobody attached");
-    }
-
-    #[test]
-    fn a_short_line_is_skipped_rather_than_panicking() {
-        assert!(parse_panes("%1\tcargo\n").is_empty());
     }
 
     #[test]

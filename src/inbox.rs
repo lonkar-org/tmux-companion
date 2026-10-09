@@ -343,7 +343,7 @@ pub async fn inbox_loop(
     let skip = compile(&config.question_skip);
     loop {
         tokio::time::sleep(interval).await;
-        let panes = panes::list().await;
+        let panes = panes::shared(&state, interval).await;
         let now = panes::now_secs();
         let (held, reports) = {
             let mut st = state.lock().await;

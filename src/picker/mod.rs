@@ -41,14 +41,60 @@ pub use paint::{Paint, Tone};
 pub use screen::{hint_line, hint_rows, rule_line, show_framed};
 pub use style::{BorderKind, Edge, LabelPosition, Look, PreviewBorder};
 
+/// A preview built when its row is selected, not before the picker opens.
+///
+/// A preview that costs a tmux call or a directory listing, built for every
+/// row before the first frame, is the picker waiting on work for rows nobody
+/// looks at: the project picker spent 381 of its 446 ms there on a busy
+/// machine (docs/dev/design-capped-cpu.md). This is the closure that builds
+/// one row's preview, run once, the first time the selection lands on it.
+///
+/// It runs inside the picker's draw loop, outside any async runtime, so it
+/// must not block on one: tmux through `tmux::command_sync`, files through
+/// `std::fs`.
+#[derive(Clone)]
+pub struct LazyPreview(std::sync::Arc<dyn Fn() -> String + Send + Sync>);
+
+impl LazyPreview {
+    /// The preview `build` returns, built when it is first wanted.
+    pub fn new(build: impl Fn() -> String + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(build))
+    }
+
+    /// Build it now.
+    pub fn build(&self) -> String {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for LazyPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LazyPreview")
+    }
+}
+
+/// Two lazy previews are the same when they are the same closure; what they
+/// would build is not known until they do.
+impl PartialEq for LazyPreview {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for LazyPreview {}
+
 /// One row a picker can show.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Item {
     /// What the matcher searches, and what the row shows when it has no
     /// columns of its own.
     pub label: String,
-    /// Shown in the preview pane. Empty means this row has nothing to show.
+    /// Shown in the preview pane. Empty means this row has nothing to show,
+    /// unless `lazy` builds something.
     pub preview: String,
+    /// Builds `preview` when the row is first selected, for a preview that
+    /// costs a process or a file read. See [`LazyPreview`].
+    pub lazy: Option<LazyPreview>,
     /// The row split into columns, aligned against every other row's.
     ///
     /// A label built with `{:<22}` cannot line up once anything in it is
@@ -122,6 +168,18 @@ impl Item {
         Self {
             label: label.into(),
             preview: preview.into(),
+            ..Self::default()
+        }
+    }
+
+    /// An item whose preview is built when it is first selected.
+    pub fn with_lazy_preview(
+        label: impl Into<String>,
+        build: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            lazy: Some(LazyPreview::new(build)),
             ..Self::default()
         }
     }
@@ -439,6 +497,53 @@ pub enum Outcome {
     Cancelled,
 }
 
+/// Ask for the picker's paint on another thread, now, so it is ready by the
+/// time the rows are.
+///
+/// `Paint::detect` reads the config and asks tmux for the theme's accent, a
+/// process of its own that took 9 ms on an idle machine and 17 under load,
+/// on the path to the first frame of every picker. Started here it overlaps
+/// whatever the command does first, usually collecting its rows; the picker's
+/// own call then finds it done, or waits only for what is left.
+///
+/// Called by the binary for any command whose output is a terminal inside
+/// tmux, which is every popup and no `#()`, `run-shell` or pipe: those have
+/// no terminal, and the bar's call once a second must not start a thread.
+pub fn prewarm() {
+    std::thread::spawn(|| {
+        let _ = Paint::detect();
+    });
+}
+
+/// A picker's frame drawn before its rows exist; see [`loading`].
+///
+/// Dropped without a picker having run, it gives the terminal back.
+#[must_use = "dropping it at once takes the frame straight back down"]
+pub struct Loading(());
+
+impl Drop for Loading {
+    fn drop(&mut self) {
+        screen::abandon_loading();
+    }
+}
+
+/// Draw `chrome` with a static "loading" line where the rows go, now, before
+/// the caller spends time collecting them.
+///
+/// For a picker whose rows take longer than the popup itself to collect, so
+/// the person sees the picker they asked for at once rather than a blank
+/// popup. Keys typed meanwhile wait in the terminal and reach the picker.
+/// Nothing animates. Hold the guard until `run` returns.
+pub fn loading(chrome: &Chrome, query: &str) -> Loading {
+    // Off a terminal (a test, a pipe) there is nothing to draw on, and the
+    // picker that follows says so in its own way.
+    use std::io::IsTerminal;
+    if std::io::stdout().is_terminal() {
+        let _ = screen::draw_loading(chrome, query);
+    }
+    Loading(())
+}
+
 /// Show the picker and wait for a decision.
 ///
 /// Returns the index into the original list, or `None` when somebody cancelled
@@ -563,7 +668,9 @@ pub fn fitting_preview(
 fn previewable(chrome: &Chrome, items: &[Item]) -> bool {
     !chrome.preview_title.is_empty()
         && chrome.preview != Preview::None
-        && items.iter().any(|i| !i.preview.is_empty())
+        && items
+            .iter()
+            .any(|i| !i.preview.is_empty() || i.lazy.is_some())
 }
 
 /// Say that a picker has nothing to show, on stderr and, from a picker, on
@@ -787,6 +894,24 @@ mod tests {
         };
         let items = vec![Item::new("a"), Item::new("b")];
         assert!(!previewable(&chrome, &items));
+    }
+
+    #[test]
+    fn a_loading_frame_off_a_terminal_draws_nothing_and_drops_cleanly() {
+        // The test's stdout is not a terminal, so nothing is taken and the
+        // guard has nothing to give back.
+        let guard = loading(&Chrome::default(), "");
+        drop(guard);
+    }
+
+    #[test]
+    fn a_list_of_lazy_previews_keeps_its_pane_before_any_is_built() {
+        let chrome = Chrome {
+            preview_title: "[ Where ]".into(),
+            ..Chrome::default()
+        };
+        let items = vec![Item::with_lazy_preview("a", || "built".into())];
+        assert!(previewable(&chrome, &items));
     }
 
     #[test]

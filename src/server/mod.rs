@@ -1,7 +1,7 @@
 //! The server half: bind the socket, accept forever, hand each line to a
 //! handler.
 mod handlers;
-pub(crate) use handlers::health_check;
+pub(crate) use handlers::{health_check, render_right};
 /// Server state and its caches.
 pub mod state;
 
@@ -196,6 +196,9 @@ pub async fn run() -> anyhow::Result<()> {
     // and until this ran neither took the marker off, so every restore after
     // an upgrade thought the machine had gone down badly.
     tokio::spawn(stop_on_signal(sock.clone()));
+    if config.bar.mode != crate::config::BarMode::Call {
+        tokio::spawn(crate::push::push_loop(Arc::clone(&state), config.bar.mode));
+    }
     if config.sessions.autosave != crate::config::SessionsAutosave::Off {
         tokio::spawn(crate::sessions::timer::sessions_autosave_loop(
             config.sessions.clone(),
@@ -444,6 +447,9 @@ async fn stop_on_signal(sock: std::path::PathBuf) {
         _ = int.recv() => "SIGINT",
     };
     eprintln!("tmux-companion: {which}, stopping");
+    // A pushed bar falls back to the call rather than freezing on the last
+    // figure; see `push`.
+    crate::push::clear();
     if let Some(dir) = state_dir() {
         crate::sessions::timer::clear_marker_in(&dir);
     }

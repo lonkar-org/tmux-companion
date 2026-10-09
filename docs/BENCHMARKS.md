@@ -156,6 +156,133 @@ pid makes it look for a suspended editor and that enumerates the process table.
 This is why the bar never passes one, and it is the single largest item in
 either table.
 
+## Under a capped CPU: the baseline, 2026-10-09
+
+The pickers are quick enough on an idle machine and slow on a throttled one,
+so this measures the same pickers under load, phase by phase, before any of
+the fixes in [design-capped-cpu.md](./dev/design-capped-cpu.md) land.
+
+Same MacBookPro16,1 (i9-9980HK, 16 logical CPUs, no efficiency cores), macOS
+26.6, tmux 3.7c, on AC power, Low Power Mode off, commit `746c3b2`. Load N is
+N busy loops at normal priority for the length of the run; each condition
+ran twice, alternated, 15 presses per picker, and the numbers are the mean
+of the two rounds' medians (the rounds agreed within a few percent, except
+`keys` at no load, 40 and 50 ms). The load was enough to make the machine
+throttle itself: `CPU_Speed_Limit` fell to 64-68% after every loaded run, so
+the 16 and 32 columns are contention and a lower clock together, which is
+what a capped CPU looks like in use.
+
+The setup is a working day's server, built by `scripts/bench-capped.sh` in a
+throwaway home: 8 sessions, 16 windows, 7 agent panes (2 printing as they
+work), 6 editors, 3 shells, 166 directories in zoxide, and a copy of a real
+configuration with 179 theme files.
+
+Keypress to first row, ms, median:
+
+| Picker | load 0 | load 16 | load 32 | 32 vs 0 | rows phase at 32 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| project | 249 | 363 | 446 | 1.8x | 381 |
+| panes | 86 | 153 | 194 | 2.3x | 125 |
+| new-window | 91 | 123 | 152 | 1.7x | 86 |
+| keys | 45 | 59 | 71 | 1.6x | 4 |
+| empty popup (tmux alone) | 24 | 30 | 33 | 1.4x | |
+
+Where the time goes, ms, median, every picker:
+
+| Phase | load 0 | load 16 | load 32 |
+| --- | ---: | ---: | ---: |
+| spawn: key to the picker's `main` (tmux, shell, exec) | 25-32 | 34-40 | 40-48 |
+| paint: `Paint::detect`, a tmux call and a config read | 8-11 | 12-16 | 16-18 |
+| draw: the first frame | 1-2 | 2 | 2-4 |
+| five keys typed at once, to the frame after the last | 10-16 | 16-19 | 19-25 |
+| rows | see the table above | | |
+
+Idle, with the bar ticking every second: the daemon 4.3-5.0 ms/s and the tmux
+server 4.3-6.0 ms/s, about the same at every load.
+
+What it says:
+
+- Collecting rows is most of the wait wherever there is any. The project
+  picker spends 214 of its 249 ms there idle and 381 of 446 ms at load 32:
+  a session preview is two tmux calls in a row for each session, and a
+  directory preview a listing of each of 166 directories, all before the
+  first frame.
+- The panes picker degrades most, 2.3x, because its rows are one
+  `capture-pane` per pane, all at once, against a tmux server that is itself
+  short of CPU.
+- `keys` reads its rows from the daemon's cache in 3-4 ms. What is left of its
+  71 ms is spawn, paint and the popup, the floor every picker pays. That
+  floor is about 70 ms at load 32, and paint is the part of it this tool
+  owns.
+- Typing is not the problem: five keys cost 25 ms at worst.
+- The daemon's idle cost does not grow with load. What it adds under a
+  capped CPU is the work it hands to the tmux server and the processes it
+  starts, which is measured per fix rather than here.
+
+Reproduce with `CONFIG=mine just bench-capped` (loads 0, 16 and 32, two
+rounds), or without `CONFIG=mine` for the default configuration.
+
+## Under a capped CPU: after the fixes, 2026-10-09
+
+The same machine, the same setup, the same loads and two rounds, on the branch
+with every fix in [design-capped-cpu.md](./dev/design-capped-cpu.md) that
+survived measurement. Medians, mean of the two rounds, ms:
+
+| Picker | before 0 / 16 / 32 | after 0 / 16 / 32 | at load 32 |
+| --- | --- | --- | ---: |
+| project | 249 / 363 / 446 | 78 / 90 / 103 | 4.3x faster |
+| panes | 86 / 153 / 194 | 50 / 57 / 69 | 2.8x faster |
+| new-window | 91 / 123 / 152 | 95 / 111 / 134 | 1.1x faster |
+| keys | 45 / 59 / 71 | 47 / 55 / 67 | about the same |
+| empty popup (tmux alone) | 24 / 30 / 33 | 23 / 27 / 32 | |
+
+- The project and new-window pickers now draw their frame before their rows,
+  46 ms after the key idle and 63-65 ms at load 32, so the time to a picker on
+  screen is about half the time to its first row. New-window's first row is
+  4 ms later than before at no load for the same reason: the frame is drawn
+  first, and its rows are the directory source, which no fix here reached.
+- Previews are built for the selected row only. That is most of project's and
+  all of panes' gain.
+- Typing is unchanged: five keys at once draw in 14 ms idle and 18-19 under
+  load.
+- Colour lookup (paint) left the critical path for every picker but keys,
+  whose rows come from the daemon faster than the lookup can finish.
+
+The bar, idle, one attached client, everything it costs per second: the
+daemon, the processes it starts, the tmux server, and in call mode the shell
+and client tmux starts for `#()` (priced at 10.5-19.7 ms each by running them):
+
+| Mode | load 0 | load 32 |
+| --- | ---: | ---: |
+| call (`#()`, the default) | 31.2 ms/s | 41-43 ms/s |
+| push (`[bar] mode = "push"`) | 24.9 ms/s | 31.5 ms/s |
+
+Push starts nothing for the bar, and each further client adds about a call's
+cost to call mode and nothing to push. These are steady-state figures, taken
+after three minutes of picker presses; a run that measures idle straight after
+start-up includes the inbox capturing every agent for the first time and reads
+higher in both modes.
+
+In Low Power Mode, on battery, the same branch, two rounds, call mode. The
+machine reported `CPU_Speed_Limit` 100 throughout, so what Low Power Mode caps
+here does not show in that figure; it shows in everything below:
+
+| Picker | load 0 | load 32 | vs mains at load 32 |
+| --- | ---: | ---: | ---: |
+| project | 91 | 135 | +31 |
+| panes | 61 | 94 | +25 |
+| new-window | 118 | 176 | +42 |
+| keys | 58 | 89 | +22 |
+| empty popup (tmux alone) | 30 | 48 | +16 |
+
+Spawn, the part of every press before the picker's own code runs, is 39 ms idle
+and 60 at load 32 here, against 32 and 42 on mains; five keys at once take 28-30
+ms at load 32. The bar costs 42-44 ms/s idle and 57 at load 32 in call mode.
+
+Reproduce with `CONFIG=mine just bench-capped`, and `BAR=push` for the second
+row of the bar table. `just bench-ab REV` compares a revision with the working
+tree.
+
 ## Method, and three ways it was wrong first
 
 `scripts/bench-keys.py` starts a private tmux server, attaches a real client on

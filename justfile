@@ -130,6 +130,15 @@ surfaces OUT="target/surfaces" *SURFACES: build
     ./scripts/capture-surfaces.sh {{OUT}} "$PWD/target/release/tmux-companion" {{SURFACES}}
     if command -v agg >/dev/null; then ./scripts/surface-png.sh {{OUT}}; fi
 
+# Pickers phase by phase and the daemon's idle cost, under N busy loops each:
+# `just bench-capped 0 32`. Isolated from the live tmux server and daemon.
+bench-capped *LOADS: build
+    ./scripts/bench-capped.sh {{LOADS}}
+
+# A git revision against the working tree, alternated: `just bench-ab HEAD~1 0 32`.
+bench-ab REV *LOADS:
+    ./scripts/bench-ab.sh {{REV}} {{LOADS}}
+
 # Daemon CPU per request, today's binary only.
 bench-segments:
     ./scripts/bench.sh segments

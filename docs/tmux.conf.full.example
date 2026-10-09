@@ -86,7 +86,14 @@ set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
 # every process on the machine and cost 18.5 ms of that segment's 26.0. That
 # marker is given up here on purpose, the line above is the cheaper way to get
 # it, and `gst <path> <pid>` still shows it by hand.
-set -ga status-right "#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})"
+# The daemon sees @tc-right here and, under `[bar] mode = "auto"` (the
+# default), sets it in each attached session once a second for tmux to expand
+# without starting anything, with a heartbeat in @tc-alive every 10 seconds.
+# While the value is unset or the heartbeat is more than 30 seconds old (call
+# mode, a daemon that stopped, or one that crashed) the line runs the call,
+# which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
+# per attached client per second; docs/BENCHMARKS.md has the numbers.
+set -ga status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
 set -g  status-right-length 150
 
 # ── The left side ───────────────────────────────────────────────────────────

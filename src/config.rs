@@ -821,6 +821,27 @@ pub struct Bar {
     /// cannot tell them apart or would rather not be shown them. `NO_COLOR`
     /// in the daemon's environment does the same.
     pub colour: bool,
+    /// How the right side reaches tmux: `call`, tmux running
+    /// `tmux-companion status-right` from `#()` every `status-interval`;
+    /// `push`, the daemon setting `@tc-right` in each attached session once a
+    /// second for `status-right` to expand; or `auto`, push when tmux's
+    /// `status-right` reads `@tc-right` and tmux is new enough, call
+    /// otherwise. See `push`.
+    pub mode: BarMode,
+}
+
+/// How the bar's right side reaches tmux; see [`Bar::mode`].
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BarMode {
+    /// Push when `status-right` reads `@tc-right`, so a tmux.conf on the
+    /// call-only line pays for nothing it does not use.
+    #[default]
+    Auto,
+    /// `#(tmux-companion status-right ...)`, a process per client per tick.
+    Call,
+    /// The daemon sets `@tc-right`; tmux starts nothing.
+    Push,
 }
 
 impl Bar {
@@ -838,6 +859,7 @@ impl Default for Bar {
             background: crate::tmux::format::BG_BAR.to_string(),
             current_window_background: crate::segments::window::BG_CURRENT_DEFAULT.to_string(),
             colour: true,
+            mode: BarMode::Auto,
         }
     }
 }

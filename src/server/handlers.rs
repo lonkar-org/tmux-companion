@@ -195,6 +195,10 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 // an interrupted test run left a socket file per test with
                 // nothing behind it.
                 let _ = std::fs::remove_file(crate::client::sock_path());
+                // The heartbeat and the pushed bar too, or the next daemon
+                // reads a restart as a crash and the bar shows stale figures
+                // until it does.
+                crate::push::clear();
                 std::process::exit(0);
             });
             Ok(String::new())
@@ -380,7 +384,7 @@ async fn when<T>(wanted: bool, fut: impl std::future::Future<Output = T>) -> Opt
 /// The TTL is applied per segment, inside the individual renders — never to
 /// this assembled string.  Caching the assembly would freeze `net`, which is a
 /// rate: the bar would repeat one window's average until the entry expired.
-async fn render_right(
+pub(crate) async fn render_right(
     args: &StatusRightArgs,
     state: &Arc<Mutex<ServerState>>,
 ) -> anyhow::Result<String> {
@@ -534,7 +538,7 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
 pub(crate) async fn health_check(
     state: &Arc<Mutex<ServerState>>,
 ) -> segments::health::HealthSample {
-    let (started, failures, quiet, offline) = {
+    let (started, failures, quiet, offline, bar_note, unclean) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
         let quiet = s
@@ -543,7 +547,14 @@ pub(crate) async fn health_check(
         let offline = s
             .offline_since
             .map(|since| crate::online::reason(since, now, &s.config.online.probe));
-        (s.started_at, s.recent_failures(), quiet, offline)
+        (
+            s.started_at,
+            s.recent_failures(),
+            quiet,
+            offline,
+            s.bar_note.clone(),
+            s.recent_unclean(),
+        )
     };
     let config_changed = match crate::config::load() {
         Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
@@ -561,6 +572,10 @@ pub(crate) async fn health_check(
     if let Some(q) = quiet {
         reasons.insert(0, q);
     }
+    if let Some(b) = bar_note {
+        reasons.push(b);
+    }
+    reasons.extend(unclean);
     segments::health::HealthSample { reasons }
 }
 
@@ -592,7 +607,12 @@ async fn agents(state: &Arc<Mutex<ServerState>>) -> String {
     let sample = match cached {
         Some(sample) => sample,
         None => {
-            let fresh = segments::agents::sample(&programs, &reports, waiting_secs).await;
+            // The shared list, when a loop read it within the interval this
+            // count is cached for; the bar no longer races the inbox loop
+            // into a listing of its own.
+            let trust = state.lock().await.agents_trust();
+            let panes = crate::panes::shared(state, trust).await;
+            let fresh = segments::agents::sample(&panes, &programs, &reports, waiting_secs);
             state.lock().await.agents_store(fresh);
             fresh
         }
@@ -627,10 +647,8 @@ async fn battery(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
         return Ok(cached);
     }
     let rendered = segments::battery::render().await?;
-    // Don't cache while charging — the percentage changes every second.
-    if !rendered.contains(segments::battery::CHARGING_ICON) {
-        state.lock().await.battery_store(rendered.clone());
-    }
+    // Charging is cached too, for less time; see BATTERY_CHARGING_TTL.
+    state.lock().await.battery_store(rendered.clone());
     Ok(rendered)
 }
 
@@ -705,7 +723,7 @@ async fn keys(
     let rows = match cached {
         Some(rows) => rows,
         None => {
-            // Collected outside the lock: six `tmux list-keys` calls is the
+            // Collected outside the lock: five `tmux list-keys` calls is the
             // slow path, and holding the mutex across it would stall every
             // status-bar refresh behind it.
             let fresh = crate::keys::collect().await?;

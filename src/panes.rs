@@ -464,11 +464,6 @@ pub fn preview_tail(text: &str, max: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// Rows beyond this get no preview: a capture per row is a few milliseconds
-/// each, and a server with more panes than this is one where the picker
-/// opening at once matters more than what is on the two-hundredth screen.
-pub const PREVIEW_LIMIT: usize = 200;
-
 /// How many lines of each screen the preview keeps.
 pub const PREVIEW_LINES: usize = 15;
 
@@ -503,6 +498,26 @@ pub async fn reports() -> Reports {
     .unwrap_or_default()
 }
 
+/// The pane list, from the daemon's last read when that is younger than
+/// `max_age`, and read now otherwise.
+///
+/// Three loops (inbox, notify, journal) and the agents segment each ran
+/// their own `list-panes -a` on their own timer, so the daemon forked about
+/// one every second for one answer. Each now passes its own interval: a
+/// list read by another loop since its last turn is as fresh as one it would
+/// have read itself. Read outside the lock, stored under it.
+pub async fn shared(
+    state: &std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+    max_age: std::time::Duration,
+) -> Vec<Pane> {
+    if let Some(panes) = state.lock().await.panes_fresh(max_age) {
+        return panes;
+    }
+    let panes = list().await;
+    state.lock().await.panes_store(panes.clone());
+    panes
+}
+
 /// The last lines of one pane's screen, as the preview shows them.
 pub async fn tail_of(id: &str) -> String {
     let screen =
@@ -510,29 +525,11 @@ pub async fn tail_of(id: &str) -> String {
     preview_tail(&screen, PREVIEW_LINES)
 }
 
-/// The last lines of each row's screen, in row order.
-///
-/// Captured concurrently, because two hundred sequential tmux calls at a few
-/// milliseconds each is a popup that opens with a visible pause.
-async fn previews(rows: &[Row]) -> Vec<String> {
-    if rows.len() > PREVIEW_LIMIT {
-        return vec![String::new(); rows.len()];
-    }
-    let mut set = tokio::task::JoinSet::new();
-    for (i, row) in rows.iter().enumerate() {
-        let id = row.id.clone();
-        set.spawn(async move {
-            let screen =
-                crate::cli::tmux_capture(&["capture-pane", "-p", "-t", &id, "-S", CAPTURE_LINES])
-                    .await;
-            (i, preview_tail(&screen, PREVIEW_LINES))
-        });
-    }
-    let mut out = vec![String::new(); rows.len()];
-    while let Some(Ok((i, text))) = set.join_next().await {
-        out[i] = text;
-    }
-    out
+/// [`tail_of`] outside the runtime, for the picker's lazy preview.
+fn tail_of_sync(id: &str) -> String {
+    let screen =
+        crate::cli::tmux_capture_sync(&["capture-pane", "-p", "-t", id, "-S", CAPTURE_LINES]);
+    preview_tail(&screen, PREVIEW_LINES)
 }
 
 /// Put the attached client on a pane.
@@ -642,19 +639,21 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
         return Ok(());
     }
 
-    let previews = previews(&rows).await;
     let items: Vec<crate::picker::Item> = rows
         .iter()
-        .zip(previews)
-        .map(|(r, preview)| {
+        .map(|r| {
             use crate::picker::{Cell, Tone};
             let state = r.state.to_string();
             // The same colours the bar uses, so the row that wants you is
             // the one that stands out here too.
             let (icon, tone) = state_look(r.state);
-            crate::picker::Item::with_preview(
+            // One capture when the row is selected, rather than one per pane
+            // before the first frame, all at once against a tmux server that
+            // is as short of CPU as this process is.
+            let id = r.id.clone();
+            crate::picker::Item::with_lazy_preview(
                 format!("{} {} {} {}", r.at, r.program, state, r.cwd),
-                preview,
+                move || tail_of_sync(&id),
             )
             .in_cells(vec![
                 Cell::strong(&r.at),

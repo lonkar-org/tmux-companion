@@ -146,6 +146,8 @@ pub mod project;
 #[doc(hidden)]
 pub mod promote;
 #[doc(hidden)]
+pub mod push;
+#[doc(hidden)]
 pub mod quiet;
 #[doc(hidden)]
 pub mod repofile;
@@ -169,5 +171,7 @@ pub mod tasks;
 pub mod theme;
 #[doc(hidden)]
 pub mod toggle;
+#[doc(hidden)]
+pub mod trace;
 #[doc(hidden)]
 pub mod window_names;

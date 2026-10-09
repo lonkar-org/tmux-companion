@@ -267,17 +267,30 @@ pub fn filter<'a>(rows: &'a [KeyRow], query: &str) -> Vec<&'a KeyRow> {
 /// config change now rather than once per keypress, which is the whole reason
 /// the daemon holds these.
 pub async fn collect() -> anyhow::Result<Vec<KeyRow>> {
+    // Five calls, all at once, where this used to make nine one after the
+    // other. Not built ahead at daemon start: `list-keys` starts a server
+    // when none is running, and rows taken while tmux.conf is still being
+    // sourced (a `run-shell` at its end can rebind root keys) stay cached
+    // until the file changes. The first `?` collects, in one round: one full listing, which `parse_commands` splits by its `-T`
+    // and `see_through` needed anyway, and the notes per table, which
+    // `list-keys -N` only prints for one table at a time.
+    let [prefix, root, mine, copy] = TABLES.map(|t| ["-N", "-T", t]);
+    let (full, n_prefix, n_root, n_mine, n_copy) = tokio::join!(
+        list_keys(&[]),
+        list_keys(&prefix),
+        list_keys(&root),
+        list_keys(&mine),
+        list_keys(&copy),
+    );
     let mut all = Vec::new();
-    for table in TABLES {
-        let notes = list_keys(&["-N", "-T", table]).await;
-        let commands = list_keys(&["-T", table]).await;
-        all.extend(rows_for_table(table, &notes, &commands));
+    for (table, notes) in TABLES.iter().zip([n_prefix, n_root, n_mine, n_copy]) {
+        all.extend(rows_for_table(table, &notes, &full));
     }
     if all
         .iter()
         .any(|r| r.table == "root" && crate::keyroute::route::is_wrapper(&r.command))
     {
-        see_through(&mut all, &list_keys(&[]).await);
+        see_through(&mut all, &full);
     }
     Ok(sort_and_dedupe(all))
 }
@@ -756,6 +769,20 @@ bind-key    -T prefix M-x     display-popup -E something
         assert_eq!(described(row), "display-popup -E something");
         assert_eq!(rows.len(), 5);
         assert_eq!(filter(&rows, "popup").len(), 1, "the command is searched");
+    }
+
+    #[test]
+    fn a_full_listing_gives_a_table_the_same_rows_as_its_own_listing() {
+        // collect() hands every table the one full `list-keys`; the other
+        // tables' lines in it must not become rows of this one.
+        let full = format!(
+            "{CMDS_PREFIX}bind-key -T root M-h select-pane -L\n\
+             bind-key -T copy-mode-vi v send-keys -X begin-selection\n"
+        );
+        assert_eq!(
+            rows_for_table("prefix", NOTES_PREFIX, &full),
+            rows_for_table("prefix", NOTES_PREFIX, CMDS_PREFIX)
+        );
     }
 
     #[test]

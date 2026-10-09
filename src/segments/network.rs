@@ -133,8 +133,29 @@ fn unit_on(net: &crate::config::Network, block: &str, bar_bg: &str) -> String {
 
 /// Read cumulative rx/tx bytes from all non-loopback interfaces via sysinfo.
 /// Replaces the `netstat -ibn` subprocess; eliminates the periodic netstat stall.
+///
+/// One `Networks` kept for the life of the process and refreshed, rather than
+/// a new one built every second: the bar asks once a second for as long as
+/// the daemon runs, and the list of interfaces changes when a VPN comes up,
+/// not between two ticks. `refresh(true)` still adds that VPN and drops an
+/// interface that went away.
 fn read_net_bytes_native() -> (u64, u64) {
-    let networks = sysinfo::Networks::new_with_refreshed_list();
+    static KEPT: std::sync::Mutex<Option<sysinfo::Networks>> = std::sync::Mutex::new(None);
+    let Ok(mut kept) = KEPT.lock() else {
+        return totals(&sysinfo::Networks::new_with_refreshed_list());
+    };
+    let networks = match kept.as_mut() {
+        Some(n) => {
+            n.refresh(true);
+            n
+        }
+        None => kept.insert(sysinfo::Networks::new_with_refreshed_list()),
+    };
+    totals(networks)
+}
+
+/// Received and sent bytes over every interface but loopback.
+fn totals(networks: &sysinfo::Networks) -> (u64, u64) {
     networks
         .iter()
         .filter(|(name, _)| !name.starts_with("lo"))

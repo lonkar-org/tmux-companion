@@ -837,12 +837,28 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
     let status = match cached {
         Some(status) => status,
         None => {
-            let fresh = fetch_git_status(&path).await?;
-            state
-                .lock()
-                .await
-                .git_store(path.clone(), fresh.clone(), opts.ttl);
-            fresh
+            // One `git status` per repository at a time. Two clients' bars,
+            // or the bar and a `gst` by hand, missing together used to run
+            // it twice; the second now waits and reads the first's result.
+            // The flight lock is held across the await, the state lock never.
+            let flight = state.lock().await.git_flight(&path);
+            let _flying = flight.lock().await;
+            let landed = if opts.force {
+                None
+            } else {
+                state.lock().await.git_cached(&path, opts.ttl)
+            };
+            match landed {
+                Some(status) => status,
+                None => {
+                    let fresh = fetch_git_status(&path).await?;
+                    state
+                        .lock()
+                        .await
+                        .git_store(path.clone(), fresh.clone(), opts.ttl);
+                    fresh
+                }
+            }
         }
     };
 
