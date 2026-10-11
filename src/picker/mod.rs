@@ -117,6 +117,10 @@ pub struct Item {
     /// tone it is drawn in. One of the constants in `src/tmux/icons.rs`, so
     /// the glyph preset reaches it.
     pub icon: Option<(String, Tone)>,
+    /// Listed only once something is typed. The session switcher opens on the
+    /// sessions alone and brings the directories in with the first letter,
+    /// which is the project picker's search without a second popup.
+    pub searched_only: bool,
 }
 
 /// One column of a row and what kind of text it is.
@@ -204,6 +208,12 @@ impl Item {
     /// with how the row was laid out.
     pub fn in_columns(mut self, columns: Vec<impl Into<String>>) -> Self {
         self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The same item, listed only once a query has been typed.
+    pub fn searched_only(mut self) -> Self {
+        self.searched_only = true;
         self
     }
 
@@ -419,6 +429,44 @@ pub struct Chrome {
     /// opened the picker, so pressing it twice does the usual thing: alt-s
     /// twice goes back to the previous session.
     pub alt_picks: Vec<(char, usize)>,
+    /// Letters that move the cursor when pressed with alt, each with how far
+    /// and which way through the list, wrapping. For a switcher: the key that
+    /// opened it, pressed again inside the popup, moves to the next row, and
+    /// with shift to the one before.
+    pub steps: Vec<(char, isize)>,
+    /// End on the selected row when this long passes after the last step key
+    /// with nothing else pressed. Any key that is not a step stops the clock
+    /// for good, so somebody searching or arrowing is never cut off. `None`,
+    /// the usual, is no clock at all.
+    pub commit_after: Option<std::time::Duration>,
+    /// Told the index of the selected row when the picker opens and after
+    /// each step, for saying it somewhere a screen reader hears.
+    pub on_step: Option<OnStep>,
+    /// The footer is somebody's own words, from `hint` in the config, and is
+    /// shown as written: nothing is added to it.
+    pub footer_as_written: bool,
+}
+
+/// What a picker calls with the selected row's index when a step key moves
+/// it; see [`Chrome::on_step`].
+#[derive(Clone)]
+pub struct OnStep(std::sync::Arc<dyn Fn(usize) + Send + Sync>);
+
+impl OnStep {
+    /// Call `f` with the index of the row stepped to.
+    pub fn new(f: impl Fn(usize) + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(f))
+    }
+
+    pub(crate) fn call(&self, index: usize) {
+        (self.0)(index)
+    }
+}
+
+impl std::fmt::Debug for OnStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnStep")
+    }
 }
 
 impl Default for Chrome {
@@ -433,6 +481,10 @@ impl Default for Chrome {
             look: Look::default(),
             icon: String::new(),
             alt_picks: Vec::new(),
+            steps: Vec::new(),
+            commit_after: None,
+            on_step: None,
+            footer_as_written: false,
         }
     }
 }
@@ -468,6 +520,7 @@ impl Chrome {
         }
         if let Some(v) = over.hint.clone() {
             self.footer = v;
+            self.footer_as_written = true;
         }
         // Only when the call site has a pane at all: a picker that says it has
         // nothing to preview must not grow one because a label was set.
@@ -478,6 +531,37 @@ impl Chrome {
         }
         self.laid_out_by(&resolved)
     }
+}
+
+/// The keys every picker with a preview pane has, which no call site's
+/// footer used to say: Tab steps the preview through its sizes (so the list
+/// beside it widens and narrows, and at the last step the preview goes), and
+/// ctrl-j and ctrl-k scroll it.
+pub const PREVIEW_KEYS: [&str; 2] = ["tab resize", "ctrl-j/k scroll"];
+
+/// The footer as drawn: the call site's, with [`PREVIEW_KEYS`] put in front
+/// of the key that leaves when the picker has a preview pane.
+///
+/// Added here rather than written into every call site's footer, so a
+/// picker whose preview a config turns off doesn't name keys that do
+/// nothing, and one that gains a preview names them without anybody
+/// remembering to. A footer from the config is left as written.
+pub fn footer_for(chrome: &Chrome) -> String {
+    if chrome.footer_as_written
+        || chrome.preview == Preview::None
+        || chrome.footer.trim().is_empty()
+    {
+        return chrome.footer.clone();
+    }
+    let mut groups: Vec<&str> = chrome.footer.trim().split("   ").collect();
+    let leaves = groups
+        .iter()
+        .position(|g| matches!(g.split(' ').next(), Some("esc" | "q")))
+        .unwrap_or(groups.len());
+    for (i, k) in PREVIEW_KEYS.iter().enumerate() {
+        groups.insert(leaves + i, k);
+    }
+    groups.join("   ")
 }
 
 // ── Running one ────────────────────────────────────────────────────
@@ -582,6 +666,88 @@ pub fn run_with_query(items: Vec<Item>, query: &str, chrome: &Chrome) -> anyhow:
     })
 }
 
+/// Rows a picker gets after it has opened, collected on a thread of their
+/// own that the picker starts once its first frame is up.
+///
+/// For rows that cost more to collect than the ones the picker opens on and
+/// that nobody sees until they search: the session switcher's directories.
+/// Started after the first frame, so on a busy machine the collecting does
+/// not compete with the drawing for a core; joined to the list whenever they
+/// arrive; and the first key that searches waits for them, so a search never
+/// runs over half the list.
+pub struct Later {
+    job: Option<Box<dyn FnOnce() -> Vec<Item> + Send>>,
+    rx: Option<std::sync::mpsc::Receiver<Vec<Item>>>,
+}
+
+impl Later {
+    /// Rows `collect` returns, collected when the picker says.
+    pub fn new(collect: impl FnOnce() -> Vec<Item> + Send + 'static) -> Self {
+        Self {
+            job: Some(Box::new(collect)),
+            rx: None,
+        }
+    }
+
+    /// Start collecting, once.
+    pub(crate) fn start(&mut self) {
+        if let Some(job) = self.job.take() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(job());
+            });
+            self.rx = Some(rx);
+        }
+    }
+
+    /// The rows if they are here, without waiting.
+    pub(crate) fn ready(&self) -> Option<Vec<Item>> {
+        self.rx.as_ref()?.try_recv().ok()
+    }
+
+    /// The rows, starting the collection if nothing has, and waiting for
+    /// them, but not for ever: a source that hangs leaves the search to the
+    /// rows already listed.
+    pub(crate) fn wait(mut self) -> Option<Vec<Item>> {
+        self.start();
+        self.rx?
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .ok()
+    }
+}
+
+/// Show the picker with the cursor on the row built at `start_at`, and give
+/// back the query as well as the pick. `later` adds rows after it opens; a
+/// row's index counts on from the ones given here.
+///
+/// For a switcher, whose cursor starts on the row after the one you are in.
+pub fn run_from(
+    items: Vec<Item>,
+    query: &str,
+    chrome: &Chrome,
+    start_at: usize,
+    later: Option<Later>,
+) -> anyhow::Result<Outcome> {
+    if items.is_empty() && query.trim().is_empty() {
+        return Ok(Outcome::Cancelled);
+    }
+    let chrome = if previewable(chrome, &items) {
+        chrome.clone()
+    } else {
+        Chrome {
+            preview: Preview::None,
+            ..chrome.clone()
+        }
+    };
+    Ok(
+        match screen::run_keyed(&items, query, &chrome, &[], Some(start_at), later)? {
+            screen::Ended::Chosen(i) | screen::Ended::Key(_, i) => Outcome::Chosen(i),
+            screen::Ended::Typed(q) => Outcome::Typed(q),
+            screen::Ended::Cancelled => Outcome::Cancelled,
+        },
+    )
+}
+
 /// What somebody did with a picker that has keys of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Keyed {
@@ -618,7 +784,7 @@ pub fn run_keyed(
         }
     };
     Ok(
-        match screen::run_keyed(&items, query, &chrome, keys, start_at)? {
+        match screen::run_keyed(&items, query, &chrome, keys, start_at, None)? {
             screen::Ended::Chosen(i) => Keyed::Chosen(i),
             screen::Ended::Key(c, i) => Keyed::Key(c, i),
             screen::Ended::Typed(_) | screen::Ended::Cancelled => Keyed::Cancelled,
@@ -703,13 +869,51 @@ fn also_in_tmux(in_tmux: bool, print: bool) -> bool {
 /// Text for `display-message`, which expands formats: every `#` doubled so
 /// the text is shown as written. `display-message -l` would do the same, but
 /// it is newer than the tmux 3.2 the pickers are documented to need.
-fn literal_for_tmux(text: &str) -> String {
+pub(crate) fn literal_for_tmux(text: &str) -> String {
     text.replace('#', "##")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picker_with_a_preview_says_tab_and_the_scroll_keys_before_esc() {
+        let chrome = Chrome {
+            footer: "enter jump   ctrl-a clear   esc cancel".into(),
+            preview: Preview::Right,
+            ..Chrome::default()
+        };
+        assert_eq!(
+            footer_for(&chrome),
+            "enter jump   ctrl-a clear   tab resize   ctrl-j/k scroll   esc cancel"
+        );
+        // Information after esc stays after it, and so dropped first.
+        let typed = Chrome {
+            footer: "enter open   esc cancel   type a path".into(),
+            ..chrome.clone()
+        };
+        assert_eq!(
+            footer_for(&typed),
+            "enter open   tab resize   ctrl-j/k scroll   esc cancel   type a path"
+        );
+    }
+
+    #[test]
+    fn no_preview_or_a_footer_from_the_config_is_shown_as_it_is() {
+        let none = Chrome {
+            footer: "enter run   esc cancel".into(),
+            preview: Preview::None,
+            ..Chrome::default()
+        };
+        assert_eq!(footer_for(&none), "enter run   esc cancel");
+        let own = Chrome {
+            footer: "my words".into(),
+            footer_as_written: true,
+            ..Chrome::default()
+        };
+        assert_eq!(footer_for(&own), "my words");
+    }
 
     // ── saying there is nothing ─────────────────────────────────────────────
 

@@ -86,6 +86,8 @@ pub mod autofetch;
 #[doc(hidden)]
 pub mod autoreload;
 #[doc(hidden)]
+pub mod branch_icons;
+#[doc(hidden)]
 pub mod brief;
 #[doc(hidden)]
 pub mod cache;
@@ -109,6 +111,8 @@ pub mod dirsource;
 pub mod doctor;
 #[doc(hidden)]
 pub mod earcons;
+#[doc(hidden)]
+pub mod identity;
 #[doc(hidden)]
 pub mod inbox;
 #[doc(hidden)]
@@ -166,11 +170,11 @@ pub mod setup;
 #[doc(hidden)]
 pub mod shell;
 #[doc(hidden)]
+pub mod switcher;
+#[doc(hidden)]
 pub mod tasks;
 #[doc(hidden)]
 pub mod theme;
-#[doc(hidden)]
-pub mod toggle;
 #[doc(hidden)]
 pub mod trace;
 #[doc(hidden)]

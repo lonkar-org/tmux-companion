@@ -55,6 +55,26 @@ pub fn sock_path() -> PathBuf {
     }
 }
 
+/// One request to a daemon that is already running, from a thread with no
+/// runtime, given up on after `wait`.
+///
+/// Starts no daemon and replaces none: the caller has a way to the answer
+/// without one, and only wants this when it is quicker. `None` for no daemon,
+/// a slow one, or an error it answered with.
+pub fn ask_running(req: &Request, wait: std::time::Duration) -> Option<String> {
+    use std::io::{BufRead, Write};
+    let stream = std::os::unix::net::UnixStream::connect(sock_path()).ok()?;
+    stream.set_read_timeout(Some(wait)).ok()?;
+    stream.set_write_timeout(Some(wait)).ok()?;
+    let mut msg = serde_json::to_string(req).ok()?;
+    msg.push('\n');
+    (&stream).write_all(msg.as_bytes()).ok()?;
+    let mut line = String::new();
+    std::io::BufReader::new(&stream).read_line(&mut line).ok()?;
+    let resp: Response = serde_json::from_str(&line).ok()?;
+    resp.error.is_none().then_some(resp.output)
+}
+
 /// One request, one response, no printing.
 ///
 /// Split out of `send_and_print` so a test can assert on a `Response` instead

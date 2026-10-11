@@ -52,6 +52,8 @@ pub(super) struct Row {
     pub preview: String,
     /// Builds `preview` the first time this row is selected, then goes.
     pub lazy: Option<super::LazyPreview>,
+    /// Hidden until something is typed; see [`Item::searched_only`].
+    pub searched_only: bool,
 }
 
 /// A row that survived the query, and where it matched.
@@ -129,6 +131,7 @@ impl State {
                 swatch: item.swatch.as_deref().and_then(super::colour_of),
                 preview: item.preview.clone(),
                 lazy: item.lazy.clone(),
+                searched_only: item.searched_only,
             })
             .collect();
         let icon_width = icon_width(&rows);
@@ -160,8 +163,12 @@ impl State {
         let pattern = Pattern::parse(&self.query, CaseMatching::Smart, Normalization::Smart);
         let mut buf = Vec::new();
         let mut scored: Vec<(u32, usize, usize, Vec<u32>)> = Vec::new();
+        let searching = !self.query.trim().is_empty();
 
         for (i, row) in self.rows.iter().enumerate() {
+            if row.searched_only && !searching {
+                continue;
+            }
             buf.clear();
             let haystack = Utf32Str::new(&row.text, &mut buf);
             let mut positions = Vec::new();
@@ -922,7 +929,7 @@ pub(super) fn draw(
 
     if let Some(hint) = panes.hint {
         frame.render_widget(
-            Paragraph::new(hint_line(&chrome.footer, paint, hint.width)),
+            Paragraph::new(hint_line(&super::footer_for(chrome), paint, hint.width)),
             hint,
         );
     }
@@ -1138,7 +1145,7 @@ fn take_terminal() -> Term {
 
 /// Show the picker and wait for a decision.
 pub(super) fn run(items: &[Item], query: &str, chrome: &Chrome) -> anyhow::Result<Ended> {
-    run_keyed(items, query, chrome, &[], None)
+    run_keyed(items, query, chrome, &[], None, None)
 }
 
 /// Show the picker, and end on any of `keys` pressed with ctrl as well.
@@ -1153,9 +1160,14 @@ pub(super) fn run_keyed(
     chrome: &Chrome,
     keys: &[char],
     start_at: Option<usize>,
+    later: Option<super::Later>,
 ) -> anyhow::Result<Ended> {
-    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use std::time::Duration;
+    let mut later = later;
+    // Every row the picker holds once `later` has delivered: empty until
+    // then, so a picker with nothing to wait for copies nothing.
+    let mut all: Vec<Item> = Vec::new();
 
     // Every row and every preview exists by now; what came before this was
     // the caller collecting them.
@@ -1173,6 +1185,13 @@ pub(super) fn run_keyed(
     state.apply_glyphs(&paint);
     crate::trace::mark("paint");
     let mut terminal = take_terminal();
+    // The clock starts with the picker: the press that opened it is the
+    // first step.
+    let mut deadline = chrome.commit_after.map(|d| std::time::Instant::now() + d);
+    // Said once the first frame is up, not before it: saying is a tmux
+    // process, and spawning one ahead of the frame put its cost on the path
+    // to the first thing anybody sees.
+    let mut said_first = false;
     // Whatever happens below, the terminal goes back to how it was found. A
     // picker that panics with raw mode still on leaves the pane unusable and
     // the person with no way to read the panic.
@@ -1186,6 +1205,19 @@ pub(super) fn run_keyed(
             );
             terminal.draw(|frame| draw(frame, &mut state, chrome, preview, &paint))?;
             crate::trace::mark("drawn");
+            if !said_first {
+                said_first = true;
+                say_selected(&state, chrome);
+                if let Some(l) = later.as_mut() {
+                    l.start();
+                }
+            }
+            // Rows that came in while nobody was typing join the list now;
+            // hidden ones change nothing on screen, so no frame for them.
+            if let Some(more) = later.as_ref().and_then(super::Later::ready) {
+                grow(&mut state, &mut all, items, more, chrome, &paint);
+                later = None;
+            }
             // Built only when nothing is waiting: keys typed faster than a
             // frame would otherwise each build the preview of a row the next
             // key moves away from.
@@ -1193,18 +1225,56 @@ pub(super) fn run_keyed(
                 continue;
             }
 
+            // A switcher's clock: the selected row is the answer once the
+            // step keys stop. Waiting for a key up to the deadline is the one
+            // timed wait in the picker, and only a caller that asked has it.
+            if let Some(at) = deadline {
+                let left = at.saturating_duration_since(std::time::Instant::now());
+                if !event::poll(left)? {
+                    if let Some(row) = state.current() {
+                        return Ok(Ended::Chosen(row.index));
+                    }
+                    deadline = None;
+                    continue;
+                }
+            }
+
             // Every event already waiting is handled before the next frame, so
             // a burst of keys typed while a frame was being drawn costs one
             // more frame, not one each. Nothing waits for keys that might
             // come: what is there is drained, and the loop draws.
             let mut ev = event::read()?;
+            let mut stepped = false;
             loop {
                 if let Event::Key(key) = ev
                     && key.kind == KeyEventKind::Press
                 {
                     crate::trace::mark("key");
-                    if let Some(end) = apply_key(&mut state, key, chrome, keys) {
-                        return Ok(end);
+                    match step_of(key, chrome) {
+                        Some(delta) => {
+                            state.move_by(delta);
+                            stepped = true;
+                            deadline = chrome.commit_after.map(|d| std::time::Instant::now() + d);
+                        }
+                        None => {
+                            // Anything else is somebody doing it by hand:
+                            // the clock stops and stays stopped.
+                            deadline = None;
+                            // A letter, or Enter on a typed query, is a
+                            // search, and a search wants every row: wait
+                            // here for the ones still coming.
+                            let searching = matches!(key.code, KeyCode::Char(_))
+                                || (key.code == KeyCode::Enter && !state.query.is_empty());
+                            if searching
+                                && let Some(l) = later.take()
+                                && let Some(more) = l.wait()
+                            {
+                                grow(&mut state, &mut all, items, more, chrome, &paint);
+                            }
+                            if let Some(end) = apply_key(&mut state, key, chrome, keys) {
+                                return Ok(end);
+                            }
+                        }
                     }
                 }
                 if !event::poll(Duration::ZERO)? {
@@ -1212,10 +1282,72 @@ pub(super) fn run_keyed(
                 }
                 ev = event::read()?;
             }
+            // Said once per burst, for the row the burst ended on.
+            if stepped {
+                say_selected(&state, chrome);
+            }
         }
     })();
     ratatui::restore();
     result
+}
+
+/// Add rows that arrived after the picker opened, keeping the query, the row
+/// the cursor is on and how the query was first typed.
+///
+/// The whole list is laid out again because column widths are measured
+/// across every row: a long directory name widens the path column for the
+/// sessions too.
+fn grow(
+    state: &mut State,
+    all: &mut Vec<Item>,
+    items: &[Item],
+    more: Vec<Item>,
+    chrome: &Chrome,
+    paint: &Paint,
+) {
+    if all.is_empty() {
+        *all = items.to_vec();
+    }
+    all.extend(more);
+    let on = state.current().map(|r| r.index);
+    let mut next = State::new(
+        all,
+        &state.query,
+        state.preview_percent,
+        &chrome.look.column_order,
+    );
+    next.opening = state.opening.clone();
+    next.apply_glyphs(paint);
+    if let Some(i) = on {
+        next.select_index(i);
+    }
+    *state = next;
+}
+
+/// How far a key moves the cursor when it is one of the caller's step keys:
+/// a letter pressed with alt. Shift is in the letter, `A` rather than `a`,
+/// the way a terminal sends it.
+fn step_of(key: ratatui::crossterm::event::KeyEvent, chrome: &Chrome) -> Option<isize> {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    if !key.modifiers.contains(KeyModifiers::ALT) {
+        return None;
+    }
+    let KeyCode::Char(c) = key.code else {
+        return None;
+    };
+    chrome
+        .steps
+        .iter()
+        .find(|(k, _)| *k == c)
+        .map(|&(_, delta)| delta)
+}
+
+/// Tell the caller which row is selected, when it asked to be told.
+fn say_selected(state: &State, chrome: &Chrome) {
+    if let (Some(say), Some(row)) = (&chrome.on_step, state.current()) {
+        say.call(row.index);
+    }
 }
 
 /// One key applied to the picker: `Some` when it ends it.
@@ -1351,6 +1483,98 @@ mod tests {
             Some(Ended::Chosen(i)) => assert_eq!(i, 2),
             _ => panic!("enter on a match chooses it"),
         }
+    }
+
+    #[test]
+    fn a_row_searched_only_is_hidden_until_something_is_typed() {
+        use ratatui::crossterm::event::KeyCode;
+        let items = vec![
+            Item::new("here"),
+            Item::new("there"),
+            Item::new("somewhere").searched_only(),
+        ];
+        let chrome = Chrome::default();
+        let mut state = State::new(&items, "", 0, &[]);
+        assert_eq!(state.hits.len(), 2);
+        apply_key(&mut state, press(KeyCode::Char('w')), &chrome, &[]);
+        let found: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
+        assert_eq!(found, [2]);
+        apply_key(&mut state, press(KeyCode::Backspace), &chrome, &[]);
+        assert_eq!(state.hits.len(), 2, "back to the rows the picker opened on");
+    }
+
+    #[test]
+    fn rows_that_come_later_join_with_the_query_and_the_cursor_kept() {
+        use ratatui::crossterm::event::KeyCode;
+        let items = vec![Item::new("api"), Item::new("web"), Item::new("docs")];
+        let chrome = Chrome::default();
+        let paint = Paint::plain();
+        let mut state = State::new(&items, "", 0, &[]);
+        state.select_index(1);
+        let mut all = Vec::new();
+        let later = vec![
+            Item::new("~/src/api-old").searched_only(),
+            Item::new("~/src/zebra").searched_only(),
+        ];
+        grow(&mut state, &mut all, &items, later, &chrome, &paint);
+        // Hidden until a search, and the cursor still on `web`.
+        assert_eq!(state.hits.len(), 3);
+        assert_eq!(state.current().map(|r| r.index), Some(1));
+        apply_key(&mut state, press(KeyCode::Char('z')), &chrome, &[]);
+        let found: Vec<usize> = state.hits.iter().map(|h| state.rows[h.row].index).collect();
+        assert_eq!(
+            found,
+            [4],
+            "a later row's index counts on from the first ones"
+        );
+    }
+
+    #[test]
+    fn later_rows_are_collected_once_and_waited_for_when_wanted() {
+        let mut later = super::super::Later::new(|| vec![Item::new("late")]);
+        assert!(later.ready().is_none(), "nothing runs before it is started");
+        later.start();
+        later.start();
+        let got = later.wait().expect("the rows");
+        assert_eq!(got.len(), 1);
+        // Never started: waiting starts it.
+        let unstarted = super::super::Later::new(|| vec![Item::new("a"), Item::new("b")]);
+        assert_eq!(unstarted.wait().map(|v| v.len()), Some(2));
+    }
+
+    #[test]
+    fn a_step_is_alt_and_one_of_the_callers_letters() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let chrome = Chrome {
+            steps: vec![('a', 1), ('A', -1)],
+            ..Chrome::default()
+        };
+        let alt = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+        assert_eq!(step_of(alt('a'), &chrome), Some(1));
+        // A terminal sends shift inside the letter, and may say so as well.
+        assert_eq!(step_of(alt('A'), &chrome), Some(-1));
+        let shifted = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(step_of(shifted, &chrome), Some(-1));
+        // Without alt it is the query.
+        assert_eq!(step_of(press(KeyCode::Char('a')), &chrome), None);
+        assert_eq!(step_of(alt('b'), &chrome), None);
+    }
+
+    #[test]
+    fn steps_wrap_round_the_rows_that_are_listed() {
+        let items = vec![
+            Item::new("one"),
+            Item::new("two"),
+            Item::new("three"),
+            Item::new("hidden").searched_only(),
+        ];
+        let mut state = State::new(&items, "", 0, &[]);
+        state.select_index(1);
+        state.move_by(1);
+        state.move_by(1);
+        assert_eq!(state.current().map(|r| r.index), Some(0));
+        state.move_by(-1);
+        assert_eq!(state.current().map(|r| r.index), Some(2));
     }
 
     #[test]

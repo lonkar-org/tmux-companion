@@ -1,7 +1,9 @@
 # Capped CPU
 
-Status: draft
+Status: implemented
 Owner: tmux-companion
+Author: claude
+Reviewer: @yogeshlonkar
 Problem: the pickers are quick on an idle machine and slow on a throttled one. The tool does not cause the throttling, but the work it does before a picker can draw, and the work it does in the background, grows with every process it starts, and a capped CPU charges for each one.
 
 This is the design for making the pickers fast under a capped CPU and keeping the background cheap enough not to add to the cap. The baseline it starts from is in [BENCHMARKS.md](../BENCHMARKS.md), "Under a capped CPU"; `just bench-capped` reproduces it.
@@ -110,13 +112,13 @@ and the tmux.conf line becomes `set -g status-right "#{@tc-right}"`, which tmux 
 What it costs and saves, to be measured rather than assumed:
 
 - One `tmux` process per second for the whole server, against one `sh` and one client per second per attached client. With one client the process count is the same and the difference is the shell and the socket round trip; with three clients it is one against six.
-- A pane switch shows on the bar at the next tick, up to a second, where today it shows at the next `status-interval`, also up to a second. A `after-select-pane` hook that asks for a push can make it immediate.
+- A pane switch shows on the bar at the next tick, up to a second, where today it shows at the next `status-interval`, also up to a second. A `after-select-pane` hook that asks for a push can make it immediate. What landed instead needs no hook: each pane in a directory other than its session's carries its own value as a pane option, which tmux reads before the session's for the client's current pane (3.4, 3.5a and 3.7c alike), so the switch's own redraw shows it. See design-perceived.md, candidate 4.
 - Under control mode the one process per second goes away too.
 - If the daemon stops, the option keeps its last value and the bar freezes. Push mode clears `@tc-right` on shutdown and the health mark is part of what is pushed, so a frozen bar is a bar that says the daemon is gone, which `doctor` then explains.
 
 Measured (BENCHMARKS.md, "after the fixes"), steady state, one client: the bar costs 31.2 ms/s in call mode and 24.9 in push at load 0, 41-43 and 31.5 at load 32, and each further client adds about a call's cost to call mode and nothing to push. Push is the recommended mode on that evidence, with the fallback line, so a bar whose daemon stopped keeps working. It is not the default yet: a pushed bar with its daemon killed outright shows its last figure until a new daemon replaces it, which call mode cannot do, and the e2e suite has no attached client to test the loop end to end.
 
-Two measured differences from the design above: no `refresh-client -S`, since `status-interval 1` already re-expands `#{@tc-right}` every second and a refresh needs a client target the daemon does not have; and the set-option target is `=session:`, with the colon, because `set-option -t` takes a pane target and refuses `=session` alone.
+Two measured differences from the design above: no `refresh-client -S`, since a `set-option` redraws every client's status line itself (checked on 3.4 and 3.7c with `status-interval 0`), and a refresh from outside tmux with no client attached fails with `no current client`, which would end the batched sequence there; and the set-option target is `=session:`, with the colon, because `set-option -t` takes a pane target and refuses `=session` alone.
 
 The three example `tmux.conf` files use the fallback line, and the default mode is `auto`: the daemon pushes when tmux's global `status-right` reads `@tc-right` and tmux is 3.4 or newer, rechecked once a minute, and leaves the bar to the call otherwise. A `status-right` still on the call-only line therefore pays nothing for push, which a plain `push` default would have charged it. `doctor` has a `bar` line saying which mode is in effect and why, including both reasons for not pushing; the health mark carries only the tmux-too-old one, since a `status-right` that does not read the option is a choice, not a fault.
 
@@ -136,17 +138,55 @@ Rehearsed on a private server with a real client: `kill -9` of a pushing daemon,
 
 Against the budgets above, at load 32 unless said:
 
-| Budget | Result |
-| --- | --- |
-| first row, any picker, load 32, 120 ms p50 | project 103, panes 69, keys 67 meet it; new-window 134 misses by 14 (its directory source) |
-| rows phase, any picker, load 0, 20 ms p99 | panes 16, keys 3 meet it; project 44-57 and new-window 64-66 miss, and include drawing the loading frame now (slowest of 15, so a p99 only nominally) |
-| paint, load 32, 5 ms p50 | 0.1-0.3 for every picker but keys, 15 (the accent; waits for control mode) |
-| five keys at once, load 32, 30 ms ceiling | 18-19 for every picker |
-| idle, daemon and tmux server, 8 ms/s | 8.4 in call mode, 7.2 in push, at load 0 |
+| Budget                                     | Result                                                                                                                                                |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| first row, any picker, load 32, 120 ms p50 | project 103, panes 69, keys 67 meet it; new-window 134 misses by 14 (its directory source)                                                            |
+| rows phase, any picker, load 0, 20 ms p99  | panes 16, keys 3 meet it; project 44-57 and new-window 64-66 miss, and include drawing the loading frame now (slowest of 15, so a p99 only nominally) |
+| paint, load 32, 5 ms p50                   | 0.1-0.3 for every picker but keys, 15 (the accent; waits for control mode)                                                                            |
+| five keys at once, load 32, 30 ms ceiling  | 18-19 for every picker                                                                                                                                |
+| idle, daemon and tmux server, 8 ms/s       | 8.4 in call mode, 7.2 in push, at load 0                                                                                                              |
 
 In Low Power Mode on battery (BENCHMARKS.md) the 120 ms first-row budget at load 32 is missed by project, 135, and new-window, 176; panes 94 and keys 89 still meet it. The floor every picker pays rises with the clock: spawn 39 idle and 60 at load 32, against 32 and 42 on mains.
 
 What is left, in the order it would pay: new-window's directory source; the accent for keys; the daemon's own idle polling (git status for the bar, window names, the chunk clock and the inbox's captures, 12-15 ms/s of the processes it starts); loops whose detection does not depend on their interval, which is what backing off needs; and control mode, which removes most of the rest.
+
+## The directory list, kept by the daemon
+
+Every picker that lists directories (`project`, `new-window`, and the session
+switcher once a letter is typed) ran the directory source itself: `zoxide
+query -l`, a process, every time it opened.
+
+zoxide has no way to push a change. Its shell hook runs `zoxide add` on every
+`cd`, and that rewrites its database, `db.zo`; nothing else is told. So the
+daemon keeps the answer and asks the file instead of the program:
+
+- A picker asks the daemon first (`dirs` on the socket), rule 3, with the
+  command, the variables zoxide reads (`_ZO_DATA_DIR` and the rest) and the
+  file to watch: `$_ZO_DATA_DIR/db.zo`, or the platform's data directory as
+  zoxide resolves it. A daemon that can't be asked, or an older one that
+  doesn't know `dirs`, leaves it to the picker as before.
+- The daemon stats the file on each request, which is not a process, and
+  gives the kept answer while the modification time is the one it read
+  with. A changed file means a `cd` since, and it runs the command again.
+- Even unchanged, an answer older than 15 minutes is read again. zoxide's
+  order is frecency, and the recency half moves with the clock alone (a
+  visit drops a bracket at the hour, a day and a week without a write), and
+  `query -l` leaves out directories deleted since, which nothing writes
+  down either.
+- Sources with no database to watch, `ghq` and a `dirs_command`, are kept
+  for a minute. `z` and `cdr` read a file in the picker already and start
+  nothing, so they don't go through the daemon.
+- No timer: nothing polls the file, and the command runs only when a picker
+  asks after a change. A background refresh debounced after each change
+  would make the first picker after a `cd` warm too, at the cost of a
+  zoxide process after every burst of `cd`s whether or not a picker
+  follows. It isn't done: the session switcher fetches its directories
+  after the first frame, where a fresh read costs nothing anybody sees, and
+  the project picker after a `cd` pays what it paid before.
+
+The freshness rule is `dirsource::still_good`, unit-tested; the e2e
+`the_daemon_keeps_the_directory_list_between_pickers` runs a counting
+`dirs_command` under two pickers and sees it run once.
 
 ## Accessibility
 

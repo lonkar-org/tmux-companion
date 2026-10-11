@@ -29,13 +29,14 @@
 #   copy-mode-vi g   history-top      -> a menu of open and search, whose own g
 #                                        still goes to the top
 #
-# Three keys sit in the root table (`-n`), so they fire without the prefix and
-# take Alt-s, Alt-a and Alt-A away from every program in the pane, including
-# an editor or an agent that wanted them:
+# Four keys sit in the root table (`-n`), so they fire without the prefix and
+# take Alt-s, Alt-S, Alt-a and Alt-A away from every program in the pane,
+# including an editor or an agent that wanted them:
 #
-#   M-s   the project picker
-#   M-a   the next window in this session
-#   M-A   the previous window, tmux's last-window, so two windows flip
+#   M-s   the session switcher, most recent first; type to pick a project
+#   M-S   the same, oldest first
+#   M-a   the window you were on before; keep pressing for older ones
+#   M-A   the same, oldest first
 #
 # Drop the `-n` on any of them to put it behind the prefix instead.
 
@@ -93,6 +94,7 @@ set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
 # mode, a daemon that stopped, or one that crashed) the line runs the call,
 # which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
 # per attached client per second; docs/BENCHMARKS.md has the numbers.
+# After a switch the bar follows in tens of ms in either mode, push the sooner.
 set -ga status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
 set -g  status-right-length 150
 
@@ -183,12 +185,18 @@ bind -N "companion: window new one here, or at any directory" c \
   display-popup -E -w 65% -h 65% "tmux-companion new-window"
 %endif
 %if "#{>=:#{version},3.3}"
-bind -N "companion: project pick a project" -n M-s \
-  display-popup -B -E -w 80% -h 70% "tmux-companion project"
+bind -N "companion: project switch session, or type to pick a project" -n M-s \
+  display-popup -B -E -w 80% -h 70% "tmux-companion switch sessions"
+bind -N "companion: project switch session, oldest first" -n M-S \
+  display-popup -B -E -w 80% -h 70% "tmux-companion switch sessions --reverse"
 %else
-bind -N "companion: project pick a project" -n M-s \
-  display-popup -E -w 80% -h 70% "tmux-companion project"
+bind -N "companion: project switch session, or type to pick a project" -n M-s \
+  display-popup -E -w 80% -h 70% "tmux-companion switch sessions"
+bind -N "companion: project switch session, oldest first" -n M-S \
+  display-popup -E -w 80% -h 70% "tmux-companion switch sessions --reverse"
 %endif
+# The project picker on its own, with every directory listed from the start:
+# bind -n M-s display-popup -B -E -w 80% -h 70% "tmux-companion project"
 # No --pane here, unlike the copy-mode `o` binding below, and the reason is
 # worth writing down: tmux expands #{pane_id} in a run-shell command and does
 # not expand it in a display-popup one, so the obvious version passes the
@@ -303,13 +311,20 @@ bind -N "companion: window jump to an agent" G \
 bind -N "companion: window jump to an agent" G \
   display-popup -E -w 80% -h 70% "tmux-companion panes --agents"
 %endif
-# The window you were on before; keep pressing within 800 ms to sweep on by
-# index the way that went. [toggle] in config.toml makes it a plain cycle.
-bind -N "companion: project toggle the tools in this session" -n M-a \
-  run-shell "tmux-companion toggle '#{session_name}'"
-# The flip between the two most recent windows, for a session with more than two.
-bind -N "companion: project flip to the last window" -n M-A \
-  run-shell "tmux-companion toggle --last '#{session_name}'"
+# The windows of this session in the order you used them, Cmd-Tab's shape:
+# one press goes back to the window you were on, a second within half a
+# second opens a list, more presses move down it, and a pause or Enter goes.
+# Esc stays. M-A walks the other way. [switcher] in config.toml has the
+# timing, and first = "list" with commit = "enter" takes the clock out.
+bind -N "companion: project switch window, most recent first" -n M-a \
+  run-shell "tmux-companion switch windows '#{session_id}' --client '#{client_name}'"
+bind -N "companion: project switch window, oldest first" -n M-A \
+  run-shell "tmux-companion switch windows '#{session_id}' --reverse --client '#{client_name}'"
+# The order comes from these hooks, which only set options; `switch` sets
+# them itself on its first press, and here the history starts with the server.
+set-hook -g 'session-window-changed[73]' 'set -gF @tc_seq "#{e|+:#{@tc_seq},1}" ; set -wF @tc_win_used "#{@tc_seq}"'
+set-hook -g 'client-session-changed[73]' 'set -gF @tc_seq "#{e|+:#{@tc_seq},1}" ; set -F @tc_ses_used "#{@tc_seq}"'
+set-hook -g 'client-attached[73]' 'set -gF @tc_seq "#{e|+:#{@tc_seq},1}" ; set -F @tc_ses_used "#{@tc_seq}"'
 # Closing captures the layout on the way out, before anything is asked to quit,
 # so the project comes back next time with the windows and panes it had. Add
 # --no-save to close without touching the saved layout.

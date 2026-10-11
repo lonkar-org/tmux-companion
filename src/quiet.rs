@@ -2,8 +2,8 @@
 //!
 //! `[notify]` announces finished commands, the inbox nudges about waiting
 //! agents, and the `agents` segment counts them; all three hold their tongue
-//! while quiet is on. The health mark shows `quiet` instead, so a bar that has
-//! gone silent reads as chosen rather than broken. The daemon keeps the clock,
+//! while quiet is on. The health mark shows a crossed-out bell instead, so a bar
+//! that has gone silent reads as chosen rather than broken. The daemon keeps the clock,
 //! so every client and every timer sees the same answer.
 
 /// Seconds from a duration written the way `age` prints one: `45m`, `2h`,

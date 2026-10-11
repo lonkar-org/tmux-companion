@@ -209,6 +209,9 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
 
     // Attach when somebody is watching and is not already inside tmux. A boot
     // script has no terminal and wants the server left running.
+    if opts.hand_back {
+        return Ok(0);
+    }
     let inside = std::env::var_os("TMUX").is_some();
     let watched = std::io::IsTerminal::is_terminal(&std::io::stdin());
     if opts.detach || inside || !watched {

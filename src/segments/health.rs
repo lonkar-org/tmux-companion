@@ -17,7 +17,10 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::panes::WAITING_COLOUR;
-use crate::tmux::{format::colored_segment, icons::HEALTH};
+use crate::tmux::{
+    format::colored_segment,
+    icons::{HEALTH, QUIET},
+};
 
 /// How long a failed timer keeps the mark up after its last failure.
 ///
@@ -126,10 +129,17 @@ pub fn format_health(sample: &HealthSample, bar_bg: &str) -> String {
         return String::new();
     };
     let more = sample.reasons.len() - 1;
+    // Quiet is the bell crossed out and nothing else: the word said what the
+    // glyph already does, at a quarter of the bar's width. `health` and
+    // `quiet --status` still say it in words.
+    let head = match short_word(first) {
+        "quiet" => QUIET.to_string(),
+        word => format!("{HEALTH}{word}"),
+    };
     let text = if more == 0 {
-        format!("{HEALTH}{}", short_word(first))
+        head
     } else {
-        format!("{HEALTH}{} +{more}", short_word(first))
+        format!("{head} +{more}")
     };
     colored_segment(false, WAITING_COLOUR, bar_bg, &text)
 }
@@ -212,6 +222,29 @@ mod tests {
         );
         assert!(drawn.contains("offline"), "{drawn}");
         assert!(!drawn.contains("1.1.1.1"), "the bar has no room: {drawn}");
+    }
+
+    #[test]
+    fn quiet_is_the_bell_crossed_out_without_a_word() {
+        let drawn = format_health(
+            &HealthSample {
+                reasons: vec![crate::quiet::status(Some(1000), 700)],
+            },
+            BAR,
+        );
+        assert!(drawn.contains(QUIET), "{drawn}");
+        assert!(!drawn.contains("quiet"), "{drawn}");
+        assert!(!drawn.contains(HEALTH), "{drawn}");
+        let two = format_health(
+            &HealthSample {
+                reasons: vec![
+                    crate::quiet::status(Some(1000), 700),
+                    "config.toml changed".into(),
+                ],
+            },
+            BAR,
+        );
+        assert!(two.contains(&format!("{QUIET} +1")), "{two}");
     }
 
     #[test]

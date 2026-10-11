@@ -5,6 +5,7 @@
 #
 # usage:
 #   scripts/bench-capped.sh                  loads 0, 16 and 32, alternated twice
+#                                            (on Linux 0, 1x and 2x the core count)
 #   scripts/bench-capped.sh 0 16             only these loads
 #   LABEL=lowpower scripts/bench-capped.sh 0 one run, named for what you changed
 #   CONFIG=mine scripts/bench-capped.sh      a copy of your config and themes
@@ -32,6 +33,15 @@
 # Low Power Mode is the other kind of cap, a lower clock rather than
 # contention; it needs sudo, so it is a person's step: turn it on, run with
 # LABEL=lowpower, turn it off.
+#
+# On Linux (a Raspberry Pi 5 is the machine it was written for) the same run
+# reads nproc, /proc/loadavg and the device-tree or cpuinfo model in place of
+# sysctl, and records throttling with `vcgencmd get_throttled`, `vcgencmd
+# measure_clock arm` and thermal_zone0 in place of `pmset -g therm`; what
+# vcgencmd is missing from is left out of the line rather than guessed. Over a
+# bare `ssh host cmd` there is no TERM and often no UTF-8 locale, and tmux
+# then refuses to attach or draws every glyph as `_`, so on Linux both get a
+# default when missing. macOS output is what it was.
 #
 # Isolation, which the older bench scripts did not have and which this exists
 # for: HOME, every XDG directory and TMUX_TMPDIR point into a temporary
@@ -63,10 +73,25 @@ ONLY=${ONLY:-}
 BIN=${BENCH_BIN:-$REPO/target/release/tmux-companion}
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT=${OUT:-$REPO/target/bench/$STAMP${LABEL:+-$LABEL}}
-if [ $# -gt 0 ]; then LOADS=("$@"); else LOADS=(0 16 32); fi
+OS=$(uname -s)
+if [ $# -gt 0 ]; then
+  LOADS=("$@")
+elif [ "$OS" = Linux ]; then
+  CORES=$(nproc)
+  LOADS=(0 "$CORES" $((CORES * 2)))
+else
+  LOADS=(0 16 32)
+fi
+if [ "$OS" = Linux ]; then
+  if [ -z "${TERM:-}" ] || [ "$TERM" = dumb ]; then export TERM=xterm-256color; fi
+  case "$(locale charmap 2>/dev/null || true)" in
+    UTF-8) ;;
+    *) export LC_ALL=C.UTF-8 ;;
+  esac
+fi
 
 [ -x "$BIN" ] || { echo "no binary at $BIN; run \`just build\` first" >&2; exit 1; }
-for c in tmux python3 zoxide; do
+for c in tmux python3 zoxide cc git; do
   command -v "$c" >/dev/null || { echo "$c is not installed" >&2; exit 1; }
 done
 mkdir -p "$OUT"
@@ -98,7 +123,62 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 therm() {
+  if [ "$OS" = Linux ]; then
+    therm_linux
+    return
+  fi
   pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit|CPU_Scheduler_Limit/ {print $1 "=" $3}' | tr '\n' ' '
+}
+
+# throttled=0x0 arm=2400MHz temp=48.2C, each part only where the machine has
+# it. get_throttled's bits: 0x1 under-voltage, 0x2 arm frequency capped, 0x4
+# throttled, 0x8 soft temperature limit; the same four shifted by 16 mean it
+# happened since boot.
+therm_linux() {
+  local out="" v hz z
+  if command -v vcgencmd >/dev/null; then
+    v=$(vcgencmd get_throttled 2>/dev/null | sed -n 's/^throttled=//p') || true
+    [ -n "$v" ] && out+="throttled=$v "
+    hz=$(vcgencmd measure_clock arm 2>/dev/null | sed -n 's/^frequency([0-9]*)=//p') || true
+    [ -n "$hz" ] && out+="arm=$((hz / 1000000))MHz "
+  fi
+  if [ -z "${hz:-}" ] && [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+    out+="cpu0=$(($(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) / 1000))MHz "
+  fi
+  z=/sys/class/thermal/thermal_zone0/temp
+  if [ -r "$z" ]; then
+    out+="temp=$(awk '{printf "%.1fC", $1 / 1000}' "$z") "
+  fi
+  printf '%s' "$out"
+}
+
+loadavg() {
+  if [ "$OS" = Linux ]; then
+    awk '{print "{ " $1, $2, $3 " }"}' /proc/loadavg
+  else
+    sysctl -n vm.loadavg
+  fi
+}
+
+machine() {
+  if [ "$OS" != Linux ]; then
+    echo "$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu) cpus, $(uname -sr)"
+    return
+  fi
+  local model="" cpu=""
+  [ -r /proc/device-tree/model ] && model=$(tr -d '\0' </proc/device-tree/model)
+  cpu=$(lscpu 2>/dev/null | sed -n 's/^Model name: *//p' | head -1)
+  [ -n "$cpu" ] || cpu=$(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -1)
+  echo "${model:+$model, }${cpu:-$(uname -m)}, $(nproc) cpus, $(uname -sr)"
+}
+
+power() {
+  if [ "$OS" != Linux ]; then
+    echo "lowpowermode=$(pmset -g | awk '/lowpowermode/ {print $2}') $(pmset -g batt | head -1 | sed "s/.*'\(.*\)'.*/\1/")"
+    return
+  fi
+  local gov=/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+  echo "governor=$(cat "$gov" 2>/dev/null || echo '?') $(therm_linux)"
 }
 
 # Short: a unix socket path holds 104 bytes on macOS, and the per-user
@@ -132,9 +212,9 @@ make_tmp() {
 {
   echo "binary   $BIN ($("$BIN" --version 2>/dev/null || echo '?'))"
   echo "commit   $(git -C "$REPO" rev-parse --short HEAD)$(git -C "$REPO" diff --quiet || echo '+dirty')"
-  echo "machine  $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu) cpus, $(uname -sr)"
+  echo "machine  $(machine)"
   echo "tmux     $(tmux -V)"
-  echo "power    lowpowermode=$(pmset -g | awk '/lowpowermode/ {print $2}') $(pmset -g batt | head -1 | sed "s/.*'\(.*\)'.*/\1/")"
+  echo "power    $(power)"
   echo "config   $CONFIG   runs $RUNS   rounds $ROUNDS   loads ${LOADS[*]}"
   echo "date     $(date '+%F %T %z')"
 } | tee "$OUT/summary.txt"
@@ -144,7 +224,7 @@ for ((round = 1; round <= ROUNDS; round++)); do
     name="${LABEL:+$LABEL-}load$load-r$round"
     make_tmp
     echo | tee -a "$OUT/summary.txt"
-    echo "== $name   before: $(therm)  loadavg $(sysctl -n vm.loadavg)" | tee -a "$OUT/summary.txt"
+    echo "== $name   before: $(therm)  loadavg $(loadavg)" | tee -a "$OUT/summary.txt"
     start_load "$load"
     sleep 2
     env -u TMUX -u TMUX_PANE \

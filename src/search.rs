@@ -748,7 +748,7 @@ mod tests {
     fn panes_are_read_most_recently_active_first_and_filtered() {
         let line = |session: &str, id: &str, activity: u64| {
             format!(
-                "{session}\t1\tedit\t0\t{id}\tzsh\t/w\tlaptop\t1\t1\t1\t{activity}\t0\tlaptop\t0\n"
+                "{session}\t1\tedit\t0\t{id}\tzsh\t/w\tlaptop\t1\t1\t1\t{activity}\t0\tlaptop\t0\t$0\t\t0\n"
             )
         };
         let panes = || {

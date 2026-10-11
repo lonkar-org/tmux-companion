@@ -154,8 +154,18 @@ impl Paint {
                 .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
                 .unwrap_or_default()
         };
-        let accent = std::env::var_os("TMUX")
-            .and_then(|_| {
+        let tmux = std::env::var("TMUX").ok();
+        // The daemon first: it has the colour from a pane list a loop already
+        // read, where tmux would cost a process on the way to the first frame.
+        // An answer, even an empty one, is the session's; no answer at all is
+        // a daemon not running or not knowing the session, and tmux decides.
+        let said = tmux
+            .as_deref()
+            .and_then(session_of)
+            .and_then(accent_from_daemon);
+        let accent = match said {
+            Some(said) => super::colour_of(&said),
+            None => tmux.as_ref().and_then(|_| {
                 // `list-clients` rather than `display-message`: a popup is not
                 // a client, and an untargeted question is answered for the
                 // session tmux touched last rather than the one on screen.
@@ -173,8 +183,9 @@ impl Paint {
                         "0\t#{@theme-color-main-1}",
                     ]))
                 })
-            })
-            .unwrap_or(FALLBACK_ACCENT);
+            }),
+        }
+        .unwrap_or(FALLBACK_ACCENT);
         let accent = readable_accent(accent);
         Self {
             accent,
@@ -399,6 +410,28 @@ pub fn no_color_unset(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_none_or(|v| v.is_empty())
 }
 
+/// The session a process inside tmux belongs to, from `$TMUX`, which is
+/// `socket,server pid,session id`. A popup gets the id of the session its
+/// client was showing when the key was pressed.
+pub fn session_of(tmux: &str) -> Option<&str> {
+    let id = tmux.rsplit(',').next()?.trim();
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
+/// The session's theme colour as the daemon has it, or `None` when there is
+/// no daemon to ask or it does not know the session. Waits 50 ms at most,
+/// enough for a daemon whose pane list was stale to read a new one under load;
+/// slower than that and tmux is asked instead.
+fn accent_from_daemon(session: &str) -> Option<String> {
+    let args = crate::proto::AccentArgs {
+        session: session.to_string(),
+    };
+    crate::client::ask_running(
+        &crate::proto::Request::build("__accent", &args),
+        std::time::Duration::from_millis(50),
+    )
+}
+
 /// The theme colour of the client that did something last, out of
 /// `list-clients -F '#{client_activity}\t#{@theme-color-main-1}'`.
 ///
@@ -528,6 +561,23 @@ pub fn is_key(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_session_is_the_last_field_of_tmux() {
+        assert_eq!(session_of("/tmp/tmux-501/default,93018,4"), Some("4"));
+        assert_eq!(
+            session_of("/tmp/a,b/sock,1,12"),
+            Some("12"),
+            "a comma in the path"
+        );
+        assert_eq!(session_of("/tmp/tmux-501/default,93018,"), None);
+        assert_eq!(session_of(""), None);
+        assert_eq!(
+            session_of("/tmp/tmux-501/default,93018,-1"),
+            None,
+            "no session"
+        );
+    }
     use super::*;
 
     #[test]

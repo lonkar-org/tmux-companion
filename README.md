@@ -160,8 +160,28 @@ this time instead of writing scripts add feature to companion for handling multi
 | example      | [docs/tmux.conf.full.example](docs/tmux.conf.full.example)                         | every feature on, with what each costs                                                     |
 | example      | [docs/config.example.toml](docs/config.example.toml)                               | every setting with its default                                                             |
 | explanation  | [docs/explanation/cheatsheet.md](docs/explanation/cheatsheet.md)                   | why the cheat sheet forgets what you've learned                                            |
+| explanation  | [docs/explanation/theme-contrast.md](docs/explanation/theme-contrast.md)           | how every theme's text and borders are computed to meet WCAG 2.1 contrast                  |
+| explanation  | [docs/explanation/performance.md](docs/explanation/performance.md)                 | actual documented performance improvements and benchmarks                                  |
 | contributing | [CONTRIBUTING.md](CONTRIBUTING.md)                                                 | build, test, lint, and what a patch needs                                                  |
 | contributing | [CHANGELOG.md](CHANGELOG.md)                                                       | what changed                                                                               |
+
+### Performance
+
+Actual documented performance improvements and benchmarks on my own device
+
+Few measured numbers:
+
+|      what      |    before to after     | conditions                                         |
+| :------------: | :--------------------: | :------------------------------------------------- |
+| project picker |     446 to 103 ms      | under heavy load (-77%)                            |
+|  panes picker  |      194 to 69 ms      | under heavy load (-64%)                            |
+|   status bar   | 31.2 to 24.9 ms of CPU | each second, idle, one client, call to push (-20%) |
+
+A second idle in push mode, one Intel MacBook Pro 2019 16", 2026-10-09.
+
+[docs/explanation/performance.md](docs/explanation/performance.md)
+
+Happy to get more benchmarks from someone else using scripts in the repo.
 
 ### Contributing
 

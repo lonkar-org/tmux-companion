@@ -96,55 +96,83 @@ pub struct Config {
     /// Quiet hours that come round every day.
     #[serde(default)]
     pub quiet: Quiet,
-    /// Which way `toggle` moves through a session's windows.
+    /// The section `toggle` read, which went with it. Accepted and ignored
+    /// so a config written for it still loads; `config check` and `doctor`
+    /// say it can go.
+    #[serde(default, skip_serializing)]
+    pub toggle: Option<toml::Value>,
+    /// How `switch` moves between windows and sessions in the order you used
+    /// them.
     #[serde(default)]
-    pub toggle: Toggle,
+    pub switcher: Switcher,
 }
 
-/// Which way `toggle` moves through a session's windows.
+/// How `switch` behaves: what the first press does, and what commits.
 ///
-/// The default is the Alt-Tab shape: the first press goes to the window you
-/// were on before, and presses that follow inside `chain_ms` keep going the
-/// way that first jump went, by index. A terminal never sees a key released,
-/// so the time between presses stands in for letting go of Alt.
+/// The order is most recently used, Cmd-Tab's. A terminal never sees Alt let
+/// go, so for windows a pause after the last press stands in for it, and
+/// `commit = "enter"` takes the clock out altogether.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
-pub struct Toggle {
-    /// `recent`, the Alt-Tab shape, or `right` or `left` for a plain cycle by
-    /// index with no timing in it at all.
-    pub order: ToggleOrder,
-    /// How soon a press has to follow the last one to carry on the sweep
-    /// rather than start again from the last window, in milliseconds.
-    pub chain_ms: u64,
-    /// Put the window's name and place on tmux's message line once the
-    /// presses stop, `chain_ms` after the last one, since the key moves focus
-    /// and nothing else says where it went. Not on every press: a message
-    /// covers the whole status line, window list included.
+pub struct Switcher {
+    /// What the first press of the window key does: `flip` goes to the window
+    /// you were on before at once and opens the list only on a second press
+    /// inside `pause_ms`; `list` opens the list on that window and moves
+    /// nothing until you commit.
+    pub first: SwitchFirst,
+    /// What commits the window list: `pause`, `pause_ms` after the last press
+    /// or at once on Enter; `enter`, only Enter. The session list commits on
+    /// Enter only, whatever this says.
+    pub commit: SwitchCommit,
+    /// How long a pause after a press counts as letting go, in milliseconds.
+    /// Also how soon a second press has to follow a flip to open the list.
+    pub pause_ms: u64,
+    /// Say the candidate, its name and place, on tmux's message line on every
+    /// press, for anybody who isn't watching the list.
     pub announce: bool,
+    /// The letter the window key is pressed with, Alt held: `a` for `M-a`.
+    /// Pressed again inside the list it moves on, and with shift it moves
+    /// back.
+    pub windows_key: char,
+    /// The same for the session key, `s` for `M-s`.
+    pub sessions_key: char,
 }
 
-impl Default for Toggle {
+impl Default for Switcher {
     fn default() -> Self {
         Self {
-            order: ToggleOrder::Recent,
-            // 800 ms: time for the eye to land on the bar and decide to go on.
-            chain_ms: 800,
+            first: SwitchFirst::Flip,
+            commit: SwitchCommit::Pause,
+            // 500 ms: long enough for a deliberate second press, short enough
+            // that a single one doesn't feel held.
+            pause_ms: 500,
             announce: true,
+            windows_key: 'a',
+            sessions_key: 's',
         }
     }
 }
 
-/// The orders [`Toggle::order`] takes.
+/// The values [`Switcher::first`] takes.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
-pub enum ToggleOrder {
-    /// The last window first, then on by index the way that jump went.
+pub enum SwitchFirst {
+    /// Go at once; a second press opens the list.
     #[default]
-    Recent,
-    /// The next window by index, wrapping from the last to the first.
-    Right,
-    /// The previous window by index, wrapping from the first to the last.
-    Left,
+    Flip,
+    /// Open the list; nothing moves until a commit.
+    List,
+}
+
+/// The values [`Switcher::commit`] takes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SwitchCommit {
+    /// When the presses pause, or on Enter.
+    #[default]
+    Pause,
+    /// On Enter only.
+    Enter,
 }
 
 /// Quiet hours on a schedule, beside the timer `tmux-companion quiet` sets.
@@ -556,6 +584,9 @@ pub struct PickerLayout {
     /// `[picker.setup]`, for the checklist `setup` shows.
     #[serde(default)]
     pub setup: PickerOverride,
+    /// `[picker.switch]`, for the window switcher's list.
+    #[serde(default)]
+    pub switch: PickerOverride,
 }
 
 /// One picker's departures from `[picker]`.
@@ -637,6 +668,8 @@ pub enum Picker {
     Panes,
     /// The checklist of what the tool offers.
     Setup,
+    /// The window switcher's list.
+    Switch,
 }
 
 /// What one picker looks like before anybody configures it.
@@ -681,6 +714,8 @@ fn builtin(
         // list, because a tmux binding is one long line and beside a list it
         // would wrap into four.
         Picker::Setup => (P::Bottom, 40, B::Edge, L::TopCenter),
+        // A short list of names in a small popup. Nothing to put beside it.
+        Picker::Switch => (P::None, 0, B::None, L::Hidden),
     }
 }
 
@@ -696,6 +731,7 @@ impl PickerLayout {
             Picker::Open => &self.open,
             Picker::Panes => &self.panes,
             Picker::Setup => &self.setup,
+            Picker::Switch => &self.switch,
         }
     }
 
@@ -1138,7 +1174,10 @@ impl Default for Notify {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Agents {
-    /// Programs that are coding agents, matched against `pane_current_command`.
+    /// Programs that are coding agents, matched against the name each pane's
+    /// program was started as (`Pane::name`): tmux's `pane_current_command`,
+    /// or, when that hides the program (`node`, `2.1.296`,
+    /// `grok-1.0.50-mac`), the name read from its arguments by `identity.rs`.
     pub programs: Vec<String>,
     /// Seconds without output after which an agent counts as waiting for you,
     /// when it has said nothing better through `agent` and rung no bell.
@@ -1387,7 +1426,7 @@ pub struct Layout {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutWindow {
-    /// The window name, which is also what `toggle` cycles by.
+    /// The window name.
     pub name: String,
     /// What to run in it. Empty leaves a shell.
     #[serde(default)]
@@ -1603,7 +1642,8 @@ impl Default for Config {
             chunk: Chunk::default(),
             keys: Keys::default(),
             quiet: Quiet::default(),
-            toggle: Toggle::default(),
+            toggle: None,
+            switcher: Switcher::default(),
         }
     }
 }
@@ -2335,11 +2375,24 @@ pub struct Git {
     /// Which branch-name prefixes earn which glyph, in the order they are
     /// tried.
     ///
-    /// The list replaces the built-ins rather than adding to them, so
-    /// `tmux-companion config dump` prints the defaults in the shape you edit
-    /// them in. A name matching nothing here keeps the plain branch glyph, so
-    /// main, master and dev are not special cases.
+    /// The list adds to the built-ins and overrides them: these entries are
+    /// tried first, then every built-in entry the list does not repeat, so an
+    /// entry wins for the prefixes it names and every other prefix keeps its
+    /// glyph. The default is the whole built-in table, so `tmux-companion
+    /// config dump` prints it in the shape you edit, and a config that copied
+    /// the six this list used to hold behaves as it did. `icon = ""` claims
+    /// its prefixes for the plain branch glyph, which is how a built-in is
+    /// turned off. A name with no `word/` prefix keeps the plain branch
+    /// glyph, so main, master and dev are not special cases.
     pub branch_types: Vec<BranchType>,
+    /// Look a prefix nothing in `branch_types` claims up among the Nerd Font
+    /// glyph names, so `parked/` finds the parking glyph.
+    ///
+    /// What the lookup picks is kept in the state directory, so a restart or
+    /// an upgrade draws the same glyph for the same prefix. Off, or under the
+    /// ascii preset, an unknown prefix draws the catch-all glyph with the
+    /// name whole, and no file is read or written.
+    pub branch_icon_matching: bool,
     /// Fetching in the background so ahead and behind mean something.
     #[serde(default)]
     pub autofetch: Autofetch,
@@ -2393,6 +2446,7 @@ impl Default for Git {
             branch_max_len: 20,
             parts: GitPart::all(),
             branch_types: default_branch_types(),
+            branch_icon_matching: true,
             autofetch: Autofetch::default(),
         }
     }
@@ -2408,6 +2462,10 @@ impl Default for Git {
 #[serde(deny_unknown_fields, default)]
 pub struct BranchType {
     /// The glyph drawn before the branch name.
+    ///
+    /// Empty claims the prefixes for the plain branch glyph and draws the
+    /// name whole, prefix and all: what deleting a built-in from the list did
+    /// when the list replaced the built-ins.
     ///
     /// `{NAME}` expands to the glyph of that name in `src/tmux/icons.rs`, the
     /// same spelling `[status.right] separator_before` uses, so the file stays
@@ -2440,12 +2498,14 @@ impl BranchType {
     }
 }
 
-/// The prefixes the bar knew before any of this was configurable.
+/// The built-in table: the six prefix groups the bar knew before any of this
+/// was configurable, then the rest of the common ones, chosen by hand.
 ///
-/// Kept as the default rather than as a hardcoded fallback so that a config
-/// dump shows them, and so that dropping one is done by deleting a line rather
-/// than by finding a flag that turns it off.
-fn default_branch_types() -> Vec<BranchType> {
+/// Kept as the default rather than as a hidden fallback so that a config dump
+/// shows it. It is also what the config's own list is layered on, in
+/// `branch_icons::effective`, so it is tried after the config whatever the
+/// config says.
+pub(crate) fn default_branch_types() -> Vec<BranchType> {
     let group = |icon: &str, prefixes: &[&str]| BranchType {
         icon: icon.to_string(),
         prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
@@ -2457,6 +2517,48 @@ fn default_branch_types() -> Vec<BranchType> {
         group("{CHORE}", &["chore/", "chores/"]),
         group("{RELEASE}", &["release/", "releases/"]),
         group("{TAG}", &["tag/", "tags/"]),
+        group("{DOCS}", &["docs/", "doc/", "documentation/"]),
+        group("{PERF}", &["perf/", "performance/"]),
+        group("{REFACTOR}", &["refactor/", "refactoring/"]),
+        group("{TEST}", &["test/", "tests/", "testing/"]),
+        group("{CI}", &["ci/"]),
+        group("{BUILD}", &["build/", "builds/"]),
+        group(
+            "{DEPS}",
+            &[
+                "deps/",
+                "dep/",
+                "dependencies/",
+                "bump/",
+                "dependabot/",
+                "renovate/",
+            ],
+        ),
+        group("{STYLE}", &["style/", "styles/"]),
+        group("{REVERT}", &["revert/", "reverts/"]),
+        group("{WIP}", &["wip/"]),
+        group(
+            "{EXPERIMENT}",
+            &[
+                "experiment/",
+                "experiments/",
+                "exp/",
+                "spike/",
+                "spikes/",
+                "poc/",
+            ],
+        ),
+        group("{BENCH}", &["bench/", "benchmark/", "benchmarks/"]),
+        group("{PARKED}", &["parked/"]),
+        group("{SECURITY}", &["security/", "sec/"]),
+        group("{A11Y}", &["a11y/", "accessibility/"]),
+        group(
+            "{I18N}",
+            &["i18n/", "l10n/", "translation/", "translations/"],
+        ),
+        group("{DESIGN}", &["design/"]),
+        group("{RESEARCH}", &["research/"]),
+        group("{BACKUP}", &["backup/", "backups/"]),
     ]
 }
 
@@ -2777,6 +2879,12 @@ pub fn deprecations(config: &Config) -> Vec<String> {
     if !config.project.zoxide {
         out.push(
             "`[project] zoxide = false` is deprecated; use `dirs_source = \"none\"`".to_string(),
+        );
+    }
+    if config.toggle.is_some() {
+        out.push(
+            "`[toggle]` is ignored and can go: `toggle` is gone, and `switch windows` with `[switcher]` replaces it"
+                .to_string(),
         );
     }
     out
@@ -3179,6 +3287,18 @@ border = "none"
     #[test]
     fn the_defaults_deprecate_nothing() {
         assert!(deprecations(&Config::default()).is_empty());
+    }
+
+    #[test]
+    fn a_toggle_section_still_loads_and_is_called_out() {
+        let c = parse(
+            "[toggle]\norder = \"recent\"\nchain_ms = 800\n",
+            std::path::Path::new("t.toml"),
+        )
+        .unwrap();
+        let notes = deprecations(&c);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("switch windows"), "{}", notes[0]);
     }
 
     #[test]

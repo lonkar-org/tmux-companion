@@ -24,8 +24,9 @@ pub const ASKED: &str = "\u{f059} ";
 pub const READING: &str = "\u{ebc8} ";
 /// `nf-md-progress_check`: the busy count on the `agents` segment.
 pub const BUSY: &str = "\u{f0996} ";
-/// nf-md-alert, the mark the health segment draws.
-pub const HEALTH: &str = "\u{f0026} ";
+/// nf-md-bell_alert_outline, the mark the health segment draws: something
+/// wants your attention.
+pub const HEALTH: &str = "\u{f0e81} ";
 /// Commits this branch has that its upstream does not (md-arrow_up).
 pub const AHEAD: &str = "\u{f40a} ";
 /// Solid right-pointing triangle, the powerline wedge between segments.
@@ -111,6 +112,55 @@ pub const STASHED: &str = "\u{e257} ";
 pub const SYNC: &str = "\u{f1378}";
 /// The checkout is on a tag rather than a branch.
 pub const TAG: &str = "\u{f412} ";
+// ── Branch types ────────────────────────────────────────────────────────────
+//
+// The glyph in front of a branch name, by how the name starts. The first six
+// are above, where they always were; these are the rest of the built-in table
+// in `config::default_branch_types`, all Material Design (md), which is one
+// family on one grid and a plane nothing else on the bar draws from.
+
+/// Branch named like documentation (md-file_document).
+pub const DOCS: &str = "\u{f0219} ";
+/// Branch named like performance work (md-speedometer).
+pub const PERF: &str = "\u{f04c5} ";
+/// Branch named like a refactor (md-recycle).
+pub const REFACTOR: &str = "\u{f044c} ";
+/// Branch named like tests (md-test_tube).
+pub const TEST: &str = "\u{f0668} ";
+/// Branch named like CI work (md-cog_sync).
+pub const CI: &str = "\u{f1460} ";
+/// Branch named like build work (md-hammer).
+pub const BUILD: &str = "\u{f08ea} ";
+/// Branch named like a dependency bump (md-package_variant).
+pub const DEPS: &str = "\u{f03d6} ";
+/// Branch named like style or formatting (md-format_paint).
+pub const STYLE: &str = "\u{f027c} ";
+/// Branch named like a revert (md-undo).
+pub const REVERT: &str = "\u{f054c} ";
+/// Branch named like work in progress (md-progress_wrench).
+pub const WIP: &str = "\u{f0cbd} ";
+/// Branch named like an experiment or a spike (md-flask).
+pub const EXPERIMENT: &str = "\u{f0093} ";
+/// Branch named like benchmarks (md-chart_line).
+pub const BENCH: &str = "\u{f012a} ";
+/// Branch parked for later (md-parking).
+pub const PARKED: &str = "\u{f03e3} ";
+/// Branch named like security work (md-shield_lock).
+pub const SECURITY: &str = "\u{f099d} ";
+/// Branch named like accessibility work (md-human_handsup).
+pub const A11Y: &str = "\u{f064c} ";
+/// Branch named like translation work (md-translate).
+pub const I18N: &str = "\u{f05ca} ";
+/// Branch named like design work (md-pencil_ruler).
+pub const DESIGN: &str = "\u{f1353} ";
+/// Branch named like research (md-microscope).
+pub const RESEARCH: &str = "\u{f0654} ";
+/// Branch named like a backup (md-archive).
+pub const BACKUP: &str = "\u{f003c} ";
+/// Any other `word/` prefix that neither the table nor the glyph-name lookup
+/// places (md-label_outline). The name is drawn whole after it.
+pub const PREFIXED: &str = "\u{f0316} ";
+
 /// File with merge conflicts.
 pub const UNMERGED: &str = "\u{f1a98} ";
 /// A single space, named so a format string reads as what it draws.
@@ -126,6 +176,11 @@ pub const SESSION: &str = "\u{f2d2}";
 
 /// A directory (fa-folder): a project not yet open, a place for a window.
 pub const FOLDER: &str = "\u{f07b}";
+
+/// A project directory (nf-md-puzzle_edit), in the list that holds the
+/// sessions too: a different shape from [`SESSION`], where the folder was
+/// close enough to read as one.
+pub const PROJECT: &str = "\u{f14d3}";
 
 /// A path nobody has opened yet (fa-plus).
 pub const PATH_NEW: &str = "\u{f067}";
@@ -157,8 +212,8 @@ pub const THEME: &str = "\u{f1fc}";
 /// A snapshot of the server (fa-camera).
 pub const SNAPSHOT: &str = "\u{f030}";
 
-/// Quiet hours (fa-moon_o).
-pub const QUIET: &str = "\u{f186}";
+/// Quiet hours (md-bell_off_outline): the bells are off on purpose.
+pub const QUIET: &str = "\u{f0a91}";
 
 /// On, done, fine (fa-check).
 pub const CHECK: &str = "\u{f00c}";
@@ -209,90 +264,117 @@ pub const RATE_DOWN: &str = "\u{f063} ";
 /// Upload, the same (fa-arrow-up).
 pub const RATE_UP: &str = "\u{f062} ";
 
+/// Every glyph by the name of its constant, in one list, so `by_name` and
+/// anything that needs all of them (the branch lookup steering clear of the
+/// bar's own glyphs) cannot disagree.
+pub const ALL: &[(&str, &str)] = &[
+    ("ADDED", ADDED),
+    ("AGENT", AGENT),
+    ("HEALTH", HEALTH),
+    ("WAITING", WAITING),
+    ("BUSY", BUSY),
+    ("AGENT_TO", AGENT_TO),
+    ("AHEAD", AHEAD),
+    ("ARROW_RIGHT", ARROW_RIGHT),
+    ("ARROW_LEFT", ARROW_LEFT),
+    ("SLANT_IN", SLANT_IN),
+    ("SLANT_OUT", SLANT_OUT),
+    ("RATE_KIB", RATE_KIB),
+    ("RATE_MIB", RATE_MIB),
+    ("RATE_GIB", RATE_GIB),
+    ("CAP_SLASH", CAP_SLASH),
+    ("CAP_CHEVRON", CAP_CHEVRON),
+    ("CAP_RULE", CAP_RULE),
+    ("CAP_EIGHTH", CAP_EIGHTH),
+    ("CAP_NONE", CAP_NONE),
+    ("BEHIND", BEHIND),
+    ("BRANCH", BRANCH),
+    ("BUGFIX", BUGFIX),
+    ("CHORE", CHORE),
+    ("CLEAN", CLEAN),
+    ("COPIED", COPIED),
+    ("DELETED", DELETED),
+    ("FAILED", FAILED),
+    ("FEATURE", FEATURE),
+    ("GIT", GIT),
+    ("GONE", GONE),
+    ("HOTFIX", HOTFIX),
+    ("MODIFIED", MODIFIED),
+    ("NEW", NEW),
+    ("RELEASE", RELEASE),
+    ("RENAMED", RENAMED),
+    ("SEPARATOR", SEPARATOR),
+    ("STAGED", STAGED),
+    ("STASHED", STASHED),
+    ("SYNC", SYNC),
+    ("TAG", TAG),
+    ("UNMERGED", UNMERGED),
+    ("WHITE_SPACE", WHITE_SPACE),
+    ("SESSION", SESSION),
+    ("FOLDER", FOLDER),
+    ("PROJECT", PROJECT),
+    ("PATH_NEW", PATH_NEW),
+    ("PANE", PANE),
+    ("PORT", PORT),
+    ("SEARCH", SEARCH),
+    ("KEY", KEY),
+    ("HISTORY", HISTORY),
+    ("SETUP", SETUP),
+    ("JOURNAL", JOURNAL),
+    ("THEME", THEME),
+    ("SNAPSHOT", SNAPSHOT),
+    ("QUIET", QUIET),
+    ("CHECK", CHECK),
+    ("OPEN_ITEM", OPEN_ITEM),
+    ("SKIPPED", SKIPPED),
+    ("UNKNOWN", UNKNOWN),
+    ("CLOCK", CLOCK),
+    ("ASKED", ASKED),
+    ("READING", READING),
+    ("TIMER_CHECK", TIMER_CHECK),
+    ("TIMER_ALERT", TIMER_ALERT),
+    ("RUN", RUN),
+    ("IDLE", IDLE),
+    ("CLOSED", CLOSED),
+    ("BATTERY_EMPTY", BATTERY_EMPTY),
+    ("BATTERY_QUARTER", BATTERY_QUARTER),
+    ("BATTERY_HALF", BATTERY_HALF),
+    ("BATTERY_THREE_QUARTERS", BATTERY_THREE_QUARTERS),
+    ("BATTERY_FULL", BATTERY_FULL),
+    ("PLUGGED", PLUGGED),
+    ("RATE_DOWN", RATE_DOWN),
+    ("RATE_UP", RATE_UP),
+    ("DOCS", DOCS),
+    ("PERF", PERF),
+    ("REFACTOR", REFACTOR),
+    ("TEST", TEST),
+    ("CI", CI),
+    ("BUILD", BUILD),
+    ("DEPS", DEPS),
+    ("STYLE", STYLE),
+    ("REVERT", REVERT),
+    ("WIP", WIP),
+    ("EXPERIMENT", EXPERIMENT),
+    ("BENCH", BENCH),
+    ("PARKED", PARKED),
+    ("SECURITY", SECURITY),
+    ("A11Y", A11Y),
+    ("I18N", I18N),
+    ("DESIGN", DESIGN),
+    ("RESEARCH", RESEARCH),
+    ("BACKUP", BACKUP),
+    ("PREFIXED", PREFIXED),
+];
+
 /// Look a glyph up by the name of its constant.
 ///
 /// This is what lets a config file say `STAGED = "*"`: the name in the file is
 /// the name in this module, so there is no second list of glyph names to keep
 /// in step with this one.
 pub fn by_name(name: &str) -> Option<&'static str> {
-    match name {
-        "ADDED" => Some(ADDED),
-        "AGENT" => Some(AGENT),
-        "HEALTH" => Some(HEALTH),
-        "WAITING" => Some(WAITING),
-        "BUSY" => Some(BUSY),
-        "AGENT_TO" => Some(AGENT_TO),
-        "AHEAD" => Some(AHEAD),
-        "ARROW_RIGHT" => Some(ARROW_RIGHT),
-        "ARROW_LEFT" => Some(ARROW_LEFT),
-        "SLANT_IN" => Some(SLANT_IN),
-        "SLANT_OUT" => Some(SLANT_OUT),
-        "RATE_KIB" => Some(RATE_KIB),
-        "RATE_MIB" => Some(RATE_MIB),
-        "RATE_GIB" => Some(RATE_GIB),
-        "CAP_SLASH" => Some(CAP_SLASH),
-        "CAP_CHEVRON" => Some(CAP_CHEVRON),
-        "CAP_RULE" => Some(CAP_RULE),
-        "CAP_EIGHTH" => Some(CAP_EIGHTH),
-        "CAP_NONE" => Some(CAP_NONE),
-        "BEHIND" => Some(BEHIND),
-        "BRANCH" => Some(BRANCH),
-        "BUGFIX" => Some(BUGFIX),
-        "CHORE" => Some(CHORE),
-        "CLEAN" => Some(CLEAN),
-        "COPIED" => Some(COPIED),
-        "DELETED" => Some(DELETED),
-        "FAILED" => Some(FAILED),
-        "FEATURE" => Some(FEATURE),
-        "GIT" => Some(GIT),
-        "GONE" => Some(GONE),
-        "HOTFIX" => Some(HOTFIX),
-        "MODIFIED" => Some(MODIFIED),
-        "NEW" => Some(NEW),
-        "RELEASE" => Some(RELEASE),
-        "RENAMED" => Some(RENAMED),
-        "SEPARATOR" => Some(SEPARATOR),
-        "STAGED" => Some(STAGED),
-        "STASHED" => Some(STASHED),
-        "SYNC" => Some(SYNC),
-        "TAG" => Some(TAG),
-        "UNMERGED" => Some(UNMERGED),
-        "WHITE_SPACE" => Some(WHITE_SPACE),
-        "SESSION" => Some(SESSION),
-        "FOLDER" => Some(FOLDER),
-        "PATH_NEW" => Some(PATH_NEW),
-        "PANE" => Some(PANE),
-        "PORT" => Some(PORT),
-        "SEARCH" => Some(SEARCH),
-        "KEY" => Some(KEY),
-        "HISTORY" => Some(HISTORY),
-        "SETUP" => Some(SETUP),
-        "JOURNAL" => Some(JOURNAL),
-        "THEME" => Some(THEME),
-        "SNAPSHOT" => Some(SNAPSHOT),
-        "QUIET" => Some(QUIET),
-        "CHECK" => Some(CHECK),
-        "OPEN_ITEM" => Some(OPEN_ITEM),
-        "SKIPPED" => Some(SKIPPED),
-        "UNKNOWN" => Some(UNKNOWN),
-        "CLOCK" => Some(CLOCK),
-        "ASKED" => Some(ASKED),
-        "READING" => Some(READING),
-        "TIMER_CHECK" => Some(TIMER_CHECK),
-        "TIMER_ALERT" => Some(TIMER_ALERT),
-        "RUN" => Some(RUN),
-        "IDLE" => Some(IDLE),
-        "CLOSED" => Some(CLOSED),
-        "BATTERY_EMPTY" => Some(BATTERY_EMPTY),
-        "BATTERY_QUARTER" => Some(BATTERY_QUARTER),
-        "BATTERY_HALF" => Some(BATTERY_HALF),
-        "BATTERY_THREE_QUARTERS" => Some(BATTERY_THREE_QUARTERS),
-        "BATTERY_FULL" => Some(BATTERY_FULL),
-        "PLUGGED" => Some(PLUGGED),
-        "RATE_DOWN" => Some(RATE_DOWN),
-        "RATE_UP" => Some(RATE_UP),
-        _ => None,
-    }
+    ALL.iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, glyph)| *glyph)
 }
 
 #[cfg(test)]

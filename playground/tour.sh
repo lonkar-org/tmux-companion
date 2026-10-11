@@ -453,7 +453,7 @@ otherwise:
     Ghostty        macos-option-as-alt = true
 
 You can skip that for now. The playground also binds both to the prefix:
-${KEY}prefix P${OFF} for the project picker and ${KEY}prefix A${OFF} for the toggle.
+${KEY}prefix P${OFF} for the project picker and ${KEY}prefix A${OFF} for the window switcher.
 
 ${BOLD}New to tmux?${OFF}
 
@@ -698,7 +698,7 @@ EOF
 
 # ── 11 ─────────────────────────────────────────────────────────────────────
 step_11() {
-  begin "🧰" "Toggle the tools away"
+  begin "🧰" "Back and forth between the tools"
   cat <<EOF
 One key to go to the tool window this session keeps, and the same key to go
 back where you were. In here the layout's tool window is ${BOLD}git${OFF}; on a real

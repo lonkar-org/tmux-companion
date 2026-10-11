@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
@@ -40,6 +40,17 @@ pub const BATTERY_TTL: Duration = Duration::from_secs(30);
 /// figure close to live and drops nine reads in ten.
 pub const BATTERY_CHARGING_TTL: Duration = Duration::from_secs(10);
 
+/// One directory source's kept answer.
+#[derive(Debug, Clone)]
+pub struct DirsAnswer {
+    /// The paths, one a line, as the source printed them.
+    pub paths: String,
+    /// When they were read.
+    pub read_at: Instant,
+    /// The watched file's modification time when they were read.
+    pub stamp: Option<SystemTime>,
+}
+
 /// Everything the server keeps between requests: the bandwidth previous
 /// sample, the directory aliases, and the three caches.
 ///
@@ -57,6 +68,9 @@ pub struct ServerState {
     /// Behind an `Arc` so the response path clones a pointer rather than a
     /// table on every request.
     pub glyphs: std::sync::Arc<GlyphMap>,
+    /// The branch-prefix table the git segment draws with, and what the
+    /// glyph-name lookup has picked so far. See `branch_icons`.
+    pub branch_icons: crate::branch_icons::BranchIcons,
     /// Previous cumulative rx/tx counters, for the bandwidth delta.
     pub net_previous: Option<NetSample>,
     /// The last bandwidth string rendered, replayed when two samples arrive too
@@ -75,6 +89,10 @@ pub struct ServerState {
     /// inbox, notify and journal loops and the agents segment, each taking
     /// it when it is younger than its own interval. See `panes::shared`.
     pub pane_list: Option<(Vec<crate::panes::Pane>, Instant)>,
+    /// Directory sources' answers, by what was asked (`dirs`): the paths,
+    /// when they were read, and the watched file's modification time then.
+    /// See `dirsource::still_good` for when one is given again.
+    pub dirs_cache: HashMap<String, DirsAnswer>,
     /// Why the bar cannot be pushed, when that is worth the health mark: a
     /// tmux too old under `[bar] mode = "auto"`. See `push::health_reason`.
     pub bar_note: Option<String>,
@@ -159,9 +177,11 @@ impl ServerState {
     pub fn with_config(config: Config) -> Self {
         let config_aliases = config.dirs.aliases.clone();
         let glyphs = std::sync::Arc::new(GlyphMap::new(&config.glyphs));
+        let branch_icons = crate::branch_icons::BranchIcons::new(&config.git, config.glyphs.preset);
         Self {
             config,
             glyphs,
+            branch_icons,
             net_previous: None,
             net_last_render: String::new(),
             dir_aliases: if config_aliases.is_empty() {
@@ -172,6 +192,7 @@ impl ServerState {
             battery_cache: None,
             agents_cache: None,
             pane_list: None,
+            dirs_cache: HashMap::new(),
             bar_note: None,
             unclean: Vec::new(),
             started_at: std::time::SystemTime::now(),
@@ -309,6 +330,26 @@ impl ServerState {
             .map(|(p, _)| p.clone())
     }
 
+    /// A directory source's kept answer, when it can be given again with the
+    /// watched file's modification time now being `now`.
+    pub fn dirs_fresh(&self, key: &str, now: Option<SystemTime>, watched: bool) -> Option<String> {
+        let a = self.dirs_cache.get(key)?;
+        crate::dirsource::still_good(a.read_at.elapsed(), a.stamp, now, watched)
+            .then(|| a.paths.clone())
+    }
+
+    /// Keep a directory source's answer just read.
+    pub fn dirs_store(&mut self, key: String, paths: String, stamp: Option<SystemTime>) {
+        self.dirs_cache.insert(
+            key,
+            DirsAnswer {
+                paths,
+                read_at: Instant::now(),
+                stamp,
+            },
+        );
+    }
+
     /// Keep a pane list just read, for the next reader.
     pub fn panes_store(&mut self, panes: Vec<crate::panes::Pane>) {
         self.pane_list = Some((panes, Instant::now()));
@@ -362,7 +403,7 @@ impl ServerState {
         let programs = &self.config.agents.programs;
         let live: std::collections::HashSet<&str> = panes
             .iter()
-            .filter(|p| crate::panes::is_agent(&p.command, programs))
+            .filter(|p| crate::panes::is_agent(p.name(), programs))
             .map(|p| p.id.as_str())
             .collect();
         self.reports.retain(|id, _| live.contains(id.as_str()));
@@ -504,6 +545,34 @@ fn load_dir_aliases() -> HashMap<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_directory_answer_is_given_again_until_its_database_moves() {
+        let mut st = ServerState::new();
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(42);
+        assert_eq!(
+            st.dirs_fresh("zoxide", Some(t), true),
+            None,
+            "nothing kept yet"
+        );
+        st.dirs_store("zoxide".into(), "/a\n/b\n".into(), Some(t));
+        assert_eq!(
+            st.dirs_fresh("zoxide", Some(t), true).as_deref(),
+            Some("/a\n/b\n")
+        );
+        let moved = t + Duration::from_secs(1);
+        assert_eq!(
+            st.dirs_fresh("zoxide", Some(moved), true),
+            None,
+            "a cd since"
+        );
+        assert_eq!(
+            st.dirs_fresh("ghq", None, false),
+            None,
+            "kept by what was asked"
+        );
+    }
+
     use super::*;
 
     #[test]

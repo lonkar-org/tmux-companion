@@ -346,13 +346,21 @@ the bindings shown are that file's.
 Every picker takes the same keys.
 Typing filters, the arrows and Page Up and Page Down move, enter takes the
 row, and escape, ctrl-c or ctrl-d closes it.
-Ctrl-a, ctrl-u or Delete clears the filter, ctrl-p or Tab changes where the
-preview sits, ctrl-j and ctrl-k scroll it, and alt-enter takes what was typed
-rather than the row.
+Ctrl-a, ctrl-u or Delete clears the filter, ctrl-p or Tab steps the preview
+through its sizes, so the list beside it widens and narrows and the last step
+hides the preview, ctrl-j and ctrl-k scroll it, and alt-enter takes what was
+typed rather than the row.
+A picker with a preview says Tab and ctrl-j/k in its line of keys, unless the
+line is your own from
+.Ic hint
+in the config.
 The terminal's cursor sits on the selected row, which is what a screen reader
 or a braille display follows, and on the end of the filter when nothing is
 listed.
-Nothing in a picker is timed.
+Nothing in a picker is timed, except the window switcher's commit on a pause,
+which
+.Ic [switcher] commit No = Qq enter
+turns off.
 .Bl -tag -width Ds
 .It Ic project Oo Ar directory Oc Op Fl -print
 Live sessions and the directories the configured source knows, in one list,
@@ -627,6 +635,80 @@ Without
 inside tmux, the line saying there is nothing to show also goes to the tmux
 message line, so a popup that closes does not take it with it.
 No such session is one line on stderr and exit 0, not an error.
+.It Ic sessions start Ar name Oo Ar dir Oc Op Fl -detach
+Open a session by its name, taking the first of these that knows it:
+a live session called
+.Ar name ,
+which it attaches to, or switches to from inside tmux;
+the newest snapshot generation holding a session called
+.Ar name ,
+which it restores alone, as
+.Ic sessions resurrect Fl -only Ar name Fl -merge
+would, confirm screen and restore table included;
+a project directory whose session would be called
+.Ar name ,
+from the directories with a saved layout and the ones
+.Ic [project] dirs_source
+lists, opened the way
+.Ic project
+opens it;
+and last
+.Ar dir ,
+which gets a session called
+.Ar name .
+Several project directories with the same name open the project picker on just
+those.
+With none of these the project picker asks for the directory, and a typed path
+is taken as well as a listed one.
+Off a terminal there is nobody to ask, so it says the directory is missing and
+exits 2.
+A
+.Ar dir
+given when something earlier answered is not used, and one line on standard
+error says so.
+tmux keeps a
+.Ql \&.
+or
+.Ql \&:
+in a name as
+.Ql _ ,
+and the name is matched the same way.
+.Fl -detach
+starts or restores the session and attaches nothing.
+The exit codes are
+.Ql 0
+there,
+.Ql 2
+a directory missing or not a directory, the restore's own codes when a restore
+refused, and
+.Ql 1
+for anything else, a cancelled pick included.
+.It Ic sessions continue Op Fl -last , Fl -print
+Go back to the session you left: attach to it, or switch to it from inside
+tmux, where the session this runs in is never the answer.
+tmux cannot say which session a client detached from, since by the time its
+.Ql client-detached
+hook runs the client has no session, so the record is the one taken on the way
+in: the
+.Ql @tc_ses_used
+stamp the switcher's hooks put on a session at every attach and switch.
+This sets those hooks too, as
+.Ic switch
+does, so on a server whose config does not set them the record starts with the
+first
+.Ic sessions continue .
+Of the sessions no client is in, or of every other session when each has a
+client, it takes the highest stamp; with no stamp, the latest
+.Ql session_last_attached ;
+with neither, the oldest by
+.Ql session_created .
+.Fl -last
+reads none of these and takes the youngest session by
+.Ql session_created ,
+attached or not, other than the one this runs in.
+.Fl -print
+prints the name and the reason, a tab between them, and exits.
+No other session to go to is one line on standard error and exit 1.
 .It Ic shutdown
 Stop the tmux-companion daemon, and only that.
 tmux and its sessions are not touched, and the next client starts a new
@@ -1252,9 +1334,12 @@ or a bare number of minutes,
 .Ic [notify]
 announces nothing, the inbox nudges nobody, and the
 .Ic agents
-segment leaves the bar; the health mark says
+segment leaves the bar; the health mark is a crossed-out bell in its
+place, so the silence reads as chosen rather than broken, and
+.Ic health
+says
 .Ql quiet
-in its place, so the silence reads as chosen rather than broken.
+in words.
 With nothing given it says how long is left;
 .Fl -off
 ends it now.
@@ -1340,63 +1425,101 @@ The daemon writes it to
 .Pa journal.tsv
 in the state directory as it happens.
 It is off by default.
-.It Ic toggle Oo Ar session Oc Op Fl -last
-Move to another window in this session, in the order
-.Ic [toggle] order
-gives.
-The default,
-.Ql recent ,
-is the Alt-Tab shape: the first press goes to the window the session was on
-before, and each press within
-.Ic [toggle] chain_ms
-of the last one, 800 milliseconds unless set, goes on by index in the
-direction that first jump went, wrapping at the ends.
-When the presses stop, the window the sweep started from is tmux's last
-window again, so the next first press goes back there.
-.Ql right
-and
-.Ql left
-move to the next or previous window by index every time, with no timing.
-Windows are told apart by index, so two windows with the same name are two
-stops, and the window pockets are parked in is passed over.
+.It Ic switch windows Oo Ar session Oc Op Fl -reverse , Fl -client Ar name , Fl -print
+Move between this session's windows in the order they were used, the way
+Cmd-Tab moves between applications.
+Run from
+.Ic run-shell ,
+with no terminal, it is one press of the key.
 With
-.Ic [toggle] announce ,
-on by default, the window's name and its place, such as
+.Ic [switcher] first
+set to
+.Ql flip ,
+the default, the first press goes at once to the window you were on before
+and draws nothing; a second press within
+.Ic [switcher] pause_ms ,
+500 milliseconds unless set, opens a popup listing the windows, most
+recently used first, on the next older one.
+With
+.Ql list ,
+the first press opens that list and nothing moves until a commit.
+Inside the list the same key moves on and, with shift, back;
+the list commits
+.Ic pause_ms
+after the last press, or at once on Enter, and Esc goes back to the window
+the presses began in.
+With
+.Ic [switcher] commit
+set to
+.Ql enter ,
+only Enter commits.
+Typing filters the list, and stops the clock.
+The window you are in carries the word
+.Ql now .
+With
+.Ic [switcher] announce ,
+on by default, each press puts the candidate's name and its place, such as
 .Ql ai, 2 of 4 ,
-go on the message line once the presses stop, at
-.Ic chain_ms
-after the last one.
-It waits because a tmux message covers the whole status line, and one on
-every press would hide the window list during a sweep.
+on the message line.
+.Fl -reverse
+goes the other way,
+.Fl -client
+is the client the key was pressed on, which the binding passes as
+.Ql #{client_name} ,
+and
+.Fl -print
+prints the windows, index and name, most recently used first, one to a
+line.
+Run in a terminal, such as a popup, it is the list.
 .Pp
-The sweep is timed: a terminal never reports a key being released, so the
-gap between presses stands in for letting go of Alt.
-Somebody who presses slower than
-.Ic chain_ms
-gets the flip every time and never the sweep; a longer
-.Ic chain_ms ,
-.Ql right
+The order comes from hooks that only set options, so a switch starts no
+process:
+.Ql session-window-changed[73] ,
+.Ql client-session-changed[73]
+and
+.Ql client-attached[73]
+count every switch into
+.Ql @tc_seq
+and stamp the window or session with it as
+.Ql @tc_win_used
 or
-.Ql left ,
-or
-.Fl -last
-are the paths with no clock in them.
+.Ql @tc_ses_used .
+.Ic switch
+sets them each time it runs.
+A window never stamped comes after every stamped one, tmux's last window
+first.
 .Pp
-.Fl -last
-flips to the window the session was on before, which is tmux's own
-.Ic last-window ,
-with no sweep and no timing.
-A
-.Ar window
-after the session is accepted and ignored, so older bindings that pass
-.Ql #{window_name}
-keep working.
+Two things are timed: the commit on a pause, and under
+.Ql flip
+the second press opening the list.
+.Ic [switcher] first No = Qq list
+with
+.Ic commit No = Qq enter
+has no clock in it at all.
 Bound to
 .Ql M-a ,
-and
-.Fl -last
+and with
+.Fl -reverse
 to
-.Ql M-A .
+.Ql M-A ,
+in the example configs.
+.It Ic switch sessions Op Fl -reverse , Fl -print
+The project picker opened as a session switcher: every session, most
+recently used first, with the cursor on the one you were in before, or with
+.Fl -reverse
+on the oldest.
+The session key, Alt held, moves on and with shift back, Enter goes and Esc
+stays; there is no clock.
+The project directories are in the list but hidden until something is typed,
+so the first letter turns it into the project picker's search, and a typed
+path opens as it does there.
+.Fl -print
+prints the session names, most recently used first.
+Bound to
+.Ql M-s
+and
+.Ql M-S
+in the example configs.
 .It Ic project close Oo Ar session Oc Op Fl -discard , Fl -no-save
 Close a project by asking every window to exit, capturing the layout on the
 way out.
@@ -1432,8 +1555,8 @@ defaults to
 A pocket is known by the pane option
 .Ql @tmux-companion-pocket
 rather than by its title, which a shell is free to change.
-.Ic toggle
-cycles past the
+.Ic switch windows
+passes the
 .Ql _pocket
 window, and
 .Ic project save
@@ -1736,7 +1859,12 @@ The sections are
 .Ic [picker] , [journal] , [online] , [open] , [earcons] , [chunk] ,
 .Ic [keys]
 and
-.Ic [toggle] .
+.Ic [switcher] .
+A
+.Ic [toggle]
+section, from a command that has gone, is ignored, and
+.Ic config check
+says so.
 .Bl -tag -width Ds
 .It Ic config path
 Which file is being read.
@@ -1778,7 +1906,9 @@ the daemon setting the session option
 .Ql @tc-right
 once a second for
 .Ic status-right
-to expand without starting anything; or
+to expand without starting anything, and the same option on each pane whose
+directory is not its session's, so a window or pane switch shows the new
+place at once; or
 .Ql auto ,
 the default, which pushes when the global
 .Ic status-right
@@ -1787,6 +1917,9 @@ reads
 and tmux is 3.4 or newer.
 .Ic doctor
 says which it chose and why.
+After a window or pane switch the bar follows in tens of milliseconds in
+either mode, and push is the sooner of the two: a median of 16 ms against 40
+for call on one idle Intel MacBook.
 .Ic [picker] preview
 is where every picker puts its preview pane, or
 .Ql none
@@ -1812,9 +1945,9 @@ preview both,
 and the preview's own label.
 Each of them can be written again under
 .Ic [picker.keys] , [picker.project] , [picker.window] , [picker.theme] ,
-.Ic [picker.run] , [picker.open] , [picker.panes]
+.Ic [picker.run] , [picker.open] , [picker.panes] , [picker.setup]
 or
-.Ic [picker.setup]
+.Ic [picker.switch]
 for the one picker that wants a different answer, together with the
 .Ic label , hint
 and
@@ -1826,12 +1959,28 @@ in
 .Pa tmux.conf ,
 not here.
 .Ic [agents] programs
-is the one list of what counts as a coding agent, matched against
-.Ql pane_current_command ;
-a command that is only a version number,
-.Ql 2.1.283 ,
-counts as well, since that is what tmux reports for claude, which names its
-process after its version, and nothing else names a process that way.
+is the one list of what counts as a coding agent, matched against the name
+each pane's program was started as.
+.Ql pane_current_command
+is matched as it is unless it can hide the program: a bare version
+.Pq claude, Ql 2.1.296 ,
+a release after a hyphen
+.Pq grok, Ql grok-1.0.50-mac ,
+an interpreter
+.Po gemini and cursor-agent are
+.Ql node ,
+aider
+.Ql python3
+.Pc
+or a name 15 bytes long.
+For those the program in front is named from its arguments:
+.Ql argv[0]
+for a native program, the script for an interpreter, so
+.Ql node /usr/local/bin/gemini
+is gemini.
+This reads the process directly and starts none.
+When it cannot be read, a bare version still counts as claude and a name with
+a release version after a hyphen as the name before it.
 The list is read by
 .Ic panes Fl -agents ,
 the
@@ -1909,14 +2058,56 @@ takes
 .Ql {NAME}
 for any glyph the tool knows, so the file stays readable without a patched
 font, and draws anything else as written.
-The list replaces the six shipped entries rather than adding to them;
+Twenty-five groups ship, from
+.Ql feat/
+and
+.Ql fix/
+to
+.Ql docs/ ,
+.Ql perf/ ,
+.Ql parked/
+and
+.Ql a11y/ ;
 .Ic config dump
 prints them in the shape they are edited in.
-A name no entry claims keeps the plain branch glyph, which is why
+The list adds to them rather than replacing them: its entries are tried
+first, then every shipped entry it does not repeat, so an entry wins for the
+prefixes it names and every other prefix keeps its glyph.
+An empty
+.Ic icon
+claims its prefixes for the plain branch glyph and keeps the name whole, which
+is how a shipped entry is turned off.
+A name with no
+.Ql word/
+prefix keeps the plain branch glyph, which is why
 .Ql main
 and
 .Ql master
 need no entry.
+.Pp
+A
+.Ql word/
+prefix nothing in the list claims is looked up among the Nerd Font Material
+Design glyph names built into the binary: the word as written, then as a
+singular, then from
+.Ql -ed
+or
+.Ql -ing ,
+then as a plural, skipping any glyph the bar already draws for something
+else, so
+.Ql cleanup/
+finds the broom.
+The daemon keeps each pick in
+.Pa $XDG_STATE_HOME/tmux-companion/branch-icons.toml
+so the same prefix draws the same glyph after a restart or an upgrade;
+.Ic doctor
+lists the picks with the
+.Ic icon
+value that makes one an entry of your own.
+A prefix the lookup cannot place draws a catch-all glyph with the name whole.
+.Ic [git] branch_icon_matching = false
+turns the lookup off, and so does the ascii glyph preset, since a looked-up
+glyph has no 7-bit form.
 .Sh DIAGNOSTICS
 .Bl -tag -width Ds
 .It Ic doctor
@@ -1970,7 +2161,7 @@ timer runs and works, or until
 forgets it, whichever comes first;
 .Cm ack
 prints each failure it forgot.
-It forgets failures and nothing else.
+It forgets failures and unclean stops and nothing else.
 A
 .Pa config.toml
 edited after the daemon started, a newer binary on disk, quiet hours and a
@@ -2004,6 +2195,9 @@ run inside the checkout reads it too
 themes, and the two files that apply them
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/
 saved per-project layouts
+.It Pa $XDG_STATE_HOME/tmux-companion/branch-icons.toml
+the glyph the daemon picked for each branch prefix it looked up by glyph
+name; delete it and restart the daemon to pick again
 .It Pa $XDG_CONFIG_HOME/tmux-companion/keys.toml
 the
 .Ic [keys]
@@ -2020,6 +2214,12 @@ found in each layer, read by
 the script the last
 .Ic keys route
 sourced, kept for reading when a wrapper misbehaves
+.It Pa $XDG_STATE_HOME/tmux-companion/crashes.tsv
+one line for every time the daemon started and found that the one before it
+had stopped without cleaning up, a crash or a
+.Ql kill -9 :
+the unix time it noticed, and the last heartbeat the old one wrote.
+Two lines within a minute put a second reason on the health mark
 .It Pa $XDG_STATE_HOME/tmux-companion/keys-usage.tsv
 which bindings the key picker ran, written only with
 .Ic [usage] enabled

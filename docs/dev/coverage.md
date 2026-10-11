@@ -25,7 +25,7 @@ trusting a tick.
 | `preview-tmux-theme.zsh` | the theme picker's swatches | deliberately smaller |
 | `reapply-themes.zsh` | `theme apply` | partial, see below |
 | `close-project.zsh` | `project close` | done |
-| `toggle-tool.zsh` | `toggle` | done |
+| `toggle-tool.zsh` | `switch windows` | done, replaced by the switcher |
 | `session-autosave.zsh` | `autosave` | done, as a daemon task |
 | `short-path.zsh` | `project::short_path` | done, as a library |
 

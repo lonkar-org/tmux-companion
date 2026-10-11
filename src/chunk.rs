@@ -676,9 +676,17 @@ pub async fn chunk_loop(
 
         // The agent's age costs a `ps`, so it is asked only while an agent is
         // the pane in front.
+        // By the name it was started as when tmux's hides it (`node` for
+        // gemini); see `identity.rs`. Nothing for a shell or an editor, one
+        // system call a poll while such a program is in front, and the
+        // arguments are read once per program started.
+        let name = crate::identity::of(seen.pane_pid, &seen.command);
         let is_agent = {
             let st = state.lock().await;
-            crate::panes::is_agent(&seen.command, &st.config.agents.programs)
+            crate::panes::is_agent(
+                name.as_deref().unwrap_or(&seen.command),
+                &st.config.agents.programs,
+            )
         };
         let age = if settings.agent_age && is_agent && seen.pane_pid != 0 {
             match tokio::process::Command::new("ps")

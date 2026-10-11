@@ -46,7 +46,7 @@ pub fn count(
 ) -> AgentsSample {
     let mut sample = AgentsSample::default();
     for pane in panes {
-        if !panes::is_agent(&pane.command, programs) {
+        if !panes::is_agent(pane.name(), programs) {
             continue;
         }
         sample.total += 1;
@@ -287,10 +287,10 @@ mod tests {
     #[test]
     fn counting_uses_the_configured_list_the_threshold_and_the_reports() {
         let listing = "\
-api\t1\t0\t0\t%1\tclaude\t/a\tlaptop\t1\t1\t1\t995\t0\tlaptop\t0
-api\t2\t0\t0\t%2\tclaude\t/a\tlaptop\t1\t1\t1\t800\t0\tlaptop\t0
-web\t1\t0\t0\t%3\tzsh\t/w\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0
-web\t1\t0\t1\t%4\tcodex\t/w\tlaptop\t1\t1\t1\t0\t1\tlaptop\t0
+api\t1\t0\t0\t%1\tclaude\t/a\tlaptop\t1\t1\t1\t995\t0\tlaptop\t0\t$0\t\t0
+api\t2\t0\t0\t%2\tclaude\t/a\tlaptop\t1\t1\t1\t800\t0\tlaptop\t0\t$0\t\t0
+web\t1\t0\t0\t%3\tzsh\t/w\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\t$0\t\t0
+web\t1\t0\t1\t%4\tcodex\t/w\tlaptop\t1\t1\t1\t0\t1\tlaptop\t0\t$0\t\t0
 ";
         let panes = panes::parse(listing);
         let programs = crate::config::Agents::default().programs;

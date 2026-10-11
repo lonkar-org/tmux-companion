@@ -90,7 +90,7 @@ pub fn step(
 ) -> Step {
     let mut out = Step::default();
     for pane in panes {
-        if !panes::is_agent(&pane.command, programs) {
+        if !panes::is_agent(pane.name(), programs) {
             continue;
         }
         let report = reports.get(&pane.id).copied();
@@ -360,7 +360,7 @@ pub async fn inbox_loop(
         );
         let seen: Vec<(String, State)> = panes
             .iter()
-            .filter(|p| panes::is_agent(&p.command, &config.programs))
+            .filter(|p| panes::is_agent(p.name(), &config.programs))
             .map(|p| {
                 let s = panes::state(
                     p,
@@ -573,6 +573,10 @@ mod tests {
             in_mode,
             host: "laptop".into(),
             bell: false,
+            session_id: String::new(),
+            accent: String::new(),
+            pid: 0,
+            identity: None,
         }
     }
 

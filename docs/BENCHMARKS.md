@@ -50,14 +50,14 @@ machine that does not have them, measures the new arm alone and says so.
 
 45 seconds, one attached client, `status-interval 1`, idle session.
 
-| | before | after |
-| --- | --- | --- |
-| `#()` spawns per second | 4.87 | **1.00** |
-| spawn CPU | 335.78 ms/s | **19.02 ms/s** |
-| tmux server CPU | 8.22 ms/s | **3.11 ms/s** |
-| daemon CPU | — | 7.58 ms/s |
-| **total** | **344.01 ms/s** | **29.71 ms/s** |
-| **share of one core** | **34.40%** | **2.97%** |
+|                         | before          | after          |
+| ----------------------- | --------------- | -------------- |
+| `#()` spawns per second | 4.87            | **1.00**       |
+| spawn CPU               | 335.78 ms/s     | **19.02 ms/s** |
+| tmux server CPU         | 8.22 ms/s       | **3.11 ms/s**  |
+| daemon CPU              | —               | 7.58 ms/s      |
+| **total**               | **344.01 ms/s** | **29.71 ms/s** |
+| **share of one core**   | **34.40%**      | **2.97%**      |
 
 11.6x. Three numbers are added rather than one measured, because no single
 counter sees all of it: a reaped child's CPU is invisible from outside the
@@ -68,14 +68,14 @@ daemon's own `getrusage`.
 
 ### What each call cost
 
-| call | per spawn | per second |
-| --- | --- | --- |
-| `battery-life.zsh` | 118.49 ms | 115.90 ms/s |
-| `net-monitor.zsh` | 83.60 ms | 79.91 ms/s |
-| `yrl gst` | 72.66 ms | 71.07 ms/s |
-| `check-vim-in-background.zsh` | 37.09 ms | 36.27 ms/s |
-| `check-clients.zsh` | 33.36 ms | 32.63 ms/s |
-| `window-status.zsh` | 18.03 ms | 0.00 ms/s |
+| call                              | per spawn    | per second     |
+| --------------------------------- | ------------ | -------------- |
+| `battery-life.zsh`                | 118.49 ms    | 115.90 ms/s    |
+| `net-monitor.zsh`                 | 83.60 ms     | 79.91 ms/s     |
+| `yrl gst`                         | 72.66 ms     | 71.07 ms/s     |
+| `check-vim-in-background.zsh`     | 37.09 ms     | 36.27 ms/s     |
+| `check-clients.zsh`               | 33.36 ms     | 32.63 ms/s     |
+| `window-status.zsh`               | 18.03 ms     | 0.00 ms/s      |
 | **`tmux-companion status-right`** | **19.02 ms** | **19.02 ms/s** |
 
 One call now does what the top five did, for less than any one of them.
@@ -95,13 +95,13 @@ window either side of a 45 second sample.
 15 presses each, both arms, same session. The clock starts when `send-keys -K`
 returns and stops when the bytes for the first result row reach the client.
 
-| | before | after |
-| --- | --- | --- |
-| project picker, keypress to first row | 102.2 ms | 103.3 ms |
-| new-window picker, keypress to first row | 81.8 ms | 86.0 ms |
-| project picker, CPU per press | 96.7 ms | **47.3 ms** |
-| new-window picker, CPU per press | 66.7 ms | **33.3 ms** |
-| `display-popup` on its own | 23.0 ms | 21.1 ms |
+|                                          | before   | after       |
+| ---------------------------------------- | -------- | ----------- |
+| project picker, keypress to first row    | 102.2 ms | 103.3 ms    |
+| new-window picker, keypress to first row | 81.8 ms  | 86.0 ms     |
+| project picker, CPU per press            | 96.7 ms  | **47.3 ms** |
+| new-window picker, CPU per press         | 66.7 ms  | **33.3 ms** |
+| `display-popup` on its own               | 23.0 ms  | 21.1 ms     |
 
 **The pickers do not open faster.** One is a millisecond behind and the other
 four, which on fifteen presses is the spread rather than a difference. What
@@ -129,22 +129,22 @@ and system time, written by a wrapper after the picker exits. It quantises to
 Per request, from the daemon's own `getrusage`, sent straight down the socket
 so no process spawn is counted. `just bench-segments`.
 
-| request | CPU |
-| --- | --- |
+| request                                           | CPU         |
+| ------------------------------------------------- | ----------- |
 | `status-right` (all three segments, concurrently) | **1.43 ms** |
-| `gst`, no `pane_pid` | 0.14 ms |
-| `gst`, with `pane_pid` | 18.25 ms |
-| `net` | 1.22 ms |
-| `battery`, 30 s cache | 0.06 ms |
-| `clients` | 7.26 ms |
-| `vim-bg` | 17.84 ms |
+| `gst`, no `pane_pid`                              | 0.14 ms     |
+| `gst`, with `pane_pid`                            | 18.25 ms    |
+| `net`                                             | 1.22 ms     |
+| `battery`, 30 s cache                             | 0.06 ms     |
+| `clients`                                         | 7.26 ms     |
+| `vim-bg`                                          | 17.84 ms    |
 
 And what a client costs before it has asked anything:
 
-| shape | CPU |
-| --- | --- |
-| `/bin/echo`, the floor | 2.52 ms |
-| client round trip | 8.03 ms |
+| shape                               | CPU      |
+| ----------------------------------- | -------- |
+| `/bin/echo`, the floor              | 2.52 ms  |
+| client round trip                   | 8.03 ms  |
 | client via `sh -c`, as tmux runs it | 13.07 ms |
 
 Those two tables are the 19.02 ms the bar pays per second, taken apart: 13 of
@@ -179,23 +179,23 @@ configuration with 179 theme files.
 
 Keypress to first row, ms, median:
 
-| Picker | load 0 | load 16 | load 32 | 32 vs 0 | rows phase at 32 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| project | 249 | 363 | 446 | 1.8x | 381 |
-| panes | 86 | 153 | 194 | 2.3x | 125 |
-| new-window | 91 | 123 | 152 | 1.7x | 86 |
-| keys | 45 | 59 | 71 | 1.6x | 4 |
-| empty popup (tmux alone) | 24 | 30 | 33 | 1.4x | |
+| Picker                   | load 0 | load 16 | load 32 | 32 vs 0 | rows phase at 32 |
+| ------------------------ | -----: | ------: | ------: | ------: | ---------------: |
+| project                  |    249 |     363 |     446 |    1.8x |              381 |
+| panes                    |     86 |     153 |     194 |    2.3x |              125 |
+| new-window               |     91 |     123 |     152 |    1.7x |               86 |
+| keys                     |     45 |      59 |      71 |    1.6x |                4 |
+| empty popup (tmux alone) |     24 |      30 |      33 |    1.4x |                  |
 
 Where the time goes, ms, median, every picker:
 
-| Phase | load 0 | load 16 | load 32 |
-| --- | ---: | ---: | ---: |
-| spawn: key to the picker's `main` (tmux, shell, exec) | 25-32 | 34-40 | 40-48 |
-| paint: `Paint::detect`, a tmux call and a config read | 8-11 | 12-16 | 16-18 |
-| draw: the first frame | 1-2 | 2 | 2-4 |
-| five keys typed at once, to the frame after the last | 10-16 | 16-19 | 19-25 |
-| rows | see the table above | | |
+| Phase                                                 |              load 0 | load 16 | load 32 |
+| ----------------------------------------------------- | ------------------: | ------: | ------: |
+| spawn: key to the picker's `main` (tmux, shell, exec) |               25-32 |   34-40 |   40-48 |
+| paint: `Paint::detect`, a tmux call and a config read |                8-11 |   12-16 |   16-18 |
+| draw: the first frame                                 |                 1-2 |       2 |     2-4 |
+| five keys typed at once, to the frame after the last  |               10-16 |   16-19 |   19-25 |
+| rows                                                  | see the table above |         |         |
 
 Idle, with the bar ticking every second: the daemon 4.3-5.0 ms/s and the tmux
 server 4.3-6.0 ms/s, about the same at every load.
@@ -228,13 +228,13 @@ The same machine, the same setup, the same loads and two rounds, on the branch
 with every fix in [design-capped-cpu.md](./dev/design-capped-cpu.md) that
 survived measurement. Medians, mean of the two rounds, ms:
 
-| Picker | before 0 / 16 / 32 | after 0 / 16 / 32 | at load 32 |
-| --- | --- | --- | ---: |
-| project | 249 / 363 / 446 | 78 / 90 / 103 | 4.3x faster |
-| panes | 86 / 153 / 194 | 50 / 57 / 69 | 2.8x faster |
-| new-window | 91 / 123 / 152 | 95 / 111 / 134 | 1.1x faster |
-| keys | 45 / 59 / 71 | 47 / 55 / 67 | about the same |
-| empty popup (tmux alone) | 24 / 30 / 33 | 23 / 27 / 32 | |
+| Picker                   | before 0 / 16 / 32 | after 0 / 16 / 32 |     at load 32 |
+| ------------------------ | ------------------ | ----------------- | -------------: |
+| project                  | 249 / 363 / 446    | 78 / 90 / 103     |    4.3x faster |
+| panes                    | 86 / 153 / 194     | 50 / 57 / 69      |    2.8x faster |
+| new-window               | 91 / 123 / 152     | 95 / 111 / 134    |    1.1x faster |
+| keys                     | 45 / 59 / 71       | 47 / 55 / 67      | about the same |
+| empty popup (tmux alone) | 24 / 30 / 33       | 23 / 27 / 32      |                |
 
 - The project and new-window pickers now draw their frame before their rows,
   46 ms after the key idle and 63-65 ms at load 32, so the time to a picker on
@@ -252,10 +252,14 @@ The bar, idle, one attached client, everything it costs per second: the
 daemon, the processes it starts, the tmux server, and in call mode the shell
 and client tmux starts for `#()` (priced at 10.5-19.7 ms each by running them):
 
-| Mode | load 0 | load 32 |
-| --- | ---: | ---: |
-| call (`#()`, the default) | 31.2 ms/s | 41-43 ms/s |
-| push (`[bar] mode = "push"`) | 24.9 ms/s | 31.5 ms/s |
+| Mode                         |    load 0 |    load 32 |
+| ---------------------------- | --------: | ---------: |
+| call (`#()`, the default)    | 31.2 ms/s | 41-43 ms/s |
+| push (`[bar] mode = "push"`) | 24.9 ms/s |  31.5 ms/s |
+
+On the release build of 2026-10-10 the same idle cost reads 30-44 ms/s in call
+and 18-28 in push, and the branch is on the bar 17 ms after a window switch
+idle and 22 at load 32 in push, 50 and 70 in call (20 switches each).
 
 Push starts nothing for the bar, and each further client adds about a call's
 cost to call mode and nothing to push. These are steady-state figures, taken
@@ -267,13 +271,13 @@ In Low Power Mode, on battery, the same branch, two rounds, call mode. The
 machine reported `CPU_Speed_Limit` 100 throughout, so what Low Power Mode caps
 here does not show in that figure; it shows in everything below:
 
-| Picker | load 0 | load 32 | vs mains at load 32 |
-| --- | ---: | ---: | ---: |
-| project | 91 | 135 | +31 |
-| panes | 61 | 94 | +25 |
-| new-window | 118 | 176 | +42 |
-| keys | 58 | 89 | +22 |
-| empty popup (tmux alone) | 30 | 48 | +16 |
+| Picker                   | load 0 | load 32 | vs mains at load 32 |
+| ------------------------ | -----: | ------: | ------------------: |
+| project                  |     91 |     135 |                 +31 |
+| panes                    |     61 |      94 |                 +25 |
+| new-window               |    118 |     176 |                 +42 |
+| keys                     |     58 |      89 |                 +22 |
+| empty popup (tmux alone) |     30 |      48 |                 +16 |
 
 Spawn, the part of every press before the picker's own code runs, is 39 ms idle
 and 60 at load 32 here, against 32 and 42 on mains; five keys at once take 28-30
@@ -282,6 +286,122 @@ ms at load 32. The bar costs 42-44 ms/s idle and 57 at load 32 in call mode.
 Reproduce with `CONFIG=mine just bench-capped`, and `BAR=push` for the second
 row of the bar table. `just bench-ab REV` compares a revision with the working
 tree.
+
+## The picker on screen, 2026-10-09
+
+A person sees the popup's border and title before any row, so the bench also
+times that moment, the frame: from the key to the picker's title reaching the
+client's pty. The budget is 50 ms at the median at load 32, taken from
+zsh-bench's 50 ms for a shell's first prompt and
+[design-perceived.md](./dev/design-perceived.md) has the sources and the
+candidates that didn't make it.
+
+Same machine and setup as above, `CONFIG=mine`, two rounds alternated. A range
+is the two rounds' medians; one figure means they agreed. ms:
+
+The release columns are the merged build of 2026-10-10 (`795045e`): these
+fixes, the bar's per-pane value, the switcher, branch icons and the bell icons.
+
+| Frame          | before, load 0 | after, load 0 | release, load 0 | before, load 32 | after, load 32 | release, load 32 |
+| -------------- | -------------: | ------------: | --------------: | --------------: | -------------: | ---------------: |
+| project        |          40-46 |         32-38 |           39-40 |           62-64 |             48 |            49-54 |
+| new-window     |          39-47 |         31-37 |           38-41 |           63-64 |             48 |            50-56 |
+| keys           |          47-48 |            39 |           40-42 |              66 |          48-52 |            51-60 |
+| panes          |          50-51 |            38 |           39-42 |           68-69 |             49 |            52-57 |
+| switch windows |                |               |           53-54 |                 |                |            74-77 |
+
+- Every picker's paint waited 15-20 ms under load for a `tmux` process that
+  only told it the session's theme colour. It asks the daemon now which
+  answers from the pane list it already polls (`0a41eb0`). A colour changed by
+  hand with `tmux set` can take up to 3 seconds to reach a picker and with no
+  daemon running tmux is asked as before.
+- The panes and agents pickers draw their border, title and one loading line
+  before listing the panes now, the way project and new-window already did
+  (`cc6d007`).
+  Keys didn't need it, its rows come from the daemon in 3 ms.
+- Keys is the one over the budget, 52 in one round of two.
+- Keys typed straight after the binding key, before the picker was up, all
+  arrived: none lost in any run.
+- The release build is 1-8 ms slower than after at load 32 and holds the
+  budget in one round of two. Its load-32 rounds started at
+  `CPU_Speed_Limit` 94 and 88 and ended at 64-66.
+- The switcher's frame is its first row: it has no chrome to draw first.
+
+## Raspberry Pi 5, no fan
+
+I had a second machine, with a CPU that's capped by design: Raspberry Pi 5, 4 cores,
+8 GB, Debian 13, tmux 3.4 built from source by `scripts/tmux-build.sh`, the
+binary built on the Pi with Rust 1.99.0. Loads are 0, 4 and 8 busy loops, one
+and two per core the way the MacBook's 16 and 32 are one and two per logical
+CPU.
+
+The case fan wasn't connected. The Pi sat at 90-96 C and soft-throttled
+(`vcgencmd get_throttled` 0xe0006) with its ARM clock between 250 and 1500 MHz
+instead of 2.4 GHz through every condition so these are a hot, throttled Pi's
+numbers. They stay as the worst case: a Pi with no fan inside a plastic case
+that keeps the heat in. Run 2026-10-09 and 10, bench at `6448e77`, the starter
+config, 15 presses per picker and condition.
+
+Medians of two rounds, ms, call mode / auto:
+
+| Frame       | load 0 | load 4 |  load 8 |
+| ----------- | -----: | -----: | ------: |
+| project     |  12/13 |  25/28 |   59/99 |
+| new-window  |  12/12 |  24/53 |   51/95 |
+| panes       |  13/13 |  25/77 |  68/112 |
+| keys        |  16/16 |  33/70 | 109/120 |
+| empty popup |    7/7 |  29/43 |   50/55 |
+
+| First row  | load 0 | load 4 |  load 8 |
+| ---------- | -----: | -----: | ------: |
+| project    |  19/20 |  40/45 |  84/147 |
+| new-window |  24/24 | 52/110 | 106/148 |
+| panes      |  21/21 | 40/100 | 118/179 |
+| keys       |  15/15 |  33/70 | 108/120 |
+
+| Bar after a window switch | load 0 | load 4 | load 8 |
+| ------------------------- | -----: | -----: | -----: |
+| call / auto               |    7/5 |  25/22 |  60/44 |
+
+- Idle, the bar costs about 12.5 ms of CPU a second in call mode and 9.5 in
+  auto with no load and 24-30 in both at loads 4 and 8.
+- No key typed early was lost in any run.
+- The auto runs started hotter than the call runs, so most of the gap between
+  the two columns under load is heat and not the mode.
+
+## Raspberry Pi 5, fan connected
+
+The same Pi, the same bench at `6448e77`, starter config and loads, with the
+case fan plugged into the board's fan header, run 2026-10-10. It sat at 57-70 C
+and `vcgencmd get_throttled` read 0x0 before and after every condition, so the
+clock was free to reach 2.4 GHz.
+
+Medians of two rounds, ms, call mode / auto:
+
+| Frame       | load 0 | load 4 | load 8 |
+| ----------- | -----: | -----: | -----: |
+| project     |    9/9 |  16/15 |  23/21 |
+| new-window  |    9/9 |  15/15 |  23/23 |
+| panes       |    9/9 |  15/15 |  22/24 |
+| keys        |  11/11 |  18/16 |  25/26 |
+| empty popup |    5/5 |  11/11 |  15/14 |
+
+| First row  | load 0 | load 4 | load 8 |
+| ---------- | -----: | -----: | -----: |
+| project    |  14/14 |  25/24 |  36/36 |
+| new-window |  17/17 |  31/30 |  51/50 |
+| panes      |  15/15 |  24/23 |  35/35 |
+| keys       |  11/11 |  18/16 |  25/26 |
+
+| Bar after a window switch | load 0 | load 4 | load 8 |
+| ------------------------- | -----: | -----: | -----: |
+| call / auto               |    6/3 |    9/6 |   13/8 |
+
+- Idle, all told, the bar costs 9.4-9.7 ms of CPU a second in call mode and
+  6.9 in auto with no load, and 7.1-7.5 against 5.2 at loads 4 and 8.
+- No key typed early was lost in any run.
+- Call and auto now sit within a millisecond or two of each other on every
+  picker, which is what says the gap in the run without a fan was heat.
 
 ## Method, and three ways it was wrong first
 
@@ -323,6 +443,29 @@ Both arms read a private zoxide database of twenty directories
 nor writes a visit into it, and both pickers are given the same list. Twenty
 because both filter by the pane's own directory the moment they open, and a
 three-entry database measures a picker with nothing to do.
+
+### Typing into a popup
+
+Keys meant for the program in a popup are written to the client's pty the way a
+keyboard sends them and only the binding key still goes through
+`send-keys -K` because on tmux 3.4 `send-keys -K` runs a root-table binding
+but hands nothing to a popup: z, Escape, x, y and Enter reached a `cat` in a
+popup as zero bytes where the same keys written to the pty arrived. Every
+type-ahead number taken on 3.4 before the change is invalid and the MacBook's
+type-ahead numbers from before it aren't directly comparable with the ones
+after. The bench config also sets `escape-time` to 10 ms (3.5's default) so a
+typed Escape isn't held for 3.4's 500 ms.
+
+The MacBook re-baselined with keys on the pty, 2026-10-10, the release build,
+`CONFIG=mine`, two rounds; type-ahead p50, ms, and no key lost in any run:
+
+| Type-ahead     | load 0 | load 32 |
+| -------------- | -----: | ------: |
+| project        |  87-88 | 117-122 |
+| new-window     |  95-97 | 130-138 |
+| panes          |  68-70 | 105-108 |
+| keys           |  53-55 |   74-80 |
+| switch windows |     55 |   82-85 |
 
 ## Running it
 

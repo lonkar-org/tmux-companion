@@ -57,8 +57,9 @@ const BRANCH_MAX_LEN: usize = 20;
 /// The shipped `[[git.branch_types]]`, for the paths that render without a
 /// config in hand: `preview`, and the tests that pin the bar byte for byte.
 ///
-/// The daemon never reads this — it passes what the config parsed, which is
-/// this same list until somebody edits it.
+/// The daemon never reads this — it passes its own table, which is the
+/// config's entries layered on this list, plus what the glyph-name lookup
+/// has picked.
 static DEFAULT_BRANCH_TYPES: LazyLock<Vec<BranchType>> =
     LazyLock::new(|| crate::config::Git::default().branch_types);
 
@@ -304,13 +305,25 @@ fn short_branch_len(branch: &str, max_len: usize, types: &[BranchType]) -> Strin
     // master, dev, ... still carry a type marker.
     let mut icon = crate::tmux::icons::BRANCH.to_string();
     let mut stripped = "";
+    let mut claimed = false;
 
     for entry in types {
         if let Some(rest) = entry.strip(branch) {
-            stripped = rest;
-            icon = entry.glyph();
+            claimed = true;
+            // An empty icon claims the prefix for the plain glyph and keeps
+            // the name whole, which is how a built-in is turned off.
+            if !entry.icon.is_empty() {
+                stripped = rest;
+                icon = entry.glyph();
+            }
             break;
         }
+    }
+    // A `word/` prefix nothing places gets the catch-all, and keeps its
+    // prefix: the glyph says nothing about whose branch it is, so the name
+    // has to.
+    if !claimed && crate::branch_icons::prefix_word(branch).is_some() {
+        icon = crate::tmux::icons::PREFIXED.to_string();
     }
 
     // A branch named exactly `feat/` strips to nothing, and a bar drawing an
@@ -403,8 +416,13 @@ pub struct LineOpts<'a> {
     pub branch_max: Option<usize>,
     /// Draw the git glyph before the branch name.
     pub branch_icon: bool,
-    /// Which prefixes earn which glyph, from `[[git.branch_types]]`. Empty
-    /// means every branch gets the plain branch glyph.
+    /// Which prefixes earn which glyph, tried in order, first match wins.
+    ///
+    /// The prefix an entry matches is cut off the name, except when its
+    /// `icon` is empty, which draws the plain branch glyph and the name
+    /// whole. A `word/` prefix no entry claims draws
+    /// [`PREFIXED`](crate::tmux::icons::PREFIXED) with the name whole, and a
+    /// name with no such prefix draws the plain branch glyph.
     pub branch_types: &'a [BranchType],
     /// Which parts to draw, and in what order.
     pub parts: &'a [GitPart],
@@ -766,9 +784,6 @@ pub struct GstOptions {
     pub ttl: Duration,
     /// What the segment draws, from `[git] parts` in the config.
     pub parts: Vec<GitPart>,
-    /// Which branch-name prefixes earn which glyph, from
-    /// `[[git.branch_types]]` in the config.
-    pub branch_types: Vec<BranchType>,
     /// The colour the status bar is set to, from `[bar] background`.
     ///
     /// The caps and the outline backgrounds are drawn against this. It is a
@@ -789,7 +804,6 @@ impl Default for GstOptions {
             branch_icon: false,
             ttl: DEFAULT_GST_TTL,
             parts: GitPart::all(),
-            branch_types: crate::config::Git::default().branch_types,
             bar_bg: BG_BAR.to_string(),
         }
     }
@@ -862,6 +876,19 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
         }
     };
 
+    // The table for this branch: a pointer clone, except the first time a
+    // prefix word is seen, when the glyph-name lookup runs once. A pick worth
+    // keeping is written here, with the lock already gone.
+    let (branch_types, keep) = state.lock().await.branch_icons.table_for(&status.branch);
+    if let Some((file, text)) = keep
+        && let Err(e) = crate::branch_icons::write_picks(&file, &text)
+    {
+        eprintln!(
+            "tmux-companion: cannot keep branch icon picks in {}: {e}",
+            file.display()
+        );
+    }
+
     let line = status_line_render(
         &status,
         nvim_suspended,
@@ -871,7 +898,7 @@ pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyho
             cap_glyph: cap,
             branch_max: opts.branch_max_len,
             branch_icon: opts.branch_icon,
-            branch_types: &opts.branch_types,
+            branch_types: &branch_types,
             parts: &opts.parts,
             bar_bg: &opts.bar_bg,
         },
@@ -1287,11 +1314,40 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_list_leaves_every_branch_on_the_plain_glyph() {
+    fn an_empty_list_leaves_a_prefixed_branch_on_the_catch_all() {
+        // Nothing claims `feat/` here, so it is a prefix nothing places: the
+        // catch-all, and the name whole. No prefix is the plain glyph.
         assert_eq!(
             short_branch_len("feat/thing", 40, &[]),
-            format!("{}feat/thing", BRANCH)
+            format!("{}feat/thing", PREFIXED)
         );
+        assert_eq!(short_branch_len("main", 40, &[]), format!("{}main", BRANCH));
+    }
+
+    #[test]
+    fn an_empty_icon_turns_a_prefix_back_into_a_plain_branch() {
+        // What deleting a built-in used to do, now that the list adds.
+        let types = one("", &["tag/"]);
+        assert_eq!(
+            short_branch_len("tag/v1", 40, &types),
+            format!("{}tag/v1", BRANCH)
+        );
+    }
+
+    #[test]
+    fn the_new_builtins_cut_their_prefix_and_the_six_draw_as_before() {
+        assert_eq!(short_branch("docs/readme"), format!("{}readme", DOCS));
+        assert_eq!(short_branch("perf/bar"), format!("{}bar", PERF));
+        assert_eq!(short_branch("Parked/idea"), format!("{}idea", PARKED));
+        assert_eq!(short_branch("dependabot/npm"), format!("{}npm", DEPS));
+        assert_eq!(short_branch("feat/x"), format!("{}x", FEATURE));
+        assert_eq!(short_branch("fix/x"), format!("{}x", BUGFIX));
+        assert_eq!(short_branch("hotfix/x"), format!("{}x", HOTFIX));
+        assert_eq!(short_branch("chore/x"), format!("{}x", CHORE));
+        assert_eq!(short_branch("release/x"), format!("{}x", RELEASE));
+        assert_eq!(short_branch("tags/x"), format!("{}x", TAG));
+        assert_eq!(short_branch("alice/x"), format!("{}alice/x", PREFIXED));
+        assert_eq!(short_branch("main"), format!("{}main", BRANCH));
     }
 
     #[test]

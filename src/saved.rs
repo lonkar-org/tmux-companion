@@ -95,6 +95,40 @@ pub fn file_name(project_path: &str) -> String {
     out
 }
 
+/// The project directory a saved-layout file name stands for: [`file_name`]
+/// read backwards, or `None` for a file that is not one of ours.
+pub fn project_path(file_name: &str) -> Option<String> {
+    let stem = file_name.strip_suffix(".toml")?;
+    let mut out = String::with_capacity(stem.len());
+    let mut rest = stem;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        match rest.get(at..at + 3) {
+            Some("%2F") => out.push('/'),
+            Some("%25") => out.push('%'),
+            _ => return None,
+        }
+        rest = &rest[at + 3..];
+    }
+    out.push_str(rest);
+    out.starts_with('/').then_some(out)
+}
+
+/// Every project directory with a saved layout under a state directory, in
+/// file-name order. A file whose name does not decode is left out, since the
+/// directory is somebody's to tidy by hand.
+pub fn projects_in(state_dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(state_dir.join("projects")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| project_path(&e.file_name().to_string_lossy()))
+        .collect();
+    out.sort();
+    out
+}
+
 /// The saved-layout file for a project under a state directory.
 pub fn path_in(state_dir: &std::path::Path, project_path: &str) -> std::path::PathBuf {
     state_dir.join("projects").join(file_name(project_path))
@@ -919,6 +953,16 @@ mod tests {
     #[test]
     fn a_percent_in_a_directory_name_cannot_forge_a_separator() {
         assert_ne!(file_name("/a%2Fb"), file_name("/a/b"));
+    }
+
+    #[test]
+    fn a_file_name_reads_back_as_the_directory_it_was_made_from() {
+        for path in ["/w/proj", "/home/me/a%2Fb", "/x/100%/y", "/a/b.c"] {
+            assert_eq!(project_path(&file_name(path)).as_deref(), Some(path));
+        }
+        assert_eq!(project_path("notes.txt"), None);
+        assert_eq!(project_path("%2Fw%zz.toml"), None);
+        assert_eq!(project_path("relative.toml"), None);
     }
 
     #[test]

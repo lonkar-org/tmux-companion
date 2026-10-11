@@ -49,6 +49,7 @@ TRACE = TMP / "trace.tsv"
 ZO = TMP / "zoxide"
 DIRS = TMP / "dirs"
 WIDTH, HEIGHT = 160, 44
+QUIET = "stty -echo; exec sleep 100000"
 # How the bar reaches tmux: `call` (the call-only line), `auto` (the fallback
 # line, config left alone, so the default mode decides) or `push` (the
 # fallback line and `[bar] mode = "push"`).
@@ -106,8 +107,11 @@ class Tmux:
         return r.stdout.strip()
 
     def start(self, conf, cwd):
+        # The pane under the popups runs nothing that echoes: a key that went
+        # to it instead of to the picker must not show up on the pty and be
+        # counted as a key the picker drew.
         self("-f", str(conf), "new-session", "-d", "-s", "bench", "-c", cwd,
-             "-x", str(WIDTH), "-y", str(HEIGHT), check=True)
+             "-x", str(WIDTH), "-y", str(HEIGHT), "sh", "-c", QUIET, check=True)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.environ.clear()
@@ -144,17 +148,38 @@ class Tmux:
             else:
                 time.sleep(0.005)
 
-    def keys(self, *keys):
-        subprocess.run(["tmux", "-S", TSOCK, "send-keys", "-K", "-c", self.client, *keys],
+    def bind(self, key):
+        """A binding key (M-s and the rest), handled by tmux as if typed."""
+        subprocess.run(["tmux", "-S", TSOCK, "send-keys", "-K", "-c", self.client, key],
                        capture_output=True, env=self.env)
 
-    def press(self, key, marker, timeout=20.0):
-        """(wall time of the send, ms until `marker` reached the client or None)."""
+    def keys(self, *keys):
+        """Keys for the program in the popup, written to the client's pty
+        the way a person's keyboard writes them, in one write.
+
+        Not `send-keys -K`: tmux 3.4 runs root-table bindings for a key sent
+        that way but hands nothing to a popup, so on the floor version every
+        Escape was dropped, the first picker never closed, and each later
+        press landed inside it. Found on the first run with a pinned 3.4;
+        3.5a and later deliver both ways.
+        """
+        os.write(self.fd, b"".join(KEYBYTES.get(k, k.encode()) for k in keys))
+
+    def press(self, key, marker, timeout=20.0, frame=None, then=()):
+        """(wall time of the send, ms until `marker` reached the client or
+        None, ms until `frame` did or None).
+
+        `then` is sent the moment the key has been: keys typed before the
+        picker can have drawn anything, the way a fast typist types.
+        """
         self.drain()
         seen = b""
         wall = time.time()
         t0 = time.perf_counter()
-        self.keys(key)
+        self.bind(key)
+        if then:
+            self.keys(*then)
+        framed = None
         while time.perf_counter() - t0 < timeout:
             try:
                 chunk = os.read(self.fd, 65536)
@@ -164,10 +189,26 @@ class Tmux:
             if not chunk:
                 break
             seen += chunk
-            if flat(marker) in flat(seen):
-                return wall, (time.perf_counter() - t0) * 1000.0
+            flat_seen = flat(seen)
+            if frame is not None and framed is None and flat(frame) in flat_seen:
+                framed = (time.perf_counter() - t0) * 1000.0
+            if flat(marker) in flat_seen:
+                # A picker that draws its rows before its title (the title
+                # sits on a border that is written after the list) is read on
+                # until the title has come too.
+                if frame is not None and framed is None:
+                    marked = getattr(self, "_marked", None) or (time.perf_counter() - t0) * 1000.0
+                    self._marked = marked
+                    continue
+                marked = getattr(self, "_marked", None)
+                self._marked = None
+                return wall, marked or (time.perf_counter() - t0) * 1000.0, framed
+        marked = getattr(self, "_marked", None)
+        self._marked = None
+        if marked is not None:
+            return wall, marked, framed
         self.missed = flat(seen)[-600:]
-        return wall, None
+        return wall, None, framed
 
     def stop(self):
         self("kill-server")
@@ -295,6 +336,13 @@ def spawn_price(n=20):
     return ((a.ru_utime - b.ru_utime) + (a.ru_stime - b.ru_stime)) * 1000 / n
 
 
+def switch_config():
+    """A config for the window switcher alone: Enter commits, no clock."""
+    path = TMP / "switch.toml"
+    path.write_text('[switcher]\ncommit = "enter"\n')
+    return path
+
+
 def conf_file():
     """The tmux.conf the bench server starts from.
 
@@ -303,6 +351,12 @@ def conf_file():
     list and the hooks you run are running. The attach hooks are then taken
     off: a popup opened by an attach hook would take the keys the bench sends.
     The bar and the bindings below come last, so they hold either way.
+
+    Without one (CONFIG=default, and any host that is not yours) the keys
+    picker lists only bindings with a `companion:` note, of which tmux has
+    none, so it drew its empty message and never its marker. The starter
+    config is loaded in its place, the 27 noted bindings a new user starts
+    from, with four noted select-pane bindings for the marker to find.
     """
     conf = TMP / "tmux.conf"
     mine = Path(os.environ["HOME"]) / ".config/tmux/tmux.conf"
@@ -314,7 +368,16 @@ def conf_file():
     lines = []
     if mine.exists():
         lines += [f'source-file "{mine}"', "set-hook -gu client-attached"]
+    else:
+        lines += [f'source-file "{REPO / "docs/tmux.conf.starter.example"}"']
+        lines += [f'bind -N "companion: pane {name}" {k} select-pane -{d}'
+                  for k, d, name in (("h", "L", "left"), ("j", "D", "down"),
+                                     ("k", "U", "up"), ("l", "R", "right"))]
     lines += [
+        # A lone ESC on the pty is held this long before tmux calls it
+        # Escape. 10 ms is the default from 3.5 on; 3.4's is 500, which would
+        # hold every closing Escape for half a second on the floor version.
+        "set -s escape-time 10",
         "set -g status-interval 1",
         f'set -g status-right "{bar}"',
         "set -g status-right-length 150",
@@ -324,6 +387,11 @@ def conf_file():
         f'bind -n M-p display-popup -B -E -w 80% -h 70% "{BIN} panes"',
         f'bind -n M-k display-popup -B -E -w 80% -h 60% "{BIN} keys"',
         'bind -n M-e display-popup -B -E -w 65% -h 65% "printf POPUPREADY; sleep 0.2"',
+        f'bind -n M-o display-popup -B -E -w 80% -h 70% "{BIN} switch sessions"',
+        # The window list with its clock off, so the burst typed after the
+        # first frame is measured rather than racing a commit on the pause.
+        f'bind -n M-w display-popup -B -E -w 50 -h 12 '
+        f'"TMUX_COMPANION_CONFIG={switch_config()} {BIN} switch windows fx-01"',
     ]
     conf.write_text("\n".join(lines) + "\n")
     return conf
@@ -361,16 +429,30 @@ def fill(t, args):
 
 
 PICKERS = [
-    # name, key, marker on the first frame
-    ("project", "M-s", b"fx-"),
+    # name, key, marker for the first row, marker for the frame (its title)
+    ("project", "M-s", b"fx-", b"Project ]"),
     # The row for the pane's own directory: the title is on the loading
     # frame now, which is drawn before any row exists.
-    ("new-window", "M-c", b"here"),
-    ("panes", "M-p", b"fx-"),
-    ("keys", "M-k", b"select-pane"),
-    ("empty popup", "M-e", b"POPUPREADY"),
+    ("new-window", "M-c", b"here", b"New window at ]"),
+    ("panes", "M-p", b"fx-", b"Panes ]"),
+    ("keys", "M-k", b"select-pane", b"Keys ]"),
+    ("switch sessions", "M-o", b"fx-", b"Projects ]"),
+    # fx-01's windows, under the list's title; no loading frame comes first,
+    # so the title is both markers.
+    ("switch windows", "M-w", b"Windows", b"Windows ]"),
+    ("empty popup", "M-e", b"POPUPREADY", None),
 ]
+# Typed straight after the binding key: no row contains it, so it shows on
+# the pty only as the picker's query, and only if every key reached it.
+TYPEAHEAD = ["z", "z", "q", "x"]
+# Typed into an open picker before one more key is timed: input lag is
+# measured with a long query, the way zsh-bench measures it with a long
+# command line.
+LONG = list("abcdefghijklmnopqrst")
 BURST = ["d", "i", "r", "-", "0"]
+# The bytes a terminal sends for the named keys the bench types; anything else
+# is its own character.
+KEYBYTES = {"Escape": b"\x1b", "Enter": b"\r", "BSpace": b"\x7f", "C-c": b"\x03"}
 
 
 def phases(wall, marks):
@@ -423,8 +505,89 @@ def burst(t, pid, timeout=20.0):
     return None, None
 
 
+def input_lag(t, pid, timeout=20.0):
+    """ms from one more key to the frame drawn after it, with a 20-character
+    query already typed and drawn, from the picker's own key and drawn marks:
+    the pty cannot say which frame carried which key."""
+    def settle(since, n):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            mine = [(w, ts) for p, w, ts in trace_lines(since) if p == pid]
+            keys = [ts for w, ts in mine if w == "key"]
+            if len(keys) >= n:
+                after = [ts for w, ts in mine if w == "drawn" and ts > keys[n - 1]]
+                if after:
+                    return keys[n - 1], min(after)
+            time.sleep(0.01)
+        return None, None
+    w = time.time()
+    t.keys(*LONG)
+    if settle(w, len(LONG))[0] is None:
+        return None
+    w = time.time()
+    t.keys("u")
+    key, drawn = settle(w, 1)
+    return None if key is None else (drawn - key) * 1000
+
+
+def bar_after_switch(t, runs=5):
+    """ms from selecting the window in the repository to the branch name on
+    the pty, coming from a window that is not in one."""
+    branch = subprocess.run(["git", "-C", str(REPO), "branch", "--show-current"],
+                            capture_output=True, text=True).stdout.strip()
+    if not branch:
+        return None
+    # The part after the last slash: a branch type's prefix is drawn as its
+    # icon, so with CONFIG=mine `release/next` reaches the bar as the icon and
+    # `next`, the full name never appears, and every run read "never showed
+    # the branch" (2026-10-10).
+    branch = branch.rsplit("/", 1)[-1]
+    # Window ids, not indexes: with CONFIG=mine the tmux.conf may set
+    # base-index 1, and then `bench:0` named no window, the select failed
+    # without a word, the repository's window never left the screen, and
+    # what was timed was the clock's next redraw, about a second in every
+    # mode (2026-10-09). check=True so a switch that did not happen stops the
+    # bench rather than timing something else.
+    home = t("display-message", "-p", "-t", "bench:", "#{window_id}", check=True)
+    away = t("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "bench:",
+             "-c", str(DIRS / "dir-001"), "sh", "-c", QUIET, check=True)
+    out = []
+    for _ in range(runs):
+        t("select-window", "-t", away, check=True)
+        t.drain(quiet=2.5, limit=6.0)
+        seen = b""
+        t0 = time.perf_counter()
+        t("select-window", "-t", home, check=True)
+        while time.perf_counter() - t0 < 6.0:
+            try:
+                chunk = os.read(t.fd, 65536)
+            except (BlockingIOError, OSError):
+                time.sleep(0.0005)
+                continue
+            seen += chunk
+            if flat(branch.encode()) in flat(seen):
+                out.append((time.perf_counter() - t0) * 1000.0)
+                break
+        else:
+            out.append(None)
+    return stats(out)
+
+
 def cpu_seconds(pid):
-    """Total CPU time of one pid from ps, in seconds."""
+    """Total CPU time of one pid from ps, in seconds.
+
+    On Linux from /proc/<pid>/stat instead: procps prints cputime in whole
+    seconds, which over a 30-second idle window reads as 0 or 33 ms/s, while
+    utime and stime there are clock ticks (10 ms)."""
+    stat = Path(f"/proc/{pid}/stat")
+    if sys.platform.startswith("linux") and stat.exists():
+        try:
+            # The command name is in parentheses and may hold spaces, so the
+            # fields are counted from the last ')'; utime and stime are 14, 15.
+            rest = stat.read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            return None
+        return (int(rest[11]) + int(rest[12])) / os.sysconf("SC_CLK_TCK")
     out = subprocess.run(["ps", "-o", "cputime=", "-p", str(pid)], capture_output=True,
                          text=True).stdout.strip()
     if not out:
@@ -521,16 +684,17 @@ def main():
         fill(t, args)
         t.drain(quiet=1.0)
         wanted = set(args.only.split(",")) if args.only else None
-        for name, key, marker in PICKERS:
+        for name, key, marker, frame in PICKERS:
             if wanted and name not in wanted:
                 continue
             # One warm press: the first of anything pays for cold caches.
             t.press(key, marker)
             t.keys("Escape")
-            seen, split, typed, per_key = [], [], [], []
+            seen, split, typed, per_key, frames, ahead, lost, longq = [], [], [], [], [], [], 0, []
             for _ in range(args.runs):
-                wall, ms = t.press(key, marker)
+                wall, ms, framed = t.press(key, marker, frame=frame)
                 seen.append(ms)
+                frames.append(framed if frame is not None else ms)
                 time.sleep(0.3)   # let the trace file catch the marks
                 ph = phases(wall, trace_lines(wall)) if key != "M-e" else None
                 if ph:
@@ -539,8 +703,23 @@ def main():
                         b, k = burst(t, ph["pid"])
                         typed.append(b)
                         per_key.append(k)
+                        longq.append(input_lag(t, ph["pid"]))
                 t.keys("Escape")
-            res = {"seen": stats(seen)}
+                if key != "M-e":
+                    # Type-ahead: the query sent the moment the key has been.
+                    # The query with the picker's cursor block after it: the
+                    # pty's own echo shows the bare letters before the picker
+                    # has read them, and only the picker draws the block.
+                    _, typed_ms, _ = t.press(key, ("".join(TYPEAHEAD) + "\u2588").encode(),
+                                             timeout=10.0, then=TYPEAHEAD)
+                    ahead.append(typed_ms)
+                    lost += typed_ms is None
+                    t.keys("Escape")
+            res = {"seen": stats(seen), "frame": stats(frames)}
+            if key != "M-e":
+                res["typeahead"] = stats(ahead)
+                res["typeahead_lost"] = lost
+                res["input20"] = stats(longq)
             for p in ("spawn", "chrome", "rows", "paint", "draw"):
                 res[p] = stats([s.get(p) for s in split])
             if key != "M-e":
@@ -556,8 +735,20 @@ def main():
             if res.get("burst5"):
                 line += f"  burst5 {res['burst5']['p50']:6.1f}"
             print(line, flush=True)
+            if res.get("frame") or res.get("typeahead") is not None:
+                f, a, i = res.get("frame"), res.get("typeahead"), res.get("input20")
+                print(f"  {'':12s} frame p50 {f['p50'] if f else float('nan'):7.1f}"
+                      + (f"  type-ahead p50 {a['p50']:6.1f} p95 {a['p95']:6.1f} lost {res['typeahead_lost']}"
+                         if a else (f"  type-ahead lost {res['typeahead_lost']}" if 'typeahead_lost' in res else ""))
+                      + (f"  input20 p50 {i['p50']:5.1f} p95 {i['p95']:5.1f}" if i else ""), flush=True)
             if not s and getattr(t, "missed", None):
                 print(f"    last bytes: {t.missed!r}", flush=True)
+        # BAR_RUNS: how many window switches the bar is timed over (default 5).
+        out["bar_switch"] = bar_after_switch(t, runs=int(os.environ.get("BAR_RUNS", "5")))
+        b = out["bar_switch"]
+        print(f"  bar after a window switch ({BAR}): "
+              + (f"p50 {b['p50']:.0f} p95 {b['p95']:.0f} ms (n={b['n']})" if b else "never showed the branch"),
+              flush=True)
         out["idle"] = idle_cost(t, daemon.pid, args.idle_secs)
         i = out["idle"]
         total = (i["daemon_self_ms_per_s"] + i["daemon_children_ms_per_s"]

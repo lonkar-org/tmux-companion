@@ -223,7 +223,7 @@ pub async fn journal_loop(
             .iter()
             .map(|p| PaneRow {
                 id: p.id.clone(),
-                command: p.command.clone(),
+                command: p.name().to_string(),
                 visible: p.visible,
             })
             .collect();

@@ -333,18 +333,25 @@ pub enum Cmd {
         out: Option<String>,
     },
 
-    /// Move to the window you were on before, and on by index while the key
-    /// keeps coming; `[toggle] order` makes it a plain cycle
+    /// Move between windows or sessions in the order you used them, Cmd-Tab's
+    /// shape: a press moves, a pause or enter goes, esc stays
+    Switch {
+        #[command(subcommand)]
+        what: SwitchWhat,
+    },
+
+    /// Removed in favour of `switch windows`, which it now runs. Kept, hidden,
+    /// for one release so a 0.9.1 binding on M-a keeps working until it is
+    /// rebound; drop it in the release after
+    #[command(hide = true)]
     Toggle {
-        /// The session to act on, which the binding passes so the key acts on
-        /// the pane it was pressed in
+        /// The session the binding passed
         session: Option<String>,
-        /// Ignored; kept so bindings that pass `#{window_name}` still parse
+        /// Ignored, as it was in 0.9.1
         #[arg(hide = true)]
         window: Option<String>,
-        /// Flip to the window this session was on before, tmux's own
-        /// last-window, instead of the next one by index
-        #[arg(long)]
+        /// Ignored: the first press of `switch windows` is already the flip
+        #[arg(long, hide = true)]
         last: bool,
     },
 
@@ -902,10 +909,9 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                     branch_icon,
                     ttl: std::time::Duration::ZERO,
                     parts: config.git.parts.clone(),
-                    branch_types: config.git.branch_types.clone(),
                     bar_bg: config.bar.background.clone(),
                 };
-                print_segment(crate::local::gst(&opts).await?, no_tmux);
+                print_segment(crate::local::gst(&opts, &config).await?, no_tmux);
                 return Ok(());
             }
             let args = GstArgs {
@@ -1055,11 +1061,21 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             Some(code) => run_dialog(code, out)?,
             None => run_command(print, pane, exec).await?,
         },
-        Cmd::Toggle {
-            session,
-            window,
-            last,
-        } => run_toggle(session, window, last).await?,
+        Cmd::Switch { what } => match what {
+            SwitchWhat::Windows {
+                session,
+                reverse,
+                client,
+                print,
+                pressed,
+            } => run_switch_windows(session, client, reverse, print, pressed).await?,
+            SwitchWhat::Sessions { reverse, print } => run_switch_sessions(reverse, print).await?,
+        },
+        // Silent on purpose: from run-shell anything printed opens a view
+        // over the pane on every press. The CHANGELOG says to rebind.
+        Cmd::Toggle { session, .. } => {
+            run_switch_windows(session, None, false, false, false).await?
+        }
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
         Cmd::Project { action, dir, print } => match action {
@@ -1101,6 +1117,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                     dry_run,
                     yes,
                     detach,
+                    hand_back: false,
                 })
                 .await;
                 if code != 0 {
@@ -1145,6 +1162,18 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             }
             SessionsAction::Autosave { once, status } => {
                 run_sessions_autosave(once, status).await?
+            }
+            SessionsAction::Start { name, dir, detach } => {
+                let code = crate::sessions::start::run(&name, dir, detach).await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+            SessionsAction::Continue { last, print } => {
+                let code = crate::sessions::start::run_continue(last, print).await;
+                if code != 0 {
+                    std::process::exit(code);
+                }
             }
             SessionsAction::List { json } => run_sessions_list(json)?,
             SessionsAction::Show { stamp, json } => run_sessions_show(stamp, json)?,
@@ -2285,8 +2314,44 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let items = project_items(&rows, &config, &home);
+
+    let chrome = crate::picker::Chrome {
+        // M-s opens this picker, so M-s again goes back where you were.
+        alt_picks: crate::project::previous_session(&rows)
+            .map(|i| vec![('s', i)])
+            .unwrap_or_default(),
+        ..chrome
+    };
+
+    let outcome = crate::picker::run_with_query(items, "", &chrome)?;
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    match project_pick(&outcome, &rows, &cwd, &home) {
+        // Switched to by its own name: deriving one from the path is wrong for
+        // any session whose path is not a project directory.
+        ProjectPick::Session(name) => focus_session(&name).await,
+        ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
+        ProjectPick::Missing(typed) => {
+            crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
+            Ok(())
+        }
+        ProjectPick::Nothing => Ok(()),
+    }
+}
+
+/// The project picker's rows: sessions bold, directories plain, each with
+/// its path, an idle column when it has been quiet a day, and its theme
+/// colour as a block. Shared with the session switcher.
+pub(crate) fn project_items(
+    rows: &[crate::project::Row],
+    config: &crate::config::Config,
+    home: &str,
+) -> Vec<crate::picker::Item> {
+    use crate::project::Kind;
     let mut items: Vec<crate::picker::Item> = Vec::with_capacity(rows.len());
-    for r in &rows {
+    for r in rows {
         use crate::picker::{Cell, Tone};
         // The kind of row is the icon rather than a word in its own column:
         // `session` down half the list said the same thing on every line.
@@ -2294,13 +2359,13 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         // directory is somewhere you could go, so it is plain.
         let (icon, name) = match r.kind {
             Kind::Session => (crate::tmux::icons::SESSION, Tone::Strong),
-            Kind::Directory => (crate::tmux::icons::FOLDER, Tone::Plain),
+            Kind::Directory => (crate::tmux::icons::PROJECT, Tone::Plain),
         };
         let mark = match r.kind {
             Kind::Session => "session",
             Kind::Directory => "dir",
         };
-        let where_it_is = crate::project::short_path(&r.path, &home);
+        let where_it_is = crate::project::short_path(&r.path, home);
         // A detached session quiet for a day or more says so in a fourth
         // column, so the stale ones show without leaving the list. The column
         // is only pushed when there is something to say: an empty last cell
@@ -2330,35 +2395,12 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
             .with_swatch(r.colour.clone()),
         );
     }
-
-    let chrome = crate::picker::Chrome {
-        // M-s opens this picker, so M-s again goes back where you were.
-        alt_picks: crate::project::previous_session(&rows)
-            .map(|i| vec![('s', i)])
-            .unwrap_or_default(),
-        ..chrome
-    };
-
-    let outcome = crate::picker::run_with_query(items, "", &chrome)?;
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    match project_pick(&outcome, &rows, &cwd, &home) {
-        // Switched to by its own name: deriving one from the path is wrong for
-        // any session whose path is not a project directory.
-        ProjectPick::Session(name) => focus_session(&name).await,
-        ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
-        ProjectPick::Missing(typed) => {
-            crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
-            Ok(())
-        }
-        ProjectPick::Nothing => Ok(()),
-    }
+    items
 }
 
 /// What the project picker's answer opens.
 #[derive(Debug, PartialEq, Eq)]
-enum ProjectPick {
+pub(crate) enum ProjectPick {
     /// A live session, by name.
     Session(String),
     /// A directory, listed or typed, to open a session in.
@@ -2372,7 +2414,7 @@ enum ProjectPick {
 /// A row picked, or the query when enter matched nothing (or alt-enter asked
 /// for the query itself): the one way into a directory the source has never
 /// listed, which the footer has always promised.
-fn project_pick(
+pub(crate) fn project_pick(
     outcome: &crate::picker::Outcome,
     rows: &[crate::project::Row],
     cwd: &str,
@@ -2417,6 +2459,19 @@ async fn open_project(
     home: &str,
 ) -> anyhow::Result<()> {
     let name = crate::project::session_name(path);
+    build_project_session(&name, path, config, home).await;
+    focus_session(&name).await
+}
+
+/// Create a session called `name` in a project directory, with the layout
+/// that project gets, unless a session of that name is already there.
+pub(crate) async fn build_project_session(
+    name: &str,
+    path: &str,
+    config: &crate::config::Config,
+    home: &str,
+) {
+    let name = name.to_string();
 
     // Through `session_exists`, which sends tmux's stderr nowhere: asked
     // bare, a first open printed `can't find session: x` before going on to
@@ -2449,8 +2504,6 @@ async fn open_project(
             });
         }
     }
-
-    focus_session(&name).await
 }
 
 /// The server's `pane-base-index`, defaulting to 0 the way tmux does.
@@ -2476,6 +2529,42 @@ async fn pane_base_index() -> usize {
 /// `project ./save`, because clap reads a bare `save` as the subcommand. That
 /// is the cost of the spelling in the documentation, and it is cheaper than a
 /// flag nobody remembers.
+/// What `switch` moves between.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum SwitchWhat {
+    /// This session's windows, most recently used first. From run-shell it is
+    /// a press: the first goes to the window you were on before, a second
+    /// opens the list ([switcher] first). In a terminal it is the list
+    Windows {
+        /// The session, by name or `$id`; the client's when only --client is
+        /// given
+        session: Option<String>,
+        /// Go the other way: the oldest first
+        #[arg(long)]
+        reverse: bool,
+        /// The client the key was pressed on, as `#{client_name}` from the
+        /// binding, for the popup and the message line
+        #[arg(long)]
+        client: Option<String>,
+        /// Print the windows, index and name, most recent first, and exit
+        #[arg(long)]
+        print: bool,
+        /// Internal: opened by a press, which left where the presses began
+        #[arg(long, hide = true)]
+        pressed: bool,
+    },
+    /// Every session, most recently used first, with the cursor on the one
+    /// you were in before; typing searches the project directories too
+    Sessions {
+        /// Start on the oldest session instead
+        #[arg(long)]
+        reverse: bool,
+        /// Print the session names, most recent first, and exit
+        #[arg(long)]
+        print: bool,
+    },
+}
+
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum ProjectAction {
     /// Capture this session's windows and panes as this project's layout
@@ -2625,6 +2714,29 @@ pub enum SessionsAction {
         /// Print JSON rather than a listing
         #[arg(long)]
         json: bool,
+    },
+    /// Open a session by name: the live one, else the newest snapshot that
+    /// holds it, else the project directory it names, else DIR or a
+    /// directory you pick
+    Start {
+        /// The session's name
+        name: String,
+        /// Where to start it when nothing else knows the name
+        dir: Option<String>,
+        /// Start or restore it and leave it running, attaching nothing
+        #[arg(long)]
+        detach: bool,
+    },
+    /// Go back to the session you left: the one used most recently that no
+    /// client is in, by the switcher's hooks or tmux's attach time; with no
+    /// record of either, the oldest session
+    Continue {
+        /// The youngest session other than this one, ignoring every record
+        #[arg(long)]
+        last: bool,
+        /// Print the session and why it was chosen, and exit
+        #[arg(long)]
+        print: bool,
     },
     /// Sessions nobody is attached to that have been quiet for days; picking
     /// one runs `project close` on it
@@ -3012,6 +3124,9 @@ pub struct ResurrectOptions {
     pub yes: bool,
     /// Leave the server detached.
     pub detach: bool,
+    /// The caller attaches, or chose not to, so the restore neither attaches
+    /// nor says how to: `sessions start` restoring one session.
+    pub hand_back: bool,
 }
 
 /// `sessions resurrect`: rebuild a server from a snapshot.
@@ -3201,6 +3316,7 @@ async fn lifecycle(opts: Lifecycle) -> anyhow::Result<i32> {
         dry_run: false,
         yes: false,
         detach: false,
+        hand_back: false,
     })
     .await
 }
@@ -3538,29 +3654,167 @@ pub(crate) async fn tmux(args: &[&str]) {
     let _ = crate::tmux::command().args(args).status().await;
 }
 
-/// `toggle`: move to another window in this session, in the order
-/// `[toggle] order` says; [`crate::toggle`] has the rule.
+/// `switch windows`: a press from `run-shell`, the list in a popup, or the
+/// order printed; [`crate::switcher`] has the rule.
 ///
-/// The window argument is accepted and not used. The session's own active
-/// window is the one the key was pressed in, and it is an index where the
-/// binding could only pass a name, which two windows can share.
-///
-/// `--last` is tmux's own `last-window`: the flip between the two most recent
-/// windows, with no clock and no sweep.
-async fn run_toggle(
+/// Which of the first two it is follows from whether there is a terminal:
+/// `run-shell` has none and a popup is one.
+async fn run_switch_windows(
     session: Option<String>,
-    _window: Option<String>,
-    last: bool,
+    client: Option<String>,
+    reverse: bool,
+    print: bool,
+    pressed: bool,
 ) -> anyhow::Result<()> {
-    let session = match session {
-        Some(s) => s,
-        None => tmux_display("#{session_name}").await,
-    };
-    if last {
-        tmux(&["last-window", "-t", &format!("={session}")]).await;
+    use std::io::IsTerminal;
+    if print {
+        return crate::switcher::print(session, client).await;
+    }
+    let config = config_or_default();
+    if std::io::stdout().is_terminal() {
+        crate::switcher::list(
+            session,
+            client,
+            reverse,
+            pressed,
+            &config.switcher,
+            &config.picker,
+        )
+        .await
+    } else {
+        crate::switcher::press(session, client, reverse, &config.switcher).await
+    }
+}
+
+/// `switch sessions`: the project picker opened on the sessions alone, most
+/// recently used first, with the cursor on the one you were in before.
+///
+/// The session key moves the cursor, with shift it moves back, and enter
+/// goes; there is no clock. The directories are in the list from the start
+/// and hidden until something is typed, so the first letter is the project
+/// picker's search and a typed path opens as it does there.
+async fn run_switch_sessions(reverse: bool, print: bool) -> anyhow::Result<()> {
+    let config = config_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let settings = &config.switcher;
+    let key = settings.sessions_key;
+    let upper = key.to_ascii_uppercase();
+
+    let chrome = crate::picker::Chrome {
+        title: "[ Sessions/Projects ]".into(),
+        icon: crate::tmux::icons::SESSION.into(),
+        footer: format!(
+            "enter go   alt-{key} next   alt-{upper} back   esc stay   type to search projects"
+        ),
+        preview_title: "[ Where ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Project);
+
+    // The sessions alone before the first frame: one tmux call, the hooks
+    // chained in front. The directories are hidden until a letter is typed,
+    // so collecting them (the source's process and every theme file) waits
+    // until the frame is up; see `picker::Later`.
+    let sessions = crate::project::sessions(&crate::switcher::hooks()).await;
+
+    if print {
+        for r in &sessions {
+            println!("{}", r.label);
+        }
         return Ok(());
     }
-    crate::toggle::run(&session, &config_or_default().toggle).await
+
+    let mut items = project_items(&sessions, &config, &home);
+    // The session you are in says so in words, not only by being first.
+    if let Some(first) = items.first_mut() {
+        first.columns.push("now".into());
+        first.tones.push(crate::picker::Tone::Dim);
+    }
+
+    // The directories' rows, kept for after the pick: an index past the
+    // sessions is one of them.
+    let directories = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let later = {
+        let (config, home, sessions) = (config.clone(), home.clone(), sessions.clone());
+        let keep = directories.clone();
+        crate::picker::Later::new(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return Vec::new();
+            };
+            let found = rt.block_on(crate::project::directories(&config, &home));
+            // A directory a session already stands for is left out, as
+            // `merge` leaves it out of the project picker. Not through
+            // `merge` itself: it would drop a second session in the same
+            // directory as well, and the sessions are already listed.
+            let taken: std::collections::HashSet<String> =
+                sessions.iter().map(|r| r.path.clone()).collect();
+            let rows = crate::project::merge(
+                Vec::new(),
+                found
+                    .into_iter()
+                    .filter(|r| !taken.contains(&r.path))
+                    .collect(),
+            );
+            let items: Vec<crate::picker::Item> = project_items(&rows, &config, &home)
+                .into_iter()
+                .map(crate::picker::Item::searched_only)
+                .collect();
+            if let Ok(mut k) = keep.lock() {
+                *k = rows;
+            }
+            items
+        })
+    };
+
+    // Sessions come first in `rows`, so a session's index is its place.
+    let n = sessions.len();
+    let start = match (n, reverse) {
+        (0 | 1, _) => 0,
+        (_, false) => 1,
+        (_, true) => n - 1,
+    };
+    let on_step = settings.announce.then(|| {
+        let names: Vec<String> = sessions.iter().map(|r| r.label.clone()).collect();
+        crate::picker::OnStep::new(move |i| {
+            // A directory is reached by searching, and is not a step.
+            let Some(name) = names.get(i) else {
+                return;
+            };
+            let text = crate::switcher::announcement(name, i + 1, names.len());
+            let _ = crate::tmux::command_sync()
+                .args(["display-message", &crate::picker::literal_for_tmux(&text)])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        })
+    });
+    let chrome = crate::picker::Chrome {
+        steps: vec![(key, 1), (upper, -1)],
+        on_step,
+        ..chrome
+    };
+
+    let outcome = crate::picker::run_from(items, "", &chrome, start, Some(later))?;
+    let mut rows = sessions;
+    if let Ok(mut d) = directories.lock() {
+        rows.append(&mut d);
+    }
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    match project_pick(&outcome, &rows, &cwd, &home) {
+        ProjectPick::Session(name) => focus_session(&name).await,
+        ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
+        ProjectPick::Missing(typed) => {
+            crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
+            Ok(())
+        }
+        ProjectPick::Nothing => Ok(()),
+    }
 }
 
 /// `autosave`: the timer lives in the daemon, so this is the manual half.

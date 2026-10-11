@@ -105,7 +105,15 @@ If `TMUX` is unset you are outside the server:
 tmux-companion start            # the picker, then attach
 tmux-companion start --last     # back to the session used most recently
 tmux-companion start ~/path     # straight to a project
+tmux-companion sessions start NAME DIR --detach   # by name: live, snapshot, project, else DIR
+tmux-companion sessions continue --print          # which session was left last, and why
 ```
+
+`sessions start NAME` with no `DIR` opens a picker when nothing knows the name,
+or when several projects share it, and off a terminal it exits 2 instead. From
+an agent, pass `DIR` and `--detach`. `sessions continue` attaches or switches the
+human's client, so from an agent use `--print` only. `--last` ignores what was
+used and names the youngest session other than the current one.
 
 Inside tmux, `tmux-companion project [DIR]` switches to that project or builds it
 from the saved layout, and a saved layout wins over `[[layout]]` in the config.
@@ -180,12 +188,18 @@ agent and a shell watching something.
 ## Starting or resuming an agent
 
 ```sh
-tmux list-panes -a -F '#S:#I.#P #{pane_current_path} #{pane_current_command}' |
-  grep -E ' (claude|codex|gemini|cursor-agent|aider|opencode|grok|agy)$'
+tmux-companion panes --agents --print
 ```
 
-That list is the one `sessions` itself counts for its restore headline, so it is
-the same definition of "an agent is already here".
+One line per agent pane: `session:window.pane`, program, state, directory and
+pane id. Match the directory against the repo. Don't grep `list-panes` on
+`#{pane_current_command}` instead: tmux reports gemini, cursor-agent and the
+npm installs of codex and opencode as `node`, aider as `python3` or `Python`,
+claude as its version number and grok as `grok-1.0.50-mac`, and `panes` names
+each by the program it was started as.
+
+The list is `[agents] programs`, the same one `sessions` counts for its restore
+headline, so it is the same definition of "an agent is already here".
 
 1. Already running in this repo: use that pane. Do not start a second copy.
 2. Otherwise split the project window, or `tmux-companion new-window` when the task

@@ -27,7 +27,11 @@ use crate::{
 };
 
 /// The git segment, computed here, with no cache and no daemon.
-pub async fn gst(opts: &GstOptions) -> anyhow::Result<String> {
+///
+/// The branch glyph comes from the same table the daemon builds from
+/// `config`, and the picks a daemon has kept are read so both draw the same
+/// glyph; this path never writes them.
+pub async fn gst(opts: &GstOptions, config: &Config) -> anyhow::Result<String> {
     let path = match &opts.path {
         Some(p) => p.canonicalize()?,
         None => std::env::current_dir()?,
@@ -44,6 +48,12 @@ pub async fn gst(opts: &GstOptions) -> anyhow::Result<String> {
         None => false,
     };
 
+    let mut icons = crate::branch_icons::BranchIcons::new(&config.git, config.glyphs.preset);
+    if let Some(file) = crate::branch_icons::picks_path() {
+        icons.attach(crate::branch_icons::read_picks(&file), None);
+    }
+    let (branch_types, _) = icons.table_for(&status.branch);
+
     let line = git::status_line_render(
         &status,
         nvim_suspended,
@@ -53,7 +63,7 @@ pub async fn gst(opts: &GstOptions) -> anyhow::Result<String> {
             cap_glyph: if opts.no_cap { Some("") } else { None },
             branch_max: opts.branch_max_len,
             branch_icon: opts.branch_icon,
-            branch_types: &opts.branch_types,
+            branch_types: &branch_types,
             parts: &opts.parts,
             bar_bg: &opts.bar_bg,
         },

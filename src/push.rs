@@ -1,6 +1,7 @@
 //! the status bar pushed: the daemon renders each attached session's right
-//! side and sets it as a session option tmux expands, instead of tmux running
-//! a process every second to ask.
+//! side and sets it as a session option tmux expands, and a pane option on
+//! each pane in another directory, instead of tmux running a process every
+//! second to ask.
 //!
 //! With `[bar] mode = "push"`, or `auto` (the default) when tmux's global
 //! `status-right` reads `@tc-right` and tmux is 3.4 or newer, `status-right`
@@ -10,15 +11,23 @@
 //! 1. takes the shared pane list (`panes::shared`), whose visible panes are
 //!    the active pane of each session somebody is attached to, and so the
 //!    path each session's git segment is about;
-//! 2. renders the right side for each of those sessions, as `status-right`
-//!    would for that path;
-//! 3. sends the ones that changed since the last tick in one `tmux`
-//!    invocation, `set-option -t =<session>: @tc-right <value> ; ...`, and
-//!    nothing at all when none did.
+//! 2. renders the right side once for each directory any pane of those
+//!    sessions is in, as `status-right` would for that path;
+//! 3. sets each session's value on the session, and each pane whose
+//!    directory is not its session's gets its own value on the pane
+//!    (`set-option -p`), which tmux finds before the session's when that
+//!    pane is current. A window or pane switch therefore shows the new
+//!    place on tmux's own redraw for the switch, not at the next tick;
+//! 4. sends what changed since the last tick in one `tmux` invocation,
+//!    `set-option -t =<session>: @tc-right <value> ; set-option -p -t %N
+//!    ...`, and nothing at all when nothing did.
 //!
 //! The cost is one `tmux` process a second for the whole server at most, and
 //! the pane list the loops read anyway, against one shell and one client
-//! process per attached client per second in call mode.
+//! process per attached client per second in call mode. What grows with the
+//! server is the git segment, rendered once per directory of an attached
+//! session rather than once per session, behind the same git cache; the
+//! segments beside it are rendered once a tick.
 //!
 //! While it pushes the daemon also writes a heartbeat, the global option
 //! `@tc-alive`, every [`BEAT`], and the recommended line ([`line`]) shows the
@@ -26,7 +35,8 @@
 //! stops cleanly (a signal, `restart`, an upgrade) unsets both at once; one
 //! that crashes leaves them, the bar shows old figures for at most
 //! [`STALE_SECS`], and then the line's call starts a new daemon, which finds
-//! the heartbeat left behind and records the unclean stop.
+//! the heartbeat left behind, records the unclean stop, and unsets the values
+//! it left on every session and pane before it pushes its own.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -195,8 +205,37 @@ pub const OPTION: &str = "@tc-right";
 /// How often the bar is rendered, which is what `status-interval 1` gave.
 pub const TICK: Duration = Duration::from_secs(1);
 
+/// The loop's clock: a tick every [`TICK`] from the last one, not [`TICK`]
+/// after the work. Sleeping after the work made the period a second plus the
+/// render, 1.1-1.2 s and more when a `git status` ran, and a figure held for
+/// two seconds whenever one of those landed between tmux's own redraws.
+///
+/// `Delay` when a tick is missed (a render longer than [`TICK`]): the next
+/// one comes a whole [`TICK`] after the late one. `Burst`, the default, would
+/// run the missed ones back to back, and two network samples that close
+/// share one tick's bytes; `Skip` would wait for the next mark on the
+/// original grid, up to a further [`TICK`], which is a longer hold than
+/// needed. Nothing here has to stay in phase with anything: a write redraws
+/// every client's status line itself.
+pub fn ticker() -> tokio::time::Interval {
+    let mut tick = tokio::time::interval(TICK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick
+}
+
 /// Sessions this daemon has set the option in, for clearing on the way out.
 static PUSHED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Panes this daemon has set the option on and not unset since, by `%N` id,
+/// for clearing on the way out.
+static PUSHED_PANES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// What a pane is recorded as carrying after a batch that failed part way:
+/// tmux stops a command sequence at its first error (a pane that closed
+/// between the listing and the write), so what the rest of it did is not
+/// known. Nothing renders to this, so the next tick writes the pane again,
+/// or unsets it.
+const UNKNOWN: &str = "\0unknown";
 
 /// The session each visible pane belongs to, with that pane's directory: one
 /// per session somebody is attached to.
@@ -210,25 +249,162 @@ pub fn sessions(panes: &[crate::panes::Pane]) -> Vec<(String, String)> {
     out
 }
 
-/// The `tmux` arguments that set every changed session's value, as one
-/// command sequence, or nothing when nothing changed.
-pub fn commands(changed: &[(String, String)]) -> Vec<String> {
+/// Every pane of an attached session, with the directory its own value is
+/// rendered for, or `None` when that is the session's directory and the pane
+/// reads the session value instead.
+///
+/// tmux expands `#{@tc-right}` in the status line for the client's current
+/// pane, and finds the option on that pane before its window, and the window
+/// before the session. A pane carrying its own value therefore shows it the
+/// moment it becomes current, on the redraw tmux does for the switch itself,
+/// where the session value waits for the next tick. A pane in the session's
+/// own directory would carry the session's value, so it carries nothing and
+/// costs no write.
+pub fn pane_paths(
+    panes: &[crate::panes::Pane],
+    sessions: &[(String, String)],
+) -> Vec<(String, Option<String>)> {
+    panes
+        .iter()
+        .filter_map(|p| {
+            let (_, path) = sessions.iter().find(|(s, _)| s == &p.session)?;
+            let own = (p.path != *path).then(|| p.path.clone());
+            Some((p.id.clone(), own))
+        })
+        .collect()
+}
+
+/// The pane writes that take what was last written, `last`, to `wanted`:
+/// `Some(value)` sets a pane whose value changed, `None` unsets a pane that
+/// carries one and should now read the session's. A pane that already holds
+/// what it wants is left alone.
+pub fn pane_writes(
+    wanted: &[(String, Option<String>)],
+    last: &HashMap<String, String>,
+) -> Vec<(String, Option<String>)> {
+    wanted
+        .iter()
+        .filter(|(id, want)| match want {
+            Some(v) => last.get(id) != Some(v),
+            None => last.contains_key(id),
+        })
+        .cloned()
+        .collect()
+}
+
+/// The `tmux` arguments that set every changed session's value and every
+/// pane write, as one command sequence, or nothing when nothing changed.
+pub fn commands(changed: &[(String, String)], panes: &[(String, Option<String>)]) -> Vec<String> {
+    fn next(args: &mut Vec<String>, cmd: &[&str]) {
+        if !args.is_empty() {
+            args.push(";".to_string());
+        }
+        args.extend(cmd.iter().map(|a| a.to_string()));
+    }
     let mut args = Vec::new();
-    for (i, (session, value)) in changed.iter().enumerate() {
-        if i > 0 {
+    for (session, value) in changed {
+        // A trailing colon: set-option takes a pane target, and `=name`
+        // alone is refused there as "no such session".
+        let target = format!("={session}:");
+        next(&mut args, &["set-option", "-t", &target, OPTION, value]);
+    }
+    for (id, value) in panes {
+        match value {
+            Some(v) => next(&mut args, &["set-option", "-p", "-t", id, OPTION, v]),
+            None => next(&mut args, &["set-option", "-pu", "-t", id, OPTION]),
+        }
+    }
+    args
+}
+
+/// The `tmux` arguments that unset the option on `sessions` and `panes`.
+pub fn unset_commands(sessions: &[String], panes: &[String]) -> Vec<String> {
+    let mut args = Vec::new();
+    let targets = sessions
+        .iter()
+        .map(|s| ("-u", format!("={s}:")))
+        .chain(panes.iter().map(|p| ("-pu", p.clone())));
+    for (flag, target) in targets {
+        if !args.is_empty() {
             args.push(";".to_string());
         }
         args.extend([
             "set-option".to_string(),
+            flag.to_string(),
             "-t".to_string(),
-            // A trailing colon: set-option takes a pane target, and `=name`
-            // alone is refused there as "no such session".
-            format!("={session}:"),
+            target,
             OPTION.to_string(),
-            value.clone(),
         ]);
     }
     args
+}
+
+/// The sessions and pane ids `list-panes -a -F "#{session_name}\t#{pane_id}"`
+/// printed, so an unset never names one that is gone: tmux stops a command
+/// sequence at the first target it cannot find.
+pub fn live(listing: &str) -> (Vec<String>, Vec<String>) {
+    let mut sessions: Vec<String> = Vec::new();
+    let mut panes = Vec::new();
+    for line in listing.lines() {
+        let Some((s, p)) = line.rsplit_once('\t') else {
+            continue;
+        };
+        if !sessions.iter().any(|x| x == s) {
+            sessions.push(s.to_string());
+        }
+        panes.push(p.to_string());
+    }
+    (sessions, panes)
+}
+
+/// The listing [`live`] reads.
+const LIVE_FORMAT: &str = "#{session_name}\t#{pane_id}";
+
+/// Unset the option on every session and pane of the server: what a daemon
+/// that stopped uncleanly left behind. A pane value left there would win over
+/// the session value this daemon writes, and this daemon leaves the panes in
+/// their session's directory unwritten, so it would show for good.
+async fn clear_left_behind() {
+    let Ok(out) = crate::tmux::command()
+        .args(["list-panes", "-a", "-F", LIVE_FORMAT])
+        .output()
+        .await
+    else {
+        return;
+    };
+    let (sessions, panes) = live(&String::from_utf8_lossy(&out.stdout));
+    let args = unset_commands(&sessions, &panes);
+    if args.is_empty() {
+        return;
+    }
+    let _ = crate::tmux::command()
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+}
+
+/// The right side for `path`: the git segment once a tick however many panes
+/// are in that directory, beside the parts that do not depend on it, which
+/// are rendered once a tick for every directory.
+async fn render_for(
+    path: &str,
+    parts: &crate::server::RightParts,
+    state: &Arc<Mutex<ServerState>>,
+    memo: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    if let Some(v) = memo.get(path) {
+        return v.clone();
+    }
+    let value = match serde_json::from_value::<crate::proto::StatusRightArgs>(
+        serde_json::json!({ "path": path }),
+    ) {
+        Ok(args) => Some(parts.with_git(&crate::server::git_part(&args, state).await)),
+        Err(_) => None,
+    };
+    memo.insert(path.to_string(), value.clone());
+    value
 }
 
 /// The daemon's task, for `push` and `auto`.
@@ -240,10 +416,12 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
     let mut last: HashMap<String, String> = HashMap::new();
+    let mut last_panes: HashMap<String, String> = HashMap::new();
     let mut checked: Option<std::time::Instant> = None;
     let mut active = false;
     let mut beat: Option<std::time::Instant> = None;
     let mut looked_for_crash = false;
+    let mut tick = ticker();
     loop {
         // `auto` looks at status-right once a minute, which is how long an
         // edited tmux.conf waits to be pushed to; `push` looks once, so
@@ -270,12 +448,12 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
             // script) is not an answer: decided on it, `auto` would sit on
             // the call for a minute. Ask again next tick instead.
             let Some(answer) = answer else {
-                tokio::time::sleep(TICK).await;
+                tick.tick().await;
                 continue;
             };
             let status_right = String::from_utf8_lossy(&answer.stdout).into_owned();
             // Once, on the first answer: a heartbeat already there is one the
-            // last daemon left behind.
+            // last daemon left behind, and so are its values.
             if !looked_for_crash {
                 looked_for_crash = true;
                 let left = crate::tmux::command()
@@ -286,40 +464,65 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
                     .unwrap_or_default();
                 if !left.is_empty() {
                     note_unclean_stop(&state, &left).await;
+                    clear_left_behind().await;
                 }
             }
             let decision = decide(mode, &status_right, &tmux_v);
             let now = matches!(decision, Decision::Push { .. });
             if active && !now {
-                clear();
+                unset_all();
                 last.clear();
+                last_panes.clear();
             }
             active = now;
             state.lock().await.bar_note = health_reason(&decision);
             checked = Some(std::time::Instant::now());
         }
-        tokio::time::sleep(TICK).await;
+        tick.tick().await;
         if !active {
             continue;
         }
         let panes = crate::panes::shared(&state, TICK).await;
+        let attached = sessions(&panes);
+        let mut memo: HashMap<String, Option<String>> = HashMap::new();
+        // Once a tick, and so one network sample a tick: two would split the
+        // rate's window between them.
+        let parts = crate::server::right_parts(&state).await;
         let mut changed = Vec::new();
-        for (session, path) in sessions(&panes) {
-            let args: crate::proto::StatusRightArgs =
-                match serde_json::from_value(serde_json::json!({ "path": path })) {
-                    Ok(a) => a,
-                    Err(_) => continue,
-                };
-            let Ok(value) = crate::server::render_right(&args, &state).await else {
+        for (session, path) in &attached {
+            let Some(value) = render_for(path, &parts, &state, &mut memo).await else {
                 continue;
             };
-            if last.get(&session) != Some(&value) {
+            if last.get(session) != Some(&value) {
                 last.insert(session.clone(), value.clone());
-                changed.push((session, value));
+                changed.push((session.clone(), value));
             }
         }
+        let mut wanted = Vec::new();
+        for (id, path) in pane_paths(&panes, &attached) {
+            match path {
+                None => wanted.push((id, None)),
+                Some(path) => {
+                    if let Some(value) = render_for(&path, &parts, &state, &mut memo).await {
+                        wanted.push((id, Some(value)));
+                    }
+                }
+            }
+        }
+        // A pane that closed took its option with it.
+        last_panes.retain(|id, _| panes.iter().any(|p| &p.id == id));
+        let writes = pane_writes(&wanted, &last_panes);
+        for (id, value) in &writes {
+            match value {
+                Some(v) => last_panes.insert(id.clone(), v.clone()),
+                None => last_panes.remove(id),
+            };
+        }
         let beat_due = beat.is_none_or(|t| t.elapsed() >= BEAT);
-        if changed.is_empty() && !beat_due {
+        if changed.is_empty() && writes.is_empty() && !beat_due {
+            if let Ok(mut pushed) = PUSHED_PANES.lock() {
+                *pushed = last_panes.keys().cloned().collect();
+            }
             continue;
         }
         if let Ok(mut pushed) = PUSHED.lock() {
@@ -329,11 +532,23 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
                 }
             }
         }
-        let mut args = commands(&changed);
+        // Every pane written to counts as possibly set until a batch says
+        // otherwise, so a stop in the middle of this one still clears it.
+        if let Ok(mut pushed) = PUSHED_PANES.lock() {
+            let mut ids: Vec<String> = last_panes.keys().cloned().collect();
+            ids.extend(writes.iter().map(|(id, _)| id.clone()));
+            ids.sort();
+            ids.dedup();
+            *pushed = ids;
+        }
+        // The heartbeat first, so a pane that closed before its write, which
+        // ends the sequence there, does not take the heartbeat with it. No
+        // `refresh-client -S` after it: a `set-option` already redraws every
+        // client's status line (3.4 and 3.7c), and with no client attached
+        // the refresh fails with `no current client`, which would fail the
+        // batch and have every value written again on the next tick.
+        let mut args = Vec::new();
         if beat_due {
-            if !args.is_empty() {
-                args.push(";".to_string());
-            }
             args.extend([
                 "set-option".to_string(),
                 "-g".to_string(),
@@ -342,41 +557,103 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
             ]);
             beat = Some(std::time::Instant::now());
         }
-        let _ = crate::tmux::command()
-            .args(&args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await;
+        let rest = commands(&changed, &writes);
+        if !args.is_empty() && !rest.is_empty() {
+            args.push(";".to_string());
+        }
+        args.extend(rest);
+        // Under the write lock, and not at all once the daemon is stopping:
+        // a write that landed after `clear` would put back a value nobody
+        // will update or unset.
+        let ok = tokio::task::spawn_blocking(move || {
+            let _writing = WRITE.lock();
+            if STOPPING.load(std::sync::atomic::Ordering::SeqCst) {
+                return true;
+            }
+            crate::tmux::command_sync()
+                .args(&args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+        .await
+        .unwrap_or(false);
+        if !ok {
+            // Somewhere in the sequence tmux stopped; what came after it was
+            // not written. Forget it all, and the next tick writes it again.
+            for (s, _) in &changed {
+                last.remove(s);
+            }
+            for (id, _) in &writes {
+                last_panes.insert(id.clone(), UNKNOWN.to_string());
+            }
+        }
     }
 }
 
-/// Unset the option everywhere this daemon set it, so the bar falls back to
-/// the call rather than showing a figure nobody is updating. Synchronous: it
-/// runs on the way out of a signal handler.
+/// Held while the loop's tmux invocation runs, so [`clear`] waits for one in
+/// flight rather than racing it.
+static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Set by [`clear`]: the daemon is on its way out and the loop writes nothing
+/// more. Seen once in the e2e suite before it existed: a tick's write landed
+/// after the shutdown's unset and left pane values behind.
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Unset the option everywhere this daemon set it, sessions and panes, so the
+/// bar falls back to the call rather than showing a figure nobody is
+/// updating, and stop the loop writing again. For the way out: a signal, a
+/// shutdown. Synchronous: it runs on the way out of a signal handler.
 pub fn clear() {
+    STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _writing = WRITE.lock();
+    unset_all();
+}
+
+/// [`clear`] without stopping the loop: for `auto` going back to the call.
+fn unset_all() {
     let sessions = PUSHED.lock().map(|p| p.clone()).unwrap_or_default();
+    let panes = PUSHED_PANES.lock().map(|p| p.clone()).unwrap_or_default();
     // The heartbeat first: gone, the line falls back to the call at once, and
     // the next daemon does not take this stop for a crash.
     let mut args: Vec<String> = ["set-option", "-gu", ALIVE]
         .iter()
         .map(|a| a.to_string())
         .collect();
-    for s in &sessions {
-        args.push(";".to_string());
-        args.extend([
-            "set-option".to_string(),
-            "-u".to_string(),
-            "-t".to_string(),
-            format!("={s}:"),
-            OPTION.to_string(),
-        ]);
+    if !sessions.is_empty() || !panes.is_empty() {
+        // Only the ones still there: one that is gone would end the sequence.
+        let listing = crate::tmux::command_sync()
+            .args(["list-panes", "-a", "-F", LIVE_FORMAT])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        let (live_sessions, live_panes) = live(&listing);
+        let sessions: Vec<String> = sessions
+            .into_iter()
+            .filter(|s| live_sessions.contains(s))
+            .collect();
+        let panes: Vec<String> = panes
+            .into_iter()
+            .filter(|p| live_panes.contains(p))
+            .collect();
+        let rest = unset_commands(&sessions, &panes);
+        if !rest.is_empty() {
+            args.push(";".to_string());
+            args.extend(rest);
+        }
     }
     let _ = crate::tmux::command_sync()
         .args(&args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+    if let Ok(mut p) = PUSHED_PANES.lock() {
+        p.clear();
+    }
+    if let Ok(mut p) = PUSHED.lock() {
+        p.clear();
+    }
 }
 
 #[cfg(test)]
@@ -463,6 +740,10 @@ mod tests {
             in_mode: false,
             host: String::new(),
             bell: false,
+            session_id: String::new(),
+            accent: String::new(),
+            pid: 0,
+            identity: None,
         }
     }
 
@@ -485,7 +766,7 @@ mod tests {
 
     #[test]
     fn changed_sessions_go_in_one_command_sequence() {
-        let args = commands(&[("a".into(), "x".into()), ("b c".into(), "y".into())]);
+        let args = commands(&[("a".into(), "x".into()), ("b c".into(), "y".into())], &[]);
         assert_eq!(
             args,
             [
@@ -502,6 +783,116 @@ mod tests {
                 "y"
             ]
         );
-        assert!(commands(&[]).is_empty(), "nothing changed, nothing run");
+        assert!(
+            commands(&[], &[]).is_empty(),
+            "nothing changed, nothing run"
+        );
+    }
+
+    fn pane_at(session: &str, id: &str, path: &str, visible: bool) -> crate::panes::Pane {
+        crate::panes::Pane {
+            id: id.into(),
+            ..pane(session, path, visible)
+        }
+    }
+
+    #[test]
+    fn a_pane_carries_its_own_value_only_where_its_directory_differs() {
+        let panes = vec![
+            pane_at("a", "%1", "/repo", true),
+            pane_at("a", "%2", "/repo", false),
+            pane_at("a", "%3", "/elsewhere", false),
+            pane_at("b", "%4", "/nobody/attached", false),
+        ];
+        let attached = sessions(&panes);
+        assert_eq!(
+            pane_paths(&panes, &attached),
+            vec![
+                ("%1".to_string(), None),
+                ("%2".to_string(), None),
+                ("%3".to_string(), Some("/elsewhere".to_string())),
+            ],
+            "the current pane and its neighbour read the session's; b has no client"
+        );
+    }
+
+    #[test]
+    fn only_a_changed_pane_is_written_and_one_back_home_is_unset() {
+        let last: HashMap<String, String> = [
+            ("%1".to_string(), "same".to_string()),
+            ("%2".to_string(), "old".to_string()),
+            ("%3".to_string(), "was its own".to_string()),
+            ("%9".to_string(), UNKNOWN.to_string()),
+        ]
+        .into();
+        let wanted = vec![
+            ("%1".to_string(), Some("same".to_string())),
+            ("%2".to_string(), Some("new".to_string())),
+            ("%3".to_string(), None),
+            ("%4".to_string(), None),
+            ("%5".to_string(), Some("first".to_string())),
+            ("%9".to_string(), None),
+        ];
+        assert_eq!(
+            pane_writes(&wanted, &last),
+            vec![
+                ("%2".to_string(), Some("new".to_string())),
+                ("%3".to_string(), None),
+                ("%5".to_string(), Some("first".to_string())),
+                ("%9".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn pane_writes_join_the_sessions_in_the_same_sequence() {
+        let args = commands(
+            &[("a".into(), "x".into())],
+            &[("%3".into(), Some("y".into())), ("%4".into(), None)],
+        );
+        assert_eq!(
+            args.join(" "),
+            format!(
+                "set-option -t =a: {OPTION} x ; set-option -p -t %3 {OPTION} y ; \
+                 set-option -pu -t %4 {OPTION}"
+            )
+        );
+        assert_eq!(
+            commands(&[], &[("%3".into(), Some("y".into()))]).join(" "),
+            format!("set-option -p -t %3 {OPTION} y"),
+            "no leading separator"
+        );
+    }
+
+    #[test]
+    fn clearing_names_only_what_is_still_there() {
+        let (sessions, panes) = live("a\t%1\na\t%2\nb c\t%7\n\n");
+        assert_eq!(sessions, ["a", "b c"]);
+        assert_eq!(panes, ["%1", "%2", "%7"]);
+        assert_eq!(
+            unset_commands(&["a".into()], &["%2".into()]).join(" "),
+            format!("set-option -u -t =a: {OPTION} ; set-option -pu -t %2 {OPTION}")
+        );
+        assert!(unset_commands(&[], &[]).is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_period_is_a_tick_whatever_the_render_takes() {
+        let mut tick = ticker();
+        tick.tick().await;
+        let start = tokio::time::Instant::now();
+        // A render of 300 ms, then the next tick: a second after the last,
+        // not a second after the render.
+        tokio::time::advance(Duration::from_millis(300)).await;
+        tick.tick().await;
+        assert_eq!(start.elapsed(), TICK);
+        // A render longer than a tick: the next comes at once, and the one
+        // after a whole tick later, never two back to back.
+        tokio::time::advance(Duration::from_millis(1500)).await;
+        tick.tick().await;
+        let late = tokio::time::Instant::now();
+        assert_eq!(late - start, TICK + Duration::from_millis(1500));
+        tick.tick().await;
+        assert_eq!(late.elapsed(), TICK);
     }
 }

@@ -67,3 +67,5 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3.12"
+# Paused time, for the push loop's tick test.
+tokio = { version = "1.40", features = ["test-util"] }

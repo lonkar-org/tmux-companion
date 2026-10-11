@@ -57,6 +57,14 @@ pub async fn report_in(paint: &crate::picker::Paint) -> String {
     line(&mut out, "socket", socket_state(), Tone::Plain);
     line(&mut out, "config", config_state(), Tone::Plain);
     line(&mut out, "glyphs", glyph_state(), Tone::Plain);
+    for (i, value) in branch_icons_state().into_iter().enumerate() {
+        line(
+            &mut out,
+            if i == 0 { "branch icons" } else { "" },
+            value,
+            Tone::Plain,
+        );
+    }
     line(&mut out, "state dir", state_dir_state(), Tone::Plain);
     line(&mut out, "daemon log", log_state(), Tone::Plain);
     line(&mut out, "sessions", sessions_state(), Tone::Plain);
@@ -319,14 +327,21 @@ fn socket_state() -> String {
 
 fn config_state() -> String {
     match crate::config::load() {
-        Ok((_, source)) => {
+        Ok((config, source)) => {
             let note = match &source {
                 crate::config::Source::File(path) if edited_after_daemon_started(path) => {
                     " (changed after the daemon started; run tmux-companion restart)"
                 }
                 _ => "",
             };
-            format!("{source}{note}")
+            // What `config check` would call out, here too, since doctor
+            // is what gets pasted into an issue.
+            let mut said = format!("{source}{note}");
+            for d in crate::config::deprecations(&config) {
+                said.push_str("; ");
+                said.push_str(&d);
+            }
+            said
         }
         Err(e) => format!("{} — BROKEN: {}", e.path.display(), e.message),
     }
@@ -379,6 +394,24 @@ fn glyph_state() -> String {
         format!("{preset}, no overrides")
     } else {
         format!("{preset}, {} substitutions", config.glyphs.icons.len())
+    }
+}
+
+/// Whether the branch-prefix lookup is on, and what it has picked, one line
+/// each, so a pick can be copied into the config from here.
+fn branch_icons_state() -> Vec<String> {
+    let Ok((config, _)) = crate::config::load() else {
+        return vec!["unknown, the config does not parse".to_string()];
+    };
+    if !config.git.branch_icon_matching {
+        return vec!["glyph-name lookup off, [git] branch_icon_matching = false".to_string()];
+    }
+    if config.glyphs.preset == crate::config::Preset::Ascii {
+        return vec!["glyph-name lookup off under the ascii preset".to_string()];
+    }
+    match crate::branch_icons::picks_path() {
+        Some(file) => crate::branch_icons::doctor_lines(&file),
+        None => vec!["no state directory, picks are not kept".to_string()],
     }
 }
 
@@ -604,6 +637,7 @@ mod tests {
             "socket",
             "config",
             "glyphs",
+            "branch icons",
             "state dir",
             "setup",
             "tmux",

@@ -5,15 +5,74 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+Performance improvements improving performance on avg. 57% under heavy load across all pickers and UI surfaces, see [explanation](https://github.com/lonkar-org/tmux-companion/blob/main/docs/explanation/performance.md).
+
+`auto` mode for push status bar segments rather than poll by tmux.
+
 ### Added
+
+- `sessions start NAME [DIR]` opens a session by its name: the live one, else
+  the newest snapshot holding it restored on its own, else the project
+  directory whose session would have that name, else `DIR`, else the project
+  picker asks where, a typed path allowed. Off a terminal it exits 2 naming the
+  missing `DIR`; `--detach` attaches nothing. `sessions continue` goes back to
+  the session you left: the one no client is in that the switcher's hooks
+  stamped last, then the latest attach, then the oldest; `--last` ignores the
+  records and takes the youngest session; `--print` says which and why. tmux's `client-detached` hook
+  cannot name the session a client left, so the record is kept on the way in.
+  No new surface: the picker is the project picker, and `--print` and the
+  error lines are the plain path.
+- `switch windows` and `switch sessions`, bound to `M-a`/`M-A` and
+  `M-s`/`M-S` in the example configs: windows and sessions in the order you
+  used them, the way Cmd-Tab goes through applications. One press of `M-a`
+  goes back to the window you were on, as quick as before and drawing
+  nothing; a second within `[switcher] pause_ms` (500 ms) opens a small list
+  and further presses move down it, a pause or Enter goes, Esc stays where the
+  presses began. `M-s` is the project picker, titled Sessions/Projects,
+  opened on the sessions alone, most recent first, with the cursor on the
+  one you were in before; Enter goes, and typing brings in the project
+  directories, which carry a puzzle-piece icon rather than the folder. The order is kept by tmux hooks
+  that only set options, so a switch starts no process. `[switcher] first =
+  "list"` opens the list on the first press instead. a11y: limited. The
+  commit on a pause, and the second press opening the list, are timed;
+  `first = "list"` with `commit = "enter"` has no clock. The list is drawn in
+  a bordered popup until screen-reader mode lands; `switch windows --print`
+  and `switch sessions --print` are the plain path, and each press says the
+  candidate on tmux's message line.
+- Nineteen more branch prefixes have a glyph of their own: `docs/`, `perf/`,
+  `refactor/`, `test/`, `ci/`, `build/`, `deps/` (and `dependabot/`,
+  `renovate/`, `bump/`), `style/`, `revert/`, `wip/`, `experiment/` (and
+  `spike/`, `poc/`), `bench/`, `parked/`, `security/`, `a11y/`, `i18n/`,
+  `design/`, `research/` and `backup/`, each with a word in the ascii preset.
+- A `word/` prefix nothing claims is looked up among the Nerd Font Material
+  Design glyph names built into the binary, so `cleanup/` draws the broom.
+  The daemon keeps each pick in `$XDG_STATE_HOME/tmux-companion/branch-icons.toml`
+  so a restart or an upgrade draws the same glyph; `doctor` lists them. A
+  prefix the lookup can't place draws a catch-all glyph and keeps the whole
+  name. `[git] branch_icon_matching = false` turns the lookup off, and the
+  ascii preset does too. The name list adds about 150 KB to the binary.
 
 - `[bar] mode = "push"`: the daemon renders each attached session's right
   side once a second and sets it as the session option `@tc-right`, so
   `status-right` expands it without starting a process. The recommended line
-  falls back to the call while the option is unset, which the daemon makes
-  it when it stops. With one client the bar costs 34.5 ms of CPU a second
-  instead of 41.5, and each further client adds nothing, where a call costs
-  about 11 ms a second per client.
+  falls back to the call while the option is unset or the daemon's heartbeat
+  is more than 30 seconds old, so a stopped or crashed daemon is started
+  again. With one client the bar costs 24.9 ms of CPU a second
+  instead of 31.2, and each further client adds nothing, where a call costs
+  about 11 ms a second per client. A pane whose directory isn't its
+  session's carries its own value as a pane option, which tmux reads first
+  for the current pane, so the bar says the new place at a window or pane
+  switch rather than at the next tick; still one `tmux` process a tick, and
+  one network sample, with the git segment rendered for each directory of
+  an attached session. The tick is a steady second rather than a second
+  after the render, so a figure no longer holds for two seconds when a
+  `git status` runs.
+  After a window or pane switch the bar shows the new place in tens of ms in
+  either mode: push 16 ms and call 40 at the median with no load, 22 and 62
+  at 32 busy loops, on one Intel MacBook.
+- `docs/explanation/performance.md`: the measured numbers behind the
+  performance changes, the machine, what load means, and how to rerun
+  them; a short table of them in the README.
 - Rulesets on the repository. A pull request into main needs a maintainer's
   approval, a passing `required` check and no new CodeQL errors, and merges
   as a squash; main can't be force-pushed or deleted. Only a maintainer can
@@ -25,23 +84,65 @@ entry per phase of the comrades port.
   CPU load, in a throwaway home with its own tmux server and daemon, split
   into phases through `TMUX_COMPANION_TRACE`. The setup it builds is a
   working day's: sessions of agents, editors and shells, and 166 directories.
+- `just bench-ab REV`: a revision against the working tree through
+  `bench-capped`, alternated so thermal drift lands on both.
 - `markdown.yml` and `just lint-md`: markdownlint's default rules over every
   Markdown file, less line length for now
   (`docs/backlog/markdown-line-length.md`).
 
 ### Changed
 
+- The panes and agents pickers draw their border, title and one loading line
+  before listing the panes, as the project and new-window pickers already
+  do, so the picker is on screen in 49 ms rather than 68 at 32 busy loops.
+- A picker asks the daemon for its session's theme colour instead of starting
+  a tmux process for it, so the project, new-window and keys pickers draw
+  their first frame 14-18 ms sooner under load (62-66 ms to 48 ms at 32
+  busy loops). A colour changed by hand with `tmux set` can take up to 3
+  seconds to reach a picker; with no daemon running, tmux is asked as before.
+- The health mark draws a bell with an alert (`nf-md-bell_alert_outline`)
+  rather than a warning triangle, and quiet hours draw only a crossed-out bell
+  (`nf-md-bell_off_outline`) where the mark said `quiet`. `health` and
+  `quiet --status` still say it in words; the ascii preset keeps `!` and `z`.
+- A picker with a preview says `tab resize` and `ctrl-j/k scroll` in its line
+  of keys, in front of `esc`; Tab steps the preview through its sizes, which
+  is how the list beside it gets wider, and no footer said so. A line of keys
+  set with `hint` in the config is left as written. The switcher's lines
+  start with `enter`, as every other picker's does, so a narrow popup keeps
+  it.
+- The directory list behind `project`, `new-window` and the session
+  switcher's search comes from the daemon, which keeps zoxide's answer
+  until its database changes (a `cd`), and at most 15 minutes, so a picker
+  opened again without a `cd` between starts no zoxide. `ghq` and a
+  `dirs_command` are kept for a minute.
+- `toggle` is replaced by `switch windows`. For this release `toggle` is a
+  hidden alias that runs `switch windows`, so a 0.9.1 binding on M-a keeps
+  working; rebind it to `switch windows`, as `docs/tmux.conf.example` does,
+  before the next release drops the alias. A `[toggle]` section in
+  config.toml is ignored rather than refused, and `config check` and `doctor`
+  say it can go.
+- `[[git.branch_types]]` adds to the shipped table instead of replacing it:
+  your entries are tried first, then every shipped one you didn't repeat. A
+  config that copied the six old built-ins draws them exactly as before. One
+  that deleted a built-in to get rid of it gets it back, and needs an entry
+  with `icon = ""` for that prefix now, which draws the plain branch glyph and
+  the whole name. For the library, `LineOpts::branch_types` follows the same
+  rule, and a `word/` prefix it doesn't claim draws `icons::PREFIXED` rather
+  than `icons::BRANCH`.
+
 - The example `tmux.conf` files draw the right side with a line that shows
   the pushed `@tc-right` while the daemon's heartbeat is fresh and runs
   `#(tmux-companion status-right ...)` otherwise, so a crashed daemon costs
   the bar 30 seconds at most and the call starts a new one; an unclean stop
   is logged, written to `crashes.tsv`, and put on the health mark, and
-  twice within a minute says so too. And
-  `[bar] mode` defaults to `auto`: the daemon pushes when `status-right`
+  twice within a minute says so too.
+- `[bar] mode` defaults to `auto`: the daemon pushes when `status-right`
   reads `@tc-right` on tmux 3.4 or newer, and otherwise leaves the bar to the
   call, which a `status-right` on the old line keeps doing at no extra cost.
   `doctor` has a `bar` line saying which and why; the health mark says so
   when tmux is too old to push.
+  Push is the faster of the two after a switch as well as the cheaper and
+  `mode = "call"` keeps the call for whoever wants it.
 - The project, new-window and panes pickers build a row's preview when the
   row is selected instead of every preview before the list appears. The
   project picker opens in 79 ms rather than 249 on an idle machine and in
@@ -60,8 +161,7 @@ entry per phase of the comrades port.
   from 82.
 - The key list asks tmux for every binding in one listing plus the notes of
   each table, all at once, rather than nine listings one after another: the
-  first `?` after a daemon start or a tmux.conf edit takes 36 ms, from about
-  90.
+  first `?` after a daemon start or a tmux.conf edit takes 36 ms, from about 90.
 - The daemon reads the pane list once for the inbox, notify and journal
   loops and the agent count on the bar, where each ran its own `list-panes`
   on its own timer. The processes the daemon starts while idle cost 21 ms of
@@ -73,18 +173,6 @@ entry per phase of the comrades port.
   network rate keeps one interface list instead of building one a second,
   two bars missing the git cache together run `git status` once, and the
   agent count trusts the inbox loop's last read for a second longer.
-- `just bench-ab REV`: a revision against the working tree through
-  `bench-capped`, alternated so thermal drift lands on both.
-
-- `toggle`, `M-a`, works like Alt-Tab: the first press goes to the window
-  you were on before, and presses within 800 ms go on by index the way that
-  jump went, leaving the window you started from as the last one. Where it
-  landed, the window's name and place, goes on the message line once the
-  presses stop, so the message never covers the window list mid-sweep. `[toggle] order =
-  "right"` is the old left-to-right cycle and `"left"` the reverse;
-  `chain_ms` and `announce` tune the rest. a11y: limited, the sweep is timed,
-  so slow presses only flip; `chain_ms`, `order` and `toggle --last` are the
-  untimed paths.
 - The documentation site follows main and no longer waits for a release:
   a change to `docs/` or the README is on
   <https://with-love.lonkar.org/tmux-companion/> a minute or two after it's
@@ -92,6 +180,18 @@ entry per phase of the comrades port.
   so in a banner and names the latest release.
 
 ### Fixed
+
+- Agents are found by the name they were started as, not only by tmux's
+  `pane_current_command`, which is the kernel's name and on macOS the file
+  that ran, cut to 15 bytes. grok (`grok-1.0.50-mac`), and gemini,
+  cursor-agent and the npm installs of codex and opencode (`node`), and aider
+  (`python3`, or `Python` on macOS) were missing from the agents picker, the
+  inbox, `brief` and the bar's `agents` count; claude is now named `claude`
+  from its arguments rather than guessed from its version number. Only a pane
+  whose name can hide its program is read, in the daemon's own listing and
+  without starting a process; `[notify] ignore` and the journal use the same
+  name. A name with a release version after a hyphen still counts as the name
+  when the process can't be read.
 
 - The project picker opens a directory typed in full that its source has
   never listed, as its footer and the manual said it would: enter on a path
@@ -151,7 +251,7 @@ replaces the shipped line, which is now shorter and in one order.
   GitHub's list of merged PRs. The release gate stops a tag whose changelog
   has no section for it. Added, Changed, Fixed and the rest are each
   collapsed under their heading, so the prelude is what shows first. `just
-  changelog-section --details 0.8.0` prints what a release would say.
+changelog-section --details 0.8.0` prints what a release would say.
 
 ## 0.8.0 - 2026-10-06
 
@@ -191,7 +291,7 @@ off until you set `[chunk] enabled = true`.
   row of every picker, the resurrect screen's row and the run dialog's
   button, and on the nearest match in `jump`, so a screen reader or a braille
   display follows the selection instead of reading nothing. `[sessions]
-  confirm_wait = true` opens the resurrect screen with no countdown.
+confirm_wait = true` opens the resurrect screen with no countdown.
   `[notify] message_ms` sets how long a notification or an agent nudge stays
   up, and zero keeps it until a key. `[bar] colour = false`, or `NO_COLOR` in
   the daemon's environment, draws the bar without colour and gives each
@@ -236,7 +336,7 @@ off until you set `[chunk] enabled = true`.
 - `[keys.key."M-a"]` settles one key: `route = "app"` hands a claimed key to
   the app at once, the way vim-tmux-navigator shares its keys, `"tmux"` never
   does, and `hold_ms` overrides the default. A field naming a layer, `nvim =
-  "NvimTree"`, is what that key should do there, and `keys collide` lists a
+"NvimTree"`, is what that key should do there, and `keys collide` lists a
   layer that does something else as drift. The `[keys]` tables can live in
   `keys.toml` beside the config instead; a name set in both is an error.
 - `keys discover` reads claude (`keybindings.json` over its defaults), fzf
@@ -376,8 +476,8 @@ journal and the usage log are off until you turn them on.
 - `docs/how-to/which-key.md`: every key in the full example, the question
   it answers, its `--help` line, and the tmux default it replaces.
 - `docs/tmux.conf.full.example` binds `note` (`prefix N`), `sessions
-  resurrect --merge` (`prefix C-r`), `sessions idle` (`prefix C-i`), `keys
-  --all` (`prefix M-/`), and a copy-mode menu on `g` for opening and
+resurrect --merge` (`prefix C-r`), `sessions idle` (`prefix C-i`), `keys
+--all` (`prefix M-/`), and a copy-mode menu on `g` for opening and
   searching what's under the cursor.
 - `just playground-tourpass` drives the playground with real keys, once
   locked down and once plain, as a check before a release.
@@ -445,7 +545,7 @@ journal and the usage log are off until you turn them on.
 - `status-right` computes only the segments `[status.right]` lists. Git, net
   and battery used to run on every render whatever the list said, so a bar
   without a battery still queried it and a failed read still put `battery
-  segment` on the health mark. The daemon no longer warms the battery at
+segment` on the health mark. The daemon no longer warms the battery at
   start either unless the bar draws it. `gst`, `net` and `battery` by hand
   compute as before.
 - The end-to-end suite's occasional "the fixture never started" under act

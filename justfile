@@ -139,6 +139,11 @@ bench-capped *LOADS: build
 bench-ab REV *LOADS:
     ./scripts/bench-ab.sh {{REV}} {{LOADS}}
 
+# Builds and benchmarks on HOST over ssh, nothing here: env and usage in the script.
+# bench-capped on another machine, fetched back: `just bench-remote HOST HEAD 0 4 8`.
+bench-remote HOST *ARGS:
+    ./scripts/bench-remote.sh {{HOST}} {{ARGS}}
+
 # Daemon CPU per request, today's binary only.
 bench-segments:
     ./scripts/bench.sh segments
@@ -226,6 +231,12 @@ lint:
 # version is the one markdown.yml pins; .markdownlint.jsonc has the rules.
 lint-md:
     npx --yes markdownlint-cli2@0.23.0
+
+# Regenerate src/presets/nf-md-names.tsv, the glyph names the branch-prefix
+# lookup searches, from one Nerd Fonts release: VERSION and the sha256 of its
+# glyphnames.json, or neither for the pinned one.
+nerdfont-names *ARGS:
+    ./scripts/nerdfont-names.sh {{ARGS}}
 
 # Read the manual page as it will ship.
 man:

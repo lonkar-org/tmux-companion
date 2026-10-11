@@ -31,6 +31,16 @@ pub fn build_id() -> String {
 }
 
 #[doc(hidden)]
+/// `__accent`: a session's theme colour, for a picker's paint.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AccentArgs {
+    /// `#{session_id}`, the `$N` at the end of a popup's `$TMUX`, with or
+    /// without the `$`.
+    pub session: String,
+}
+
+#[doc(hidden)]
 /// `agent`: what an agent says about itself, and which pane it is in.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +258,26 @@ pub struct ShJobsArgs {
 }
 
 #[doc(hidden)]
+/// Arguments for `dirs`: a directory source's command, for the daemon to run
+/// or to answer from its cache.
+///
+/// The client works out what to run and what to watch, so a daemon started
+/// from another environment still runs the client's source: `env` carries
+/// the variables the source reads, such as zoxide's `_ZO_DATA_DIR`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DirsArgs {
+    /// The command, one absolute path per line on its standard output.
+    pub command: Vec<String>,
+    /// Variables to run it with.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// A file whose modification time says when the answer changed: the
+    /// source's database. Without one the answer is kept for a fixed time.
+    #[serde(default)]
+    pub watch: Option<String>,
+}
+
 /// Arguments for `keys`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]

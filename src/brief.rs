@@ -1065,6 +1065,10 @@ mod tests {
             in_mode: false,
             host: "laptop".into(),
             bell: false,
+            session_id: String::new(),
+            accent: String::new(),
+            pid: 0,
+            identity: None,
         };
         let asked = |lines: &str| {
             crate::inbox::entry(
@@ -1146,6 +1150,10 @@ mod tests {
             in_mode: false,
             host: "laptop".into(),
             bell: false,
+            session_id: String::new(),
+            accent: String::new(),
+            pid: 0,
+            identity: None,
         };
         crate::inbox::entry(
             &pane,

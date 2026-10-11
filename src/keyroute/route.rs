@@ -432,7 +432,7 @@ mod tests {
     use super::*;
 
     const LISTING: &str = r#"bind-key    -T prefix       c                         new-window
-bind-key    -T root         M-a                       run-shell "tmux-companion toggle  '#{session_name}'"
+bind-key    -T root         M-a                       run-shell "tmux-companion switch windows  '#{session_id}'"
 bind-key -r -T root         M-b                       next-window
 bind-key    -T root         M-\;                      next-window
 bind-key    -T root         MouseDown1Pane            select-pane -t =
@@ -449,7 +449,7 @@ bind-key    -T root         Enter                     send-keys Enter
         let a = b.iter().find(|b| b.key == "M-a").unwrap();
         assert_eq!(a.table, "root");
         assert_eq!(
-            a.command, r#"run-shell "tmux-companion toggle  '#{session_name}'""#,
+            a.command, r#"run-shell "tmux-companion switch windows  '#{session_id}'""#,
             "the double space survives"
         );
         assert!(!a.repeat);
@@ -476,7 +476,7 @@ bind-key    -T root         Enter                     send-keys Enter
                 "punctuation in the key's name".to_string()
             )]
         );
-        assert!(p.script.contains("bind-key -N \"companion: next \\\"window\\\"\" -T kc-tmux M-a run-shell \"tmux-companion toggle  '#{session_name}'\""));
+        assert!(p.script.contains("bind-key -N \"companion: next \\\"window\\\"\" -T kc-tmux M-a run-shell \"tmux-companion switch windows  '#{session_id}'\""));
         assert!(
             p.script.contains("bind-key -r -T kc-tmux M-b next-window"),
             "the repeat flag moves with it"
@@ -497,7 +497,7 @@ bind-key    -T root         Enter                     send-keys Enter
     fn a_second_run_rewraps_from_kc_tmux_rather_than_wrapping_a_wrapper() {
         // root and kc-tmux as tmux lists them after a first run: the original
         // moved, the wrapper in its place, on one line, with no -N
-        let listing = "bind-key    -T kc-tmux M-a run-shell \"tmux-companion toggle  '#{session_name}'\"\n\
+        let listing = "bind-key    -T kc-tmux M-a run-shell \"tmux-companion switch windows  '#{session_id}'\"\n\
              bind-key    -T root M-a if-shell -F \"x\" { switch-client -T kc-hold-M-a } { switch-client -T kc-tmux ; send-keys -K M-a }\n";
         let second = plan(
             &parse_listing(listing),
@@ -509,9 +509,9 @@ bind-key    -T root         Enter                     send-keys Enter
         );
         assert_eq!(second.wrapped, ["M-a"]);
         assert!(
-            second
-                .script
-                .contains("-T kc-tmux M-a run-shell \"tmux-companion toggle  '#{session_name}'\""),
+            second.script.contains(
+                "-T kc-tmux M-a run-shell \"tmux-companion switch windows  '#{session_id}'\""
+            ),
             "the original, not the wrapper"
         );
         assert!(second.script.contains("-d 0.300"), "the new hold");

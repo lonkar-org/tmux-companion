@@ -82,11 +82,30 @@ branch_max_len = 20
 # move escape sequences rather than glyphs.
 parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked", "deleted", "renamed", "copied", "modified", "staged", "stash"]
 
+# A prefix nothing below claims is looked up among the Nerd Font glyph names
+# (Material Design, 6880 of them, built into the binary), so `cleanup/` finds
+# the broom and `deploy/` the rocket. The word is tried as written, then as a
+# singular, then from -ed or -ing, then plural; a glyph the bar already draws
+# for something else is never picked. A prefix the lookup cannot place draws
+# the catch-all glyph, PREFIXED, with the name whole, since that glyph says
+# nothing about whose branch it is.
+#
+# What the lookup picks is kept in $XDG_STATE_HOME/tmux-companion/
+# branch-icons.toml, so a restart or an upgrade draws the same glyph for the
+# same prefix. `tmux-companion doctor` lists the picks and the entry that
+# makes one yours; delete the file and restart the daemon to pick again.
+#
+# false turns the lookup off: an unknown prefix draws the catch-all and no file
+# is read or written. The ascii preset turns it off too, since a looked-up
+# glyph has no 7-bit form.
+branch_icon_matching = true
+
 # Which branch-name prefixes earn which glyph, tried in the order written.
 #
 # The prefix is cut off the name the bar draws, so `feat/status-bar` renders as
-# the feature glyph and `status-bar`. A name no entry claims keeps the plain
-# branch glyph, which is why main, master and dev need no entry of their own.
+# the feature glyph and `status-bar`. A name with no `word/` prefix keeps the
+# plain branch glyph, which is why main, master and dev need no entry of their
+# own.
 #
 # Matching is by plain prefix, compared without case. Not a regular expression:
 # `posts/` is what people actually name branches, and an unanchored pattern
@@ -94,9 +113,11 @@ parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked",
 # status bar.
 #
 # `icon` takes `{NAME}` for any glyph in src/tmux/icons.rs — FEATURE, BUGFIX,
-# HOTFIX, CHORE, RELEASE, TAG, BRANCH, GIT and the rest — so this file stays
-# readable without a patched font. Anything else is drawn as written, which is
-# how an emoji, a letter or a codepoint your own font has gets in:
+# DOCS, PARKED, BRANCH, GIT and the rest — so this file stays readable without
+# a patched font. Anything else is drawn as written, which is how an emoji, a
+# letter or a codepoint your own font has gets in. An empty icon claims its
+# prefixes for the plain branch glyph and keeps the name whole, which is how a
+# built-in below is turned off:
 #
 #   [[git.branch_types]]
 #   icon = "{TAG}"
@@ -104,14 +125,16 @@ parts = ["sync", "branch", "state", "ahead", "behind", "conflicts", "untracked",
 #
 #   [[git.branch_types]]
 #   icon = "\U000F04DF "      # a codepoint, TOML's 8-digit escape
-#   prefixes = ["parked/"]
+#   prefixes = ["someday/"]
 #
 #   [[git.branch_types]]
-#   icon = "wip "
-#   prefixes = ["wip/", "spike/"]
+#   icon = ""                 # tag/ draws as a plain branch again
+#   prefixes = ["tag/"]
 #
-# The list replaces these six rather than adding to them, so copy what you want
-# to keep. `tmux-companion config dump` prints the current list in this shape.
+# Your list adds to these rather than replacing them: your entries are tried
+# first, then every entry below you did not repeat. So a file with only the
+# entries you want to change is enough, and one that copied the first six, as
+# older versions advised, draws them as it always did.
 [[git.branch_types]]
 icon = "{FEATURE}"
 prefixes = ["feat/", "feature/", "features/"]
@@ -135,6 +158,82 @@ prefixes = ["release/", "releases/"]
 [[git.branch_types]]
 icon = "{TAG}"
 prefixes = ["tag/", "tags/"]
+
+[[git.branch_types]]
+icon = "{DOCS}"
+prefixes = ["docs/", "doc/", "documentation/"]
+
+[[git.branch_types]]
+icon = "{PERF}"
+prefixes = ["perf/", "performance/"]
+
+[[git.branch_types]]
+icon = "{REFACTOR}"
+prefixes = ["refactor/", "refactoring/"]
+
+[[git.branch_types]]
+icon = "{TEST}"
+prefixes = ["test/", "tests/", "testing/"]
+
+[[git.branch_types]]
+icon = "{CI}"
+prefixes = ["ci/"]
+
+[[git.branch_types]]
+icon = "{BUILD}"
+prefixes = ["build/", "builds/"]
+
+[[git.branch_types]]
+icon = "{DEPS}"
+prefixes = ["deps/", "dep/", "dependencies/", "bump/", "dependabot/", "renovate/"]
+
+[[git.branch_types]]
+icon = "{STYLE}"
+prefixes = ["style/", "styles/"]
+
+[[git.branch_types]]
+icon = "{REVERT}"
+prefixes = ["revert/", "reverts/"]
+
+[[git.branch_types]]
+icon = "{WIP}"
+prefixes = ["wip/"]
+
+[[git.branch_types]]
+icon = "{EXPERIMENT}"
+prefixes = ["experiment/", "experiments/", "exp/", "spike/", "spikes/", "poc/"]
+
+[[git.branch_types]]
+icon = "{BENCH}"
+prefixes = ["bench/", "benchmark/", "benchmarks/"]
+
+[[git.branch_types]]
+icon = "{PARKED}"
+prefixes = ["parked/"]
+
+[[git.branch_types]]
+icon = "{SECURITY}"
+prefixes = ["security/", "sec/"]
+
+[[git.branch_types]]
+icon = "{A11Y}"
+prefixes = ["a11y/", "accessibility/"]
+
+[[git.branch_types]]
+icon = "{I18N}"
+prefixes = ["i18n/", "l10n/", "translation/", "translations/"]
+
+[[git.branch_types]]
+icon = "{DESIGN}"
+prefixes = ["design/"]
+
+[[git.branch_types]]
+icon = "{RESEARCH}"
+prefixes = ["research/"]
+
+[[git.branch_types]]
+icon = "{BACKUP}"
+prefixes = ["backup/", "backups/"]
 
 [git.autofetch]
 # Fetch the repositories the bar has drawn, on a timer inside the daemon, so
@@ -557,10 +656,13 @@ timeout_ms = 2000
 [agents]
 # One list of what counts as a coding agent, read by everything that asks:
 # `tmux-companion panes --agents`, the `agents` segment on the bar, and the
-# restore headline that counts them. Matched against pane_current_command,
-# and a command that is only a version number, `2.1.283`, counts as well:
-# that is what tmux reports for claude, which names its process after its
-# version, and nothing else names a process that way.
+# restore headline that counts them. Matched against the name each pane's
+# program was started as. tmux's pane_current_command is matched as it is,
+# except when it can hide the program: a bare version (claude, `2.1.296`), a
+# release after a hyphen (grok, `grok-1.0.50-mac`), an interpreter (gemini
+# and cursor-agent are `node`, aider `python3`) or 15 bytes long. Then the
+# daemon reads the arguments of the program in front, `node
+# /usr/local/bin/gemini` being gemini, and starts no process to do it.
 programs = ["claude", "codex", "gemini", "cursor-agent", "aider", "opencode", "grok", "agy"]
 # Seconds without output after which an agent counts as waiting for you, when
 # it has said nothing better through `tmux-companion agent` and rung no bell.
@@ -1024,6 +1126,9 @@ colour = true
 # the call otherwise, so a status-right still on the call-only line pays for
 # nothing; it looks again once a minute. `tmux-companion doctor` says which it
 # chose and why, and the health mark says so when tmux is too old to push.
+# After a window or pane switch the bar follows in tens of ms in either mode,
+# push the sooner of the two (median 16 ms against call's 40 with no load, 22
+# against 62 at 32 busy loops, one Intel MacBook).
 mode = "auto"
 
 [picker]
@@ -1203,6 +1308,7 @@ mode = "auto"
 #   [picker.open]       the application chooser
 #   [picker.panes]      every pane on the server, or the agents among them
 #   [picker.setup]      the checklist `setup` shows
+#   [picker.switch]     the window switcher's list
 #
 # Three keys exist only in these tables, because they are the words one picker
 # says and not a shape every picker shares: `label` is what it calls itself on
@@ -1329,25 +1435,36 @@ hold_ms = 170
 # tmux = "choose-tree"
 # nvim = "NvimTree"
 
-[toggle]
-# Which way `toggle`, M-a in the example tmux.conf, moves through a session's
-# windows. "recent" is the Alt-Tab shape: the first press goes to the window
-# you were on before, and each press inside chain_ms of the last one keeps
-# going by index the way that first jump went, wrapping at the ends. When you
-# stop, the window you started from is tmux's last window again. "right" and
-# "left" are a plain cycle by index with no clock in it, the way toggle used
-# to work. `toggle --last` (M-A) is the flip on its own, untimed.
-order = "recent"
+[switcher]
+# `switch windows` (M-a, M-A backwards) and `switch sessions` (M-s, M-S): the
+# windows of this session, or every session, in the order you used them, the
+# way Cmd-Tab goes through applications. A press moves to the next older one,
+# shift moves back, Esc stays where you were.
+#
+# What the first press of M-a does. "flip" goes to the window you were on
+# before at once and draws nothing; a second press within pause_ms opens the
+# list on the one before that. "list" opens the list on the first press and
+# moves nothing until you commit. Sessions always open the list.
+first = "flip"
 
-# How soon a press has to follow the one before to carry the sweep on, in
-# milliseconds. A slower press starts again from the last window, so anybody
-# who presses slowly gets the flip and never the sweep: raise it, or use
-# "right" or "left". Zero makes every press the flip.
-chain_ms = 800
+# What commits the window list. "pause": pause_ms after the last press, or at
+# once on Enter. "enter": only Enter. Typing or an arrow stops the clock either
+# way. The session list commits on Enter only.
+#
+# Two things here are timed: the commit on a pause, and, under "flip", a second
+# press having to come within pause_ms to open the list. first = "list" with
+# commit = "enter" has no clock in it at all.
+commit = "pause"
 
-# Say where the key landed, the window's name and its place, `ai, 2 of 4`, on
-# tmux's message line, chain_ms after the last press, for tmux's display-time.
-# It waits because a message covers the whole status line, window list too,
-# and one per press hid the list a sweep is watched on. The key moves focus;
-# this says where.
+# How long a pause after a press counts as letting go of Alt, in milliseconds.
+pause_ms = 500
+
+# Put the candidate's name and its place, `ai, 2 of 4`, on tmux's message line
+# on every press, for anybody who is listening rather than watching.
 announce = true
+
+# The letters the keys are pressed with, Alt held: M-a and M-s. Pressed again
+# inside the list they move on, and with shift they move back. Change them if
+# your bindings use other keys, or a press inside the list types the letter.
+windows_key = "a"
+sessions_key = "s"

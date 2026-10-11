@@ -45,6 +45,8 @@ pub mod import;
 pub mod portable;
 #[doc(hidden)]
 pub mod restore;
+#[doc(hidden)]
+pub mod start;
 pub mod store;
 #[doc(hidden)]
 pub mod summary;

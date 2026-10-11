@@ -93,6 +93,7 @@ set -g  status-style bg=colour233,fg=colour251
 # mode, a daemon that stopped, or one that crashed) the line runs the call,
 # which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
 # per attached client per second; docs/BENCHMARKS.md has the numbers.
+# After a switch the bar follows in tens of ms in either mode, push the sooner.
 set -g  status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
 
 # session name (~30 worst case) + ssh hostname (~20) + clock 9

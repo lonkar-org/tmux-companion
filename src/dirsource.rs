@@ -94,14 +94,66 @@ impl DirsSource {
         }
     }
 
-    /// The directories this source knows, most relevant first.
+    /// The file whose modification time says this source's answer changed,
+    /// for a source that runs a command and keeps a database.
+    ///
+    /// zoxide writes `db.zo` on every `cd` it is told about, under
+    /// `$_ZO_DATA_DIR` or the platform's data directory, which is what its own
+    /// `dirs::data_local_dir()` resolves to: `~/Library/Application Support`
+    /// on macOS, `$XDG_DATA_HOME` or `~/.local/share` elsewhere.
+    pub fn watched_file(&self, home: &str) -> Option<std::path::PathBuf> {
+        if *self != Self::Zoxide {
+            return None;
+        }
+        let dir = match std::env::var_os("_ZO_DATA_DIR") {
+            Some(d) => std::path::PathBuf::from(d),
+            None if cfg!(target_os = "macos") => {
+                std::path::PathBuf::from(home).join("Library/Application Support/zoxide")
+            }
+            None => match std::env::var_os("XDG_DATA_HOME") {
+                Some(d) => std::path::PathBuf::from(d).join("zoxide"),
+                None => std::path::PathBuf::from(home).join(".local/share/zoxide"),
+            },
+        };
+        Some(dir.join("db.zo"))
+    }
+
+    /// The directories this source knows, most relevant first, asking the
+    /// daemon first for a source that runs a command.
+    ///
+    /// The daemon keeps the answer until the source's database changes, or
+    /// for [`COMMAND_TTL`] when there is no database to watch, so a picker
+    /// opened twice without a `cd` between starts no zoxide the second time.
+    /// A daemon that can't be asked, or says no, leaves it to this process.
+    pub async fn list(&self, home: &str) -> Vec<String> {
+        let Some(command) = self.command() else {
+            return self.list_here(home).await;
+        };
+        let args = crate::proto::DirsArgs {
+            command,
+            env: SOURCE_ENV
+                .iter()
+                .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+                .collect(),
+            watch: self.watched_file(home).map(|p| p.display().to_string()),
+        };
+        let req = crate::proto::Request::build("dirs", &args);
+        if let Ok(resp) = crate::client::send(req).await
+            && resp.error.is_none()
+        {
+            return parse_lines(&resp.output);
+        }
+        self.list_here(home).await
+    }
+
+    /// [`DirsSource::list`] in this process, without the daemon.
     ///
     /// Every failure is the empty list: a jumper that is not installed, a
     /// database that has never been written, a command that exits non-zero.
     /// The picker degrades to live sessions and a typed path, which is a
     /// smaller tool and still a working one, and that is better than an error
     /// in a popup somebody opened to switch projects.
-    pub async fn list(&self, home: &str) -> Vec<String> {
+    pub async fn list_here(&self, home: &str) -> Vec<String> {
         if let Some(path) = self.data_file(home) {
             let text = std::fs::read_to_string(path).unwrap_or_default();
             return match self {
@@ -207,13 +259,66 @@ fn unquote_zsh(word: &str) -> String {
     }
 }
 
+/// The variables a source's command reads, passed to the daemon with it.
+pub const SOURCE_ENV: [&str; 4] = [
+    "_ZO_DATA_DIR",
+    "_ZO_EXCLUDE_DIRS",
+    "_ZO_RESOLVE_SYMLINKS",
+    "XDG_DATA_HOME",
+];
+
+/// How long the daemon keeps a source's answer when it has no file to watch:
+/// `ghq` and a `dirs_command`. A minute, so a repository cloned a moment ago
+/// is a short wait away rather than a restart away.
+pub const COMMAND_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long an answer is kept even when the watched file has not changed.
+///
+/// zoxide orders by frecency, and the recency half of that moves with the
+/// clock alone: a directory visited fifty minutes ago drops a bracket at the
+/// hour without anything being written. It also leaves out directories that
+/// have since been deleted, which nothing writes down either. Fifteen
+/// minutes bounds both.
+pub const WATCHED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Whether a kept answer can be given again: `age` since it was read,
+/// `then` the watched file's modification time when it was read, `now` the
+/// same time read now, `watched` whether there is a file to watch at all.
+///
+/// A watched file is the better signal: the answer is good for as long as
+/// the file is unchanged, up to [`WATCHED_MAX_AGE`]. A file that can't be
+/// read now, or wasn't then, says nothing, so the fixed [`COMMAND_TTL`]
+/// decides, as it does for a source with no file.
+pub fn still_good(
+    age: std::time::Duration,
+    then: Option<std::time::SystemTime>,
+    now: Option<std::time::SystemTime>,
+    watched: bool,
+) -> bool {
+    match (watched, then, now) {
+        (true, Some(then), Some(now)) => then == now && age < WATCHED_MAX_AGE,
+        _ => age < COMMAND_TTL,
+    }
+}
+
+/// A file's modification time, or `None` when it can't be read.
+pub fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 /// Run a command and return its standard output, empty on any failure.
 async fn run(cmd: &[String]) -> String {
+    run_with(cmd, &[]).await
+}
+
+/// [`run`] with variables set for it.
+pub async fn run_with(cmd: &[String], env: &[(String, String)]) -> String {
     let Some((program, args)) = cmd.split_first() else {
         return String::new();
     };
     let out = tokio::process::Command::new(program)
         .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .output()
         .await;
     match out {
@@ -408,7 +513,7 @@ mod tests {
 
     #[tokio::test]
     async fn none_lists_nothing_and_runs_nothing() {
-        assert!(DirsSource::None.list("/home/y").await.is_empty());
+        assert!(DirsSource::None.list_here("/home/y").await.is_empty());
     }
 
     #[tokio::test]
@@ -416,6 +521,48 @@ mod tests {
         // The jumper named in the config is not installed on this machine.
         // That is a smaller picker, not an error.
         let source = DirsSource::Command(vec!["tmux-companion-no-such-binary".into()]);
-        assert!(source.list("/home/y").await.is_empty());
+        assert!(source.list_here("/home/y").await.is_empty());
+    }
+
+    #[test]
+    fn an_unchanged_database_keeps_the_answer_until_the_clock_moves_it() {
+        use std::time::{Duration, SystemTime};
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let later = t + Duration::from_secs(5);
+        // Untouched, and young: kept, however long past the command TTL.
+        assert!(still_good(Duration::from_secs(600), Some(t), Some(t), true));
+        // A `cd` wrote the database: read again, however young.
+        assert!(!still_good(
+            Duration::from_millis(10),
+            Some(t),
+            Some(later),
+            true
+        ));
+        // Untouched but older than frecency allows: read again.
+        assert!(!still_good(WATCHED_MAX_AGE, Some(t), Some(t), true));
+    }
+
+    #[test]
+    fn without_a_file_to_watch_a_fixed_time_decides() {
+        use std::time::{Duration, SystemTime};
+        let t = SystemTime::UNIX_EPOCH;
+        assert!(still_good(Duration::from_secs(59), None, None, false));
+        assert!(!still_good(COMMAND_TTL, None, None, false));
+        // A watched file that has gone, or never was: the same fixed time.
+        assert!(still_good(Duration::from_secs(5), Some(t), None, true));
+        assert!(still_good(Duration::from_secs(5), None, Some(t), true));
+        assert!(!still_good(Duration::from_secs(61), None, Some(t), true));
+    }
+
+    #[test]
+    fn only_zoxide_has_a_database_to_watch() {
+        let z = DirsSource::Zoxide.watched_file("/home/y").expect("a file");
+        assert!(z.ends_with("zoxide/db.zo"), "{}", z.display());
+        assert_eq!(DirsSource::Ghq.watched_file("/home/y"), None);
+        assert_eq!(
+            DirsSource::Command(vec!["x".into()]).watched_file("/home/y"),
+            None
+        );
+        assert_eq!(DirsSource::Z.watched_file("/home/y"), None);
     }
 }

@@ -82,7 +82,8 @@ pub fn interesting(command: &str, shell: &str, ignore: &[String]) -> bool {
     if crate::panes::is_version_name(name) {
         return false;
     }
-    !ignore.iter().any(|i| i == name)
+    // `grok-1.0.50-mac` is `grok`; see `panes::versioned_name`.
+    !ignore.iter().any(|i| crate::panes::names(name, i))
 }
 
 /// Everything one pass needs that is not the pane list.
@@ -213,8 +214,8 @@ pub async fn notify_loop(
             .await
             .into_iter()
             .map(|p| PaneRow {
+                command: p.name().to_string(),
                 id: p.id,
-                command: p.command,
                 visible: p.visible,
             })
             .collect();
@@ -271,6 +272,9 @@ mod tests {
         // The ignore list says `claude`; tmux says `2.1.283` for it.
         assert!(!interesting("2.1.283", "/bin/zsh", &[]));
         assert!(interesting("cargo", "/bin/zsh", &[]));
+        let ignore = vec!["grok".to_string()];
+        assert!(!interesting("grok-1.0.50-mac", "/bin/zsh", &ignore));
+        assert!(interesting("cargo-1.0", "/bin/zsh", &ignore));
     }
 
     #[test]

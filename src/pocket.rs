@@ -14,7 +14,7 @@
 //! because that is what the border and the `panes` picker show.
 //!
 //! `_pocket` is an ordinary window, since tmux has no hidden one. The places
-//! that would be surprised by it know its name: `toggle` cycles past it, and
+//! that would be surprised by it know its name: `switch windows` passes it, and
 //! `project save` leaves it and every pocket pane out of the layout it
 //! writes, because a scratch shell is not part of what a project opens with.
 

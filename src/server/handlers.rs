@@ -113,6 +113,24 @@ pub fn assemble_right_with(
     out
 }
 
+/// A directory source's paths, from the cache while the source's database
+/// is unchanged, and run otherwise. The stat is outside the lock and the run
+/// is too; the lock is taken for one statement each side, which is the rule
+/// for `ServerState`.
+async fn dirs(args: &crate::proto::DirsArgs, state: &Arc<Mutex<ServerState>>) -> String {
+    let key = serde_json::to_string(args).unwrap_or_default();
+    let watch = args.watch.as_deref().map(std::path::Path::new);
+    let now = watch.and_then(crate::dirsource::modified);
+    if let Some(paths) = state.lock().await.dirs_fresh(&key, now, watch.is_some()) {
+        return paths;
+    }
+    let paths = crate::dirsource::run_with(&args.command, &args.env).await;
+    // The stamp from before the run: a `cd` that lands while the command
+    // reads makes the next request read again rather than miss it.
+    state.lock().await.dirs_store(key, paths.clone(), now);
+    paths
+}
+
 pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response {
     if req.cmd != "__rusage" {
         REQ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -125,7 +143,6 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 {
                     let s = state.lock().await;
                     opts.parts = s.config.git.parts.clone();
-                    opts.branch_types = s.config.git.branch_types.clone();
                     opts.bar_bg = s.config.bar.background.clone();
                     // The flag wins when it was given; otherwise `[git]
                     // branch_max_len` decides, which until this line was a
@@ -173,6 +190,10 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             Ok(a) => keys(&a, &state).await,
             Err(e) => Err(e),
         },
+        "dirs" => match req.parse_args::<crate::proto::DirsArgs>() {
+            Ok(a) => Ok(dirs(&a, &state).await),
+            Err(e) => Err(e),
+        },
         "noop" => Ok(String::new()),
         // How a client replaces a daemon from an older build: ask it to go,
         // then start one. Anybody who can send this could already send any
@@ -188,6 +209,12 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 // Answer first, exit after: a client that gets no response
                 // cannot tell "it stopped" from "it was never there".
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                // The heartbeat and the pushed bar too, or the next daemon
+                // reads a restart as a crash and the bar shows stale figures
+                // until it does. Before the socket goes: the watchdog exits
+                // the process the moment it sees the file gone, and exiting
+                // in the middle of this leaves pane values behind.
+                crate::push::clear();
                 // Take the socket file with it.  A daemon that exits and
                 // leaves the file behind reads as a live daemon to anything
                 // that stats the path instead of connecting to it, and the
@@ -195,10 +222,6 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                 // an interrupted test run left a socket file per test with
                 // nothing behind it.
                 let _ = std::fs::remove_file(crate::client::sock_path());
-                // The heartbeat and the pushed bar too, or the next daemon
-                // reads a restart as a crash and the bar shows stale figures
-                // until it does.
-                crate::push::clear();
                 std::process::exit(0);
             });
             Ok(String::new())
@@ -271,6 +294,18 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             }
             Err(e) => Err(e),
         },
+        // A session's theme colour from the pane list a loop already read,
+        // so a picker's first frame does not wait on a tmux process for it.
+        // An unknown session is an error, which sends the picker to tmux.
+        "__accent" => match req.parse_args::<crate::proto::AccentArgs>() {
+            Ok(a) => {
+                let id = format!("${}", a.session.trim_start_matches('$'));
+                crate::panes::accent_of(&state, &id)
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("no session {id}"))
+            }
+            Err(e) => Err(e),
+        },
         // What every agent last said, as a JSON map of pane id to report,
         // for the `panes` picker and the brief, which run in a client.
         "__reports" => {
@@ -331,7 +366,6 @@ fn gst_options(args: &GstArgs) -> GstOptions {
         // has no access to and does not want: it stays a pure mapping from the
         // wire to the options.
         parts: crate::config::GitPart::all(),
-        branch_types: crate::config::Git::default().branch_types,
         bar_bg: crate::tmux::format::BG_BAR.to_string(),
     }
 }
@@ -388,21 +422,54 @@ pub(crate) async fn render_right(
     args: &StatusRightArgs,
     state: &Arc<Mutex<ServerState>>,
 ) -> anyhow::Result<String> {
+    let (parts, gst) = tokio::join!(right_parts(state), git_part(args, state));
+    Ok(parts.with_git(&gst))
+}
+
+/// Everything on the right side but the git segment: what does not depend on
+/// the directory, so push renders it once a tick however many directories it
+/// renders git for. One `net` sample per call, which is what keeps the rate's
+/// window a whole tick.
+pub(crate) struct RightParts {
+    right: crate::config::StatusRight,
+    net: String,
+    battery: String,
+    agents: String,
+    health: String,
+    chunk: String,
+}
+
+impl RightParts {
+    /// The side, with `gst` in the git segment's place.
+    pub(crate) fn with_git(&self, gst: &str) -> String {
+        assemble_right_with(
+            &self.right,
+            gst,
+            &self.net,
+            &self.battery,
+            &self.agents,
+            &self.health,
+            &self.chunk,
+        )
+    }
+}
+
+/// The git segment for `args.path`, or empty when the side does not draw it
+/// or it failed, which the health mark then says.
+pub(crate) async fn git_part(args: &StatusRightArgs, state: &Arc<Mutex<ServerState>>) -> String {
     // One lock, read into locals, released before the struct is built. Two
     // `state.lock().await` calls inside one expression deadlock: the first
     // guard is a temporary that lives until the end of the statement, so the
     // second waits on a mutex this same task is still holding.
-    let (parts, branch_types, bar_bg, branch_max_len, right) = {
+    let (parts, bar_bg, branch_max_len, wanted) = {
         let s = state.lock().await;
         (
             s.config.git.parts.clone(),
-            s.config.git.branch_types.clone(),
             s.config.bar.background.clone(),
             s.config.git.branch_max_len,
-            s.config.status.right.clone(),
+            computed(&s.config.status.right).git,
         )
     };
-    let wanted = computed(&right);
     let opts = GstOptions {
         path: args.path.clone(),
         force: args.force,
@@ -417,19 +484,38 @@ pub(crate) async fn render_right(
         // Deliberately not plumbed from the request: see `GstOptions::pane_pid`.
         pane_pid: None,
         parts,
-        branch_types,
         bar_bg,
     };
+    let gst = when(wanted, segments::git::render(&opts, state)).await;
+    let mut failed = Vec::new();
+    let gst = segment_or_empty("gst", gst, &mut failed);
+    note_failures(state, failed).await;
+    gst
+}
 
+/// What failed on a pass, on the health mark.
+async fn note_failures(state: &Arc<Mutex<ServerState>>, failed: Vec<(String, String)>) {
+    if !failed.is_empty() {
+        let mut st = state.lock().await;
+        for (source, what) in failed {
+            st.note_failure(&source, what);
+        }
+    }
+}
+
+/// The segments beside git, computed concurrently, and only the configured
+/// ones.
+pub(crate) async fn right_parts(state: &Arc<Mutex<ServerState>>) -> RightParts {
+    let right = state.lock().await.config.status.right.clone();
+    let wanted = computed(&right);
     // Every segment on the side runs concurrently, and one that is not on it
     // does not run at all: `when` never polls the future it is handed, so no
-    // `git status`, counter read or battery query happens for a segment
-    // nobody drew, and none of them can fail onto the health mark. `net`'s
-    // expensive half is the counter read, which touches no shared state; its
-    // arithmetic needs `&mut ServerState` and is applied afterwards, so
-    // nothing here holds a lock across an await.
-    let (gst, battery, net_sample, agents, health) = tokio::join!(
-        when(wanted.git, segments::git::render(&opts, state)),
+    // counter read or battery query happens for a segment nobody drew, and
+    // none of them can fail onto the health mark. `net`'s expensive half is
+    // the counter read, which touches no shared state; its arithmetic needs
+    // `&mut ServerState` and is applied afterwards, so nothing here holds a
+    // lock across an await.
+    let (battery, net_sample, agents, health) = tokio::join!(
         when(wanted.battery, battery(state)),
         when(wanted.net, segments::network::sample()),
         when(wanted.agents, agents(state)),
@@ -472,22 +558,21 @@ pub(crate) async fn render_right(
     // A failing segment must not blank the whole side, but it must not vanish
     // silently either — a permanently empty git segment is otherwise
     // indistinguishable from a directory that is not a repository.
-    let gst = segment_or_empty("gst", gst, &mut failed);
     let battery = segment_or_empty("battery", battery, &mut failed);
-    if !failed.is_empty() {
-        let mut st = state.lock().await;
-        for (source, what) in failed {
-            st.note_failure(&source, what);
-        }
-    }
+    note_failures(state, failed).await;
     let chunk = if wanted.chunk {
         chunk_segment(state).await
     } else {
         String::new()
     };
-    Ok(assemble_right_with(
-        &right, &gst, &net, &battery, &agents, &health, &chunk,
-    ))
+    RightParts {
+        right,
+        net,
+        battery,
+        agents,
+        health,
+        chunk,
+    }
 }
 
 /// The health mark, behind its five-second cache.

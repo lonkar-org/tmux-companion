@@ -219,3 +219,23 @@ fn the_old_close_project_name_still_parses() {
         Cmd::CloseProject { .. }
     ));
 }
+
+#[test]
+fn a_0_9_1_toggle_binding_still_parses_and_stays_out_of_help() {
+    // 0.9.1's example bound M-a to `toggle '#{session_name}'`, some with the
+    // window name after it and some with --last; all three shapes still parse
+    // for the release that keeps the alias.
+    for args in [
+        vec!["tmux-companion", "toggle", "work"],
+        vec!["tmux-companion", "toggle", "work", "edit"],
+        vec!["tmux-companion", "toggle", "--last", "work"],
+    ] {
+        let cli = Cli::parse_from(args.clone());
+        match cli.command {
+            Cmd::Toggle { session, .. } => assert_eq!(session.as_deref(), Some("work"), "{args:?}"),
+            other => panic!("{args:?} parsed as {other:?}"),
+        }
+    }
+    let help = Cli::command().render_help().to_string();
+    assert!(!help.contains("toggle"), "the alias is hidden: {help}");
+}

@@ -4,7 +4,7 @@
 //! one session, "which project" and "which tool" share a single index, so at
 //! five projects you are hopping through ten unrelated windows to reach the
 //! other half of the one you are in. A session per project splits that into two
-//! axes, and the toggle moves between tools without touching the project.
+//! axes, and the window switcher moves between tools without touching the project.
 //!
 //! The list is sessions first, most recently attached first, then whatever the
 //! directory source knows -- zoxide by default, and [`crate::dirsource`] for
@@ -82,21 +82,26 @@ pub fn short_path(path: &str, home: &str) -> String {
 }
 
 /// The `list-sessions -F` format [`sessions_from`] reads: last attached, name,
-/// path, theme colour, attached clients, and last activity in unix seconds.
-const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}";
+/// path, theme colour, attached clients, last activity in unix seconds, and
+/// the switcher's stamp from the last switch to it.
+const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}\t#{@tc_ses_used}";
 
-/// Parse `tmux list-sessions` output into rows, most recently attached first.
+/// Parse `tmux list-sessions` output into rows, most recently used first.
 ///
 /// tmux lists alphabetically and this wants recency, because a picker whose
 /// first row is the session you are in and whose second is the one you were in
 /// before makes "go back" a keypress rather than a search.
+///
+/// Recency is the switcher's stamp when the hook has set one, since it counts
+/// every switch, and `session_last_attached` after it, which is whole seconds
+/// and ties when you switch twice inside one.
 ///
 /// `now` is unix seconds and is what the idle age is measured against; it is
 /// an argument so the parse can be tested against a fixed clock. The two
 /// fields behind it are optional in the listing, so a row without them is a
 /// session whose idleness is simply unknown rather than a line dropped.
 pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
-    let mut with_time: Vec<(i64, Row)> = listing
+    let mut with_time: Vec<((Option<u64>, i64), Row)> = listing
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|line| {
@@ -107,6 +112,7 @@ pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
             let colour = f.next().filter(|c| !c.is_empty()).map(str::to_string);
             let attached: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
             let activity: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
+            let used: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
             let idle = match (attached, activity) {
                 (Some(attached), Some(activity)) => {
                     crate::sessions::idle::idle_for(attached, activity, now)
@@ -114,7 +120,7 @@ pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
                 _ => None,
             };
             Some((
-                last_attached,
+                (used, last_attached),
                 Row {
                     kind: Kind::Session,
                     label,
@@ -270,18 +276,31 @@ pub fn resolve_typed(query: &str, cwd: &str, home: &str) -> Option<String> {
 
 /// Every row the picker should show: sessions first, then the directory source.
 pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
+    // The session list (a tmux process) and the directories (every theme
+    // file and a zoxide process) are independent, so side by side: the wait
+    // is the longer of them rather than their sum, which on a capped CPU is
+    // most of what this picker took to collect.
+    let (sessions, directories) = tokio::join!(sessions(&[]), directories(config, home));
+    merge(sessions, directories)
+}
+
+/// The live sessions alone, most recently used first, with tmux commands run
+/// in the same call ahead of the listing. The session switcher sets its hooks
+/// this way, for no process of their own, and draws these before it has a
+/// single directory.
+pub async fn sessions(before: &[Vec<String>]) -> Vec<Row> {
+    sessions_from(&tmux_sessions(before).await, crate::sessions::idle::now())
+}
+
+/// The directory source's rows, coloured by their themes. Nothing when the
+/// source is `none`.
+pub async fn directories(config: &crate::config::Config, home: &str) -> Vec<Row> {
     let source = crate::dirsource::DirsSource::from_config(&config.project);
     if source == crate::dirsource::DirsSource::None {
-        return sessions_from(&tmux_sessions().await, crate::sessions::idle::now());
+        return Vec::new();
     }
-    // The three are independent and were done one after another: the session
-    // list (a tmux process), every theme file (a hundred and more reads), and
-    // the directory source (a zoxide process). Side by side, the wait is the
-    // longest of them rather than their sum, which on a capped CPU is most of
-    // what this picker took to collect.
     let themes_home = home.to_string();
-    let (sessions, themes, listing) = tokio::join!(
-        tmux_sessions(),
+    let (themes, listing) = tokio::join!(
         tokio::task::spawn_blocking(move || {
             let map = std::fs::read_to_string(project_map_path(&themes_home))
                 .map(|t| parse_project_map(&t))
@@ -290,13 +309,8 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
         }),
         source.list(home),
     );
-    let sessions = sessions_from(&sessions, crate::sessions::idle::now());
     let (map, colours) = themes.unwrap_or_default();
-    let listing = listing.join("\n");
-    merge(
-        sessions,
-        directories_from(&listing, &map, &colours, &config.theme.default),
-    )
+    directories_from(&listing.join("\n"), &map, &colours, &config.theme.default)
 }
 
 /// The row a second press of the picker's key goes to: the session you were
@@ -306,12 +320,15 @@ pub fn previous_session(rows: &[Row]) -> Option<usize> {
     rows.get(1).filter(|r| r.kind == Kind::Session).map(|_| 1)
 }
 
-/// `tmux list-sessions`, with the fields the rows need.
-async fn tmux_sessions() -> String {
-    let out = crate::tmux::command()
-        .args(["list-sessions", "-F", SESSIONS_FORMAT])
-        .output()
-        .await;
+/// `tmux list-sessions`, with the fields the rows need, after `before`.
+async fn tmux_sessions(before: &[Vec<String>]) -> String {
+    let mut args: Vec<String> = Vec::new();
+    for c in before {
+        args.extend(c.iter().cloned());
+        args.push(";".to_string());
+    }
+    args.extend(["list-sessions", "-F", SESSIONS_FORMAT].map(String::from));
+    let out = crate::tmux::command().args(&args).output().await;
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         // No server running yet is the ordinary case for the first project of
@@ -626,6 +643,19 @@ mod tests {
         let rows = sessions_from(listing, 0);
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, vec!["zulu", "mike", "alpha"]);
+    }
+
+    #[test]
+    fn the_switchers_stamp_orders_sessions_attached_in_the_same_second() {
+        // Three switches inside one second: last_attached ties, the stamps
+        // don't. A session the hook never saw comes after the stamped ones.
+        let listing = "500\talpha\t/a\t\t1\t500\t4\n\
+                       500\tzulu\t/z\t\t0\t500\t6\n\
+                       900\tnew\t/n\t\t0\t900\t\n\
+                       500\tmike\t/m\t\t0\t500\t5\n";
+        let rows = sessions_from(listing, 0);
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, vec!["zulu", "mike", "alpha", "new"]);
     }
 
     #[test]

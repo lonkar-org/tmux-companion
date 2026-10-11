@@ -693,7 +693,7 @@ bind-key -r -T copy-mode-vi o run-shell \"tmux-companion open\"
 bind-key    -T prefix       c                 new-window
 bind-key    -T prefix       g                 display-popup -E -w 80% -h 70% "tmux-companion panes"
 bind-key    -T prefix       \%                split-window -h
-bind-key    -T root         M-a               run-shell "tmux-companion toggle '#{session_name}'"
+bind-key    -T root         M-a               run-shell "tmux-companion switch windows '#{session_id}' --client '#{client_name}'"
 "#;
 
     #[test]
@@ -707,11 +707,11 @@ bind-key    -T root         M-a               run-shell "tmux-companion toggle '
         let on = |id: &str| bound_on(&item(id), &bindings, &p, &distinct);
         assert_eq!(on("panes"), Some(("prefix".into(), "g".into())));
         assert_eq!(on("open"), Some(("copy-mode-vi".into(), "o".into())));
-        assert_eq!(on("toggle"), Some(("root".into(), "M-a".into())));
+        assert_eq!(on("switch-windows"), Some(("root".into(), "M-a".into())));
         // `panes --agents` is a different item from `panes`, and the other
         // way round.
         assert_eq!(on("panes-agents"), None);
-        assert_eq!(on("toggle-last"), None);
+        assert_eq!(on("switch-windows-back"), None);
         assert_eq!(on("inbox"), None);
 
         // Bound in another table than the example's is still bound.

@@ -88,7 +88,7 @@ one is explained on this page:
 | `[bar]`                                                     | the background the segments draw against                          | [The bar's own background](#the-bars-own-background)                               |
 | `[picker]`, `[picker.<name>]`                               | how every picker is laid out, and one picker's exceptions         | [How the pickers are drawn](#how-the-pickers-are-drawn)                            |
 | `[open]`, `[[open.application]]`                            | what `open` does with a file, and what `open --choose` offers     | [What open does with a file](#what-open-does-with-a-file)                          |
-| `[toggle]`                                                  | which way `toggle` moves through a session's windows              | [Which way toggle goes](#which-way-toggle-goes)                                    |
+| `[switcher]`                                                | what `switch` does on the first press, and what commits           | [Switching in the order you used things](#switching-in-the-order-you-used-things)  |
 
 There are no tmux user options. A mapping of this tree onto `@` options would
 cost a `show-options` round trip per option per render, and would produce
@@ -233,14 +233,20 @@ crash.
 
 The first thing in the git segment is a glyph chosen from how the branch name
 starts, so `feat/picker-preview` gets the feature icon and drops the `feat/`,
-and a name nothing claims keeps the plain branch glyph, which is why `main`,
-`master`, `dev` and `stable` were never special cases.
+and a name with no `word/` prefix keeps the plain branch glyph, which is why
+`main`, `master`, `dev` and `stable` were never special cases.
 
-Six groups ship, covering `feat/`, `feature/`, `features/`, `fix/`, `fixes/`,
-`bugfix/`, `bugfixes/`, `hotfix/`, `chore/`, `chores/`, `release/`,
-`releases/`, `tag/` and `tags/`, which is a reasonable guess at how most people
-name branches and wrong the moment you name one `posts/` or `parked/`, so the
-whole table is `[[git.branch_types]]`:
+Twenty-five groups ship. The first six are the ones there always were:
+`feat/`, `feature/`, `features/`, `fix/`, `fixes/`, `bugfix/`, `bugfixes/`,
+`hotfix/`, `chore/`, `chores/`, `release/`, `releases/`, `tag/` and `tags/`.
+The rest cover `docs/`, `perf/`, `refactor/`, `test/`, `ci/`, `build/`,
+`deps/` (with `bump/`, `dependabot/` and `renovate/`), `style/`, `revert/`,
+`wip/`, `experiment/` (with `spike/` and `poc/`), `bench/`, `parked/`,
+`security/`, `a11y/`, `i18n/`, `design/`, `research/` and `backup/`, most with
+their plural or long spelling too. `tmux-companion config dump` prints the
+whole table.
+
+Your `[[git.branch_types]]` adds to that table and overrides it:
 
 ```toml
 [[git.branch_types]]
@@ -250,11 +256,22 @@ prefixes = ["post/", "posts/"]
 [[git.branch_types]]
 icon = "P "
 prefixes = ["parked/"]
+
+[[git.branch_types]]
+icon = ""
+prefixes = ["tag/"]
 ```
 
-Entries are tried in the order written and the first prefix that claims the
-name wins, the match ignores case, and the prefix is cut off the name the bar
-draws. They're plain prefixes rather than regular expressions: `posts/` is what
+Your entries are tried first, in the order written, then every shipped entry
+you didn't repeat, and the first prefix that claims the name wins. So the
+second entry above replaces the parking glyph for `parked/` and nothing else,
+and a file that copied the first six, as older versions told you to, draws
+them as it always did. An empty `icon` claims its prefixes for the plain
+branch glyph and draws the name whole, which is how you turn a shipped one
+off: the third entry makes `tag/v2` a plain branch again.
+
+The match ignores case and the prefix is cut off the name the bar draws.
+They're plain prefixes rather than regular expressions: `posts/` is what
 you'd type anyway, and an unanchored pattern hitting the middle of a branch
 name is a bug you'd find on the status bar rather than in a test.
 
@@ -265,11 +282,36 @@ font. Anything else is drawn as written, so an emoji, a couple of letters, or a
 codepoint your own font has all work, and the trailing space is yours to
 include or leave out.
 
-Your list replaces the six rather than adding to them, so run
-`tmux-companion config dump`, copy the `[[git.branch_types]]` blocks you want
-to keep, and add yours. Replacing rather than merging is what lets you delete
-`tag/` if a branch of yours starts with it and you'd rather it didn't get the
-tag glyph.
+### A prefix nothing claims
+
+A branch named `word/…` that no entry claims is looked up among the Nerd Font
+Material Design glyph names, which are built into the binary: the word as
+written, then as a singular, then from `-ed` or `-ing`, then as a plural, with
+a few words that aren't glyph names mapped to one that is (`deploy` to the
+rocket, `infra` to the server). A glyph the bar already draws for something
+else is skipped, so `alert/` never looks like the health mark. `cleanup/`
+finds the broom and `api/` the api glyph.
+
+What the lookup picks is kept in
+`$XDG_STATE_HOME/tmux-companion/branch-icons.toml`, so a restart or an upgrade
+draws the same glyph for the same prefix. `tmux-companion doctor` lists each
+pick with the `icon` value that makes it an entry of your own; delete the
+file, or one `[[pick]]` in it, and restart the daemon to pick again.
+
+A prefix the lookup can't place draws a catch-all glyph, `PREFIXED`, and keeps
+the name whole: `alice/topic` stays `alice/topic`, since the glyph doesn't say
+whose branch it is. To draw the plain branch glyph there instead, set
+`PREFIXED = "\U000F062C "` under `[glyphs.icons]`.
+
+```toml
+[git]
+branch_icon_matching = false
+```
+
+turns the lookup off: an unknown prefix draws the catch-all and no file is
+read or written. The ascii preset turns it off too, because a looked-up glyph
+has no 7-bit form; there every shipped glyph draws as its word (`docs`,
+`perf`, `a11y`).
 
 ## Building the right-hand side
 
@@ -419,7 +461,7 @@ daily = ["22:00-08:00", "13:00-14:00"]
 at the same times every day, so nobody has to remember to, which is the hard
 part on the days it matters most. Inside a window `[notify]` announces nothing,
 the inbox nudges nobody, the `agents` segment leaves the bar and the health
-mark says `quiet`. The times are local and 24-hour, a window may cross
+mark is a crossed-out bell (`tmux-companion health` says `quiet` in words). The times are local and 24-hour, a window may cross
 midnight, and a time that isn't one is refused when the config is read. With
 both a timer and a window running, quiet lasts until the later of the two
 ends.
@@ -494,6 +536,23 @@ show = "waiting"
 question_skip = ['^[\s─━═╭╮╰╯│┃|-]*$', '^\s*[❯>]\s*$', "…"]
 ```
 
+`programs` is matched against the name each pane's program was started as.
+tmux's `pane_current_command` is the kernel's name for it, which often isn't:
+on macOS it's the file that ran, cut to 15 bytes, so claude is `2.1.296` and
+grok `grok-1.0.50-mac`; on both systems gemini, cursor-agent and the npm
+installs of codex and opencode are `node`, and aider is `python3`, or `Python`
+on macOS. For a pane named like that, a bare version, a release after a
+hyphen, an interpreter or 15 bytes long, the daemon reads the arguments of the
+program in front and names it from them: `argv[0]` for a native program, the
+script for an interpreter (`node /usr/local/bin/gemini` is `gemini`,
+`python3 -m aider` is `aider`). The pickers, the inbox and the brief show that
+name. A shell, an editor or any other name is matched as it is, at no cost.
+
+When the process can't be read, another user's say, tmux's name still counts:
+a bare version is claude, and a name with a release version after a hyphen is
+the name before it. A wrapper script that runs an agent without `exec` is
+named for the script, so put the script's name in `programs`.
+
 `style = "glyphs"` draws the segment as the robot and the count, then an
 arrow, an hourglass and the waiting count, for a bar already full of words;
 the glyphs are `AGENT`, `AGENT_TO`, `WAITING` and `BUSY` under
@@ -515,6 +574,11 @@ the daemon reads it; `tmux-companion agent hooks claude` prints the
 the terminal bell when it needs you (claude's `preferredNotifChannel` set to
 `terminal_bell`) reads as `asked` until its window is visited, since tmux keeps
 the bell flag up until then.
+
+Only claude has hooks today. Every other agent in `programs`, grok among them,
+is counted and listed, and its state comes from the window's quiet time and the
+bell alone: `waiting` after `waiting_secs` without output, never `busy`,
+`asked` or `done`.
 
 A click on the segment opens the inbox, and one on `health` the brief, once
 tmux.conf has `bind -T root MouseDown1StatusRight run-shell "tmux-companion
@@ -549,11 +613,11 @@ One list, read by everything that asks whether a pane is an agent:
 `tmux-companion panes --agents`, the `agents` segment on the bar, and the
 headline `sessions resurrect` shows, which counts them. It used to be compiled
 into that headline, so an agent the code hadn't heard of was invisible to all
-three. `programs` is matched against `pane_current_command`, and a command that is
-only a version number, `2.1.283`, counts as an agent too: that's what tmux
-reports for claude, which names its process after its version, and on the
-laptop this was written on it was the only agent running and the bar said
-none. The same rule keeps `[notify]` and the journal from treating a claude
+three. `programs` is matched against the name each program was started as, read
+as above, and a command that is only a version number, `2.1.283`, counts as an
+agent too when its process can't be read: that's what tmux reports for claude,
+which runs from a file named for its version, and on the laptop this was
+written on it was the only agent running and the bar said none. The same rule keeps `[notify]` and the journal from treating a claude
 session ending as a command finishing.
 
 `waiting_secs` is how long an agent has to draw nothing before it counts as
@@ -707,7 +771,7 @@ The match is by whole directory names, so trusting `~/work/api` doesn't trust
 macOS's `/var` and `/private/var` don't make a trusted checkout a stranger.
 
 Anywhere else the window names still count, since a plain shell called `edit`
-beside one called `ai` is already what `toggle` and the bar need, and every
+beside one called `ai` is already what the switcher and the bar need, and every
 `command` is blanked. `project show` says which happened, and names the file
 when it was ignored and why. The order is a saved layout, because it was
 captured on this machine by a key you pressed; then the checkout file; then
@@ -820,6 +884,12 @@ A source that is not installed, or a database never written, is the empty list
 and not an error. The picker falls back to live sessions and whatever you type,
 which is a smaller tool and still a working one, since typing a path that
 matches no row opens it either way, so nothing is unreachable.
+
+The daemon keeps what a source that runs a command printed. zoxide's answer is
+kept until its database changes, which a `cd` does, and for 15 minutes at
+most; `ghq` and a `dirs_command` are kept for a minute, so a directory a
+command would list from now on shows up within that. `z` and `cdr` are files
+read when the picker opens and aren't kept.
 
 ### Recording a visit
 
@@ -1051,7 +1121,7 @@ daemon's environment does the same. Each rate gets an arrow, since the two
 blocks are told apart by colour otherwise. The one thing still said by colour
 alone is a branch with no upstream, which without it looks like a clean one.
 
-`mode` is how the right side reaches tmux. `call` is the
+`mode` is how the any segment from companion reaches tmux. `call` is the
 `#(tmux-companion status-right ...)` line: every `status-interval` tmux starts
 a shell and a client for each attached client. `push` has the daemon render
 each attached session's right side once a second and set it as the session
@@ -1068,6 +1138,20 @@ still on the call-only line costs nothing extra. `tmux-companion doctor` has a
 `bar` line saying which it chose and why, and the health mark says so when tmux
 is too old to push.
 
+After a pane or window switch the bar shows the new place in tens of
+milliseconds in either mode so there's no trade-off left on speed and push is
+the faster as well as the cheaper. Push keeps a value on every pane whose
+directory isn't its session's, as a pane option, which tmux reads before the
+session's, so it draws the right one on the redraw it does for the switch
+itself; call
+gets there because the `#()` line now carries a different
+`#{pane_current_path}` and tmux runs that straight away rather than at the next
+`status-interval`. Measured on one Intel MacBook (i9-9980HK, tmux 3.7c), 20
+switches a round, from selecting a window in a git repository to its branch
+reaching the client: push p50 16 ms, p95 17 with no load and p50 22, p95 27 at
+32 busy loops; call p50 40, p95 53 and p50 62, p95 81. `mode = "call"` keeps
+the call if you'd rather have it anyway.
+
 Push is the cheaper of the two (`docs/BENCHMARKS.md` has the numbers). While
 the option is unset, or the daemon's heartbeat in `@tc-alive` (written every
 10 seconds) is more than 30 seconds old, the line falls back to the call,
@@ -1077,7 +1161,12 @@ a heartbeat left behind writes the unclean stop to the daemon log and to
 `crashes.tsv` in the state directory, and puts it on the health mark; twice
 within a minute says so too, for an hour or until `health ack`. Push renders with the
 `[git]` settings; the `--branch-max-len` and `--style` on the call line apply
-to the fallback only.
+to the fallback only. It renders the git segment once for each directory a
+pane of an attached session is in, and the rest of the side once, so a session spread over many repositories runs a
+`git status` for each, behind the same five-second cache. A session nobody is
+attached to isn't rendered, so switching a client to it shows what was last
+pushed there, or the call's output, until the next second. A clean stop, or switching to
+`call`, unsets the pane values with the rest.
 
 ## How the pickers are drawn
 
@@ -1155,33 +1244,59 @@ is either a browser holding a pane open forever or an editor with nowhere to
 draw. Empty means no chooser, and `--choose` then opens what it would have
 opened anyway rather than showing a picker with nothing in it.
 
-## Which way toggle goes
+## Switching in the order you used things
 
 ```toml
-[toggle]
-order = "recent"
-chain_ms = 800
+[switcher]
+first = "flip"
+commit = "pause"
+pause_ms = 500
 announce = true
+windows_key = "a"
+sessions_key = "s"
 ```
 
-`toggle`, `M-a` in the example tmux.conf, works the way Alt-Tab does by
-default. The first press goes to the window you were on before. Press again
-within `chain_ms` and it keeps going by index in the direction that first jump
-went, wrapping at the ends: on `c` with `a` as the last window, presses go
-`a`, `d`, `c`, `b`, and with the last window to the right they sweep right.
-When you stop, the window you started from is tmux's last window again, so the
-next first press takes you back there.
+`switch windows`, `M-a` in the example tmux.conf, goes through the session's
+windows the way Cmd-Tab goes through applications: most recently used first.
+One press is the window you were just on, each further press the next older
+one, `M-A` goes back, and the window you land on becomes the most recent.
 
-A terminal never tells tmux a key was let go, so the gap between presses
-stands in for letting go of Alt, and that makes the sweep timed. Anybody who
-presses slower than `chain_ms` gets the flip every time and never the sweep.
-Raise `chain_ms`, or set `order` to `"right"` or `"left"` for a plain cycle by
-index that has no clock in it at all. `toggle --last`, `M-A`, is the flip on
-its own. `chain_ms = 0` makes every press the flip.
+With `first = "flip"` the first press goes there at once and draws nothing,
+so a single tap is as quick as it ever was. A second press within `pause_ms`
+opens a small list, in the order as it was before the first press, with the
+candidate on the next older window; from then on the presses move the
+candidate. With `first = "list"` the first press opens the list and nothing
+moves until you commit.
 
-`announce` puts the window's name and its place, `ai, 2 of 4`, on tmux's
-message line once the presses stop, `chain_ms` after the last one, for as long
-as tmux's `display-time` says. The key moves focus, and nothing else says
-where it went. It waits because a tmux message covers the whole status line,
-window list included, and a message on every press hid the list you watch a
-sweep on until a key cleared it.
+`commit = "pause"` commits `pause_ms` after the last press, or at once on
+Enter. `commit = "enter"` commits on Enter only. Typing filters the list and
+an arrow moves through it, and either stops the clock. Esc goes back to the
+window the presses began in.
+
+A terminal never tells tmux a key was let go, so a pause stands in for letting
+go of Alt, and that makes two things timed: the commit on a pause, and, under
+`flip`, the second press having to come within `pause_ms` to open the list.
+`first = "list"` with `commit = "enter"` has no clock in it at all.
+
+`switch sessions`, `M-s`, is the project picker opened on the sessions alone,
+most recently used first, with the cursor on the one you were in before.
+`M-s` again moves on, `M-S` back, Enter goes, Esc stays, and there is no clock.
+The first letter typed brings in the project directories, so it's the project
+picker's search, and a typed path opens as it does there.
+
+`announce` puts the candidate's name and its place, `ai, 2 of 4`, on tmux's
+message line on every press. While the list is up the message covers nothing
+you're using.
+
+`windows_key` and `sessions_key` are the letters the bindings use with Alt.
+Inside the list the same key moves on and with shift moves back, so a binding
+on other keys wants these changed too, or a press inside the list types the
+letter into the search.
+
+The order comes from three tmux hooks that `switch` sets each time it runs,
+at index 73 so they sit beside your own: `session-window-changed`,
+`client-session-changed` and `client-attached`. Each only sets options, a
+counter and a stamp on the window or session, so a switch starts no process.
+
+A `[toggle]` section, from the `toggle` command this replaced, is ignored, and
+`config check` and `doctor` say it can go.

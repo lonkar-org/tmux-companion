@@ -125,6 +125,27 @@ pub struct Pane {
     /// `#{window_bell_flag}`: the window rang the bell and nobody has visited
     /// it since. Needs `monitor-bell on`, which is tmux's default.
     pub bell: bool,
+    /// `#{session_id}`, the `$N` a popup's `$TMUX` ends with.
+    pub session_id: String,
+    /// `#{@theme-color-main-1}` as this pane resolves it, empty when no theme
+    /// set it.
+    pub accent: String,
+    /// `#{pane_pid}`: the process the pane started with, which holds its
+    /// terminal. 0 when the listing did not say.
+    pub pid: u32,
+    /// The name the program in front was started by, when `command` hides
+    /// it and the process could be read: `claude` for `2.1.296`, `gemini`
+    /// for `node`. Filled by [`list`]; see `identity.rs`.
+    pub identity: Option<String>,
+}
+
+impl Pane {
+    /// What the pane runs, by the best name known for it: the name it was
+    /// started by when that was read, tmux's otherwise. Every question
+    /// about whether a pane is an agent, and what it is called, asks this.
+    pub fn name(&self) -> &str {
+        self.identity.as_deref().unwrap_or(&self.command)
+    }
 }
 
 /// The `-F` string the listing asks for.
@@ -136,11 +157,11 @@ pub fn pane_format() -> &'static str {
     "#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t\
      #{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_active}\t\
      #{window_active}\t#{session_attached}\t#{window_activity}\t#{pane_in_mode}\t#{host}\t\
-     #{window_bell_flag}"
+     #{window_bell_flag}\t#{session_id}\t#{@theme-color-main-1}\t#{pane_pid}"
 }
 
 /// How many fields [`pane_format`] produces.
-const FIELDS: usize = 15;
+const FIELDS: usize = 18;
 
 /// Parse what [`pane_format`] produces, sorted by session, window and pane.
 ///
@@ -172,6 +193,10 @@ pub fn parse(text: &str) -> Vec<Pane> {
                 in_mode: on(f[12]),
                 host: f[13].trim().to_string(),
                 bell: on(f[14]),
+                session_id: f[15].trim().to_string(),
+                accent: f[16].trim().to_string(),
+                pid: f[17].trim().parse().unwrap_or(0),
+                identity: None,
             })
         })
         .collect();
@@ -191,8 +216,32 @@ pub fn parse(text: &str) -> Vec<Pane> {
 /// and no name in `[agents] programs` ever matches it; on the laptop this
 /// was written on, that was the only agent running and the bar said none.
 /// Nothing else names a process that way.
+///
+/// So does a program's name with a release version after it. grok installs
+/// each release as `grok-1.0.50-macos-x86_64` and runs it through a symlink
+/// called `grok`; the kernel names the process after the file, cut to 15
+/// bytes, so tmux reports `grok-1.0.50-mac` and an exact match never saw it.
 pub fn is_agent(command: &str, programs: &[String]) -> bool {
-    programs.iter().any(|p| p == command) || is_version_name(command)
+    programs.iter().any(|p| names(command, p)) || is_version_name(command)
+}
+
+/// Whether `command`, as tmux reports it, is `program`: the name itself, or
+/// the name with a release version after it (see [`versioned_name`]).
+pub fn names(command: &str, program: &str) -> bool {
+    command == program || versioned_name(command) == Some(program)
+}
+
+/// `grok-1.0.50-mac` is `grok`: the part before a hyphen that starts a
+/// release version, a digit with a dot after the digits. `None` for a command
+/// with no such hyphen, and for `gcc-13`, where the number is a series rather
+/// than a release.
+pub fn versioned_name(command: &str) -> Option<&str> {
+    let c = command.trim();
+    c.match_indices('-').find_map(|(i, _)| {
+        let rest = &c[i + 1..];
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        (i > 0 && digits > 0 && rest.as_bytes().get(digits) == Some(&b'.')).then(|| &c[..i])
+    })
 }
 
 /// `2.1.283`, `1.0`: digits and dots and nothing else, with at least one dot.
@@ -351,7 +400,7 @@ pub fn age(secs: u64) -> String {
 /// hostname, and a shell that sets its title to its own name adds nothing to
 /// the command already there.
 pub fn program(pane: &Pane) -> String {
-    let command = program_name(&pane.command);
+    let command = program_name(pane.name());
     let title = pane.title.trim();
     if title.is_empty() || title == pane.host || title == pane.command || title == command {
         return command.to_string();
@@ -361,12 +410,14 @@ pub fn program(pane: &Pane) -> String {
 
 /// The name a command is shown by: itself, unless it is only a version
 /// number, which is claude, the one program that names its process that way.
-/// `2.1.283 has waited 5m` told nobody which program had.
+/// `2.1.283 has waited 5m` told nobody which program had. A name with a
+/// release version after it, `grok-1.0.50-mac`, is shown without the version,
+/// which tmux has cut off part way through anyway.
 pub fn program_name(command: &str) -> &str {
     if is_version_name(command) {
         VERSION_NAMED
     } else {
-        command
+        versioned_name(command).unwrap_or(command)
     }
 }
 
@@ -425,7 +476,7 @@ pub fn rows(panes: &[Pane], filter: &Filter, clock: &Clock) -> Vec<Row> {
         .filter(|p| filter.exclude != Some(p.id.as_str()))
         .filter(|p| filter.session.is_none_or(|s| s == p.session))
         .filter_map(|p| {
-            let agent = is_agent(&p.command, clock.programs);
+            let agent = is_agent(p.name(), clock.programs);
             if filter.only_agents && !agent {
                 return None;
             }
@@ -480,8 +531,22 @@ pub fn now_secs() -> u64 {
 }
 
 /// Every pane on the server. Empty when tmux is not there to ask.
+///
+/// A pane whose command hides the program (`node`, `2.1.296`) gets the name
+/// the program was started by, read from the process; see `identity.rs` for
+/// what that costs and why only those panes pay it.
 pub async fn list() -> Vec<Pane> {
-    parse(&crate::cli::tmux_capture(&["list-panes", "-a", "-F", pane_format()]).await)
+    let mut panes =
+        parse(&crate::cli::tmux_capture(&["list-panes", "-a", "-F", pane_format()]).await);
+    identify(&mut panes);
+    panes
+}
+
+/// Fill in each pane's [`Pane::identity`].
+pub fn identify(panes: &mut [Pane]) {
+    for p in panes {
+        p.identity = crate::identity::of(p.pid, &p.command);
+    }
 }
 
 /// What the agents have reported, from the daemon. Empty when it cannot be
@@ -516,6 +581,39 @@ pub async fn shared(
     let panes = list().await;
     state.lock().await.panes_store(panes.clone());
     panes
+}
+
+/// The colour a session's visible pane resolves, or any of its panes' when
+/// none is visible; `None` for a session not in the list.
+pub fn accent_in(panes: &[Pane], session_id: &str) -> Option<String> {
+    let mine = || panes.iter().filter(|p| p.session_id == session_id);
+    mine()
+        .find(|p| p.visible)
+        .or_else(|| mine().next())
+        .map(|p| p.accent.clone())
+}
+
+/// How old a pane list the accent is answered from. Push mode reads one every
+/// second and the inbox every two, so this is a list a loop already paid for;
+/// past it the daemon reads its own rather than answer from an old one.
+const ACCENT_TRUST: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A session's theme colour, as its visible pane resolves it, for a picker
+/// that would otherwise start a tmux process to ask.
+///
+/// `None` is a session the listing does not have, which a fresh read is
+/// tried for once: a picker opened in a session made a moment ago.
+pub async fn accent_of(
+    state: &std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+    session_id: &str,
+) -> Option<String> {
+    if let Some(accent) = accent_in(&shared(state, ACCENT_TRUST).await, session_id) {
+        return Some(accent);
+    }
+    let panes = list().await;
+    let accent = accent_in(&panes, session_id);
+    state.lock().await.panes_store(panes);
+    accent
 }
 
 /// The last lines of one pane's screen, as the preview shows them.
@@ -604,6 +702,23 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
     let home = std::env::var("HOME").unwrap_or_default();
     let here = std::env::var("TMUX_PANE").ok();
 
+    let chrome = crate::picker::Chrome {
+        title: if agents { "[ Agents ]" } else { "[ Panes ]" }.into(),
+        icon: if agents {
+            crate::tmux::icons::AGENT
+        } else {
+            crate::tmux::icons::PANE
+        }
+        .into(),
+        footer: "enter jump   ctrl-a clear   esc cancel".into(),
+        preview_title: "[ Screen ]".into(),
+        ..Default::default()
+    }
+    .configured(&config.picker, crate::config::Picker::Panes);
+    // On screen before the listing: under load the two reads below took
+    // 22 ms, about a third of the time to the first frame.
+    let loading = (!print).then(|| crate::picker::loading(&chrome, ""));
+
     let (panes, reports) = tokio::join!(list(), reports());
     let filter = Filter {
         exclude: here.as_deref(),
@@ -620,6 +735,9 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
     let rows = rows(&panes, &filter, &clock);
 
     if rows.is_empty() {
+        // The frame comes down before the message, which goes to stderr and
+        // to tmux, neither of them a screen in raw mode.
+        drop(loading);
         crate::picker::say_nothing_to_show(
             if agents {
                 "no agent panes running"
@@ -665,21 +783,9 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
         })
         .collect();
 
-    let chrome = crate::picker::Chrome {
-        title: if agents { "[ Agents ]" } else { "[ Panes ]" }.into(),
-        icon: if agents {
-            crate::tmux::icons::AGENT
-        } else {
-            crate::tmux::icons::PANE
-        }
-        .into(),
-        footer: "enter jump   ctrl-a clear   esc cancel".into(),
-        preview_title: "[ Screen ]".into(),
-        ..Default::default()
-    }
-    .configured(&config.picker, crate::config::Picker::Panes);
-
-    if let Some(index) = crate::picker::run(items, "", &chrome)?
+    let picked = crate::picker::run(items, "", &chrome)?;
+    drop(loading);
+    if let Some(index) = picked
         && let Some(row) = rows.get(index)
     {
         jump(&row.id).await;
@@ -705,6 +811,47 @@ mod tests {
         assert!(!is_agent("v1.2", &programs));
     }
 
+    #[test]
+    fn a_program_run_from_a_versioned_file_is_an_agent() {
+        // grok runs `grok-1.0.50-macos-x86_64` through a symlink named
+        // `grok`, and tmux reports the kernel's name for it, cut to 15 bytes:
+        // `grok-1.0.50-mac` on macOS, `grok-1.0.50-lin` on Linux.
+        let programs: Vec<String> = ["grok", "cursor-agent"].map(String::from).to_vec();
+        assert!(is_agent("grok", &programs));
+        assert!(is_agent("grok-1.0.50-mac", &programs));
+        assert!(is_agent("grok-1.0.50-lin", &programs));
+        assert!(is_agent("cursor-agent-1.", &programs), "cut off at the dot");
+        assert!(!is_agent("grokky-1.0.50", &programs));
+        assert!(!is_agent("grok-macos-x86_64", &programs), "no version");
+        assert!(!is_agent("cursor", &programs));
+        assert!(
+            !is_agent("gcc-13", &["gcc".to_string()]),
+            "a series, not a release"
+        );
+        assert!(!is_agent("-1.0", &programs));
+        assert_eq!(program_name("grok-1.0.50-mac"), "grok");
+        assert_eq!(program_name("cursor-agent-1.2"), "cursor-agent");
+        assert_eq!(program_name("gcc-13"), "gcc-13");
+        assert_eq!(program_name("zsh"), "zsh");
+    }
+
+    #[test]
+    fn a_session_answers_with_its_visible_panes_colour() {
+        let listing = "\
+api\t1\tedit\t0\t%1\tzsh\t/a\tlaptop\t0\t1\t1\t0\t0\tlaptop\t0\t$1\tcolour60\t0
+api\t2\tedit\t0\t%2\tzsh\t/a\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\t$1\tcolour99\t0
+web\t1\tedit\t0\t%3\tzsh\t/w\tlaptop\t1\t1\t0\t0\t0\tlaptop\t0\t$2\t\t0
+";
+        let panes = parse(listing);
+        assert_eq!(accent_in(&panes, "$1").as_deref(), Some("colour99"));
+        assert_eq!(
+            accent_in(&panes, "$2").as_deref(),
+            Some(""),
+            "known, no theme"
+        );
+        assert_eq!(accent_in(&panes, "$9"), None, "a session it has not seen");
+    }
+
     /// One line as tmux would print it.
     #[allow(clippy::too_many_arguments)]
     fn line(
@@ -719,7 +866,7 @@ mod tests {
         in_mode: bool,
     ) -> String {
         format!(
-            "{session}\t{window}\tedit\t{pane}\t{id}\t{command}\t{path}\t{title}\t1\t1\t1\t{activity}\t{}\tlaptop\t0\n",
+            "{session}\t{window}\tedit\t{pane}\t{id}\t{command}\t{path}\t{title}\t1\t1\t1\t{activity}\t{}\tlaptop\t0\t$0\t\t0\n",
             u8::from(in_mode)
         )
     }
@@ -764,6 +911,47 @@ mod tests {
         assert!(!p.in_mode);
         assert_eq!(p.host, "laptop");
         assert!(!p.bell);
+        assert_eq!(p.pid, 0);
+        assert_eq!(p.identity, None);
+        let with_pid = format!(
+            "{}4242\n",
+            line("api", 2, 1, "%7", "zsh", "/a", "x", 0, false).trim_end_matches("0\n")
+        );
+        assert_eq!(parse(&with_pid)[0].pid, 4242);
+    }
+
+    #[test]
+    fn a_pane_is_the_program_it_was_started_as_when_tmux_names_something_else() {
+        // tmux says `node` for gemini and `2.1.296` for claude; the process
+        // says which program it is, and that name is the one asked about.
+        let mut gemini = pane("node", 0, false);
+        assert!(!is_agent(gemini.name(), &programs()));
+        gemini.identity = Some("gemini".into());
+        assert!(is_agent(gemini.name(), &programs()));
+        assert_eq!(program(&gemini), "gemini");
+        let mut claude = pane("2.1.296", 0, false);
+        claude.identity = Some("claude".into());
+        assert_eq!(program(&claude), "claude");
+        let mut server = pane("node", 0, false);
+        server.identity = Some("vite".into());
+        assert!(!is_agent(server.name(), &programs()));
+        assert_eq!(program(&server), "vite");
+        let rows = rows(
+            &[gemini, server],
+            &Filter {
+                only_agents: true,
+                ..Filter::default()
+            },
+            &Clock {
+                now: 0,
+                waiting_secs: 10,
+                programs: &programs(),
+                reports: &Reports::new(),
+                home: "/home/me",
+            },
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].program, "gemini");
     }
 
     #[test]
@@ -787,9 +975,10 @@ mod tests {
 
     #[test]
     fn a_pane_is_visible_only_when_somebody_could_see_it() {
-        let hidden = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t0\t1\t0\t0\tlaptop\t0\n";
+        let hidden = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t0\t1\t0\t0\tlaptop\t0\t$0\t\t0\n";
         assert!(!parse(hidden)[0].visible, "window not active");
-        let detached = "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t1\t0\t0\t0\tlaptop\t0\n";
+        let detached =
+            "api\t2\tedit\t1\t%7\tclaude\t/a\tlaptop\t1\t1\t0\t0\t0\tlaptop\t0\t$0\t\t0\n";
         assert!(!parse(detached)[0].visible, "nobody attached");
     }
 

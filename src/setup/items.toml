@@ -70,15 +70,27 @@ goes = "tmux.conf"
 # ── Keys: windows, sessions, projects ────────────────────────────────────────
 
 [[item]]
-id = "project"
+id = "switch-sessions"
 group = "Keys"
 kind = "binding"
-line = "Can I get to that project without typing its path?"
-command = "project"
+line = "Back to the session I was just in, or to a project without typing its path?"
+command = "switch sessions"
 key = "M-s"
 table = "root"
 fallback = ["M-p", "M-j"]
-snippet = '''bind -N "companion: project pick a project" -n {key} display-popup -B -E -w 80% -h 70% "tmux-companion project"'''
+snippet = '''bind -N "companion: project switch session, or type to pick a project" -n {key} display-popup -B -E -w 80% -h 70% "tmux-companion switch sessions"'''
+goes = "tmux.conf"
+
+[[item]]
+id = "switch-sessions-back"
+group = "Keys"
+kind = "binding"
+line = "The session I have left longest?"
+command = "switch sessions --reverse"
+key = "M-S"
+table = "root"
+fallback = ["M-P", "M-J"]
+snippet = '''bind -N "companion: project switch session, oldest first" -n {key} display-popup -B -E -w 80% -h 70% "tmux-companion switch sessions --reverse"'''
 goes = "tmux.conf"
 
 [[item]]
@@ -154,27 +166,27 @@ snippet = '''bind -N "companion: window which pane listens on which port" {key} 
 goes = "tmux.conf"
 
 [[item]]
-id = "toggle"
+id = "switch-windows"
 group = "Keys"
 kind = "binding"
-line = "The window I was in, and on from there, without the prefix?"
-command = "toggle"
+line = "The window I was in, and older ones, without the prefix?"
+command = "switch windows"
 key = "M-a"
 table = "root"
 fallback = ["M-w"]
-snippet = '''bind -N "companion: project toggle the tools in this session" -n {key} run-shell "tmux-companion toggle '#{session_name}'"'''
+snippet = '''bind -N "companion: project switch window, most recent first" -n {key} run-shell "tmux-companion switch windows '#{session_id}' --client '#{client_name}'"'''
 goes = "tmux.conf"
 
 [[item]]
-id = "toggle-last"
+id = "switch-windows-back"
 group = "Keys"
 kind = "binding"
-line = "Back to the window I was just in?"
-command = "toggle --last"
+line = "The window I have left longest?"
+command = "switch windows --reverse"
 key = "M-A"
 table = "root"
 fallback = ["M-W"]
-snippet = '''bind -N "companion: project flip to the last window" -n {key} run-shell "tmux-companion toggle --last '#{session_name}'"'''
+snippet = '''bind -N "companion: project switch window, oldest first" -n {key} run-shell "tmux-companion switch windows '#{session_id}' --reverse --client '#{client_name}'"'''
 goes = "tmux.conf"
 
 [[item]]

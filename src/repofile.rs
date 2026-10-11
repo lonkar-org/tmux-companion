@@ -12,7 +12,7 @@
 //! to the repository can use to run commands on your machine, so the commands
 //! are honoured only under a path `[project] trusted` lists. Anywhere else
 //! the names still count, since a plain shell called `edit` beside one called
-//! `ai` is already what `toggle` and the bar need, and every `command` is
+//! `ai` is already what the switcher and the bar need, and every `command` is
 //! blanked. `project show` says which happened.
 //!
 //! Precedence, from `saved::resolve`: a saved layout, because it was captured

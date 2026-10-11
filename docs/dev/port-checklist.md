@@ -28,7 +28,7 @@ commit that does the work. `blocked` carries the reason on the same line.
 | 1   | `theme gen`                                              | done — report matches the python on all 76 themes                                                                                                  |
 | 2   | `keys`, `cheatsheet`                                     | done — both render what the zsh did, bar the two bindings tmux stopped reporting                                                                   |
 | 3   | `project`                                                | done — 156 rows live, sessions and zoxide merged, `[[layout]]` drives the windows                                                                  |
-| 4   | `autosave`, `toggle`                                     | done — autosave is a daemon task, toggle cycles the session's windows by index                                                                     |
+| 4   | `autosave`, `toggle`                                     | done — autosave is a daemon task; toggle later gave way to `switch windows`                                                                        |
 | 5   | `theme`, `run`                                           | done — run's history is byte-identical to `fc -ln` over 1127 commands                                                                              |
 | 6   | `open`, `close-project`, the probes, the tmux.conf logic | done — plus `clipboard` and `zoom`, and docs/tmux.conf.full.example                                                                                |
 | 7   | `panes`, and the `agents` segment                        | done — one `list-panes -a` shared by the picker and the bar, `[agents]` is the one list of what an agent is, and the restore headline reads it too |
@@ -56,6 +56,7 @@ The design is `docs/dev/tmux-resurrect-port.md`. One row per step.
 | 10  | the autosave timer and the crash marker                     | done — the shared poll was dropped: measuring it after `aggressive` was cut left it saving a rounding error        |
 | 11  | importing the old format                                    | done — two passes, because the file writes every pane before every window                                          |
 | 12  | `project close`, and the cutover                            | done — `close-project` hidden for one release, `[autosave]` deprecated and off by default                          |
+| 13  | `sessions start` and `sessions continue`                    | done — by name: live, snapshot, project, DIR or a picker; back to the session left, by the switcher's stamp        |
 
 ## What is left
 
@@ -159,6 +160,10 @@ pid.
 - `earcon` is new, with `[earcons]`: a sound per event, the research's
   differentiator 8, for agents and health. Commands wait on tmux 3.8
   (`docs/backlog/command-output-automatic.md`).
+- `switch windows` and `switch sessions` are new, with `[switcher]`: the
+  windows and sessions in the order they were used, Cmd-Tab's shape.
+  `docs/dev/design-switcher.md` is the spec. The order comes from hooks that
+  only set options; nothing to port. `toggle` went with it.
 - `chunk` is new, with `[chunk]` and a `chunk` segment: focus time per
   sitting, one sound at the next boundary past budget, one snooze.
   `docs/dev/design-chunk-clock.md` is the spec. The daemon polls

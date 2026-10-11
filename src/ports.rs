@@ -633,8 +633,8 @@ mod tests {
 
     fn panes() -> Vec<crate::panes::Pane> {
         crate::panes::parse(
-            "api\t1\tedit\t0\t%1\tnode\t/home/me/w/api\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\n\
-             web\t2\trun\t1\t%2\tzsh\t/home/me/w/web\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\n",
+            "api\t1\tedit\t0\t%1\tnode\t/home/me/w/api\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\t$0\t\t0\n\
+             web\t2\trun\t1\t%2\tzsh\t/home/me/w/web\tlaptop\t1\t1\t1\t0\t0\tlaptop\t0\t$0\t\t0\n",
         )
     }
 

@@ -836,91 +836,257 @@ fn project_builds_the_windows_the_layout_asks_for() {
     assert_eq!(names, vec!["edit", "tests"], "got {names:?}");
 }
 
-/// `toggle` says where it landed once the presses stop, not on each one.
-///
-/// tmux draws a message over the whole status line, so the message every
-/// press used to put up hid the window list a sweep is watched on, until a
-/// key cleared it. The inner server here has a real client, drawn in the
-/// outer pane, so the status line is read off the screen the way it is seen.
+/// The directory source's command runs once for two pickers: the daemon
+/// keeps its answer, and the second `project --print` gets the same rows
+/// without the command running again.
 #[test]
-fn toggle_says_where_it_landed_after_the_presses_stop() {
-    let Some(h) = KeyHold::start_any("toggle-say", "set -g display-time 60000\n") else {
+fn the_daemon_keeps_the_directory_list_between_pickers() {
+    let Some(t) = Tmux::start("dirscache") else {
         return;
     };
-    for _ in 0..2 {
-        h.inner_tmux(&["new-window", "-d", "-t", "i:"]);
-    }
-    let bar = |h: &KeyHold| {
-        let screen = h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"]);
-        screen.lines().last().unwrap_or_default().to_string()
-    };
-    h.companion("[toggle]\nchain_ms = 3000\n", "toggle i");
-    // Straight after the press the bar is still the window list.
-    let first = bar(&h);
-    assert!(!first.contains(" of 3"), "said before the delay: {first:?}");
-    h.wait_for("the announcement", || bar(&h).contains(", 2 of 3"));
-}
-
-/// `toggle` goes to the last window, sweeps on the way that jump went, and
-/// leaves the window the sweep began in as tmux's last, the Alt-Tab shape.
-///
-/// The unit tests in `src/toggle.rs` model what tmux does with two
-/// `select-window`s in one call; this is tmux doing it, on every pinned
-/// version. The delay is a minute so a slow runner is never between presses
-/// for longer than it.
-#[test]
-fn toggle_sweeps_the_way_the_first_jump_went_and_remembers_where_it_began() {
-    let Some(t) = Tmux::start("toggle-sweep") else {
-        return;
-    };
+    let dir = t.sandbox.join("somewhere");
+    std::fs::create_dir_all(&dir).unwrap();
+    let count = t.sandbox.join("ran");
+    let source = t.sandbox.join("bin/list-dirs");
+    write_executable(
+        &source,
+        &format!(
+            "#!/bin/sh\necho x >> '{}'\necho '{}'\n",
+            count.display(),
+            dir.display()
+        ),
+    );
     std::fs::write(
         t.sandbox.join("config/tmux-companion/config.toml"),
-        "[toggle]\nchain_ms = 60000\nannounce = false\n",
+        format!("[project]\ndirs_command = [\"{}\"]\n", source.display()),
     )
     .unwrap();
-    let dir = repo_with_changes(&t.sandbox);
-    t.session("sweep", &dir);
-    for _ in 0..3 {
-        t.must(&["new-window", "-d", "-t", "=sweep:"]);
-    }
-    let ids: Vec<String> = t
-        .tmux(&["list-windows", "-t", "=sweep", "-F", "#{window_id}"])
-        .lines()
-        .map(str::to_string)
-        .collect();
-    assert_eq!(ids.len(), 4, "{ids:?}");
-    let (a, b, c, d) = (&ids[0], &ids[1], &ids[2], &ids[3]);
-    // On a, then over to c by hand: c active, a last.
-    t.must(&["select-window", "-t", &format!("=sweep:{c}")]);
-    let state = |t: &Tmux| {
-        t.tmux(&[
-            "list-windows",
-            "-t",
-            "=sweep",
-            "-F",
-            "#{window_id} #{window_active}#{window_last_flag}",
-        ])
-    };
-    let active = |t: &Tmux| {
-        let s = state(t);
-        s.lines()
-            .find(|l| l.ends_with(" 10"))
-            .and_then(|l| l.split(' ').next())
-            .unwrap_or_else(|| panic!("no active window in {s:?}"))
-            .to_string()
-    };
-    // a is to the left of c, so the sweep goes left: a, d, c, b.
-    for want in [a, d, c, b] {
-        let (_, err, ok) = t.run(&["toggle", "sweep"]);
+    t.session("cache", &t.sandbox);
+    for _ in 0..2 {
+        let (out, err, ok) = t.run(&["project", "--print"]);
         assert!(ok, "{err}");
-        assert_eq!(&active(&t), want, "{}", state(&t));
+        assert!(out.contains("somewhere"), "{out}");
     }
-    // c, where it began, is tmux's last window, so `--last` goes back there.
-    let s = state(&t);
-    assert!(s.lines().any(|l| l == format!("{c} 01")), "{s:?}");
-    let (_, err, ok) = t.run(&["toggle", "--last", "sweep"]);
-    assert!(ok, "{err}");
-    assert_eq!(&active(&t), c, "{}", state(&t));
+    let ran = std::fs::read_to_string(&count).unwrap_or_default();
+    assert_eq!(ran.lines().count(), 1, "the source ran {ran:?}");
+}
+
+/// The switcher's keys bound on the inner server of a [`KeyHold`], the way
+/// the example configs bind them, with this test's config, state and daemon
+/// socket in the server's environment so the popup a press opens reads them
+/// too.
+fn bind_switcher(h: &KeyHold, config: &str) {
+    let cfg = h.dir.join("config.toml");
+    std::fs::write(&cfg, config).unwrap();
+    std::fs::create_dir_all(h.dir.join("state")).unwrap();
+    for (k, v) in [
+        ("TMUX_COMPANION_CONFIG", cfg.display().to_string()),
+        ("XDG_STATE_HOME", h.dir.join("state").display().to_string()),
+        (
+            "TMUX_COMPANION_SOCK",
+            h.dir.join("d.sock").display().to_string(),
+        ),
+        ("HOME", h.dir.display().to_string()),
+    ] {
+        h.inner_tmux(&["set-environment", "-g", k, &v]);
+    }
+    let bin = target_binary().display().to_string();
+    let windows = format!("{bin} switch windows '#{{session_id}}' --client '#{{client_name}}'");
+    h.inner_tmux(&["bind", "-n", "M-a", "run-shell", &windows]);
+    h.inner_tmux(&[
+        "bind",
+        "-n",
+        "M-A",
+        "run-shell",
+        &format!("{windows} --reverse"),
+    ]);
+    let sessions = format!("{bin} switch sessions");
+    h.inner_tmux(&[
+        "bind",
+        "-n",
+        "M-s",
+        "display-popup",
+        "-E",
+        "-w",
+        "80%",
+        "-h",
+        "70%",
+        &sessions,
+    ]);
+}
+
+/// The binary run against the inner server of a [`KeyHold`], from outside
+/// it: `$TMUX` names that server's socket, which is what a tmux the binary
+/// starts follows, so nothing here reaches any other server. `run-shell`
+/// would be the obvious way and prints nothing back to a command client.
+fn on_inner(h: &KeyHold, args: &[&str]) -> String {
+    let socket = h.inner_tmux(&["display", "-p", "#{socket_path}"]);
+    assert!(!socket.is_empty(), "the inner server has no socket path");
+    let o = Command::new(target_binary())
+        .args(args)
+        .env("TMUX", format!("{socket},0,0"))
+        .env("TMUX_COMPANION_CONFIG", h.dir.join("config.toml"))
+        .env("TMUX_COMPANION_SOCK", h.dir.join("d.sock"))
+        .env("XDG_STATE_HOME", h.dir.join("state"))
+        .env("HOME", &h.dir)
+        .output()
+        .expect("the binary runs");
+    assert!(
+        o.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    String::from_utf8_lossy(&o.stdout).trim_end().to_string()
+}
+
+/// The inner session's windows, most recently used first, as `--print` says.
+fn switch_order(h: &KeyHold) -> Vec<String> {
+    on_inner(h, &["switch", "windows", "i", "--print"])
+        .lines()
+        .map(|l| l.split(' ').next().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// `switch windows` after entering windows 1, 2 and 3: one press flips to 2
+/// at once, a second opens the list on 1, a third moves to 0, and Enter goes
+/// there through 3, so the order afterwards is the one Cmd-Tab leaves. Then
+/// the same run ended with Esc goes back to where it began.
+///
+/// A real client in the outer pane, because the list is a popup and a popup
+/// needs one; the presses are typed on it, so the second and later reach the
+/// popup the way a person's do. The pause is a minute, so nothing here waits
+/// on the clock: Enter and Esc decide.
+#[test]
+fn switch_windows_goes_in_the_order_they_were_used_and_esc_stays() {
+    let Some(h) = KeyHold::start_any("switchwin", "") else {
+        return;
+    };
+    bind_switcher(&h, "[switcher]\npause_ms = 60000\nannounce = false\n");
+    for _ in 0..3 {
+        h.inner_tmux(&["new-window", "-d", "-t", "i:", "sleep 100000"]);
+    }
+    // Setting the hooks is the first thing any `switch` does.
+    switch_order(&h);
+    for w in ["i:1", "i:2", "i:3"] {
+        h.inner_tmux(&["select-window", "-t", w]);
+    }
+    assert_eq!(switch_order(&h), ["3", "2", "1", "0"]);
+    let active = |h: &KeyHold| h.inner_tmux(&["display", "-p", "-t", "i", "#{window_index}"]);
+    let popup_up = |h: &KeyHold| {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Windows")
+    };
+
+    h.press("M-a");
+    h.wait_for("the flip to window 2", || active(&h) == "2");
+    assert!(!popup_up(&h), "one press drew the list");
+    h.press("M-a");
+    h.wait_for("the list", || popup_up(&h));
+    assert_eq!(active(&h), "2", "the list moved something before a commit");
+    h.press("M-a");
+    // Give the picker the press before Enter: both are typed into the
+    // popup's pty in order, so this is a wait for nothing but the frame.
+    std::thread::sleep(Duration::from_millis(200));
+    h.press("Enter");
+    h.wait_for("the commit to window 0", || {
+        active(&h) == "0" && !popup_up(&h)
+    });
+    assert_eq!(switch_order(&h), ["0", "3", "2", "1"]);
+
+    // Again, and Esc: back to 0 with the order as it was.
+    h.press("M-a");
+    h.wait_for("the flip to window 3", || active(&h) == "3");
+    h.press("M-a");
+    h.wait_for("the list", || popup_up(&h));
+    h.press("Escape");
+    h.wait_for("the cancel back to window 0", || {
+        active(&h) == "0" && !popup_up(&h)
+    });
+    assert_eq!(switch_order(&h), ["0", "3", "2", "1"]);
+
+    // M-A walks the other way: from rest, the oldest.
+    h.press("M-A");
+    h.wait_for("the flip to window 1", || active(&h) == "1");
+    let _ = Command::new(target_binary())
+        .arg("__shutdown")
+        .env("TMUX_COMPANION_SOCK", h.dir.join("d.sock"))
+        .env_remove("TMUX")
+        .output();
+}
+
+/// With `first = "list"` the first press opens the list and moves nothing,
+/// and a pause commits: the one timed path, tested with a pause long enough
+/// that a press can't land after it and short enough to wait out.
+#[test]
+fn switch_windows_lists_first_and_commits_on_a_pause() {
+    let Some(h) = KeyHold::start_any("switchpause", "") else {
+        return;
+    };
+    bind_switcher(
+        &h,
+        "[switcher]\nfirst = \"list\"\npause_ms = 1500\nannounce = false\n",
+    );
+    for _ in 0..2 {
+        h.inner_tmux(&["new-window", "-d", "-t", "i:", "sleep 100000"]);
+    }
+    switch_order(&h);
+    for w in ["i:1", "i:2"] {
+        h.inner_tmux(&["select-window", "-t", w]);
+    }
+    let active = |h: &KeyHold| h.inner_tmux(&["display", "-p", "-t", "i", "#{window_index}"]);
+    h.press("M-a");
+    h.wait_for("the list", || {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Windows")
+    });
+    assert_eq!(active(&h), "2", "the list moved something before a commit");
+    h.wait_for("the commit on the pause", || active(&h) == "1");
+    assert_eq!(switch_order(&h), ["1", "2", "0"]);
+}
+
+/// `switch sessions` opens on the session you were in before, and Enter
+/// goes there; the order is the order of the switches, all inside one
+/// second, which `session_last_attached` alone can't tell apart.
+#[test]
+fn switch_sessions_opens_on_the_one_you_were_in_before() {
+    let Some(h) = KeyHold::start_any("switchses", "") else {
+        return;
+    };
+    bind_switcher(
+        &h,
+        "[switcher]\nannounce = false\n[project]\ndirs_source = \"none\"\n",
+    );
+    // The hooks, then three sessions switched through inside a second.
+    on_inner(&h, &["switch", "sessions", "--print"]);
+    for s in ["b", "c"] {
+        h.inner_tmux(&["new-session", "-d", "-s", s, "sleep 100000"]);
+    }
+    for s in ["c", "b", "i"] {
+        h.inner_tmux(&["switch-client", "-t", s]);
+    }
+    let order = on_inner(&h, &["switch", "sessions", "--print"]);
+    assert_eq!(order.lines().collect::<Vec<_>>(), ["i", "b", "c"]);
+    let here = |h: &KeyHold| h.inner_tmux(&["display", "-p", "#{client_session}"]);
+    h.press("M-s");
+    h.wait_for("the list", || {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Sessions")
+    });
+    h.press("Enter");
+    h.wait_for("the switch to b", || here(&h) == "b");
+
+    // Typing turns it into the project search: a path typed in full opens a
+    // session there, although no directory was listed when the list opened.
+    let dir = h.dir.join("typedproj");
+    std::fs::create_dir_all(&dir).unwrap();
+    h.press("M-s");
+    h.wait_for("the list again", || {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Sessions")
+    });
+    h.outer_tmux(&["send-keys", "-t", "o:0", "-l", &dir.display().to_string()]);
+    h.press("Enter");
+    h.wait_for("the typed project's session", || here(&h) == "typedproj");
 }
 
 /// Three presses of the pocket key: out, away, and back, the same pane
@@ -978,7 +1144,8 @@ fn the_pocket_comes_out_is_parked_and_comes_back_the_same_pane() {
             .any(|l| l == format!("{pocket_id} _pocket shell")),
         "{away:?}"
     );
-    // `toggle` has nowhere to go: the only other window is the pocket's.
+    // The window switcher has nowhere to go: the only other window is the
+    // pocket's.
     let before = t.tmux(&[
         "display-message",
         "-p",
@@ -986,7 +1153,7 @@ fn the_pocket_comes_out_is_parked_and_comes_back_the_same_pane() {
         &home_pane,
         "#{window_active}",
     ]);
-    let (_, _, ok) = t.run(&["toggle", "alpha"]);
+    let (_, _, ok) = t.run(&["switch", "windows", "alpha"]);
     assert!(ok);
     let after = t.tmux(&[
         "display-message",
@@ -998,7 +1165,7 @@ fn the_pocket_comes_out_is_parked_and_comes_back_the_same_pane() {
     assert_eq!(
         before.trim(),
         after.trim(),
-        "toggle went into the pocket window"
+        "the switcher went into the pocket window"
     );
     // Back: the same pane beside the first one, and `_pocket` is gone.
     let (_, err, ok) = t.run(&["pocket", "--pane", &home_pane]);
@@ -1917,6 +2084,197 @@ fn jump_lands_copy_mode_on_the_match_typed() {
     assert_eq!(words, ["1", "4", "say", "needle-42"], "{:?}", ask(&t));
 }
 
+/// Wakes a stopped daemon however the test ends: a daemon left stopped would
+/// hang the teardown's `__shutdown` and every `#()` the bar runs.
+struct Resume(i32);
+
+impl Drop for Resume {
+    fn drop(&mut self) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(self.0),
+            nix::sys::signal::Signal::SIGCONT,
+        );
+    }
+}
+
+/// In push mode a window or pane switch shows the new place on the bar at the
+/// switch, not at the daemon's next tick.
+///
+/// Each pane whose directory is not its session's carries its own
+/// `@tc-right`, and tmux reads a pane's option before the session's for the
+/// client's current pane. The daemon is stopped before the switches, so
+/// nothing it does afterwards can be what made the bar right: tmux's own
+/// redraw for the switch is. Both ways, twice: the values written while one
+/// window was current, then the other. A client is attached from a second session,
+/// since push renders only for sessions somebody is attached to, and the bar
+/// is read off that client's screen.
+#[test]
+fn a_pushed_bar_follows_a_switch_without_waiting_for_the_daemon() {
+    let Some(t) = Tmux::start("pushswitch") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[bar]\nmode = \"push\"\n",
+    )
+    .unwrap();
+    let repo = |side: &str, branch: &str| {
+        let root = t.sandbox.join(side);
+        std::fs::create_dir_all(&root).unwrap();
+        let dir = repo_with_changes(&root);
+        let o = Command::new("git")
+            .args(["checkout", "-q", "-b", branch])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        dir
+    };
+    let left = repo("a", "alpha-left");
+    let right = repo("b", "beta-right");
+    t.session("seen", &left);
+    let far = t.must(&[
+        "new-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        "=seen:",
+        "-c",
+        &right.display().to_string(),
+    ]);
+    // Window 1 again, back in the session's own directory: it reads the
+    // session's value rather than carrying one.
+    let home = t.must(&[
+        "split-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        &far,
+        "-c",
+        &left.display().to_string(),
+    ]);
+    t.must(&[
+        "new-session",
+        "-d",
+        "-s",
+        "viewer",
+        "-x",
+        "220",
+        "-y",
+        "20",
+        &format!("env -u TMUX tmux -L {} attach -t seen", t.socket),
+    ]);
+    assert!(
+        t.until(10, |t| !t.tmux(&["list-clients"]).is_empty()),
+        "no client ever attached: {:?}",
+        t.capture("viewer")
+    );
+    let bar = |t: &Tmux| {
+        t.capture("viewer")
+            .lines()
+            .last()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let (_, err, ok) = t.run(&["health"]);
+    assert!(ok, "the daemon did not start: {err}");
+    let own = |t: &Tmux, pane: &str| t.tmux(&["show-options", "-pqv", "-t", pane, "@tc-right"]);
+    assert!(
+        t.until(20, |t| own(t, &far).contains("beta-right")
+            && bar(t).contains("alpha-left")),
+        "never pushed: pane {far} has {:?}, the bar is {:?}",
+        own(&t, &far),
+        bar(&t)
+    );
+    assert_eq!(
+        own(&t, &home),
+        "",
+        "a pane in the session's directory carries nothing"
+    );
+
+    let marker = t.sandbox.join("state/tmux-companion/sessions/running");
+    let pid: i32 = std::fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("no daemon marker at {}: {e}", marker.display()))
+        .trim()
+        .parse()
+        .expect("a pid in the marker");
+    let stop = || {
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGSTOP,
+        )
+        .expect("stop the daemon");
+        Resume(pid)
+    };
+    // Window ids, not indexes, so a base-index in the config cannot point a
+    // switch at a window that is not there.
+    let window = |pane: &str| t.must(&["display-message", "-p", "-t", pane, "#{window_id}"]);
+    let first = t.must(&["display-message", "-p", "-t", "=seen:", "#{pane_id}"]);
+    let (w0, w1) = (window(&first), window(&far));
+    let switch = |t: &Tmux, how: &str, target: &str, want: &str, not: &str| {
+        t.must(&[how, "-t", target]);
+        assert!(
+            t.until(5, |t| {
+                let b = bar(t);
+                b.contains(want) && !b.contains(not)
+            }),
+            "after {how} -t {target} the bar is not {want}: {:?}",
+            bar(t)
+        );
+    };
+
+    // Values written while window 0, in `left`, was current: away from it
+    // and back, by window and by pane, with nobody writing.
+    let resume = stop();
+    switch(&t, "select-window", &w1, "beta-right", "alpha-left");
+    switch(&t, "select-pane", &home, "alpha-left", "beta-right");
+    switch(&t, "select-pane", &far, "beta-right", "alpha-left");
+    switch(&t, "select-window", &w0, "alpha-left", "beta-right");
+    switch(&t, "select-window", &w1, "beta-right", "alpha-left");
+    drop(resume);
+
+    // Written again with window 1 current: now the session's directory is
+    // `right`, window 0's pane carries its own value and `far` none. Back to
+    // the window that was current at that write, and away from it.
+    assert!(
+        t.until(20, |t| own(t, &first).contains("alpha-left")
+            && own(t, &far).is_empty()),
+        "never rewritten for window 1: pane {first} has {:?}, {far} has {:?}",
+        own(&t, &first),
+        own(&t, &far)
+    );
+    let resume = stop();
+    switch(&t, "select-window", &w0, "alpha-left", "beta-right");
+    switch(&t, "select-window", &w1, "beta-right", "alpha-left");
+    switch(&t, "select-pane", &home, "alpha-left", "beta-right");
+    switch(&t, "select-pane", &far, "beta-right", "alpha-left");
+    drop(resume);
+
+    // A clean stop takes the pane values with it, so a bar left to the call
+    // never shows a pushed figure nobody updates. The client goes first:
+    // its status line runs `tmux-companion` calls, and the first one after
+    // the stop starts a new daemon, which pushes again.
+    t.must(&["kill-session", "-t", "=viewer"]);
+    assert!(
+        t.until(10, |t| t.tmux(&["list-clients"]).is_empty()),
+        "the client is still attached"
+    );
+    let (_, err, ok) = t.run(&["shutdown"]);
+    assert!(ok, "{err}");
+    assert!(
+        t.until(10, |t| [&first, &far, &home]
+            .iter()
+            .all(|p| own(t, p).is_empty())),
+        "a pane kept its value after the daemon stopped: {:?}",
+        [&first, &far, &home].map(|p| own(&t, p))
+    );
+}
+
 /// A picker with nothing to show says so on tmux's message line as well as on
 /// stderr, because `display-popup -E` takes stderr away with the popup.
 /// `--print` keeps to stderr.
@@ -2415,6 +2773,66 @@ fn panes_lists_what_runs_where_and_the_bar_counts_the_agents() {
     );
 }
 
+/// An agent run by an interpreter is named for its script, not for the
+/// interpreter tmux reports: aider is a Python console script, which tmux
+/// calls `python3` on Linux and `Python` or `python3.N` on macOS, and
+/// gemini, cursor-agent and the npm codex are `node` the same way.
+#[test]
+fn an_agent_run_by_an_interpreter_is_named_for_its_script() {
+    let Some(t) = Tmux::start("ident") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[agents]\nprograms = [\"aider\"]\n",
+    )
+    .unwrap();
+    let bin = t.sandbox.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("aider");
+    std::fs::write(
+        &script,
+        "#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let dir = repo_with_changes(&t.sandbox);
+    t.session("alpha", &dir);
+    // Not `send_when_ready`, which waits for the command's own name in
+    // `pane_current_command`, and that is the point: tmux says python.
+    let python = |t: &Tmux| {
+        t.panes()
+            .iter()
+            .any(|p| p.to_ascii_lowercase().contains("python"))
+    };
+    for _ in 0..10 {
+        t.must(&[
+            "send-keys",
+            "-t",
+            "=alpha:",
+            &script.display().to_string(),
+            "C-m",
+        ]);
+        if t.until(2, python) {
+            break;
+        }
+    }
+    assert!(
+        python(&t),
+        "the fixture never started, or tmux named it something else: {:?}",
+        t.panes()
+    );
+
+    let (out, err, ok) = t.run(&["panes", "--agents", "--print"]);
+    assert!(ok, "panes --agents --print failed:\n{err}");
+    let row = out
+        .lines()
+        .find(|l| l.starts_with("alpha:"))
+        .unwrap_or_else(|| panic!("the python agent is not an agent: {out:?}"));
+    assert_eq!(row.split('\t').nth(1), Some("aider"), "{row:?}");
+}
+
 #[test]
 fn the_inbox_holds_an_agent_that_stopped_with_what_its_screen_said() {
     // A sleeping "agent" with a one-second waiting threshold: the daemon's
@@ -2617,10 +3035,13 @@ fn quiet_hours_take_the_agent_count_off_the_bar_and_say_so() {
     assert!(
         t.until(10, |t| {
             let (out, _, _) = t.run(&["status-right", &dir_s]);
-            !out.contains("agent") && out.contains("quiet")
+            !out.contains("agent") && out.contains(tmux_companion::tmux::icons::QUIET)
         }),
-        "the bar kept counting, or never said quiet"
+        "the bar kept counting, or never drew the crossed-out bell"
     );
+    // The bar says it with a glyph; `health` says it in words.
+    let (out, _, _) = t.run(&["health"]);
+    assert!(out.contains("quiet for"), "health: {out:?}");
     let (out, _, _) = t.run(&["quiet"]);
     assert!(out.starts_with("quiet for"), "{out:?}");
     let (out, _, _) = t.run(&["quiet", "off"]);
@@ -4024,4 +4445,140 @@ fn keys_toml_beside_the_config_is_read_too() {
         ESC_A,
         "the route came from keys.toml"
     );
+}
+
+/// `sessions start NAME` finds the name live, then in a snapshot, then as a
+/// project, then takes the directory given, and with none of those and no
+/// terminal says which argument is missing.
+#[test]
+fn sessions_start_finds_a_name_live_then_saved_then_as_a_project() {
+    let Some(t) = Tmux::start("sessstart") else {
+        return;
+    };
+    let dir = t.sandbox.clone();
+    a_server_worth_saving(&t, &dir);
+    let server = t.server_pid();
+
+    let (out, err, ok) = t.run(&["sessions", "save"]);
+    assert!(ok, "save failed: {out} {err}");
+
+    // Live: nothing is built, and the directory given is said to be unused.
+    let (out, err, ok) = t.run(&["sessions", "start", "beta", "/nowhere", "--detach"]);
+    assert!(ok, "start beta: {out} {err}");
+    assert!(out.contains("beta is running"), "{out}");
+    assert!(err.contains("/nowhere not used"), "{err}");
+
+    // Saved: alpha alone comes back from the snapshot, windows and all, on the
+    // same server and with beta left as it was.
+    t.must(&["kill-session", "-t", "=alpha"]);
+    assert_eq!(t.sessions(), vec!["beta"]);
+    let (out, err, ok) = t.run(&["sessions", "start", "alpha", "--detach"]);
+    assert!(ok, "start alpha: {out} {err}");
+    assert!(
+        t.until(10, |t| t.sessions() == vec!["alpha", "beta"]),
+        "sessions after start: {:?} ({out} {err})",
+        t.sessions()
+    );
+    assert_eq!(
+        t.tmux(&["list-windows", "-t", "=alpha", "-F", "#{window_name}"]),
+        "edit\nwatch"
+    );
+    assert_eq!(t.server_pid(), server, "the server was replaced");
+
+    // A project: a directory with a saved layout, whose session would be
+    // called `proj`, opens with that layout.
+    let proj = dir.join("w/proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let proj = proj.canonicalize().unwrap().display().to_string();
+    let projects = t.sandbox.join("state/tmux-companion/projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    std::fs::write(
+        projects.join(format!("{}.toml", proj.replace('/', "%2F"))),
+        format!("path = \"{proj}\"\nformat = 1\n\n[[window]]\nname = \"code\"\n"),
+    )
+    .unwrap();
+    let (out, err, ok) = t.run(&["sessions", "start", "proj", "--detach"]);
+    assert!(ok, "start proj: {out} {err}");
+    assert_eq!(
+        t.tmux(&["display-message", "-p", "-t", "=proj:", "#{session_path}"]),
+        proj
+    );
+    assert_eq!(
+        t.tmux(&["list-windows", "-t", "=proj", "-F", "#{window_name}"]),
+        "code"
+    );
+
+    // The directory given, when nothing else knows the name.
+    let scratch = dir.join("scratch-here");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch_arg = scratch.display().to_string();
+    let (out, err, ok) = t.run(&["sessions", "start", "scratch", &scratch_arg, "--detach"]);
+    assert!(ok, "start scratch: {out} {err}");
+    assert!(out.contains("started scratch"), "{out}");
+    assert_eq!(
+        t.tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=scratch:",
+            "#{session_path}"
+        ]),
+        scratch.canonicalize().unwrap().display().to_string()
+    );
+
+    // Nothing knows it, no directory, nobody at a terminal to ask.
+    let (out, err, ok) = t.run(&["sessions", "start", "nowhere"]);
+    assert!(!ok, "start nowhere succeeded: {out}");
+    assert!(
+        err.contains("tmux-companion sessions start nowhere DIR"),
+        "{err}"
+    );
+    assert!(!t.sessions().contains(&"nowhere".to_string()));
+}
+
+/// `sessions continue` goes back to the session a client last left, by the
+/// stamp the switcher's hooks put on it, and with no stamp to the oldest.
+#[test]
+fn sessions_continue_goes_back_to_the_session_last_left() {
+    let Some(t) = Tmux::start("sesscontinue") else {
+        return;
+    };
+    let dir = t.sandbox.display().to_string();
+    for name in ["first", "second", "third"] {
+        t.must(&["new-session", "-d", "-s", name, "-c", &dir]);
+    }
+
+    // No hooks have run and nobody has attached: oldest, or youngest.
+    let (out, err, ok) = t.run_outside(&["sessions", "continue", "--print"]);
+    assert!(ok, "continue: {out} {err}");
+    assert!(out.starts_with("first\t"), "{out}");
+    let (out, _, _) = t.run_outside(&["sessions", "continue", "--last", "--print"]);
+    assert!(out.starts_with("third\t"), "{out}");
+
+    // That first `continue` set the hooks. A client attaches to `second`,
+    // which stamps it, and leaves.
+    let mut client = Command::new("tmux");
+    client
+        .args(["-L", &t.socket, "-C", "attach", "-t", "=second"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    t.env(&mut client);
+    client.env_remove("TMUX");
+    let mut client = client.spawn().expect("a control client starts");
+    assert!(
+        t.until(10, |t| t
+            .tmux(&["list-clients", "-F", "#{client_session}"])
+            .contains("second")),
+        "the control client never attached"
+    );
+    t.must(&["detach-client", "-s", "=second"]);
+    let _ = client.wait();
+
+    let (out, err, ok) = t.run_outside(&["sessions", "continue", "--print"]);
+    assert!(ok, "continue: {out} {err}");
+    assert_eq!(out.trim_end(), "second\tused most recently");
+    // --last ignores the stamp: the youngest session.
+    let (out, _, _) = t.run_outside(&["sessions", "continue", "--last", "--print"]);
+    assert_eq!(out.trim_end(), "third\tyoungest");
 }

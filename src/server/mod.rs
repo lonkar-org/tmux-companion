@@ -1,7 +1,7 @@
 //! The server half: bind the socket, accept forever, hand each line to a
 //! handler.
 mod handlers;
-pub(crate) use handlers::{health_check, render_right};
+pub(crate) use handlers::{RightParts, git_part, health_check, right_parts};
 /// Server state and its caches.
 pub mod state;
 
@@ -161,7 +161,16 @@ pub async fn run() -> anyhow::Result<()> {
 
     // The state comes first so the timers can note a failure on it; before
     // the health mark existed a failed timer had only the log to go to.
-    let state = Arc::new(Mutex::new(ServerState::with_config(config.clone())));
+    let mut fresh = ServerState::with_config(config.clone());
+    // Read here, once, before the state is shared: the picks a previous
+    // daemon made, so the same branch prefix draws the same glyph. Only this
+    // daemon writes them; a `ServerState` built anywhere else keeps its picks
+    // in memory.
+    if let Some(file) = crate::branch_icons::picks_path() {
+        let picks = crate::branch_icons::read_picks(&file);
+        fresh.branch_icons.attach(picks, Some(file));
+    }
+    let state = Arc::new(Mutex::new(fresh));
 
     // Started before the accept loop, so it runs for as long as the daemon
     // does and stops when it stops. That is the whole of the lifetime

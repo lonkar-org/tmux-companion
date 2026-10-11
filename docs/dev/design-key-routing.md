@@ -145,7 +145,7 @@ The decision is made with format conditions and no fork. This is the shape the s
 
 ```tmux
 # the original binding from tmux.conf, moved untouched into a table of its own
-bind -T kc-tmux M-a run-shell "tmux-companion toggle '#{session_name}'"
+bind -T kc-tmux M-a run-shell "tmux-companion switch windows '#{session_id}'"
 
 bind -n M-a {
   if -F "#{&&:#{==:#{pane_current_command},#{@kc_owner}},#{m:*|M-a|*,#{@kc_claim}}}" {
