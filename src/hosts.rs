@@ -814,6 +814,10 @@ pub struct Form {
     /// The command answered a test, or was tested and refused: `s` and `t`
     /// act now, and any other key goes back to editing.
     pub tested: bool,
+    /// How the last thing said went: answered (true), refused or failed
+    /// (false), or neither, such as `connecting`. Drawn as a tone; the words
+    /// say it too.
+    pub passed: Option<bool>,
 }
 
 /// What a key did to the form.
@@ -860,6 +864,7 @@ impl Form {
                 _ => {
                     self.tested = false;
                     self.said.clear();
+                    self.passed = None;
                 }
             }
         }
@@ -872,21 +877,25 @@ impl Form {
                     Ok(c) => c,
                     Err(e) => {
                         self.said = e;
+                        self.passed = Some(false);
                         self.on_command = true;
                         return FormAct::Edit;
                     }
                 };
                 if let Err(e) = check_name(&self.name) {
                     self.said = e;
+                    self.passed = Some(false);
                     self.on_command = false;
                     return FormAct::Edit;
                 }
                 if let Some(h) = taken.iter().find(|h| h.name == self.name) {
                     self.said = taken_line(h);
+                    self.passed = Some(false);
                     self.on_command = false;
                     return FormAct::Edit;
                 }
                 self.said = format!("{}: connecting", self.name);
+                self.passed = None;
                 return FormAct::Test(self.name.clone(), command);
             }
             KeyCode::Backspace => {
@@ -923,31 +932,59 @@ impl Form {
         } else {
             "tab next field   enter test the command   esc leave"
         };
+        // The keys first, where every picker has them, then the fields.
         let lines = vec![
+            keys.to_string(),
             "Add a host".to_string(),
             format!("name: {}", self.name),
             format!("command: {}", self.command),
             self.said.clone(),
-            keys.to_string(),
         ];
         let at = if self.tested {
-            (3, self.said.chars().count())
+            (4, self.said.chars().count())
         } else if self.on_command {
-            (2, "command: ".len() + self.command.chars().count())
+            (3, "command: ".len() + self.command.chars().count())
         } else {
-            (1, "name: ".len() + self.name.chars().count())
+            (2, "name: ".len() + self.name.chars().count())
         };
         (lines, at)
     }
 }
 
-/// Draw the form in one write: the whole screen, then the cursor.
+/// Draw the form in one write: the whole screen, then the cursor. The keys
+/// are drawn the way a picker's hint is, keys strong and words dim, with the
+/// picker's rule under them; the answer to a test is in the `Ok` tone when the
+/// host answered and `Failed` when it didn't, and its words say which.
 fn draw_form(f: &Form) -> std::io::Result<()> {
+    use crate::picker::paint::{Paint, Tone, hint_parts};
     use std::io::Write;
+    let paint = Paint::detect();
     let (lines, (row, col)) = f.screen();
-    let mut out = String::from("\x1b[H\x1b[2J");
-    out.push_str(&lines.join("\r\n"));
-    out.push_str(&format!("\x1b[{};{}H", row + 1, col + 1));
+    let width = ratatui::crossterm::terminal::size().map_or(80, |(w, _)| w as usize);
+    let mut out = String::from("\x1b[H\x1b[2J ");
+    for (word, key) in hint_parts(&lines[0]) {
+        out.push_str(&paint.ink(&word, if key { Tone::Strong } else { Tone::Dim }));
+    }
+    out.push_str("\r\n ");
+    out.push_str(&paint.ink(&"─".repeat(width.saturating_sub(2)), Tone::Dim));
+    out.push_str("\r\n");
+    let said_tone = match f.passed {
+        Some(true) => Tone::Ok,
+        Some(false) => Tone::Failed,
+        None => Tone::Dim,
+    };
+    let body: Vec<String> = lines[1..]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| match i {
+            0 => format!(" {}", paint.ink(l, Tone::Strong)),
+            3 => format!(" {}", paint.ink(l, said_tone)),
+            _ => format!(" {l}"),
+        })
+        .collect();
+    out.push_str(&body.join("\r\n"));
+    // One row more for the rule, one column for the inset.
+    out.push_str(&format!("\x1b[{};{}H", row + 2, col + 2));
     let mut stdout = std::io::stdout();
     stdout.write_all(out.as_bytes())?;
     stdout.flush()
@@ -1006,8 +1043,9 @@ pub async fn form() -> anyhow::Result<Option<String>> {
                 FormAct::Leave => return Ok(None),
                 FormAct::Test(name, command) => {
                     draw_form(&f)?;
-                    let (said, _) = test_hello(&name, command).await;
+                    let (said, ok) = test_hello(&name, command).await;
                     f.said = said;
+                    f.passed = Some(ok);
                     f.tested = true;
                 }
                 FormAct::Keep(save) => {
@@ -1016,6 +1054,7 @@ pub async fn form() -> anyhow::Result<Option<String>> {
                         Ok(said) => return Ok(Some(said)),
                         Err(e) => {
                             f.said = format!("{e:#}");
+                            f.passed = Some(false);
                             f.tested = false;
                         }
                     }
@@ -1344,11 +1383,15 @@ mod tests {
         }
         assert_eq!(f.name, "vm-2", "vm is taken");
         let (lines, at) = f.screen();
-        assert_eq!(lines[1], "name: vm-2");
-        assert_eq!(lines[2], "command: ssh dev@vm.local");
+        assert_eq!(
+            lines[0],
+            "tab next field   enter test the command   esc leave"
+        );
+        assert_eq!(lines[2], "name: vm-2");
+        assert_eq!(lines[3], "command: ssh dev@vm.local");
         assert_eq!(
             at,
-            (2, "command: ssh dev@vm.local".len()),
+            (3, "command: ssh dev@vm.local".len()),
             "the cursor is in the field"
         );
         assert_eq!(
