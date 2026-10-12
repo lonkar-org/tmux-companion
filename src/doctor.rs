@@ -79,6 +79,7 @@ pub async fn report_in(paint: &crate::picker::Paint) -> String {
     line(&mut out, "health", health, tone);
     line(&mut out, "bar", bar_state(), Tone::Plain);
     line(&mut out, "setup", setup_state().await, Tone::Plain);
+    line(&mut out, "hosts", crate::hosts::doctor_state(), Tone::Plain);
     line(&mut out, "tmux", tmux_version(), Tone::Plain);
     line(&mut out, "platform", platform(), Tone::Plain);
     out.push_str(&options_section_in(tmux_options().as_ref(), paint));

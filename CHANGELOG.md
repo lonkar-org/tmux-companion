@@ -5,12 +5,98 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+## 0.10.0 - 2026-10-12
+
+Sessions on your other machines are in `M-s` now. Add a host with `hosts add` and picking one of its sessions opens it as a mirror session, with the prefix going to the VM and your own bar showing the VM's branch, agents and health, so there's no more ssh, then attach, then remembering whose prefix is whose. Quiet hours can follow macOS Focus, or Do Not Disturb on a Linux desktop, when you turn on `follow_focus` and in `M-s` a search keeps sessions first and brings projects in by when you last jumped to them.
+
+Upgrading: it's 0.10.0 rather than 0.9.2 because `sessions::Session` in the library gained two fields and a snapshot holding a mirror session can't be read by 0.9.x.
+
 Performance improvements improving performance on avg. 57% under heavy load across all pickers and UI surfaces, see [explanation](https://github.com/lonkar-org/tmux-companion/blob/main/docs/explanation/performance.md).
 
 `auto` mode for push status bar segments rather than poll by tmux.
 
 ### Added
 
+- `hosts`, `hosts add`, `hosts connect` and `bridge`, with `[[hosts]]`: the
+  first part of sessions across machines. The daemon keeps a link to another
+  machine's tmux-companion, Cap'n Proto over the stdio of
+  `ssh vm 'tmux-companion bridge'`, brought up on demand, while a client is
+  attached or never, per host. While it is up the host's sessions are polled
+  every five seconds and kept on disk, and `hosts` lists each host and its
+  sessions in plain lines with when it was last heard from, or why its link
+  is down. `doctor` has a `hosts` line. No picker shows a host yet.
+  `hosts add NAME -- ssh NAME` adds one for this tmux server, or to
+  `config.toml` with `--save`. The link never asks for a password or a host
+  key; it fails and says why.
+- Another machine's sessions in `M-s`: after the local sessions, a line per
+  host, `vm, 4 sessions, last heard 15m` or `live`, then its sessions as
+  `api@vm`. The rows come from what the daemon last heard, so the list
+  doesn't wait for ssh. A host that can't be reached keeps its rows in a faint
+  tone with `unreachable` on each and the reason in the preview, and Enter on
+  one tries again. The session key steps over host lines and unreachable rows,
+  and says `api on vm, 5 of 9`. `switch sessions --print` gives the same lines.
+  Picking one opens a mirror session `api@vm` whose pane runs
+  `host attach vm api`, the ssh you'd type yourself, attached to a grouped
+  session of this machine's own on the host. The prefix goes to the host in
+  that session only, `M-a` goes on to the host's switcher, and the bar shows
+  the host's git, agents and health, built here from words the host sends and
+  never from its markup. A detach on the host closes it and puts you back. A
+  dropped connection says why in one line and waits for `r` or `q`. A typed
+  `name@vm` and `sessions start NAME@HOST` make the session on the host when
+  it isn't there. ctrl-x forgets a row, or a host after `forget vm? y/n` on
+  the message line; `hosts forget` does it from a shell. ctrl-n on a host's
+  line, or `hosts add` with no arguments, opens a form that tests the command
+  with a hello before keeping it. The example configs set the host colour in
+  `@tc-host-fg` and `@tc-host-bg`, which the ssh hostname uses too.
+- The rest of another machine's read side. `brief` gives each host one line,
+  `vm: 4 sessions, 1 agent asked, last heard 12s`, from what the daemon
+  already knows, and starts no link. The project picker lists every host's
+  sessions as `M-s` does, and inside a mirror session it lists that host's
+  own directories, from the source its own config names, as `api@vm`;
+  picking one, or typing a path there, starts the project on the host with
+  the new `project --detached DIR` and opens it as a mirror session. While a
+  host's link is up its waiting agents are in `inbox` and `brief` with
+  `on vm` after their place, and one that asks plays this machine's earcon,
+  silent while this machine is quiet. Their words arrive as text. Picking
+  one opens the mirror session at the agent's pane, or restarts the attach
+  of the one already open with that pane chosen. Snapshots keep mirror
+  sessions, and `sessions resurrect` reopens them saying `vm: press r to
+  connect` through a new shipped `[[restore.program]]` row, so no ssh runs
+  until `r`. `host attach` takes `--dir`, `--window`, `--pane` and `--wait`.
+- A host's link pushes instead of polling: the host tells this machine when
+  its sessions, its waiting agents or the bar of a mirror session change,
+  as its own poll sees them, so an agent asking there plays the earcon here
+  in about two seconds rather than five, and an idle link costs nothing
+  between changes but a ping. A ping every `ping_secs` (15) notices a link that
+  died quietly; three unanswered and it restarts, saying so in `hosts`. A
+  host running an older bridge is polled as before, and `hosts` says its
+  bridge lacks `watch`. A host's line in `hosts` says which: `pushing`, or
+  `polled every 5s` with the host's `poll_secs`.
+- Handing the terminal to a host: `open = "handover"` on a host, or
+  alt-enter on one of its sessions in `M-s` for once, and tmux replaces this
+  terminal's client with `ssh vm -t 'tmux attach-session -t =api'`. The
+  host's tmux then has the whole terminal, one bar and the host's, its
+  prefix and its keys; a detach there comes back to the session you left
+  with `exec tmux attach-session -t =here`. The message line says
+  `api on vm, handed over: detach there to come back to here` first, and a
+  connection that ends any other way says so and waits for Enter. For a host
+  that hands over, alt-enter opens a mirror session instead.
+- Quiet follows a Focus. `quiet --focus [NAME]` and `quiet --focus-off` say a
+  Focus started and ended, for a macOS Shortcuts automation or any hook to
+  call; quiet holds in between and `quiet`, `health` and `brief` say
+  `quiet while Focus Work is on`. `[quiet] follow_focus`, off by default and
+  macOS only, has the daemon follow it from the Focus database instead: one
+  stat every two seconds, a read when it changed, no process. A database it
+  can't read, which can mean the terminal lacks Full Disk Access, is said on
+  the health mark once, and quiet keeps to the timer and `daily`. No new
+  surface: the line is words, the bar keeps its crossed-out bell.
+- `[quiet] follow_focus` on Linux follows the desktop's Do Not Disturb: GNOME,
+  KDE Plasma, dunst, mako's `do-not-disturb` mode and SwayNotificationCenter,
+  over one session-bus connection that listens for their signals. No timer
+  and no process; GNOME's database is read only when dconf says the setting
+  was written. `quiet` says `quiet while Do Not Disturb is on`, as it does for
+  macOS's Do Not Disturb Focus. Off by default, as on macOS. The Linux build
+  gains `zbus`.
 - `sessions start NAME [DIR]` opens a session by its name: the live one, else
   the newest snapshot holding it restored on its own, else the project
   directory whose session would have that name, else `DIR`, else the project
@@ -92,6 +178,20 @@ Performance improvements improving performance on avg. 57% under heavy load acro
 
 ### Changed
 
+- A search in `M-s` filters and keeps the order: sessions first by when each
+  was last used, then projects by when each was last jumped to (zoxide's own
+  last-accessed time, read from its database), instead of ranking the two
+  together by match score. A picker can ask for this with `keep_order`.
+
+- `M-s` is titled `Sessions/Projects` whatever `[picker.project] label` says,
+  and its hint reads `type to filter session, concealed projects`, with
+  `concealed` in bold: the directories are there, hidden until a letter is
+  typed. A picker hint can now mark one word strong with `**word**`.
+
+- `sessions::Session`, in the library, has two new fields, `host` and
+  `remote`, for a mirror session's host and the session it stands for there.
+  A snapshot without them reads as before; one written with them doesn't
+  read in an older build.
 - The panes and agents pickers draw their border, title and one loading line
   before listing the panes, as the project and new-window pickers already
   do, so the picker is on screen in 49 ms rather than 68 at 32 busy loops.

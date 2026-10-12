@@ -5,6 +5,13 @@
 //! while quiet is on. The health mark shows a crossed-out bell instead, so a bar
 //! that has gone silent reads as chosen rather than broken. The daemon keeps the clock,
 //! so every client and every timer sees the same answer.
+//!
+//! Quiet also follows a Focus, the operating system's own "don't bother me":
+//! `quiet --focus NAME` and `--focus-off` say one started and ended, for a
+//! macOS Shortcuts automation or any other hook to call, and with
+//! `[quiet] follow_focus` on macOS the daemon reads the Focus database itself;
+//! on Linux `dnd` follows the desktop's Do Not Disturb.
+//! See `docs/dev/design-quiet-focus.md`.
 
 /// Seconds from a duration written the way `age` prints one: `45m`, `2h`,
 /// `90s`, `1d`, or a bare number of minutes.
@@ -93,16 +100,231 @@ pub fn is_quiet(until: Option<u64>, now: u64) -> bool {
     until.is_some_and(|u| u > now)
 }
 
-/// The one line `quiet --status` prints and the health mark reasons from.
-pub fn status(until: Option<u64>, now: u64) -> String {
-    match until {
-        Some(u) if u > now => format!("quiet for {} more", crate::panes::age(u - now)),
-        _ => "not quiet".to_string(),
+/// The one line `quiet` prints and the health mark reasons from: the Focus
+/// first when one is on, since it has no end anybody can count down to.
+pub fn status(until: Option<u64>, focus: Option<&str>, now: u64) -> String {
+    let left = until
+        .filter(|&u| u > now)
+        .map(|u| crate::panes::age(u - now));
+    // `Focus` alone is a hook that did not say which: "a Focus", not
+    // "Focus Focus". Do Not Disturb is said by its name alone, on both
+    // systems: "Focus Do Not Disturb" reads badly aloud.
+    let focus = focus.map(|f| {
+        if f == UNNAMED_FOCUS {
+            "a Focus".to_string()
+        } else if f == DO_NOT_DISTURB {
+            f.to_string()
+        } else {
+            format!("Focus {f}")
+        }
+    });
+    match (focus, left) {
+        (Some(f), Some(left)) => format!("quiet while {f} is on, and for {left} more"),
+        (Some(f), None) => format!("quiet while {f} is on"),
+        (None, Some(left)) => format!("quiet for {left} more"),
+        (None, None) => "not quiet".to_string(),
     }
 }
 
-/// `quiet`: turn it on for a while, off, or ask.
-pub async fn run(duration: Option<String>, off: bool) -> anyhow::Result<()> {
+/// Whether a line is one `status` wrote for quiet being on, for the readers
+/// that pick it out of the health reasons.
+pub fn is_status_line(line: &str) -> bool {
+    line.starts_with("quiet for ") || line.starts_with("quiet while ")
+}
+
+// ── Focus ───────────────────────────────────────────────────────────────────
+
+/// What a Focus is called when nothing names it: `quiet --focus` with no name,
+/// or a mode the configurations file does not list.
+pub const UNNAMED_FOCUS: &str = "Focus";
+
+/// The name macOS gives its Do Not Disturb Focus, and the one a Linux
+/// desktop's do-not-disturb is reported under: said without the word Focus.
+pub const DO_NOT_DISTURB: &str = "Do Not Disturb";
+
+/// The Focus that is on, from the text of `Assertions.json` and
+/// `ModeConfigurations.json`, or none.
+///
+/// An assertion is macOS recording that a mode was turned on, by hand, by a
+/// schedule or by a smart trigger, and it leaves the list when the mode ends.
+/// When there are several the newest wins. The name comes from the mode's
+/// configuration; a mode it does not list is called by the last part of its
+/// identifier, and a configurations file that does not parse costs the name,
+/// not the answer.
+///
+/// The format is Apple's and undocumented, so anything that is not the shape
+/// below is an error rather than a guess: the caller says so on the health
+/// mark and quiet falls back to the timer and the schedule.
+pub fn focus_from(assertions: &str, configurations: &str) -> Result<Option<String>, String> {
+    let doc: serde_json::Value =
+        serde_json::from_str(assertions).map_err(|e| format!("Assertions.json: {e}"))?;
+    let data = doc
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or("Assertions.json has no `data` list")?;
+    let newest = data
+        .iter()
+        .filter_map(|d| d.get("storeAssertionRecords")?.as_array())
+        .flatten()
+        .filter_map(|r| {
+            let id = r
+                .get("assertionDetails")?
+                .get("assertionDetailsModeIdentifier")?
+                .as_str()?;
+            let at = r
+                .get("assertionStartDateTimestamp")
+                .and_then(|t| t.as_f64())
+                .unwrap_or(0.0);
+            Some((at, id))
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    let Some((_, id)) = newest else {
+        return Ok(None);
+    };
+    Ok(Some(
+        mode_name(configurations, id).unwrap_or_else(|| fallback_name(id)),
+    ))
+}
+
+/// The name a mode identifier has in `ModeConfigurations.json`.
+fn mode_name(configurations: &str, id: &str) -> Option<String> {
+    let doc: serde_json::Value = serde_json::from_str(configurations).ok()?;
+    doc.get("data")?.as_array()?.iter().find_map(|d| {
+        let name = d
+            .get("modeConfigurations")?
+            .get(id)?
+            .get("mode")?
+            .get("name")?
+            .as_str()?
+            .trim();
+        (!name.is_empty()).then(|| name.to_string())
+    })
+}
+
+/// `com.apple.focus.work` as `work`, for a mode the configurations do not name.
+fn fallback_name(id: &str) -> String {
+    match id.rsplit('.').next() {
+        Some(last) if !last.is_empty() => last.to_string(),
+        _ => UNNAMED_FOCUS.to_string(),
+    }
+}
+
+/// Where macOS keeps the Focus database, under `home`.
+pub fn focus_dir(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("Library/DoNotDisturb/DB")
+}
+
+/// What one look at the database found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Look {
+    /// It read, and this Focus is on, or none is.
+    Read(Option<String>),
+    /// There is no database: a Mac where Focus was never used, or not a Mac.
+    Absent,
+    /// It is there and could not be read or made sense of, and why.
+    Failed(String),
+}
+
+/// Read the database in `dir` once. Two small files, read only when the
+/// watcher saw them change.
+pub fn look(dir: &std::path::Path) -> Look {
+    let assertions = match std::fs::read_to_string(dir.join("Assertions.json")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Look::Absent,
+        Err(e) => return Look::Failed(format!("cannot read the macOS Focus state: {e}")),
+    };
+    // Missing or unreadable costs the name only, which `focus_from` covers.
+    let configurations =
+        std::fs::read_to_string(dir.join("ModeConfigurations.json")).unwrap_or_default();
+    match focus_from(&assertions, &configurations) {
+        Ok(focus) => Look::Read(focus),
+        Err(why) => Look::Failed(format!("cannot make sense of the macOS Focus state: {why}")),
+    }
+}
+
+/// What the watcher compares between passes: the modification time and size
+/// of each file, so two changes inside one second still differ by length.
+pub type Stamp = Option<(std::time::SystemTime, u64)>;
+
+/// One `stat`, no read and no process.
+pub fn stamp(path: &std::path::Path) -> Stamp {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// How often the watcher stats the database. Two seconds is as late as a
+/// nudge can be for an agent that stopped as the Focus started, and a `stat`
+/// costs microseconds.
+pub const FOCUS_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The health source a failure to read the database is filed under.
+pub const FOCUS_SOURCE: &str = "focus";
+
+/// `[quiet] follow_focus`: the daemon's half. A `stat` of the two files on a
+/// timer of its own, and a read only when one changed; never a process.
+///
+/// A database that cannot be read says so on the health mark once, through
+/// `note_failure`, and quiet goes on from the timer and `[quiet] daily`; a
+/// later change that reads takes the failure back. One that is absent is a
+/// Mac that never used Focus, and nothing is said.
+pub async fn focus_loop(
+    state: std::sync::Arc<tokio::sync::Mutex<crate::server::state::ServerState>>,
+    dir: std::path::PathBuf,
+) {
+    let files = [
+        dir.join("Assertions.json"),
+        dir.join("ModeConfigurations.json"),
+    ];
+    let mut seen: Option<[Stamp; 2]> = None;
+    let mut failing = false;
+    loop {
+        let now = [stamp(&files[0]), stamp(&files[1])];
+        if seen != Some(now) {
+            seen = Some(now);
+            let found = look(&dir);
+            let mut st = state.lock().await;
+            match found {
+                Look::Read(focus) => {
+                    st.focus = focus;
+                    st.note_ok(FOCUS_SOURCE);
+                    st.health_cache = None;
+                    failing = false;
+                }
+                Look::Absent => {
+                    st.focus = None;
+                    st.health_cache = None;
+                }
+                Look::Failed(why) => {
+                    if !failing {
+                        st.note_failure(
+                            FOCUS_SOURCE,
+                            format!("focus: {why}; quiet follows the timer and [quiet] daily only"),
+                        );
+                        st.health_cache = None;
+                    }
+                    failing = true;
+                }
+            }
+        }
+        tokio::time::sleep(FOCUS_POLL).await;
+    }
+}
+
+/// What `quiet` was asked to do about a Focus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusChange {
+    /// One started, with its name.
+    On(String),
+    /// It ended.
+    Off,
+}
+
+/// `quiet`: turn it on for a while, off, say a Focus started or ended, or ask.
+pub async fn run(
+    duration: Option<String>,
+    off: bool,
+    focus: Option<FocusChange>,
+) -> anyhow::Result<()> {
     // `off` as the duration is what a prompt in tmux.conf sends, since one
     // prompt cannot also carry a flag.
     let off = off || duration.as_deref().is_some_and(|d| d.trim() == "off");
@@ -116,7 +338,20 @@ pub async fn run(duration: Option<String>, off: bool) -> anyhow::Result<()> {
         (None, true) => Some(0),
         (None, false) => None,
     };
-    let args = crate::proto::QuietArgs { secs };
+    let (focus, focus_off) = match focus {
+        Some(FocusChange::On(name)) => {
+            let name = name.trim();
+            let name = if name.is_empty() { UNNAMED_FOCUS } else { name };
+            (Some(name.to_string()), false)
+        }
+        Some(FocusChange::Off) => (None, true),
+        None => (None, false),
+    };
+    let args = crate::proto::QuietArgs {
+        secs,
+        focus,
+        focus_off,
+    };
     let resp = crate::client::send(crate::proto::Request::build("__quiet", &args)).await?;
     if let Some(why) = resp.error {
         anyhow::bail!("{why}");
@@ -183,8 +418,128 @@ mod tests {
         assert!(is_quiet(Some(1000), 999));
         assert!(!is_quiet(Some(1000), 1000));
         assert!(!is_quiet(None, 0));
-        assert_eq!(status(Some(1000), 700), "quiet for 5m more");
-        assert_eq!(status(Some(1000), 1000), "not quiet");
-        assert_eq!(status(None, 5), "not quiet");
+        assert_eq!(status(Some(1000), None, 700), "quiet for 5m more");
+        assert_eq!(status(Some(1000), None, 1000), "not quiet");
+        assert_eq!(status(None, None, 5), "not quiet");
+    }
+
+    #[test]
+    fn a_focus_is_named_on_the_line_and_the_timer_follows_it() {
+        assert_eq!(
+            status(None, Some("Work"), 5),
+            "quiet while Focus Work is on"
+        );
+        assert_eq!(
+            status(Some(1000), Some("Sleep"), 700),
+            "quiet while Focus Sleep is on, and for 5m more"
+        );
+        assert_eq!(
+            status(Some(10), Some("Work"), 700),
+            "quiet while Focus Work is on",
+            "a timer that ran out says nothing"
+        );
+        assert_eq!(
+            status(None, Some(UNNAMED_FOCUS), 5),
+            "quiet while a Focus is on"
+        );
+        assert_eq!(
+            status(None, Some(DO_NOT_DISTURB), 5),
+            "quiet while Do Not Disturb is on",
+            "Do Not Disturb without the word Focus"
+        );
+        assert_eq!(
+            status(Some(1000), Some(DO_NOT_DISTURB), 700),
+            "quiet while Do Not Disturb is on, and for 5m more"
+        );
+        for line in [status(None, Some("Work"), 5), status(Some(1000), None, 700)] {
+            assert!(is_status_line(&line), "{line}");
+        }
+        assert!(!is_status_line("not quiet"));
+        assert!(!is_status_line("offline for 3m"));
+    }
+
+    // Built from the shape macOS writes, with made-up identifiers and times:
+    // nobody's real database belongs in the repository.
+    const CONFIGS: &str = r#"{"data":[{"modeConfigurations":{
+        "com.apple.focus.work":{"mode":{"name":"Work","modeIdentifier":"com.apple.focus.work"}},
+        "com.apple.sleep.sleep-mode":{"mode":{"name":"Sleep"}},
+        "com.example.custom":{"mode":{"name":"  "}}
+    }}],"header":{"version":8}}"#;
+
+    fn assertions(records: &str) -> String {
+        format!(
+            r#"{{"data":[{{"storeAssertionRecords":[{records}],"storeInvalidationRecords":[]}}],"header":{{"version":8,"timestamp":800000000.5}}}}"#
+        )
+    }
+
+    fn record(id: &str, at: f64) -> String {
+        format!(
+            r#"{{"assertionUUID":"00000000-0000-0000-0000-000000000000","assertionStartDateTimestamp":{at},"assertionSource":{{"assertionClientIdentifier":"com.example.test"}},"assertionDetails":{{"assertionDetailsIdentifier":"x","assertionDetailsModeIdentifier":"{id}"}}}}"#
+        )
+    }
+
+    #[test]
+    fn no_assertion_is_no_focus() {
+        assert_eq!(focus_from(&assertions(""), CONFIGS), Ok(None));
+        assert_eq!(
+            focus_from(r#"{"data":[{}],"header":{}}"#, CONFIGS),
+            Ok(None),
+            "a store with no records list yet"
+        );
+    }
+
+    #[test]
+    fn an_assertion_is_named_from_the_configurations() {
+        let a = assertions(&record("com.apple.focus.work", 800000000.0));
+        assert_eq!(focus_from(&a, CONFIGS), Ok(Some("Work".into())));
+    }
+
+    #[test]
+    fn the_newest_of_several_assertions_wins() {
+        let a = assertions(&format!(
+            "{},{}",
+            record("com.apple.sleep.sleep-mode", 800000100.0),
+            record("com.apple.focus.work", 800000000.0)
+        ));
+        assert_eq!(focus_from(&a, CONFIGS), Ok(Some("Sleep".into())));
+    }
+
+    #[test]
+    fn a_mode_with_no_name_is_called_by_its_identifier() {
+        let a = assertions(&record("com.example.custom", 1.0));
+        assert_eq!(focus_from(&a, CONFIGS), Ok(Some("custom".into())));
+        let a = assertions(&record("com.apple.focus.work", 1.0));
+        assert_eq!(
+            focus_from(&a, "not json"),
+            Ok(Some("work".into())),
+            "configurations that do not parse cost the name only"
+        );
+    }
+
+    #[test]
+    fn a_database_that_is_not_the_shape_is_an_error_not_a_guess() {
+        assert!(focus_from("", CONFIGS).is_err());
+        assert!(focus_from(r#"{"header":{}}"#, CONFIGS).is_err());
+        assert!(focus_from(r#"{"data":{}}"#, CONFIGS).is_err());
+    }
+
+    #[test]
+    fn the_database_on_disk_reads_absent_read_and_failed() {
+        let dir = std::env::temp_dir().join(format!("tc-focus-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(look(&dir), Look::Absent);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Assertions.json"), assertions("")).unwrap();
+        assert_eq!(look(&dir), Look::Read(None), "no configurations is fine");
+        std::fs::write(
+            dir.join("Assertions.json"),
+            assertions(&record("com.apple.focus.work", 1.0)),
+        )
+        .unwrap();
+        std::fs::write(dir.join("ModeConfigurations.json"), CONFIGS).unwrap();
+        assert_eq!(look(&dir), Look::Read(Some("Work".into())));
+        std::fs::write(dir.join("Assertions.json"), "{").unwrap();
+        assert!(matches!(look(&dir), Look::Failed(_)));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

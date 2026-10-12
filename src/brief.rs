@@ -50,6 +50,9 @@ pub struct Brief {
     /// How many journal events the last day holds, which is whether `j` has
     /// anything to open.
     pub journal_today: usize,
+    /// One line per host, from what the daemon already knows: no link is
+    /// started for the brief.
+    pub hosts: Vec<String>,
 }
 
 impl Brief {
@@ -150,7 +153,7 @@ fn drawn(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint, numbered
             out.push_str(&format!(
                 "  {}{} {} {} {} {}\n",
                 number(i + 1),
-                ink(format!("{:<14}", e.at), Tone::Strong),
+                ink(format!("{:<14}", e.place()), Tone::Strong),
                 ink(format!("{:<12}", e.program), Tone::Plain),
                 ink(format!("{:<7}", e.state), state),
                 ink(
@@ -177,6 +180,16 @@ fn drawn(b: &Brief, now: u64, home: &str, paint: &crate::picker::Paint, numbered
         }
     }
     out.push('\n');
+    // One line per host, in words: how many sessions, what is waiting there,
+    // when it was last heard from, and why it can't be reached.
+    if !b.hosts.is_empty() {
+        out.push_str(&paint.heading(icons::SSH, "Hosts"));
+        out.push('\n');
+        for line in &b.hosts {
+            out.push_str(&format!("  {}\n", ink(line.clone(), Tone::Plain)));
+        }
+        out.push('\n');
+    }
     if !b.idle.is_empty() {
         out.push_str(&paint.heading(
             icons::IDLE,
@@ -261,6 +274,16 @@ fn shown_agents(b: &Brief) -> usize {
 pub enum Target {
     /// A waiting agent's pane, by `#{pane_id}`.
     Pane(String),
+    /// A waiting agent on another host: the host, where its inbox says it
+    /// is, and its `#{pane_id}` there.
+    HostPane {
+        /// The host.
+        host: String,
+        /// `session:window.pane` on the host.
+        at: String,
+        /// `%N` on the host.
+        pane: String,
+    },
     /// An idle session, by name.
     Session(String),
 }
@@ -272,10 +295,16 @@ pub fn targets(b: &Brief) -> Vec<(Target, String)> {
         .iter()
         .take(SHOWN)
         .map(|e| {
-            (
-                Target::Pane(e.id.clone()),
-                format!("{}, {}", e.at, e.program),
-            )
+            let target = if e.host.is_empty() {
+                Target::Pane(e.id.clone())
+            } else {
+                Target::HostPane {
+                    host: e.host.clone(),
+                    at: e.at.clone(),
+                    pane: e.id.clone(),
+                }
+            };
+            (target, format!("{}, {}", e.place(), e.program))
         })
         .chain(
             b.idle
@@ -486,7 +515,9 @@ pub fn choose(b: &Brief, answer: &str) -> Action {
         let n: usize = rest.parse().unwrap_or(0);
         return match n.checked_sub(1).and_then(|i| rows.get(i)) {
             Some((Target::Session(name), _)) => Action::Close(name.clone()),
-            Some((Target::Pane(_), _)) => Action::Say(format!("{n} is an agent. {which}")),
+            Some((Target::Pane(_) | Target::HostPane { .. }, _)) => {
+                Action::Say(format!("{n} is an agent. {which}"))
+            }
             None => Action::Say(no_such(rest)),
         };
     }
@@ -596,22 +627,43 @@ pub async fn gather() -> Brief {
             .unwrap_or_default()
     };
     let quiet = async {
-        let args = crate::proto::QuietArgs { secs: None };
+        let args = crate::proto::QuietArgs::default();
         crate::client::send(crate::proto::Request::build("__quiet", &args))
             .await
             .ok()
             .filter(|r| r.error.is_none())
             .map(|r| r.output.trim().to_string())
-            .filter(|o| o.starts_with("quiet for"))
+            .filter(|o| crate::quiet::is_status_line(o))
     };
-    let (inbox_json, health_text, reports, idle, sessions_text, sitting, quiet) = tokio::join!(
+    // The hosts as the daemon holds them, from memory and its cache on disk:
+    // the brief runs from the `client-attached` hook, and starting links there
+    // would make every host `while-attached` in effect, so it asks nothing.
+    let hosts = async {
+        crate::client::send(crate::proto::Request::build(
+            "__hosts",
+            &crate::proto::HostsArgs::default(),
+        ))
+        .await
+        .ok()
+        .filter(|r| r.error.is_none())
+        .and_then(|r| serde_json::from_str::<Vec<crate::link::manager::HostView>>(&r.output).ok())
+        .unwrap_or_default()
+    };
+    let (inbox_json, health_text, reports, idle, sessions_text, sitting, quiet, hosts) = tokio::join!(
         ask("__inbox"),
         ask("__health"),
         crate::panes::reports(),
         crate::sessions::idle::list(IDLE_DAYS),
-        crate::cli::tmux_capture(&["list-sessions", "-F", "#{session_name}"]),
+        crate::cli::tmux_capture(&[
+            "list-sessions",
+            "-f",
+            crate::link::NOT_MIRRORED,
+            "-F",
+            "#{session_name}"
+        ]),
         chunk_status,
         quiet,
+        hosts,
     );
     // The clock being off is said by `chunk status`, not on every brief.
     let sitting = if sitting.starts_with("The chunk clock is off") {
@@ -668,6 +720,10 @@ pub async fn gather() -> Brief {
         sitting,
         quiet,
         journal_today,
+        hosts: hosts
+            .iter()
+            .map(|v| crate::hosts::brief_line(v, now))
+            .collect(),
     }
 }
 
@@ -681,7 +737,7 @@ pub async fn gather() -> Brief {
 pub fn health_reasons(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("quiet for"))
+        .filter(|l| !l.is_empty() && !crate::quiet::is_status_line(l))
         .map(str::to_string)
         .collect()
 }
@@ -839,6 +895,11 @@ async fn act(
             }
             match target {
                 Target::Pane(id) => crate::panes::jump(&id).await,
+                Target::HostPane { host, at, pane } => {
+                    if let Err(e) = crate::remote::open_at_pane(&host, &at, &pane).await {
+                        return Ok(Done::Stay(Some(format!("Could not go to {label}: {e}"))));
+                    }
+                }
                 Target::Session(name) => {
                     if let Err(e) = crate::cli::focus_session(&name).await {
                         return Ok(Done::Stay(Some(format!("Could not go to {name}: {e}"))));
@@ -926,14 +987,19 @@ async fn act(
             let on = b.quiet.is_none();
             let args = crate::proto::QuietArgs {
                 secs: Some(if on { 3600 } else { 0 }),
+                ..Default::default()
             };
             let line =
                 match crate::client::send(crate::proto::Request::build("__quiet", &args)).await {
                     Ok(r) if r.error.is_none() => {
                         let status = r.output.trim().to_string();
-                        match (on, status.starts_with("quiet for")) {
+                        match (on, crate::quiet::is_status_line(&status)) {
                             (true, _) => format!("Quiet hours on: {status}."),
                             (false, false) => "Quiet hours off.".to_string(),
+                            // A Focus is the system's to end, not this key's.
+                            (false, true) if status.starts_with("quiet while") => {
+                                format!("Still {status}; ending the Focus ends it.")
+                            }
                             // Off from the timer, but a daily window from the
                             // config is still running, and only the config ends
                             // that.
@@ -1069,6 +1135,7 @@ mod tests {
             accent: String::new(),
             pid: 0,
             identity: None,
+            mirrored: false,
         };
         let asked = |lines: &str| {
             crate::inbox::entry(
@@ -1154,6 +1221,7 @@ mod tests {
             accent: String::new(),
             pid: 0,
             identity: None,
+            mirrored: false,
         };
         crate::inbox::entry(
             &pane,

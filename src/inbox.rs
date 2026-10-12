@@ -46,9 +46,23 @@ pub struct Entry {
     /// one, and then [`Entry::question_line`] picks with the shipped list.
     #[serde(default)]
     pub question: String,
+    /// The host the agent runs on, for one another machine's daemon told
+    /// this one about over the link; empty for an agent here.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host: String,
 }
 
 impl Entry {
+    /// Where it is, in words: `api:1.0`, or `api:1.0 on vm` for an agent on
+    /// another host, so the host is said wherever the place is.
+    pub fn place(&self) -> String {
+        if self.host.is_empty() {
+            self.at.clone()
+        } else {
+            format!("{} on {}", self.at, self.host)
+        }
+    }
+
     /// The question, as one line.
     pub fn question_line(&self) -> String {
         if self.question.is_empty() {
@@ -89,7 +103,9 @@ pub fn step(
     waiting_secs: u64,
 ) -> Step {
     let mut out = Step::default();
-    for pane in panes {
+    // A grouped session another machine's mirror attached to lists every
+    // pane of its group again: the agents are the group's, once.
+    for pane in panes.iter().filter(|p| !p.mirrored) {
         if !panes::is_agent(pane.name(), programs) {
             continue;
         }
@@ -139,6 +155,7 @@ pub fn entry(
         question: question_in(&lines, skip),
         lines,
         state: state.word().to_string(),
+        host: String::new(),
     }
 }
 
@@ -360,7 +377,7 @@ pub async fn inbox_loop(
         );
         let seen: Vec<(String, State)> = panes
             .iter()
-            .filter(|p| panes::is_agent(p.name(), &config.programs))
+            .filter(|p| !p.mirrored && panes::is_agent(p.name(), &config.programs))
             .map(|p| {
                 let s = panes::state(
                     p,
@@ -459,7 +476,7 @@ pub async fn inbox_loop(
             let mut st = state.lock().await;
             st.agents_store(sample);
             st.nudged.retain(|id| kept.contains_key(id));
-            st.inbox = kept;
+            st.inbox_set(kept);
             // Quiet hours hold the nudge; the entry stays, so it fires when
             // quiet ends if the agent is still waiting.
             if st.is_quiet() {
@@ -504,7 +521,7 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
         for e in &entries {
             println!(
                 "{}\t{}\t{} {}\t{}\t{}",
-                e.at,
+                e.place(),
                 e.program,
                 e.state,
                 panes::age(now.saturating_sub(e.since)),
@@ -523,12 +540,19 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
             // Each state its one look, as everywhere: a `done` agent is here
             // to be read, not answered, so it is passive blue, not amber.
             let (icon, tone) = panes::word_look(&e.state);
+            // A host's agent arrives with its question and not its screen:
+            // the question is the preview.
+            let preview = if e.lines.is_empty() {
+                q.clone()
+            } else {
+                e.lines.clone()
+            };
             crate::picker::Item::with_preview(
-                format!("{} {} {} {} {}", e.at, e.program, e.state, age, q),
-                e.lines.clone(),
+                format!("{} {} {} {} {}", e.place(), e.program, e.state, age, q),
+                preview,
             )
             .in_cells(vec![
-                Cell::strong(&e.at),
+                Cell::strong(e.place()),
                 Cell::plain(&e.program),
                 Cell::new(&e.state, tone),
                 Cell::dim(age),
@@ -549,14 +573,45 @@ pub async fn run(print: bool) -> anyhow::Result<()> {
     if let Some(index) = crate::picker::run(items, "", &chrome)?
         && let Some(e) = entries.get(index)
     {
-        panes::jump(&e.id).await;
+        jump_to(e).await?;
     }
     Ok(())
+}
+
+/// Go to an entry's pane: here, the jump every picker makes; on a host,
+/// through its mirror session, with the pane chained after the attach.
+pub async fn jump_to(e: &Entry) -> anyhow::Result<()> {
+    if e.host.is_empty() {
+        panes::jump(&e.id).await;
+        Ok(())
+    } else {
+        crate::remote::open_at_pane(&e.host, &e.at, &e.id).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosts_agent_says_its_host_where_its_place_is() {
+        let mut e = Entry {
+            id: "%3".into(),
+            at: "api:1.0".into(),
+            program: "claude".into(),
+            path: String::new(),
+            since: 0,
+            lines: String::new(),
+            state: "asked".into(),
+            question: String::new(),
+            host: String::new(),
+        };
+        assert_eq!(e.place(), "api:1.0");
+        let local = serde_json::to_string(&e).expect("json");
+        assert!(!local.contains("host"), "a local entry's JSON is as it was");
+        e.host = "vm".into();
+        assert_eq!(e.place(), "api:1.0 on vm");
+    }
 
     fn pane(id: &str, command: &str, activity: u64, in_mode: bool) -> Pane {
         Pane {
@@ -577,6 +632,7 @@ mod tests {
             accent: String::new(),
             pid: 0,
             identity: None,
+            mirrored: false,
         }
     }
 

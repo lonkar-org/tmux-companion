@@ -45,7 +45,8 @@ pub fn count(
     waiting_secs: u64,
 ) -> AgentsSample {
     let mut sample = AgentsSample::default();
-    for pane in panes {
+    // A grouped session's panes are its group's, listed again.
+    for pane in panes.iter().filter(|p| !p.mirrored) {
         if !panes::is_agent(pane.name(), programs) {
             continue;
         }

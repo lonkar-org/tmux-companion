@@ -357,7 +357,14 @@ pub async fn take_snapshot(
     let mut exclude = config.exclude.clone();
     exclude.extend(extra_exclude.iter().cloned());
 
-    let sessions = tmux_out(&["list-sessions", "-F", super::capture::SESSION_FORMAT]).await;
+    let sessions = tmux_out(&[
+        "list-sessions",
+        "-f",
+        crate::link::NOT_MIRRORED,
+        "-F",
+        super::capture::SESSION_FORMAT,
+    ])
+    .await;
     let windows = tmux_out(&["list-windows", "-a", "-F", super::capture::WINDOW_FORMAT]).await;
     let panes = tmux_out(&["list-panes", "-a", "-F", super::capture::PANE_FORMAT]).await;
     let default_command = tmux_out(&["show-options", "-gv", "default-command"])

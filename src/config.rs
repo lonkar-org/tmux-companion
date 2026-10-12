@@ -105,6 +105,111 @@ pub struct Config {
     /// them.
     #[serde(default)]
     pub switcher: Switcher,
+    /// Other machines whose tmux-companion this daemon links to, one
+    /// `[[hosts]]` table each, in the order they are listed everywhere.
+    #[serde(default)]
+    pub hosts: Vec<Host>,
+}
+
+/// One other machine, reached by a command that opens ssh to it.
+///
+/// Every key but `name` and `command` has a default, per host, because
+/// `[hosts]` can't be both a table of defaults and an array of tables.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Host {
+    /// The word on every row and in every announcement: letters, digits, `-`
+    /// and `_`, up to 32, since it ends up in session names, file names and
+    /// shell lines.
+    pub name: String,
+    /// One argv that opens ssh to the host, `["ssh", "vm"]` or a wrapper that
+    /// ends in ssh. The remote command is appended as one last argument.
+    pub command: Vec<String>,
+    /// When the link is up: `on-demand`, `while-attached` or `off`.
+    #[serde(default)]
+    pub link: LinkMode,
+    /// Seconds between two `sessions` questions while the link is up.
+    #[serde(default = "Host::default_poll_secs")]
+    pub poll_secs: u64,
+    /// Seconds an on-demand link stays up after the last thing that needed it.
+    #[serde(default = "Host::default_idle_secs")]
+    pub idle_secs: u64,
+    /// Seconds the host has to say hello, or answer a question, before the
+    /// link is called down.
+    #[serde(default = "Host::default_connect_secs")]
+    pub connect_secs: u64,
+    /// Seconds between two pings while the link is watching rather than
+    /// polling; three unanswered and the link is restarted.
+    #[serde(default = "Host::default_ping_secs")]
+    pub ping_secs: u64,
+    /// What picking one of its sessions does: `mirror` or `handover`.
+    #[serde(default)]
+    pub open: HostOpen,
+}
+
+impl Host {
+    fn default_poll_secs() -> u64 {
+        5
+    }
+    fn default_idle_secs() -> u64 {
+        600
+    }
+    fn default_connect_secs() -> u64 {
+        10
+    }
+    fn default_ping_secs() -> u64 {
+        15
+    }
+
+    /// A host with every key but its name and command at the default.
+    pub fn new(name: &str, command: Vec<String>) -> Self {
+        Self {
+            name: name.to_string(),
+            command,
+            link: LinkMode::default(),
+            poll_secs: Self::default_poll_secs(),
+            idle_secs: Self::default_idle_secs(),
+            connect_secs: Self::default_connect_secs(),
+            ping_secs: Self::default_ping_secs(),
+            open: HostOpen::default(),
+        }
+    }
+}
+
+/// The values [`Host::link`] takes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LinkMode {
+    /// No link until something asks for the host, and none again
+    /// `idle_secs` after the last ask.
+    #[default]
+    OnDemand,
+    /// Up while any client is attached to the local tmux server.
+    WhileAttached,
+    /// Never.
+    Off,
+}
+
+impl LinkMode {
+    /// The value as the config spells it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::OnDemand => "on-demand",
+            Self::WhileAttached => "while-attached",
+            Self::Off => "off",
+        }
+    }
+}
+
+/// The values [`Host::open`] takes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostOpen {
+    /// A local session `api@vm` whose pane attaches to the host's.
+    #[default]
+    Mirror,
+    /// This terminal's client is handed to the host's tmux.
+    Handover,
 }
 
 /// How `switch` behaves: what the first press does, and what commits.
@@ -185,6 +290,11 @@ pub struct Quiet {
     /// Windows of local time, `"22:00-08:00"`, quiet every day. One may cross
     /// midnight.
     pub daily: Vec<String>,
+    /// Quiet while the system's do-not-disturb is on: on macOS a Focus, read
+    /// from the Focus database the system keeps; on Linux the desktop's Do Not
+    /// Disturb, followed over the session bus (`dnd`). Off by default: macOS's
+    /// format is Apple's and undocumented and can need Full Disk Access.
+    pub follow_focus: bool,
 }
 
 /// Keys tmux and the apps in its panes both want: the registry
@@ -1644,6 +1754,7 @@ impl Default for Config {
             quiet: Quiet::default(),
             toggle: None,
             switcher: Switcher::default(),
+            hosts: Vec::new(),
         }
     }
 }
@@ -1845,6 +1956,10 @@ impl Default for Restore {
                 row("^(htop|top|btop|watch)( |$)", "{command}"),
                 row("^(tail|less|journalctl)( |$)", "{command}"),
                 row("^ssh( |$)", "{command}"),
+                // A mirror session's shim, reopened waiting for `r`: a
+                // resurrect after a reboot shouldn't start a dozen ssh
+                // handshakes at once, or any before somebody asks.
+                row("^tmux-companion host attach ", "{command} --wait"),
             ],
         }
     }
@@ -2845,6 +2960,14 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
         });
     }
 
+    if let Err(message) = check_hosts(&config.hosts) {
+        return Err(ConfigError {
+            path: path.to_path_buf(),
+            message,
+            did_you_mean: None,
+        });
+    }
+
     let name = &config.project.dirs_source;
     if crate::dirsource::DirsSource::from_name(name).is_none() {
         let known: Vec<String> = crate::dirsource::NAMES
@@ -2861,6 +2984,42 @@ fn validate(config: Config, path: &std::path::Path) -> Result<Config, ConfigErro
         });
     }
     Ok(config)
+}
+
+/// What a `[[hosts]]` list can get wrong that serde can't say: a name that
+/// can't go into a session or file name, two hosts with one name, an empty
+/// command, a zero interval.
+pub fn check_hosts(hosts: &[Host]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for h in hosts {
+        crate::hosts::check_name(&h.name).map_err(|e| format!("`[[hosts]] name`: {e}"))?;
+        if !seen.insert(h.name.as_str()) {
+            return Err(format!(
+                "`[[hosts]]` has two hosts called `{}`, and the name is how every row and file tells them apart",
+                h.name
+            ));
+        }
+        if h.command.is_empty() || h.command[0].trim().is_empty() {
+            return Err(format!(
+                "`[[hosts]]` `{}` has an empty `command`; it is the argv that opens ssh to the host, like [\"ssh\", \"{}\"]",
+                h.name, h.name
+            ));
+        }
+        for (key, value) in [
+            ("poll_secs", h.poll_secs),
+            ("idle_secs", h.idle_secs),
+            ("connect_secs", h.connect_secs),
+            ("ping_secs", h.ping_secs),
+        ] {
+            if value == 0 {
+                return Err(format!(
+                    "`[[hosts]]` `{}` has `{key} = 0`, and it is a number of seconds, at least 1",
+                    h.name
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What the config says that still works but should be spelled another way.

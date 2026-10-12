@@ -1,6 +1,6 @@
 [package]
 name = "tmux-companion"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2024"
 # The floor the locked tree builds on, not the floor the source needs: the
 # code itself wants 1.88 (let chains), and sysinfo 0.39.3 in Cargo.lock wants
@@ -21,6 +21,7 @@ categories = ["command-line-utilities", "development-tools"]
 # are for working on this repository rather than building it.
 include = [
     "/src/**/*",
+    "/schema/**/*",
     "/build.rs",
     "/Cargo.toml",
     "/Cargo.lock",
@@ -64,8 +65,26 @@ ratatui = "0.30.0"
 nucleo-matcher = "0.3.1"
 toml_edit = "0.25.15"
 unicode-width = "0.2"
+# The link to another host's daemon: Cap'n Proto RPC over the stdio of an ssh
+# session. The Rust the schema compiles to is committed beside it in
+# schema/, so no build needs the `capnp` tool; `just capnp` regenerates it.
+capnp       = "0.27.2"
+capnp-rpc   = "0.27.0"
+futures     = "0.3.34"
+tokio-util  = { version = "0.7.19", features = ["compat"] }
+
+# The Linux desktop's do-not-disturb, for `[quiet] follow_focus`: one
+# session-bus connection holding a few signal subscriptions. Pure Rust, so the
+# static musl build keeps working, MIT; tokio only, no second executor.
+# docs/dev/design-quiet-focus.md says why D-Bus and not a process per look.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 tempfile = "3.12"
 # Paused time, for the push loop's tick test.
 tokio = { version = "1.40", features = ["test-util"] }
+
+# tests/e2e.rs plays a desktop on a private bus to drive `dnd::watch`.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }

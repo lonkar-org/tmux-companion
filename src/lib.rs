@@ -108,9 +108,13 @@ pub mod config;
 #[doc(hidden)]
 pub mod dirsource;
 #[doc(hidden)]
+pub mod dnd;
+#[doc(hidden)]
 pub mod doctor;
 #[doc(hidden)]
 pub mod earcons;
+#[doc(hidden)]
+pub mod hosts;
 #[doc(hidden)]
 pub mod identity;
 #[doc(hidden)]
@@ -123,6 +127,16 @@ pub mod jump;
 pub mod keys;
 #[doc(hidden)]
 pub mod kill;
+#[doc(hidden)]
+pub mod link;
+/// The Rust `capnp compile` writes for `schema/link.capnp`, committed so no
+/// build needs the tool; `just capnp` regenerates it. At the crate root
+/// because the generated paths name `crate::link_capnp`.
+#[doc(hidden)]
+#[allow(missing_docs, unused_qualifications, clippy::all, clippy::pedantic)]
+pub mod link_capnp {
+    include!("../schema/link_capnp.rs");
+}
 #[doc(hidden)]
 pub mod local;
 #[doc(hidden)]
@@ -153,6 +167,8 @@ pub mod promote;
 pub mod push;
 #[doc(hidden)]
 pub mod quiet;
+#[doc(hidden)]
+pub mod remote;
 #[doc(hidden)]
 pub mod repofile;
 #[doc(hidden)]

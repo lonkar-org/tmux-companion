@@ -78,7 +78,8 @@ set -g status-right-style default
 # sh-jobs is a #() of its own, so 14.6 ms/s of spawn plus 16.25 ms of server
 # CPU per call for the process-table scan. Configure what it draws in
 # [[sh_jobs.job]]. Drop this line if the marker is not worth that to you.
-set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
+# Not in a mirror session, whose panes are another machine's.
+set -g  status-right "#{?@tc-host,,#(tmux-companion sh-jobs #{pane_pid})}"
 
 # git, bandwidth and battery, computed concurrently and returned in one call.
 #
@@ -95,7 +96,11 @@ set -g  status-right "#(tmux-companion sh-jobs #{pane_pid})"
 # which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
 # per attached client per second; docs/BENCHMARKS.md has the numbers.
 # After a switch the bar follows in tens of ms in either mode, push the sooner.
-set -ga status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
+# In a mirror session (`api@vm`, a session on another machine opened from
+# M-s) @tc-host is set and the right side is the host's segments, which the
+# daemon sets as @tc-right in every bar mode: the call would show this
+# machine's directory of the pane that runs the attach.
+set -ga status-right "#{?@tc-host,#{@tc-right},#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}}"
 set -g  status-right-length 150
 
 # ── The left side ───────────────────────────────────────────────────────────
@@ -108,12 +113,20 @@ set -g  status-right-length 150
 # No subprocess here: the session name is tmux's own, and the colours are the
 # options `theme apply` writes, so picking a theme repaints this block without
 # anything having to run.
-set -g  status-left "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
+# The host colour, set once: another machine's name is drawn in it on the bar
+# (the ssh hostname, the `@vm` of a mirror session) and in the session
+# switcher's rows, so a host looks the same wherever it is drawn.
+set -g @tc-host-fg colour203
+set -g @tc-host-bg colour233
+#
+# In a mirror session the name is the host's session, then `@vm` and the ssh
+# glyph in the host colour: the words say where you are, the colour repeats it.
+set -g  status-left "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #{?@tc-host,#{@tc-remote}#[fg=#{@tc-host-fg}#,bg=#{@tc-host-bg}]@#{@tc-host} 󰣀,#S} "
 
 # The hostname, only when this server was started over ssh, because on a local
-# machine it is a word you already know.
+# machine it is a word you already know. In the host colour above.
 if-shell '[ -n "$SSH_CONNECTION" ]' \
-  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
+  'set -ga status-left "#[fg=#{@tc-host-fg},bg=#{@tc-host-bg}] 󰣀 #h"'
 
 set -ga status-left "#[fg=color240,bg=color233] %H:%M:%S"
 
@@ -264,6 +277,16 @@ bind -N "companion: window which pane listens on which port" P \
 %else
 bind -N "companion: window which pane listens on which port" P \
   display-popup -E -w 80% -h 70% "tmux-companion ports"
+%endif
+# Another machine in the session list: a form asking for its name and the
+# command that opens ssh to it, which tests the command with one hello before
+# keeping it. In M-s, ctrl-n on a host's line opens the same form.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: project add a host to the session list" M-h \
+  display-popup -B -E -w 70% -h 30% "tmux-companion hosts add"
+%else
+bind -N "companion: project add a host to the session list" M-h \
+  display-popup -E -w 70% -h 30% "tmux-companion hosts add"
 %endif
 %if "#{>=:#{version},3.3}"
 bind -N "companion: project the agents waiting on you" M-g \

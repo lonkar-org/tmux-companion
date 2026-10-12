@@ -1,7 +1,7 @@
 //! The server half: bind the socket, accept forever, hand each line to a
 //! handler.
 mod handlers;
-pub(crate) use handlers::{RightParts, git_part, health_check, right_parts};
+pub(crate) use handlers::{RightParts, git_part, health_check, health_reasons, right_parts};
 /// Server state and its caches.
 pub mod state;
 
@@ -254,9 +254,39 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
 
+    // Quiet while the system's do-not-disturb is on. On macOS a `stat` of the
+    // Focus database every two seconds and a read when it changed; on Linux
+    // one session-bus connection and its signals, no timer. Elsewhere
+    // `quiet --focus` from a hook is the way in.
+    if config.quiet.follow_focus
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let home = std::path::Path::new(&home);
+        #[cfg(target_os = "macos")]
+        tokio::spawn(crate::quiet::focus_loop(
+            Arc::clone(&state),
+            crate::quiet::focus_dir(home),
+        ));
+        #[cfg(target_os = "linux")]
+        tokio::spawn(crate::dnd::follow(
+            Arc::clone(&state),
+            crate::dnd::dconf_user_db(home, std::env::var("XDG_CONFIG_HOME").ok().as_deref()),
+        ));
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = home;
+    }
+
     if config.chunk.enabled {
         tokio::spawn(crate::chunk::chunk_loop(Arc::clone(&state)));
     }
+
+    // Other machines: each host from config.toml and the tmux server, its
+    // cached sessions read from disk, and a thread for each whose link isn't
+    // off. A host with no ask and no attached client starts nothing.
+    crate::link::manager::start(&state).await;
+    // The bar of each mirror session, from its host, in every bar mode. With
+    // no host it reads nothing.
+    tokio::spawn(crate::link::mirror::mirror_loop(Arc::clone(&state)));
 
     if config.autoreload.enabled {
         tokio::spawn(crate::autoreload::autoreload_loop(

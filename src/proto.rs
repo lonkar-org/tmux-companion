@@ -67,13 +67,74 @@ pub struct SetupFacts {
 }
 
 #[doc(hidden)]
-/// `quiet`: how long to be quiet for, zero for off, nothing to only ask.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+/// `quiet`: how long to be quiet for, zero for off, nothing to only ask; and
+/// a Focus that started or ended.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct QuietArgs {
     /// Seconds of quiet from now; `Some(0)` turns it off; `None` asks.
     #[serde(default)]
     pub secs: Option<u64>,
+    /// A Focus started, under this name: quiet until it ends.
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// The Focus ended.
+    #[serde(default)]
+    pub focus_off: bool,
+}
+
+#[doc(hidden)]
+/// `__hosts`: every host and its link, after an optional ask or reload.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostsArgs {
+    /// Start or retry a host's link now: its name, or empty for every host.
+    #[serde(default)]
+    pub connect: Option<String>,
+    /// Read `[[hosts]]` and `@tc-hosts` again first.
+    #[serde(default)]
+    pub reload: bool,
+    /// With `forget_session`, the host whose cached row to forget.
+    #[serde(default)]
+    pub forget_host: Option<String>,
+    /// The session whose cached row to forget; the next poll brings it back
+    /// if it is still there.
+    #[serde(default)]
+    pub forget_session: Option<String>,
+}
+
+#[doc(hidden)]
+/// `__host_dirs`: a host's directories, through its link.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostDirsArgs {
+    /// The host, by its name in `hosts`.
+    pub host: String,
+}
+
+#[doc(hidden)]
+/// `__link_segments`: one session's bar segments, for a bridge.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinkSegmentsArgs {
+    /// `#{session_name}`.
+    pub session: String,
+}
+
+#[doc(hidden)]
+/// `__link_watch`: what a bridge's `watch` waits on. Answered at once
+/// without `since`, otherwise once something may have changed after the
+/// generation it names, or after a while with nothing.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinkWatchArgs {
+    /// The generation the last answer carried.
+    #[serde(default)]
+    pub since: Option<u64>,
+    /// The machine whose grouped sessions' segments are wanted: their
+    /// `@tc-mirror`.
+    #[serde(default)]
+    pub machine: String,
 }
 
 /// `chunk`: one action on the chunk clock's sitting.

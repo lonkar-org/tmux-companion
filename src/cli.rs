@@ -396,6 +396,11 @@ pub enum Cmd {
         /// Print the rows and exit, opening nothing
         #[arg(long, conflicts_with = "dir")]
         print: bool,
+        /// With DIR: make its session and print the session's name, and
+        /// switch to nothing and attach nothing. What a mirror session runs
+        /// on its host before the attach
+        #[arg(long, requires = "dir")]
+        detached: bool,
     },
 
     /// Snapshots of every session, kept in generations
@@ -588,9 +593,22 @@ pub enum Cmd {
         /// How long: `45m`, `2h`, `90s`, or a bare number of minutes;
         /// nothing asks how long is left
         duration: Option<String>,
-        /// End quiet hours now
+        /// End quiet hours now; a Focus that is on stays on
         #[arg(long, conflicts_with = "duration")]
         off: bool,
+        /// A Focus started: quiet until `--focus-off`, named on the health
+        /// line. For a Shortcuts automation, or any hook, to call
+        #[arg(
+            long,
+            value_name = "NAME",
+            num_args = 0..=1,
+            default_missing_value = crate::quiet::UNNAMED_FOCUS,
+            conflicts_with_all = ["duration", "off", "focus_off"]
+        )]
+        focus: Option<String>,
+        /// The Focus ended
+        #[arg(long, conflicts_with_all = ["duration", "off"])]
+        focus_off: bool,
     },
 
     /// The chunk clock: how long you've been at tmux this sitting, and
@@ -635,6 +653,30 @@ pub enum Cmd {
         /// What to do
         #[command(subcommand)]
         action: ThemeAction,
+    },
+
+    /// Other machines' tmux-companion: each host, its link and its
+    /// sessions, one line each; `add` adds one, `connect` brings one's link up
+    Hosts {
+        /// `add` or `connect`, or nothing to list
+        #[command(subcommand)]
+        action: Option<crate::hosts::HostsAction>,
+    },
+
+    /// One other machine's session, from this one: `host attach vm api` is
+    /// what a mirror session's pane runs
+    Host {
+        #[command(subcommand)]
+        action: crate::remote::HostAction,
+    },
+
+    /// Serve the link on stdin and stdout, for another machine's daemon:
+    /// what a host command runs on this machine, not something to type
+    Bridge {
+        /// Serve only these methods, comma-separated, as an older bridge
+        /// would; for tests
+        #[arg(long, hide = true)]
+        methods: Option<String>,
     },
 
     /// Inspect the configuration file
@@ -1069,7 +1111,9 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 print,
                 pressed,
             } => run_switch_windows(session, client, reverse, print, pressed).await?,
-            SwitchWhat::Sessions { reverse, print } => run_switch_sessions(reverse, print).await?,
+            SwitchWhat::Sessions { reverse, print, at } => {
+                run_switch_sessions(reverse, print, at).await?
+            }
         },
         // Silent on purpose: from run-shell anything printed opens a view
         // over the pane on every press. The CHANGELOG says to rebind.
@@ -1078,7 +1122,12 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         }
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
-        Cmd::Project { action, dir, print } => match action {
+        Cmd::Project {
+            action,
+            dir,
+            print,
+            detached,
+        } => match action {
             Some(ProjectAction::Save { no_commands }) => run_project_save(!no_commands).await?,
             Some(ProjectAction::Forget { dir }) => run_project_forget(dir).await?,
             Some(ProjectAction::Show { dir }) => run_project_show(dir).await?,
@@ -1087,7 +1136,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 discard,
                 no_save,
             }) => run_close_project(session, discard, !no_save).await?,
-            None => run_project(dir, print).await?,
+            None => run_project(dir, print, detached).await?,
         },
         Cmd::Sessions { action } => match action {
             SessionsAction::Export { file, stamp } => {
@@ -1248,12 +1297,27 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             target,
             days,
         } => crate::journal::run(print, target, days).await?,
-        Cmd::Quiet { duration, off } => crate::quiet::run(duration, off).await?,
+        Cmd::Quiet {
+            duration,
+            off,
+            focus,
+            focus_off,
+        } => {
+            let change = match (focus, focus_off) {
+                (Some(name), _) => Some(crate::quiet::FocusChange::On(name)),
+                (None, true) => Some(crate::quiet::FocusChange::Off),
+                (None, false) => None,
+            };
+            crate::quiet::run(duration, off, change).await?
+        }
         Cmd::Chunk { action } => crate::chunk::run(action).await?,
         Cmd::Health { action } => run_health(action.is_some()).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
+        Cmd::Hosts { action } => crate::hosts::run(action).await?,
+        Cmd::Host { action } => crate::remote::run(action).await?,
+        Cmd::Bridge { methods } => crate::link::bridge::run(methods).await?,
         // No `Request::build` and no args struct in proto.rs: the checklist
         // reads tmux and the config itself and draws in this terminal. The
         // daemon is asked one raw question, `__setup`, for what only it saw.
@@ -2208,7 +2272,7 @@ async fn run_start(dir: Option<String>, last: bool, hook: bool) -> anyhow::Resul
         return run_start_hook().await;
     }
     if dir.is_some() {
-        return run_project(dir, false).await;
+        return run_project(dir, false, false).await;
     }
     if last {
         let listing = tmux_capture(&[
@@ -2223,7 +2287,7 @@ async fn run_start(dir: Option<String>, last: bool, hook: bool) -> anyhow::Resul
         // Nothing to go back to, so ask rather than failing: `--last` on a
         // machine that has just booted is the same situation as no flag.
     }
-    run_project(None, false).await
+    run_project(None, false, false).await
 }
 
 /// `start --hook`: the `client-attached` half, which decides for itself.
@@ -2267,7 +2331,7 @@ async fn run_start_hook() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
+async fn run_project(dir: Option<String>, print: bool, detached: bool) -> anyhow::Result<()> {
     use crate::project::Kind;
 
     let config = config_or_default();
@@ -2281,6 +2345,14 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
         let Some(path) = crate::project::resolve_typed(&dir, &cwd, &home) else {
             anyhow::bail!("no such directory: {dir}");
         };
+        // The session made and its name said, nothing switched: on a host,
+        // the attach that follows is the other machine's mirror session.
+        if detached {
+            let name = crate::project::session_name(&path);
+            build_project_session(&name, &path, &config, &home).await;
+            println!("{name}");
+            return Ok(());
+        }
         return open_project(&path, &config, &home).await;
     }
 
@@ -2296,10 +2368,19 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     // list, the directory source and every theme file.
     let _loading = (!print).then(|| crate::picker::loading(&chrome, ""));
 
-    let rows = crate::project::collect(&config, &home).await;
+    let found = project_rows(&config, &home).await;
+    let ProjectRows {
+        sessions,
+        remote,
+        views,
+        dirs,
+        here,
+        dirs_failed,
+    } = found;
+    let now = crate::sessions::idle::now();
 
     if print {
-        for row in &rows {
+        let print_row = |row: &crate::project::Row| {
             println!(
                 "{}\t{}\t{}\t{}",
                 match row.kind {
@@ -2310,11 +2391,47 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
                 crate::project::short_path(&row.path, &home),
                 row.colour.clone().unwrap_or_default()
             );
+        };
+        sessions.iter().for_each(print_row);
+        // A host's group line says where it is, its reason when it can't
+        // be reached included; its sessions say they are the host's.
+        for r in &remote {
+            match &r.target {
+                crate::remote::Target::Group(h) => {
+                    let line = views
+                        .iter()
+                        .find(|v| v.name == *h)
+                        .map_or(r.line.clone(), |v| crate::remote::group_line(v, now, true));
+                    println!("host\t{line}\t\t");
+                }
+                crate::remote::Target::Session { host, name, .. } => {
+                    let path = views
+                        .iter()
+                        .find(|v| v.name == *host)
+                        .and_then(|v| v.sessions.iter().find(|s| s.name == *name))
+                        .map(|s| s.path.clone())
+                        .unwrap_or_default();
+                    println!("session\t{}\t{path}\t", r.line);
+                }
+            }
         }
+        if let Some(why) = &dirs_failed {
+            println!("dirs\t{why}\t\t");
+        }
+        dirs.iter().for_each(print_row);
         return Ok(());
     }
+    if let Some(why) = &dirs_failed {
+        crate::remote::say(why).await;
+    }
 
-    let items = project_items(&rows, &config, &home);
+    let n_local = sessions.len();
+    let n_remote = remote.len();
+    let mut items = project_items(&sessions, &config, &home);
+    items.extend(crate::remote::items(&remote, &views, now));
+    items.extend(project_items(&dirs, &config, &home));
+    let mut rows = sessions;
+    rows.extend(dirs);
 
     let chrome = crate::picker::Chrome {
         // M-s opens this picker, so M-s again goes back where you were.
@@ -2325,19 +2442,122 @@ async fn run_project(dir: Option<String>, print: bool) -> anyhow::Result<()> {
     };
 
     let outcome = crate::picker::run_with_query(items, "", &chrome)?;
+    // A host's row: its session opens as a mirror session, its group line
+    // retries the link, as in the session switcher.
+    if let crate::picker::Outcome::Chosen(i) = outcome
+        && (n_local..n_local + n_remote).contains(&i)
+    {
+        return match &remote[i - n_local].target {
+            crate::remote::Target::Group(host)
+            | crate::remote::Target::Session {
+                host,
+                reachable: false,
+                ..
+            } => {
+                crate::remote::retry(host).await;
+                Ok(())
+            }
+            crate::remote::Target::Session { host, name, .. } => {
+                crate::remote::open(host, name, false, false).await
+            }
+        };
+    }
+    let outcome = match outcome {
+        crate::picker::Outcome::Chosen(i) if i >= n_local + n_remote => {
+            crate::picker::Outcome::Chosen(i - n_remote)
+        }
+        o => o,
+    };
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    match project_pick(&outcome, &rows, &cwd, &home) {
+    match project_pick(&outcome, &rows, &cwd, &home, here.as_deref()) {
         // Switched to by its own name: deriving one from the path is wrong for
         // any session whose path is not a project directory.
         ProjectPick::Session(name) => focus_session(&name).await,
         ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
+        ProjectPick::HostDirectory(host, path) => crate::remote::open_project(&host, &path).await,
         ProjectPick::Missing(typed) => {
             crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
             Ok(())
         }
         ProjectPick::Nothing => Ok(()),
+    }
+}
+
+/// What the project picker lists, in its order: this server's sessions,
+/// each host's group line and sessions, then the directories of one place.
+pub(crate) struct ProjectRows {
+    /// This server's sessions, most recently used first.
+    sessions: Vec<crate::project::Row>,
+    /// Every host's rows, as the session switcher shows them.
+    remote: Vec<crate::remote::Row>,
+    /// The hosts the remote rows came from.
+    views: Vec<crate::link::manager::HostView>,
+    /// The directories: this machine's source, or inside a mirror session
+    /// that host's, through its link.
+    dirs: Vec<crate::project::Row>,
+    /// The host whose mirror session the picker was opened in.
+    here: Option<String>,
+    /// Why a host's directories aren't listed, when they aren't.
+    dirs_failed: Option<String>,
+}
+
+/// The host a mirror session stands on, when the session the picker opened
+/// from is one: the first row, which recency puts there. Only inside tmux,
+/// since outside it no session is the one you are in.
+pub(crate) fn here_host(sessions: &[crate::project::Row]) -> Option<String> {
+    std::env::var_os("TMUX")?;
+    sessions
+        .first()
+        .and_then(|r| r.mirror.as_ref())
+        .map(|(host, _)| host.clone())
+}
+
+/// Collect [`ProjectRows`]. The local directory source starts beside the
+/// session list, as it always has, and is dropped unread when the session
+/// list says the picker is in a mirror session, whose directories are its
+/// host's.
+async fn project_rows(config: &crate::config::Config, home: &str) -> ProjectRows {
+    let local_dirs = {
+        let (config, home) = (config.clone(), home.to_string());
+        tokio::spawn(async move { crate::project::directories(&config, &home).await })
+    };
+    let sessions = crate::project::sessions(&[]).await;
+    let views = crate::remote::views_for_picker();
+    let now = crate::sessions::idle::now();
+    let open = crate::remote::open_mirrors(&sessions);
+    let remote = crate::remote::rows(&views, &open, now);
+    let here = here_host(&sessions);
+    let (sessions, dirs, dirs_failed) = match &here {
+        Some(host) => {
+            local_dirs.abort();
+            match crate::remote::host_dirs(host).await {
+                Ok(paths) => (
+                    sessions,
+                    crate::remote::dir_rows(host, &paths, &views),
+                    None,
+                ),
+                Err(why) => (sessions, Vec::new(), Some(why)),
+            }
+        }
+        None => {
+            let found = local_dirs.await.unwrap_or_default();
+            // `merge`, as the picker always has: a directory a session
+            // stands for goes, and so does a second session in one place.
+            let (sessions, dirs) = crate::project::merge(sessions, found)
+                .into_iter()
+                .partition(|r| r.kind == crate::project::Kind::Session);
+            (sessions, dirs, None)
+        }
+    };
+    ProjectRows {
+        sessions,
+        remote,
+        views,
+        dirs,
+        here,
+        dirs_failed,
     }
 }
 
@@ -2372,7 +2592,23 @@ pub(crate) fn project_items(
         // would still pad the path out to the widest row.
         let idle = crate::project::idle_column(r);
         let mut label = format!("{mark} {} {}", r.label, where_it_is);
-        let mut cells = vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)];
+        let mut cells = match (&r.kind, &r.mirror) {
+            // A host's directory: `api@vm` in the words, with `@vm` in the
+            // host tone as a remote session's row has it.
+            (Kind::Directory, Some((host, _))) => {
+                let base = r
+                    .label
+                    .strip_suffix(&format!("@{host}"))
+                    .unwrap_or(&r.label)
+                    .to_string();
+                vec![
+                    Cell::new(base, name),
+                    Cell::new(format!("@{host}"), Tone::Host),
+                    Cell::dim(where_it_is),
+                ]
+            }
+            _ => vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)],
+        };
         if let Some(idle) = idle {
             // In the label too, so typing `idle` filters down to them.
             label.push(' ');
@@ -2405,6 +2641,9 @@ pub(crate) enum ProjectPick {
     Session(String),
     /// A directory, listed or typed, to open a session in.
     Directory(String),
+    /// A directory on a host, listed or typed inside one of its mirror
+    /// sessions: the host, then the path as the host will read it.
+    HostDirectory(String, String),
     /// A typed path that is not a directory, as it was typed.
     Missing(String),
     /// Cancelled, or enter on an empty query.
@@ -2414,21 +2653,33 @@ pub(crate) enum ProjectPick {
 /// A row picked, or the query when enter matched nothing (or alt-enter asked
 /// for the query itself): the one way into a directory the source has never
 /// listed, which the footer has always promised.
+///
+/// `here` is the host whose mirror session the picker opened in: a path
+/// typed there is the host's to read, so it goes to the host as typed.
 pub(crate) fn project_pick(
     outcome: &crate::picker::Outcome,
     rows: &[crate::project::Row],
     cwd: &str,
     home: &str,
+    here: Option<&str>,
 ) -> ProjectPick {
     use crate::picker::Outcome;
-    use crate::project::Kind;
+    use crate::project::{Kind, Row};
     match outcome {
         Outcome::Chosen(i) => match rows.get(*i) {
             Some(r) if r.kind == Kind::Session => ProjectPick::Session(r.label.clone()),
+            Some(Row {
+                mirror: Some((host, _)),
+                path,
+                ..
+            }) => ProjectPick::HostDirectory(host.clone(), path.clone()),
             Some(r) => ProjectPick::Directory(r.path.clone()),
             None => ProjectPick::Nothing,
         },
         Outcome::Typed(q) if q.trim().is_empty() => ProjectPick::Nothing,
+        Outcome::Typed(q) if here.is_some() => {
+            ProjectPick::HostDirectory(here.unwrap_or_default().to_string(), q.trim().to_string())
+        }
         Outcome::Typed(q) => match crate::project::resolve_typed(q, cwd, home) {
             Some(path) => ProjectPick::Directory(path),
             None => ProjectPick::Missing(q.trim().to_string()),
@@ -2559,9 +2810,15 @@ pub enum SwitchWhat {
         /// Start on the oldest session instead
         #[arg(long)]
         reverse: bool,
-        /// Print the session names, most recent first, and exit
+        /// Print the session names, most recent first, then each host's
+        /// line and its sessions, and exit
         #[arg(long)]
         print: bool,
+        /// Internal: open with the cursor on this row, `host:vm`,
+        /// `remote:vm:api` or `local:api`, after a question on the message
+        /// line closed the popup
+        #[arg(long, hide = true)]
+        at: Option<String>,
     },
 }
 
@@ -3693,127 +3950,365 @@ async fn run_switch_windows(
 /// goes; there is no clock. The directories are in the list from the start
 /// and hidden until something is typed, so the first letter is the project
 /// picker's search and a typed path opens as it does there.
-async fn run_switch_sessions(reverse: bool, print: bool) -> anyhow::Result<()> {
+async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> anyhow::Result<()> {
     let config = config_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let settings = &config.switcher;
     let key = settings.sessions_key;
     let upper = key.to_ascii_uppercase();
+    let mut at = at;
+    let mut start_index: Option<usize> = None;
 
-    let chrome = crate::picker::Chrome {
-        title: "[ Sessions/Projects ]".into(),
-        icon: crate::tmux::icons::SESSION.into(),
-        footer: format!(
-            "enter go   alt-{key} next   alt-{upper} back   esc stay   type to search projects"
-        ),
-        preview_title: "[ Where ]".into(),
-        ..Default::default()
-    }
-    .configured(&config.picker, crate::config::Picker::Project);
+    loop {
+        // The sessions alone before the first frame: one tmux call, the hooks
+        // chained in front, and one question to a daemon already running for
+        // each host's rows, which it answers from memory or its cache on disk
+        // and which asks it to bring each on-demand link up afterwards. The
+        // directories are hidden until a letter is typed, so collecting them
+        // (the source's process and every theme file) waits until the frame
+        // is up; see `picker::Later`.
+        let sessions = crate::project::sessions(&crate::switcher::hooks()).await;
+        let views = crate::remote::views_for_picker();
+        // Inside a mirror session a typed path is the host's: its
+        // directories are listed and a path opens there.
+        let here = here_host(&sessions);
+        let now = crate::sessions::idle::now();
+        let open = crate::remote::open_mirrors(&sessions);
+        let remote_rows = crate::remote::rows(&views, &open, now);
 
-    // The sessions alone before the first frame: one tmux call, the hooks
-    // chained in front. The directories are hidden until a letter is typed,
-    // so collecting them (the source's process and every theme file) waits
-    // until the frame is up; see `picker::Later`.
-    let sessions = crate::project::sessions(&crate::switcher::hooks()).await;
-
-    if print {
-        for r in &sessions {
-            println!("{}", r.label);
-        }
-        return Ok(());
-    }
-
-    let mut items = project_items(&sessions, &config, &home);
-    // The session you are in says so in words, not only by being first.
-    if let Some(first) = items.first_mut() {
-        first.columns.push("now".into());
-        first.tones.push(crate::picker::Tone::Dim);
-    }
-
-    // The directories' rows, kept for after the pick: an index past the
-    // sessions is one of them.
-    let directories = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let later = {
-        let (config, home, sessions) = (config.clone(), home.clone(), sessions.clone());
-        let keep = directories.clone();
-        crate::picker::Later::new(move || {
-            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            else {
-                return Vec::new();
-            };
-            let found = rt.block_on(crate::project::directories(&config, &home));
-            // A directory a session already stands for is left out, as
-            // `merge` leaves it out of the project picker. Not through
-            // `merge` itself: it would drop a second session in the same
-            // directory as well, and the sessions are already listed.
-            let taken: std::collections::HashSet<String> =
-                sessions.iter().map(|r| r.path.clone()).collect();
-            let rows = crate::project::merge(
-                Vec::new(),
-                found
-                    .into_iter()
-                    .filter(|r| !taken.contains(&r.path))
-                    .collect(),
-            );
-            let items: Vec<crate::picker::Item> = project_items(&rows, &config, &home)
-                .into_iter()
-                .map(crate::picker::Item::searched_only)
-                .collect();
-            if let Ok(mut k) = keep.lock() {
-                *k = rows;
+        if print {
+            for r in &sessions {
+                println!("{}", r.label);
             }
-            items
-        })
-    };
-
-    // Sessions come first in `rows`, so a session's index is its place.
-    let n = sessions.len();
-    let start = match (n, reverse) {
-        (0 | 1, _) => 0,
-        (_, false) => 1,
-        (_, true) => n - 1,
-    };
-    let on_step = settings.announce.then(|| {
-        let names: Vec<String> = sessions.iter().map(|r| r.label.clone()).collect();
-        crate::picker::OnStep::new(move |i| {
-            // A directory is reached by searching, and is not a step.
-            let Some(name) = names.get(i) else {
-                return;
-            };
-            let text = crate::switcher::announcement(name, i + 1, names.len());
-            let _ = crate::tmux::command_sync()
-                .args(["display-message", &crate::picker::literal_for_tmux(&text)])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        })
-    });
-    let chrome = crate::picker::Chrome {
-        steps: vec![(key, 1), (upper, -1)],
-        on_step,
-        ..chrome
-    };
-
-    let outcome = crate::picker::run_from(items, "", &chrome, start, Some(later))?;
-    let mut rows = sessions;
-    if let Ok(mut d) = directories.lock() {
-        rows.append(&mut d);
-    }
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    match project_pick(&outcome, &rows, &cwd, &home) {
-        ProjectPick::Session(name) => focus_session(&name).await,
-        ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
-        ProjectPick::Missing(typed) => {
-            crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false).await;
-            Ok(())
+            for line in crate::remote::print_lines(&views, &open, now) {
+                println!("{line}");
+            }
+            return Ok(());
         }
-        ProjectPick::Nothing => Ok(()),
+
+        let mut footer = format!(
+            "enter go   alt-{key} next   alt-{upper} back   esc stay   type to filter session, **concealed** projects"
+        );
+        if !views.is_empty() {
+            footer.push_str("   ctrl-x forget   ctrl-n add host");
+            footer.push_str(crate::remote::alt_enter_hint(&views));
+        }
+        let chrome = crate::picker::Chrome {
+            title: "[ Sessions/Projects ]".into(),
+            icon: crate::tmux::icons::SESSION.into(),
+            footer,
+            preview_title: "[ Where ]".into(),
+            ..Default::default()
+        }
+        .configured(&config.picker, crate::config::Picker::Project);
+        // The shape is the project picker's, the name is this list's own: a
+        // `label` under [picker.project] names the project picker, and this
+        // one is the sessions first and the projects behind a letter.
+        let chrome = crate::picker::Chrome {
+            title: "[ Sessions/Projects ]".into(),
+            // Sessions by last use, then projects by last jump, typed or not.
+            keep_order: true,
+            ..chrome
+        };
+
+        let mut items = project_items(&sessions, &config, &home);
+        // The session you are in says so in words, not only by being first.
+        if let Some(first) = items.first_mut() {
+            first.columns.push("now".into());
+            first.tones.push(crate::picker::Tone::Dim);
+        }
+        let n_local = sessions.len();
+        let n_remote = remote_rows.len();
+        items.extend(crate::remote::items(&remote_rows, &views, now));
+
+        // The directories' rows, kept for after the pick: an index past the
+        // sessions and the hosts is one of them.
+        let directories = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let later = {
+            let (config, home, sessions) = (config.clone(), home.clone(), sessions.clone());
+            let (here, views) = (here.clone(), views.clone());
+            let keep = directories.clone();
+            crate::picker::Later::new(move || {
+                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return Vec::new();
+                };
+                if let Some(host) = &here {
+                    // The host's directories, through its link; a typed path
+                    // opens there whether or not it is listed.
+                    let rows = match rt.block_on(crate::remote::host_dirs(host)) {
+                        Ok(paths) => crate::remote::dir_rows(host, &paths, &views),
+                        Err(_) => Vec::new(),
+                    };
+                    let items: Vec<crate::picker::Item> = project_items(&rows, &config, &home)
+                        .into_iter()
+                        .map(crate::picker::Item::searched_only)
+                        .collect();
+                    if let Ok(mut k) = keep.lock() {
+                        *k = rows;
+                    }
+                    return items;
+                }
+                let mut found = rt.block_on(crate::project::directories(&config, &home));
+                // Projects by when they were last jumped to, as the sessions
+                // are by when they were last used. Only zoxide keeps that
+                // time; any other source, or a db.zo this can't read, keeps
+                // the source's own order.
+                let source = crate::dirsource::DirsSource::from_config(&config.project);
+                if let Some(last) = source
+                    .watched_file(&home)
+                    .and_then(|f| std::fs::read(f).ok())
+                    .and_then(|db| crate::dirsource::zoxide_last_jumped(&db))
+                {
+                    found.sort_by_key(|r| {
+                        std::cmp::Reverse(last.get(&r.path).copied().unwrap_or(0))
+                    });
+                }
+                // A directory a session already stands for is left out, as
+                // `merge` leaves it out of the project picker. Not through
+                // `merge` itself: it would drop a second session in the same
+                // directory as well, and the sessions are already listed.
+                let taken: std::collections::HashSet<String> =
+                    sessions.iter().map(|r| r.path.clone()).collect();
+                let rows = crate::project::merge(
+                    Vec::new(),
+                    found
+                        .into_iter()
+                        .filter(|r| !taken.contains(&r.path))
+                        .collect(),
+                );
+                let items: Vec<crate::picker::Item> = project_items(&rows, &config, &home)
+                    .into_iter()
+                    .map(crate::picker::Item::searched_only)
+                    .collect();
+                if let Ok(mut k) = keep.lock() {
+                    *k = rows;
+                }
+                items
+            })
+        };
+
+        // Where a step can land: every local session, and each remote
+        // session whose host can be reached. The start rule, the second
+        // row, counts these alone.
+        let steps: Vec<usize> = (0..n_local)
+            .chain(
+                remote_rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| {
+                        matches!(
+                            r.target,
+                            crate::remote::Target::Session {
+                                reachable: true,
+                                ..
+                            }
+                        )
+                    })
+                    .map(|(i, _)| n_local + i),
+            )
+            .collect();
+        let ids: Vec<String> = sessions
+            .iter()
+            .map(|r| format!("local:{}", r.label))
+            .chain(remote_rows.iter().map(|r| r.target.id()))
+            .collect();
+        let start = match (
+            at.take().and_then(|id| ids.iter().position(|x| *x == id)),
+            start_index.take(),
+        ) {
+            (Some(i), _) => i,
+            (None, Some(i)) => i.min(items.len().saturating_sub(1)),
+            (None, None) => match (steps.len(), reverse) {
+                (0, _) => 0,
+                (1, _) => steps[0],
+                (_, false) => steps[1],
+                (n, true) => steps[n - 1],
+            },
+        };
+        let on_step = settings.announce.then(|| {
+            let mut names: Vec<Option<String>> =
+                sessions.iter().map(|r| Some(r.label.clone())).collect();
+            names.extend(remote_rows.iter().map(|r| match &r.target {
+                crate::remote::Target::Session {
+                    host,
+                    name,
+                    reachable: true,
+                } => Some(format!("{name} on {host}")),
+                _ => None,
+            }));
+            let lines: Vec<String> = remote_rows.iter().map(|r| r.line.clone()).collect();
+            let steps = steps.clone();
+            crate::picker::OnStep::new(move |i| {
+                // A directory is reached by searching, and is not a step.
+                let text = match (names.get(i), steps.iter().position(|s| *s == i)) {
+                    (Some(Some(name)), Some(at)) => {
+                        crate::switcher::announcement(name, at + 1, steps.len())
+                    }
+                    // A group line or an unreachable row, where a reopened
+                    // picker can start: its words, which say why.
+                    (Some(None), _) => match lines.get(i - n_local) {
+                        Some(l) => l.clone(),
+                        None => return,
+                    },
+                    _ => return,
+                };
+                let _ = crate::tmux::command_sync()
+                    .args(["display-message", &crate::picker::literal_for_tmux(&text)])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            })
+        });
+        // alt-enter on a remote session does the other thing with it: hand
+        // the terminal over where the host mirrors, mirror where it hands
+        // over. Anywhere else it takes the query, as in any picker.
+        let alt_enter: Vec<usize> = remote_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                matches!(
+                    r.target,
+                    crate::remote::Target::Session {
+                        reachable: true,
+                        ..
+                    }
+                )
+            })
+            .map(|(i, _)| n_local + i)
+            .collect();
+        let chrome = crate::picker::Chrome {
+            steps: vec![(key, 1), (upper, -1)],
+            on_step,
+            alt_enter,
+            ..chrome
+        };
+
+        let (outcome, pressed) =
+            crate::picker::run_from_keys(items, "", &chrome, start, Some(later), &['x', 'n'])?;
+        let mut rows = sessions.clone();
+        if let Ok(mut d) = directories.lock() {
+            rows.append(&mut d);
+        }
+        let remote_at = |i: usize| (n_local..n_local + n_remote).contains(&i);
+
+        if let (crate::picker::Outcome::Chosen(i), Some('\r')) = (&outcome, pressed)
+            && remote_at(*i)
+            && let crate::remote::Target::Session { host, name, .. } =
+                &remote_rows[*i - n_local].target
+        {
+            return crate::remote::open_other(host, name).await;
+        }
+        if let (crate::picker::Outcome::Chosen(i), Some(k)) = (&outcome, pressed) {
+            let i = *i;
+            match (k, remote_at(i)) {
+                ('x', false) if i < n_local => {
+                    crate::remote::say(&format!(
+                        "{} is on this machine; only remote rows can be forgotten",
+                        sessions[i].label
+                    ))
+                    .await;
+                    start_index = Some(i);
+                }
+                ('x', true) => match &remote_rows[i - n_local].target {
+                    crate::remote::Target::Session { host, name, .. } => {
+                        crate::remote::forget_row(host, name).await;
+                        start_index = Some(i);
+                    }
+                    crate::remote::Target::Group(host) => {
+                        if let Some((_, r)) = open.iter().find(|(h, _)| h == host) {
+                            crate::remote::say(&format!(
+                                "{} is open; close it first",
+                                crate::link::mirror::session_name(r, host)
+                            ))
+                            .await;
+                            start_index = Some(i);
+                        } else {
+                            return crate::hosts::ask_to_forget(host).await;
+                        }
+                    }
+                },
+                ('n', true)
+                    if matches!(
+                        remote_rows[i - n_local].target,
+                        crate::remote::Target::Group(_)
+                    ) =>
+                {
+                    let said = crate::hosts::form().await?;
+                    if let Some(said) = said {
+                        crate::remote::say(&said).await;
+                    }
+                    start_index = Some(i);
+                }
+                ('n', _) => {
+                    crate::remote::say(
+                        "ctrl-n on a host's line adds a host; tmux-companion hosts add does it from anywhere",
+                    )
+                    .await;
+                    start_index = Some(i);
+                }
+                _ => {
+                    crate::remote::say(
+                        "ctrl-x forgets a remote row or a host; a directory is not kept to forget",
+                    )
+                    .await;
+                    start_index = Some(i);
+                }
+            }
+            continue;
+        }
+
+        if let crate::picker::Outcome::Chosen(i) = outcome
+            && remote_at(i)
+        {
+            return match &remote_rows[i - n_local].target {
+                crate::remote::Target::Group(host)
+                | crate::remote::Target::Session {
+                    host,
+                    reachable: false,
+                    ..
+                } => {
+                    crate::remote::retry(host).await;
+                    Ok(())
+                }
+                crate::remote::Target::Session { host, name, .. } => {
+                    crate::remote::open(host, name, false, false).await
+                }
+            };
+        }
+        // A typed `name@vm` with no row for it makes the session on the host
+        // and opens it, the way a typed path opens a project.
+        if let crate::picker::Outcome::Typed(q) = &outcome {
+            let hosts: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
+            if let Some((name, host)) = crate::remote::split_at_host(q, &hosts) {
+                return crate::remote::open(host, name, true, false).await;
+            }
+        }
+        let outcome = match outcome {
+            crate::picker::Outcome::Chosen(i) if i >= n_local + n_remote => {
+                crate::picker::Outcome::Chosen(i - n_remote)
+            }
+            o => o,
+        };
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        return match project_pick(&outcome, &rows, &cwd, &home, here.as_deref()) {
+            ProjectPick::Session(name) => focus_session(&name).await,
+            ProjectPick::Directory(path) => open_project(&path, &config, &home).await,
+            ProjectPick::HostDirectory(host, path) => {
+                crate::remote::open_project(&host, &path).await
+            }
+            ProjectPick::Missing(typed) => {
+                crate::picker::say_nothing_to_show(&format!("no such directory: {typed}"), false)
+                    .await;
+                Ok(())
+            }
+            ProjectPick::Nothing => Ok(()),
+        };
     }
 }
 
@@ -4931,12 +5426,13 @@ mod tests {
             path: path.into(),
             colour: None,
             idle: None,
+            mirror: None,
         };
         let rows = vec![
             row(Kind::Session, "api", "/w/api"),
             row(Kind::Directory, "web", "/w/web"),
         ];
-        let pick = |o: Outcome| project_pick(&o, &rows, "/", &home);
+        let pick = |o: Outcome| project_pick(&o, &rows, "/", &home, None);
         assert_eq!(pick(Outcome::Chosen(0)), ProjectPick::Session("api".into()));
         assert_eq!(
             pick(Outcome::Chosen(1)),
@@ -4953,6 +5449,36 @@ mod tests {
         assert_eq!(pick(Outcome::Typed("  ".into())), ProjectPick::Nothing);
         assert_eq!(pick(Outcome::Cancelled), ProjectPick::Nothing);
     }
+
+    #[test]
+    fn inside_a_mirror_session_a_directory_is_the_hosts() {
+        use crate::picker::Outcome;
+        use crate::project::{Kind, Row};
+        let rows = vec![Row {
+            kind: Kind::Directory,
+            label: "api@vm".into(),
+            path: "/srv/api".into(),
+            colour: None,
+            idle: None,
+            mirror: Some(("vm".into(), "api".into())),
+        }];
+        let pick = |o: Outcome, here| project_pick(&o, &rows, "/", "/home/me", here);
+        assert_eq!(
+            pick(Outcome::Chosen(0), None),
+            ProjectPick::HostDirectory("vm".into(), "/srv/api".into()),
+            "a host's row is the host's wherever the picker opened"
+        );
+        assert_eq!(
+            pick(Outcome::Typed(" ~/src/new ".into()), Some("vm")),
+            ProjectPick::HostDirectory("vm".into(), "~/src/new".into()),
+            "a typed path goes to the host as typed, for the host to read"
+        );
+        assert_eq!(
+            pick(Outcome::Typed(" ".into()), Some("vm")),
+            ProjectPick::Nothing
+        );
+    }
+
     use clap::CommandFactory;
 
     #[test]

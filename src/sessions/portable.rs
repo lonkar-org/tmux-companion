@@ -95,6 +95,8 @@ fn map_paths(snap: &Snapshot, f: &dyn Fn(&str) -> String) -> Snapshot {
             .map(|s| Session {
                 name: s.name.clone(),
                 path: f(&s.path),
+                host: s.host.clone(),
+                remote: s.remote.clone(),
                 window: s
                     .window
                     .iter()
@@ -335,6 +337,8 @@ mod tests {
             session: vec![Session {
                 name: "api".into(),
                 path: "/Users/me/w/api".into(),
+                host: String::new(),
+                remote: String::new(),
                 window: vec![Window {
                     index: 1,
                     name: "edit".into(),

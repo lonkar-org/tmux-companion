@@ -162,11 +162,13 @@ jobs:
       # which `ports` reads where there is no lsof and which
       # `ports_names_the_pane_that_started_the_listener` needs; GitHub's ubuntu
       # image already has it, act's has neither ss nor lsof. macOS ships lsof.
+      # dbus-daemon is the private bus the Linux follow_focus test plays a
+      # desktop on; with CI set that test fails rather than skips without it.
       - name: Build dependencies
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y build-essential pkg-config libevent-dev libncurses-dev bison iproute2
+            sudo apt-get install -y build-essential pkg-config libevent-dev libncurses-dev bison iproute2 dbus-daemon
           else
             for f in libevent pkgconf jemalloc; do brew list "$f" >/dev/null 2>&1 || brew install "$f"; done
           fi
@@ -223,6 +225,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: ./scripts/check-review-marks.sh
+
+  # schema/link_capnp.rs is generated from schema/link.capnp and committed, so
+  # no build needs the capnp tool; this is what keeps the two from drifting.
+  # apt's capnproto is the compiler and the script installs the Rust plugin
+  # at the version it pins. The header line naming the compiler's version is
+  # left out of the comparison, since apt's and brew's differ.
+  capnp:
+    name: capnp schema is fresh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup show active-toolchain || rustup toolchain install
+      - run: sudo apt-get update && sudo apt-get install -y capnproto
+      - run: ./scripts/capnp.sh --check
 
   # Every other job runs the pinned toolchain, so `rust-version` in Cargo.toml
   # was a claim nothing tested: it said 1.85 while the source used let chains,
@@ -303,7 +327,7 @@ jobs:
   # The one check the ruleset on main requires; see the note on `on:`. A
   # matrix leg added or renamed changes nothing in the ruleset this way.
   required:
-    needs: [format, clippy, tests, marks, msrv, docs]
+    needs: [format, clippy, tests, marks, capnp, msrv, docs]
     if: always()
     runs-on: ubuntu-latest
     steps:

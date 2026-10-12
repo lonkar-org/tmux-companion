@@ -107,7 +107,7 @@ pub fn newer_than(path: &Path, moment: SystemTime) -> bool {
 
 /// The word the bar shows for a reason: what is wrong, not the whole sentence.
 pub fn short_word(reason: &str) -> &'static str {
-    if reason.starts_with("quiet for") {
+    if crate::quiet::is_status_line(reason) {
         "quiet"
     } else if reason.starts_with("offline for") {
         "offline"
@@ -228,7 +228,7 @@ mod tests {
     fn quiet_is_the_bell_crossed_out_without_a_word() {
         let drawn = format_health(
             &HealthSample {
-                reasons: vec![crate::quiet::status(Some(1000), 700)],
+                reasons: vec![crate::quiet::status(Some(1000), None, 700)],
             },
             BAR,
         );
@@ -238,7 +238,7 @@ mod tests {
         let two = format_health(
             &HealthSample {
                 reasons: vec![
-                    crate::quiet::status(Some(1000), 700),
+                    crate::quiet::status(Some(1000), None, 700),
                     "config.toml changed".into(),
                 ],
             },

@@ -3055,6 +3055,268 @@ fn quiet_hours_take_the_agent_count_off_the_bar_and_say_so() {
     );
 }
 
+/// A Focus said from a hook, the way a Shortcuts automation would, is quiet
+/// until it is said to end, and a timer turned off under it leaves it on.
+#[test]
+fn a_focus_from_a_hook_is_quiet_until_it_ends() {
+    let Some(t) = Tmux::start("focushook") else {
+        return;
+    };
+    let (out, err, ok) = t.run(&["quiet", "--focus", "Work"]);
+    assert!(ok, "quiet --focus failed:\n{err}");
+    assert_eq!(out.trim(), "quiet while Focus Work is on");
+    let (out, _, _) = t.run(&["health"]);
+    assert!(out.contains("quiet while Focus Work is on"), "{out:?}");
+    let (out, _, _) = t.run(&["quiet", "--off"]);
+    assert_eq!(
+        out.trim(),
+        "quiet while Focus Work is on",
+        "--off ends the timer, not the Focus"
+    );
+    let (out, _, _) = t.run(&["quiet", "--focus-off"]);
+    assert_eq!(out.trim(), "not quiet");
+    let (out, _, _) = t.run(&["quiet", "--focus"]);
+    assert_eq!(out.trim(), "quiet while a Focus is on", "no name given");
+    let (out, _, _) = t.run(&["quiet", "--focus", "Do Not Disturb"]);
+    assert_eq!(out.trim(), "quiet while Do Not Disturb is on");
+    let (_, _, ok) = t.run(&["quiet", "5m", "--focus", "Work"]);
+    assert!(!ok, "a duration and a Focus in one call is refused");
+}
+
+/// With `[quiet] follow_focus`, the daemon reads the Focus database under
+/// HOME, the sandbox's here: a fixture in the shape macOS writes, no real one.
+#[cfg(target_os = "macos")]
+#[test]
+fn follow_focus_reads_the_database_and_follows_it_off() {
+    let Some(t) = Tmux::start("focusdb") else {
+        return;
+    };
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[quiet]\nfollow_focus = true\n",
+    )
+    .unwrap();
+    let db = t.sandbox.join("Library/DoNotDisturb/DB");
+    std::fs::create_dir_all(&db).unwrap();
+    std::fs::write(
+        db.join("ModeConfigurations.json"),
+        r#"{"data":[{"modeConfigurations":{"com.apple.focus.work":{"mode":{"name":"Work"}}}}]}"#,
+    )
+    .unwrap();
+    let on = r#"{"data":[{"storeAssertionRecords":[{"assertionStartDateTimestamp":1.0,"assertionDetails":{"assertionDetailsModeIdentifier":"com.apple.focus.work"}}]}]}"#;
+    let off = r#"{"data":[{"storeAssertionRecords":[]}]}"#;
+    std::fs::write(db.join("Assertions.json"), on).unwrap();
+    assert!(
+        t.until(10, |t| t.run(&["quiet"]).0.trim()
+            == "quiet while Focus Work is on"),
+        "the watcher never saw the Focus: {:?}",
+        t.run(&["quiet"]).0
+    );
+    std::fs::write(db.join("Assertions.json"), off).unwrap();
+    assert!(
+        t.until(10, |t| t.run(&["quiet"]).0.trim() == "not quiet"),
+        "the watcher never saw it end: {:?}",
+        t.run(&["quiet"]).0
+    );
+    std::fs::write(db.join("Assertions.json"), "{").unwrap();
+    assert!(
+        t.until(10, |t| t.run(&["health"]).0.contains("macOS Focus state")),
+        "a database that does not parse never reached health: {:?}",
+        t.run(&["health"]).0
+    );
+}
+
+/// `[quiet] follow_focus` on Linux, against a desktop played on a private
+/// session bus: a fake KDE notification server with an `Inhibited` property,
+/// a dconf `Notify` for a user database written here, and a swaync
+/// `SubscribeV2`. No real desktop and no tmux; it needs `dbus-daemon`, and
+/// skips without one unless `CI` is set.
+#[cfg(target_os = "linux")]
+#[test]
+fn follow_focus_on_linux_follows_the_desktop_on_its_bus() {
+    use tmux_companion::dnd::{SHOW_BANNERS, gvdb_one_bool, watch};
+
+    let dir = tempfile::Builder::new()
+        .prefix("tc-dnd-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let conf = dir.path().join("bus.conf");
+    let sock = dir.path().join("bus");
+    std::fs::write(
+        &conf,
+        format!(
+            "<busconfig><type>session</type><listen>unix:path={}</listen>\
+             <auth>EXTERNAL</auth><policy context=\"default\">\
+             <allow send_destination=\"*\" eavesdrop=\"true\"/>\
+             <allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>",
+            sock.display()
+        ),
+    )
+    .unwrap();
+    let daemon = Command::new("dbus-daemon")
+        .arg(format!("--config-file={}", conf.display()))
+        .arg("--nofork")
+        .spawn();
+    let Ok(daemon) = daemon else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "dbus-daemon is not installed, and with CI set that is a failure"
+        );
+        eprintln!("skipping: no dbus-daemon");
+        return;
+    };
+    struct Reap(std::process::Child);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _reap = Reap(daemon);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sock.exists() {
+        assert!(Instant::now() < deadline, "dbus-daemon never listened");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let address = format!("unix:path={}", sock.display());
+
+    struct Kde {
+        inhibited: bool,
+    }
+    #[zbus::interface(name = "org.freedesktop.Notifications")]
+    impl Kde {
+        #[zbus(property)]
+        fn inhibited(&self) -> bool {
+            self.inhibited
+        }
+    }
+
+    let db = dir.path().join("dconf-user");
+    std::fs::write(&db, gvdb_one_bool(SHOW_BANNERS, true)).unwrap();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let desktop = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.freedesktop.Notifications")
+            .unwrap()
+            .serve_at("/org/freedesktop/Notifications", Kde { inhibited: false })
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let watcher = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let db2 = db.clone();
+        tokio::spawn(async move { watch(&watcher, db2, tx).await });
+        type Said = Result<Option<String>, String>;
+        async fn said(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Said>) -> Said {
+            tokio::time::timeout(Duration::from_secs(10), rx.recv())
+                .await
+                .expect("the watcher said nothing within ten seconds")
+                .expect("the watcher stopped")
+        }
+        assert_eq!(said(&mut rx).await, Ok(None), "nothing on at the start");
+
+        let kde = desktop
+            .object_server()
+            .interface::<_, Kde>("/org/freedesktop/Notifications")
+            .await
+            .unwrap();
+        kde.get_mut().await.inhibited = true;
+        kde.get()
+            .await
+            .inhibited_changed(kde.signal_emitter())
+            .await
+            .unwrap();
+        assert_eq!(
+            said(&mut rx).await,
+            Ok(Some("Do Not Disturb".into())),
+            "KDE on"
+        );
+        kde.get_mut().await.inhibited = false;
+        kde.get()
+            .await
+            .inhibited_changed(kde.signal_emitter())
+            .await
+            .unwrap();
+        assert_eq!(said(&mut rx).await, Ok(None), "KDE off");
+
+        // GNOME: dconf writes the database, then says so.
+        std::fs::write(&db, gvdb_one_bool(SHOW_BANNERS, false)).unwrap();
+        let notify = |prefix: &'static str| {
+            let desktop = desktop.clone();
+            async move {
+                desktop
+                    .emit_signal(
+                        None::<()>,
+                        "/ca/desrt/dconf/Writer/user",
+                        "ca.desrt.dconf.Writer",
+                        "Notify",
+                        &(prefix, vec![""], "tag"),
+                    )
+                    .await
+                    .unwrap();
+            }
+        };
+        // A write somewhere else leaves the new database unread: nothing is
+        // said until show-banners itself is named.
+        notify("/org/gnome/nautilus/window-state/").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), rx.recv())
+                .await
+                .is_err(),
+            "a write to another key read the database"
+        );
+        notify(SHOW_BANNERS).await;
+        assert_eq!(
+            said(&mut rx).await,
+            Ok(Some("Do Not Disturb".into())),
+            "GNOME on"
+        );
+        std::fs::write(&db, gvdb_one_bool(SHOW_BANNERS, true)).unwrap();
+        notify("/org/gnome/desktop/notifications/").await;
+        assert_eq!(said(&mut rx).await, Ok(None), "GNOME off, by its directory");
+
+        // swaync's signal carries the answer.
+        let swaync = |dnd: bool| {
+            let desktop = desktop.clone();
+            async move {
+                desktop
+                    .emit_signal(
+                        None::<()>,
+                        "/org/erikreider/swaync/cc",
+                        "org.erikreider.swaync.cc",
+                        "SubscribeV2",
+                        &(3u32, dnd, false, false),
+                    )
+                    .await
+                    .unwrap();
+            }
+        };
+        swaync(true).await;
+        assert_eq!(
+            said(&mut rx).await,
+            Ok(Some("Do Not Disturb".into())),
+            "swaync on"
+        );
+        swaync(false).await;
+        assert_eq!(said(&mut rx).await, Ok(None), "swaync off");
+
+        // A database that is not one is said once, and the answer stands.
+        std::fs::write(&db, b"not a database").unwrap();
+        notify(SHOW_BANNERS).await;
+        assert!(
+            said(&mut rx).await.is_err(),
+            "an unreadable database is said"
+        );
+    });
+}
+
 #[test]
 fn the_journal_writes_down_a_command_that_ran_long_enough() {
     let Some(t) = Tmux::start("journal") else {

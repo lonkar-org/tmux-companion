@@ -137,6 +137,11 @@ pub struct Pane {
     /// it and the process could be read: `claude` for `2.1.296`, `gemini`
     /// for `node`. Filled by [`list`]; see `identity.rs`.
     pub identity: Option<String>,
+    /// Whether the session is a grouped one another machine's mirror
+    /// attached to (`@tc-mirror`): it lists every pane of the session it is
+    /// grouped with a second time. Its active pane is what that machine's
+    /// bar shows; counted as an agent, it would be every agent twice.
+    pub mirrored: bool,
 }
 
 impl Pane {
@@ -157,11 +162,13 @@ pub fn pane_format() -> &'static str {
     "#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t\
      #{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_active}\t\
      #{window_active}\t#{session_attached}\t#{window_activity}\t#{pane_in_mode}\t#{host}\t\
-     #{window_bell_flag}\t#{session_id}\t#{@theme-color-main-1}\t#{pane_pid}"
+     #{window_bell_flag}\t#{session_id}\t#{@theme-color-main-1}\t#{pane_pid}\t#{@tc-mirror}"
 }
 
-/// How many fields [`pane_format`] produces.
-const FIELDS: usize = 18;
+/// How many fields [`pane_format`] produces, and how many a listing from
+/// before the last one, `@tc-mirror`, has.
+const FIELDS: usize = 19;
+const FIELDS_BEFORE_MIRRORS: usize = 18;
 
 /// Parse what [`pane_format`] produces, sorted by session, window and pane.
 ///
@@ -174,7 +181,7 @@ pub fn parse(text: &str) -> Vec<Pane> {
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            if f.len() != FIELDS {
+            if f.len() != FIELDS && f.len() != FIELDS_BEFORE_MIRRORS {
                 return None;
             }
             let on = |s: &str| s.trim() == "1";
@@ -197,6 +204,7 @@ pub fn parse(text: &str) -> Vec<Pane> {
                 accent: f[16].trim().to_string(),
                 pid: f[17].trim().parse().unwrap_or(0),
                 identity: None,
+                mirrored: f.get(18).is_some_and(|m| !m.trim().is_empty()),
             })
         })
         .collect();
@@ -542,6 +550,25 @@ pub async fn list() -> Vec<Pane> {
     panes
 }
 
+/// Every pane and every session, in one tmux call: the session list rides
+/// after the pane list, its lines marked so neither parser reads the other's.
+pub async fn list_with_sessions() -> (Vec<Pane>, crate::link::Listing) {
+    let text = crate::cli::tmux_capture(&[
+        "list-panes",
+        "-a",
+        "-F",
+        pane_format(),
+        ";",
+        "list-sessions",
+        "-F",
+        crate::link::SESSION_FORMAT,
+    ])
+    .await;
+    let mut panes = parse(&text);
+    identify(&mut panes);
+    (panes, crate::link::parse_listing(&text))
+}
+
 /// Fill in each pane's [`Pane::identity`].
 pub fn identify(panes: &mut [Pane]) {
     for p in panes {
@@ -578,8 +605,10 @@ pub async fn shared(
     if let Some(panes) = state.lock().await.panes_fresh(max_age) {
         return panes;
     }
-    let panes = list().await;
-    state.lock().await.panes_store(panes.clone());
+    let (panes, listing) = list_with_sessions().await;
+    let mut st = state.lock().await;
+    st.panes_store(panes.clone());
+    st.sessions_store(listing);
     panes
 }
 
@@ -796,6 +825,24 @@ pub async fn run(agents: bool, print: bool, target: Option<String>) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_grouped_session_another_machine_attached_is_marked() {
+        let line = |session: &str, mirror: &str| {
+            format!(
+                "{session}\t1\tai\t0\t%7\tclaude\t/w\th\t1\t1\t1\t5\t0\th\t0\t$1\t\t42\t{mirror}"
+            )
+        };
+        let text = format!("{}\n{}\n", line("api", ""), line("api~mac", "mac"));
+        let panes = parse(&text);
+        assert_eq!(panes.len(), 2, "{panes:?}");
+        assert_eq!(
+            panes.iter().map(|p| p.mirrored).collect::<Vec<_>>(),
+            [false, true]
+        );
+        let before = "api\t1\tai\t0\t%7\tclaude\t/w\th\t1\t1\t1\t5\t0\th\t0\t$1\t\t42";
+        assert_eq!(parse(before).len(), 1, "a listing from before the field");
+    }
 
     #[test]
     fn a_process_named_by_its_version_is_an_agent() {

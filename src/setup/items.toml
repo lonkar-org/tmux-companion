@@ -94,6 +94,18 @@ snippet = '''bind -N "companion: project switch session, oldest first" -n {key} 
 goes = "tmux.conf"
 
 [[item]]
+id = "hosts-add"
+group = "Keys"
+kind = "binding"
+line = "How do I add another machine to the session list?"
+command = "hosts add"
+key = "M-h"
+table = "prefix"
+fallback = ["M-H", "C-M-h"]
+snippet = '''bind -N "companion: project add a host to the session list" {key} display-popup -B -E -w 70% -h 30% "tmux-companion hosts add"'''
+goes = "tmux.conf"
+
+[[item]]
 id = "new-window"
 group = "Keys"
 kind = "binding"

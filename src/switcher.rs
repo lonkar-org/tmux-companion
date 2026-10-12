@@ -370,6 +370,9 @@ struct Seen {
     kept: Option<Pressed>,
     /// tmux's version, for the one flag the popup needs 3.3 for.
     version: String,
+    /// `@tc-host` on the session: set on a mirror session, whose windows are
+    /// the host's, so the key goes to the host.
+    host: String,
     windows: Vec<Window>,
 }
 
@@ -391,7 +394,8 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
         display.extend(args(&["-t", t]));
     }
     display.push(format!(
-        "#{{session_id}}\t#{{window_id}}\t#{{client_width}}\t#{{client_height}}\t#{{version}}\t#{{{STATE}}}"
+        "#{{session_id}}\t#{{window_id}}\t#{{client_width}}\t#{{client_height}}\t#{{version}}\t#{{{HOST}}}\t#{{{STATE}}}",
+        HOST = crate::link::HOST_OPTION
     ));
     let mut list = args(&["list-windows", "-F", LIST_FORMAT]);
     if let Some(t) = &target {
@@ -414,6 +418,7 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
     let w = f.next().and_then(|v| v.parse().ok()).unwrap_or(80);
     let h = f.next().and_then(|v| v.parse().ok()).unwrap_or(24);
     let version = f.next().unwrap_or_default().to_string();
+    let host = f.next().unwrap_or_default().to_string();
     let kept = f.next().and_then(Pressed::decode);
     let rest: String = lines.map(|l| format!("{l}\n")).collect();
     Seen {
@@ -422,6 +427,7 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
         client: (w, h),
         kept,
         version,
+        host,
         windows: parse(&rest),
     }
 }
@@ -448,6 +454,26 @@ fn say(client: Option<&str>, text: &str) -> Vec<String> {
     a
 }
 
+/// The key a press of the window key is, as `send-keys` names it: `M-a`,
+/// or `M-A` going the other way.
+pub fn key_name(key: char, reverse: bool) -> String {
+    let k = if reverse {
+        key.to_ascii_uppercase()
+    } else {
+        key
+    };
+    format!("M-{k}")
+}
+
+/// In a mirror session the windows are the host's: the press goes on to the
+/// mirror pane, where the host's own switcher takes it. tmux writes `M-a` as
+/// `ESC a` in one write, which the host's tmux reads as `M-a` again.
+async fn to_host(seen: &Seen, key: char, reverse: bool) -> anyhow::Result<()> {
+    let target = format!("{}:", seen.session);
+    crate::cli::tmux(&["send-keys", "-t", &target, &key_name(key, reverse)]).await;
+    Ok(())
+}
+
 /// One press of the window key from tmux's root table: `run-shell`, no
 /// terminal.
 pub async fn press(
@@ -462,6 +488,9 @@ pub async fn press(
         (None, None) => None,
     };
     let seen = look(session.as_deref(), client.as_deref()).await;
+    if !seen.host.is_empty() {
+        return to_host(&seen, settings.windows_key, reverse).await;
+    }
     let order = by_recency(seen.windows.clone());
     let step = if reverse { -1 } else { 1 };
     let at = format!("{}:", seen.session);
@@ -585,6 +614,9 @@ pub async fn list(
     picker: &crate::config::PickerLayout,
 ) -> anyhow::Result<()> {
     let seen = look(session.as_deref(), client.as_deref()).await;
+    if !seen.host.is_empty() {
+        return to_host(&seen, settings.windows_key, reverse).await;
+    }
     let step: i64 = if reverse { -1 } else { 1 };
     let (origin, pos) = match seen.kept.as_ref().filter(|_| pressed) {
         Some(p) => (p.origin.clone(), p.pos),

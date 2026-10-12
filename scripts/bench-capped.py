@@ -55,6 +55,28 @@ QUIET = "stty -echo; exec sleep 100000"
 # fallback line and `[bar] mode = "push"`).
 BAR = os.environ.get("BAR", "call")
 
+# LINK=1 adds two fake hosts to the bench config and measures the link after
+# everything else: the daemon's idle cost with one link up, against the idle
+# cost without one measured just before, and the hello's time from starting
+# the host command to its answer. The fake host is this machine: `env` gives
+# the bridge a second daemon on its own socket, config and state directory,
+# and `sh -c` runs the line ssh would hand the remote shell.
+LINK = os.environ.get("LINK", "") == "1"
+BSOCK = str(TMP / "tcb.sock")
+
+# REMOTE=N adds a fake host, `bench-rows`, whose own tmux server holds N
+# sessions, and connects it before the pickers run, so `switch sessions`
+# opens with N remote rows under the local ones; afterwards it times a pick
+# of one of them to the host's first byte in the mirror pane. The host is
+# this machine again: a fake ssh that takes `-t`, then runs the line with a
+# second daemon and a second tmux server of its own. Last, it times the
+# host's agent saying `asked` to the earcon here (EARCON_RUNS, default 10).
+REMOTE = int(os.environ.get("REMOTE", "0") or 0)
+RSOCK = str(TMP / "tcr.sock")
+RTMUX = TMP / "r-tmux"
+RTSOCK = str(RTMUX / f"tmux-{os.getuid()}" / "default")
+EARCON = TMP / "earcon"
+
 ESCAPES = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[\]\(][^\x07\x1b]*(?:\x07|\x1b\\)?")
 
 
@@ -320,6 +342,204 @@ def push_config():
     else:
         text += '\n[bar]\nmode = "push"\n'
     path.write_text(text)
+
+
+def link_config():
+    """Two fake hosts in the bench home's config: `bench-up`, which stays up
+    once connected, and `bench-hello`, which closes a second after each ask
+    so every connect is a fresh hello."""
+    path = Path(os.environ.get("XDG_CONFIG_HOME", Path(os.environ["HOME"]) / ".config"))
+    path = path / "tmux-companion" / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = path.read_text() if path.exists() else ""
+    # PATH first, so the bridge line finds the binary under test and not an
+    # installed one from before the bridge existed.
+    cmd = ["env", f"PATH={Path(BIN).parent}:{os.environ.get('PATH', '')}",
+           f"TMUX_COMPANION_SOCK={BSOCK}", f"XDG_CONFIG_HOME={TMP / 'b-config'}",
+           f"XDG_STATE_HOME={TMP / 'b-state'}", "sh", "-c"]
+    argv = ", ".join(json.dumps(w) for w in cmd)
+    for name, idle, poll in (("bench-up", 3600, 5), ("bench-hello", 1, 1)):
+        text += (f'\n[[hosts]]\nname = "{name}"\ncommand = [{argv}]\n'
+                 f"idle_secs = {idle}\npoll_secs = {poll}\n")
+    path.write_text(text)
+
+
+def remote_config(n):
+    """`bench-rows` in the bench home's config, its tmux server started with
+    `n` sessions, each printing one line the pick waits for."""
+    path = Path(os.environ.get("XDG_CONFIG_HOME", Path(os.environ["HOME"]) / ".config"))
+    path = path / "tmux-companion" / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    (RTMUX / f"tmux-{os.getuid()}").mkdir(parents=True, exist_ok=True, mode=0o700)
+    env = {
+        "PATH": f"{Path(BIN).parent}:{os.environ.get('PATH', '')}",
+        "TMUX_COMPANION_SOCK": RSOCK,
+        "XDG_CONFIG_HOME": str(TMP / "r-config"),
+        "XDG_STATE_HOME": str(TMP / "r-state"),
+        "TMUX_TMPDIR": str(RTMUX),
+        "TERM": "xterm-256color",
+    }
+    fake = TMP / "fakessh"
+    fake.write_text("#!/bin/sh\n[ \"$1\" = -t ] && shift\nexec env -u TMUX -u TMUX_PANE "
+                    + " ".join(f"{k}='{v}'" for k, v in env.items())
+                    + ' sh -c "$1"\n')
+    fake.chmod(0o755)
+    text = path.read_text() if path.exists() else ""
+    text += (f'\n[[hosts]]\nname = "bench-rows"\ncommand = [{json.dumps(str(fake))}]\n'
+             "idle_secs = 3600\npoll_secs = 5\n")
+    # The earcon a host's agent plays here, as a file touched: when it is
+    # written is when the sound would have started. It replaces any
+    # [earcons] table a copied config brings: with CONFIG=mine the copy's own
+    # table used to win, its `asked` played a real sound or none, and the
+    # measurement printed `never sounded`. A copied [quiet] goes too: quiet
+    # holds every earcon, so a `daily` window covering the hour the bench
+    # runs in, or a Focus followed, would silence it the same way.
+    text = re.sub(r"(?ms)^\[(earcons|quiet)\][ \t]*\n.*?(?=^\[|\Z)", "", text)
+    text += (f'\n[earcons]\nenabled = true\non = ["asked"]\n'
+             f'asked = ["touch", {json.dumps(str(EARCON))}]\n')
+    path.write_text(text)
+    # The host's agents: `sleep`, quiet for an hour before silence alone
+    # counts, so only the hook's `asked` puts one in its inbox.
+    rconf = TMP / "r-config" / "tmux-companion" / "config.toml"
+    rconf.parent.mkdir(parents=True, exist_ok=True)
+    rconf.write_text('[agents]\nprograms = ["sleep"]\nwaiting_secs = 3600\n')
+    renv = dict(os.environ, **env)
+    renv.pop("TMUX", None)
+    for i in range(n):
+        subprocess.run(["tmux", "-S", RTSOCK, "-f", "/dev/null", "new-session", "-d",
+                        "-s", f"r{i:02d}", "sh", "-c", f"echo BREADY{i:02d}; exec sleep 100000"],
+                       env=renv, check=True, capture_output=True)
+    # A second window in the first session holds the host's agent: no row
+    # more in the picker than the N it measures with.
+    if n:
+        subprocess.run(["tmux", "-S", RTSOCK, "new-window", "-d", "-t", "=r00:",
+                        "sleep 100000"], env=renv, check=True, capture_output=True)
+
+
+def earcon_after_ask(runs):
+    """ms from the host's agent saying `asked` to the earcon here: the host's
+    inbox pass, the link's poll and the sound's start. Between runs the agent
+    says `busy` and the entry is let go here, so each ask is news."""
+    renv = dict(os.environ, TMUX_TMPDIR=str(RTMUX))
+    renv.pop("TMUX", None)
+    pane = subprocess.run(["tmux", "-S", RTSOCK, "list-panes", "-a", "-F",
+                           "#{session_name} #{pane_id} #{pane_current_command}"],
+                          env=renv, capture_output=True, text=True).stdout
+    pane = next((l.split()[1] for l in pane.splitlines()
+                 if l.startswith("r00 ") and l.endswith(" sleep")), None)
+    if pane is None:
+        return None
+    times = []
+    for _ in range(runs):
+        ask("__agent", {"pane": pane, "state": "busy"}, RSOCK)
+        end = time.time() + 20
+        while time.time() < end and any(
+                e.get("host") == "bench-rows" for e in json.loads(ask("__inbox", None))):
+            time.sleep(0.1)
+        try:
+            EARCON.unlink()
+        except FileNotFoundError:
+            pass
+        t0 = time.time()
+        ask("__agent", {"pane": pane, "state": "asked"}, RSOCK)
+        while time.time() - t0 < 20 and not EARCON.exists():
+            time.sleep(0.02)
+        if not EARCON.exists():
+            break   # a build whose inbox has no hosts: one wait says so
+        times.append((EARCON.stat().st_mtime - t0) * 1000.0)
+    return stats(times)
+
+
+def remote_stop():
+    subprocess.run(["tmux", "-S", RTSOCK, "kill-server"], capture_output=True)
+    try:
+        ask("__shutdown", None, RSOCK)
+    except OSError:
+        pass
+
+
+def pick_to_first_byte(t, runs):
+    """ms from Enter on a remote row in `switch sessions` to the host's
+    screen in the mirror pane: the mirror session made, the switch, the
+    shim, the fake ssh, the grouped attach and the host's tmux drawing. The
+    query is typed first and the frame given time to settle, so only the
+    pick is timed. The client goes back to `bench` and the mirror session is
+    closed before the next pick."""
+    times = []
+    for i in range(runs):
+        name = f"r{i % max(REMOTE, 1):02d}"
+        mirror = f"{name}@bench-rows"
+        _, opened, _ = t.press("M-o", b"fx-")
+        if opened is None:
+            continue
+        t.keys(*mirror)
+        time.sleep(0.4)
+        t.drain()
+        t0 = time.perf_counter()
+        t.keys("Enter")
+        seen = None
+        while time.perf_counter() - t0 < 10:
+            if f"BREADY{name[1:]}" in t("capture-pane", "-p", "-t", f"={mirror}:"):
+                seen = (time.perf_counter() - t0) * 1000.0
+                break
+            time.sleep(0.002)
+        if seen is not None:
+            times.append(seen)
+        t("switch-client", "-c", t.client, "-t", "=bench")
+        t("kill-session", "-t", f"={mirror}")
+        time.sleep(0.3)
+        t.drain()
+    return stats(times)
+
+
+def ask(cmd, args, sock=SOCK):
+    """One request to a daemon socket, its output."""
+    import socket
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock)
+    s.sendall((json.dumps({"cmd": cmd, "args": args}) + "\n").encode())
+    buf = b""
+    while not buf.endswith(b"\n"):
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+    s.close()
+    return json.loads(buf)["output"]
+
+
+def host_view(name, connect=False):
+    views = json.loads(ask("__hosts", {"connect": name} if connect else {}))
+    return next(v for v in views if v["name"] == name)
+
+
+def until_host(name, ok, timeout=30.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        v = host_view(name)
+        if ok(v):
+            return v
+        time.sleep(0.05)
+    return None
+
+
+def link_bench(t, daemon_pid, secs, runs):
+    """The daemon's idle cost with `bench-up`'s link up, and `bench-hello`'s
+    hello time over `runs` fresh connects."""
+    host_view("bench-up", connect=True)
+    up = until_host("bench-up", lambda v: v["state"]["state"] == "up")
+    if not up:
+        return {"error": f"bench-up never came up: {host_view('bench-up')['state']}"}
+    idle = idle_cost(t, daemon_pid, secs)
+    hellos = []
+    for _ in range(runs):
+        if not until_host("bench-hello", lambda v: v["state"]["state"] in ("idle", "down")):
+            break
+        before = host_view("bench-hello", connect=True)["attempts"]
+        v = until_host("bench-hello", lambda v: v["attempts"] > before)
+        if v and v["state"]["state"] == "up":
+            hellos.append(float(v["hello_ms"]))
+    return {"idle": idle, "hello": stats(hellos)}
 
 
 def spawn_price(n=20):
@@ -667,6 +887,10 @@ def main():
     seed(args.dirs)
     if BAR == "push":
         push_config()
+    if LINK:
+        link_config()
+    if REMOTE:
+        remote_config(REMOTE)
     env = dict(os.environ, TMUX_COMPANION_SOCK=SOCK, TMUX_COMPANION_TRACE=str(TRACE),
                _ZO_DATA_DIR=str(ZO))
     env.pop("TMUX", None)
@@ -682,6 +906,12 @@ def main():
         time.sleep(1.0)
         t.start(conf_file(), str(REPO))
         fill(t, args)
+        if REMOTE:
+            host_view("bench-rows", connect=True)
+            if not until_host("bench-rows", lambda v: len(v["sessions"]) >= REMOTE):
+                raise SystemExit(f"bench-rows never listed its sessions: "
+                                 f"{host_view('bench-rows')['state']}")
+            print(f"  remote rows: {REMOTE} from bench-rows", flush=True)
         t.drain(quiet=1.0)
         wanted = set(args.only.split(",")) if args.only else None
         for name, key, marker, frame in PICKERS:
@@ -743,6 +973,20 @@ def main():
                       + (f"  input20 p50 {i['p50']:5.1f} p95 {i['p95']:5.1f}" if i else ""), flush=True)
             if not s and getattr(t, "missed", None):
                 print(f"    last bytes: {t.missed!r}", flush=True)
+        # A binary from before mirror sessions has no `host` to pick with.
+        if REMOTE and subprocess.run([BIN, "host", "--help"], capture_output=True).returncode == 0:
+            out["pick_first_byte"] = pick_to_first_byte(t, args.runs)
+            f = out["pick_first_byte"]
+            print("  pick to the host's first byte: "
+                  + (f"p50 {f['p50']:.0f} p95 {f['p95']:.0f} ms (n={f['n']})" if f
+                     else "never drew"), flush=True)
+        # The host's agent asking to the earcon here, phase 3's budget.
+        if REMOTE:
+            out["earcon_after_ask"] = earcon_after_ask(int(os.environ.get("EARCON_RUNS", "10")))
+            e = out["earcon_after_ask"]
+            print("  host agent asked to the earcon here: "
+                  + (f"p50 {e['p50']:.0f} p95 {e['p95']:.0f} ms (n={e['n']})" if e
+                     else "never sounded"), flush=True)
         # BAR_RUNS: how many window switches the bar is timed over (default 5).
         out["bar_switch"] = bar_after_switch(t, runs=int(os.environ.get("BAR_RUNS", "5")))
         b = out["bar_switch"]
@@ -760,7 +1004,26 @@ def main():
               f" + its children {i['daemon_children_ms_per_s']:.2f} ms/s"
               f" ({i['daemon_tmux_calls_per_s']:.2f} tmux calls/s)"
               f"  tmux server {i['tmux_ms_per_s'] or 0:.2f} ms/s", flush=True)
+        if LINK:
+            out["link"] = link_bench(t, daemon.pid, args.idle_secs, args.runs)
+            k = out["link"]
+            if "error" in k:
+                print(f"  link: {k['error']}", flush=True)
+            else:
+                li, h = k["idle"], k["hello"]
+                more = li["daemon_self_ms_per_s"] - i["daemon_self_ms_per_s"]
+                print(f"  link: idle with one link up daemon {li['daemon_self_ms_per_s']:.2f} ms/s"
+                      f" ({more:+.2f} over none)"
+                      + (f"; hello p50 {h['p50']:.1f} p95 {h['p95']:.1f} ms (n={h['n']})" if h
+                         else "; no hello measured"), flush=True)
     finally:
+        if REMOTE:
+            remote_stop()
+        if LINK:
+            try:
+                ask("__shutdown", None, BSOCK)
+            except OSError:
+                pass
         t.stop()
         daemon.terminate()
         try:

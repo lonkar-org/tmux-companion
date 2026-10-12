@@ -60,6 +60,9 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
         std::path::Path::new(d).is_dir()
     });
     let home = std::env::var("HOME").unwrap_or_default();
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "tmux-companion".to_string());
 
     let spec = crate::sessions::restore::RestoreSpec {
         snapshot: &snapshot,
@@ -72,6 +75,7 @@ pub(crate) async fn resurrect(opts: ResurrectOptions) -> anyhow::Result<i32> {
         base_index: tmux_number("base-index").await.unwrap_or(0),
         pane_base: tmux_number("pane-base-index").await.unwrap_or(0),
         missing: &missing,
+        exe: &exe,
     };
 
     let built = match crate::sessions::restore::rebuild(&spec) {

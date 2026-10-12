@@ -89,6 +89,26 @@ pub struct ServerState {
     /// inbox, notify and journal loops and the agents segment, each taking
     /// it when it is younger than its own interval. See `panes::shared`.
     pub pane_list: Option<(Vec<crate::panes::Pane>, Instant)>,
+    /// The session list read in the same tmux call as `pane_list`, mirror
+    /// sessions left out, with when it was read as an instant and in unix
+    /// seconds. What a link's `sessions` answers from.
+    pub session_list: Option<(Vec<crate::link::Session>, Instant, u64)>,
+    /// The mirror sessions this machine opened, from the same listing.
+    pub mirrors: Vec<crate::link::Mirror>,
+    /// The grouped sessions another machine's mirrors attached to, from the
+    /// same listing: the push loop leaves them alone, since their bar is off.
+    pub grouped: Vec<String>,
+    /// The grouped sessions with a client attached, each with the machine
+    /// its `@tc-mirror` names: the ones a bridge's `watch` pushes segments
+    /// for.
+    pub grouped_shown: Vec<(String, String)>,
+    /// Bumped whenever something a bridge's `watch` pushes may have changed:
+    /// the session list, the inbox, or, while a grouped session has a
+    /// client, any new listing, since its segments ride on that. A `watch`
+    /// waits on this rather than on a timer of its own.
+    pub watch_gen: tokio::sync::watch::Sender<u64>,
+    /// Every host this daemon links to, and what each last said.
+    pub links: crate::link::manager::Links,
     /// Directory sources' answers, by what was asked (`dirs`): the paths,
     /// when they were read, and the watched file's modification time then.
     /// See `dirsource::still_good` for when one is given again.
@@ -118,6 +138,10 @@ pub struct ServerState {
     pub nudged: std::collections::HashSet<String>,
     /// When quiet hours end, in unix seconds; none or past means not quiet.
     pub quiet_until: Option<u64>,
+    /// The Focus that is on, by name, from `quiet --focus` or the
+    /// `[quiet] follow_focus` watcher (`quiet::focus_loop` on macOS,
+    /// `dnd::follow` on Linux); quiet for as long as it is set.
+    pub focus: Option<String>,
     /// The chunk clock's sitting, kept by `chunk::chunk_loop`.
     pub chunk: crate::chunk::Sitting,
     /// When the inbox last saw an agent finish its turn or stop on a
@@ -192,6 +216,12 @@ impl ServerState {
             battery_cache: None,
             agents_cache: None,
             pane_list: None,
+            session_list: None,
+            mirrors: Vec::new(),
+            grouped: Vec::new(),
+            grouped_shown: Vec::new(),
+            watch_gen: tokio::sync::watch::Sender::new(0),
+            links: crate::link::manager::Links::default(),
             dirs_cache: HashMap::new(),
             bar_note: None,
             unclean: Vec::new(),
@@ -202,6 +232,7 @@ impl ServerState {
             inbox: std::collections::HashMap::new(),
             nudged: std::collections::HashSet::new(),
             quiet_until: None,
+            focus: None,
             chunk: crate::chunk::Sitting::default(),
             chunk_boundary_at: 0,
             chunk_process_age: None,
@@ -355,6 +386,55 @@ impl ServerState {
         self.pane_list = Some((panes, Instant::now()));
     }
 
+    /// The session list read with the pane list, and when (unix seconds), if
+    /// it was read less than `max_age` ago.
+    pub fn sessions_fresh(&self, max_age: Duration) -> Option<(Vec<crate::link::Session>, u64)> {
+        self.session_list
+            .as_ref()
+            .filter(|(_, at, _)| at.elapsed() < max_age)
+            .map(|(s, _, when)| (s.clone(), *when))
+    }
+
+    /// Keep a session listing just read with the pane list.
+    pub fn sessions_store(&mut self, listing: crate::link::Listing) {
+        let changed = self
+            .session_list
+            .as_ref()
+            .is_none_or(|(old, _, _)| crate::link::sessions_differ(old, &listing.sessions))
+            || self.grouped_shown != listing.shown;
+        let shown = !listing.shown.is_empty();
+        self.session_list = Some((listing.sessions, Instant::now(), crate::panes::now_secs()));
+        self.mirrors = listing.mirrors;
+        self.grouped = listing.grouped;
+        self.grouped_shown = listing.shown;
+        if changed || shown {
+            self.watch_bump();
+        }
+    }
+
+    /// Tell every waiting `watch` that something it pushes may have changed.
+    pub fn watch_bump(&mut self) {
+        self.watch_gen.send_modify(|g| *g = g.wrapping_add(1));
+    }
+
+    /// Keep the inbox a pass just worked out, and wake a waiting `watch`
+    /// when it differs from the one held.
+    pub fn inbox_set(&mut self, inbox: HashMap<String, crate::inbox::Entry>) {
+        let same = inbox.len() == self.inbox.len()
+            && inbox.iter().all(|(id, e)| {
+                self.inbox.get(id).is_some_and(|o| {
+                    o.since == e.since
+                        && o.state == e.state
+                        && o.question == e.question
+                        && o.at == e.at
+                })
+            });
+        self.inbox = inbox;
+        if !same {
+            self.watch_bump();
+        }
+    }
+
     // ── agents ───────────────────────────────────────────────────────────────
 
     /// Whether any configured segment is the agent count.
@@ -409,15 +489,21 @@ impl ServerState {
         self.reports.retain(|id, _| live.contains(id.as_str()));
     }
 
-    /// Whether quiet hours are on right now.
+    /// Whether quiet hours are on right now: a timer, a daily window or a
+    /// Focus.
     pub fn is_quiet(&self) -> bool {
-        self.quiet_ends(crate::panes::now_secs()).is_some()
+        self.focus.is_some() || self.quiet_ends(crate::panes::now_secs()).is_some()
     }
 
-    /// When quiet ends, from the timer and `[quiet] daily` together, or none
-    /// when it is not on.
+    /// When the timed part of quiet ends, from the timer and `[quiet] daily`
+    /// together, or none when neither is on. A Focus has no end to count to.
     pub fn quiet_ends(&self, now: u64) -> Option<u64> {
         crate::quiet::effective_until(self.quiet_until, &self.config.quiet.daily, now)
+    }
+
+    /// The line `quiet` prints, `not quiet` included.
+    pub fn quiet_status(&self, now: u64) -> String {
+        crate::quiet::status(self.quiet_ends(now), self.focus.as_deref(), now)
     }
 
     // ── health ───────────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 //! `sessions start` and `sessions continue`: getting into a session by its name, or back into the one you left
 //!
+//! `start NAME@HOST`, where HOST is one of `hosts`, opens the mirror
+//! session of NAME on that host, making NAME there first when it has none.
+//!
 //! `start NAME` looks for the name in this order and takes the first that
 //! knows it:
 //!
@@ -149,6 +152,16 @@ pub async fn run(name: &str, dir: Option<String>, detach: bool) -> i32 {
 }
 
 async fn start(asked: &str, dir: Option<String>, detach: bool) -> anyhow::Result<i32> {
+    // `NAME@HOST` with a host after the `@`: a mirror session of NAME on
+    // that host, made there when the host has no session by that name. The
+    // link's mode doesn't matter: `off` stops the list, not the attach.
+    if let Some((remote, host)) = asked.trim().rsplit_once('@')
+        && !remote.is_empty()
+        && crate::remote::find_host(host).await.is_some()
+    {
+        crate::remote::open(host, remote, true, detach).await?;
+        return Ok(0);
+    }
     let name = tmux_name(asked);
     if name.is_empty() {
         eprintln!("a session needs a name");
@@ -321,6 +334,7 @@ fn directory_row(path: &str, listed: &[crate::project::Row]) -> crate::project::
             path: path.to_string(),
             colour: None,
             idle: None,
+            mirror: None,
         })
 }
 
@@ -346,17 +360,19 @@ fn pick(
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    Ok(match crate::cli::project_pick(&outcome, rows, &cwd, home) {
-        ProjectPick::Directory(path) => Some(path),
-        ProjectPick::Missing(typed) => {
-            eprintln!("no such directory: {typed}");
-            None
-        }
-        ProjectPick::Session(_) | ProjectPick::Nothing => {
-            eprintln!("nothing started");
-            None
-        }
-    })
+    Ok(
+        match crate::cli::project_pick(&outcome, rows, &cwd, home, None) {
+            ProjectPick::Directory(path) => Some(path),
+            ProjectPick::Missing(typed) => {
+                eprintln!("no such directory: {typed}");
+                None
+            }
+            ProjectPick::Session(_) | ProjectPick::HostDirectory(..) | ProjectPick::Nothing => {
+                eprintln!("nothing started");
+                None
+            }
+        },
+    )
 }
 
 // ── continue ────────────────────────────────────────────────────────────────
@@ -511,7 +527,16 @@ async fn continue_(last: bool, print: bool) -> anyhow::Result<i32> {
         args.extend(cmd);
         args.push(";".to_string());
     }
-    args.extend(["list-sessions", "-F", CONTINUE_FORMAT].map(String::from));
+    args.extend(
+        [
+            "list-sessions",
+            "-f",
+            crate::link::NOT_MIRRORED,
+            "-F",
+            CONTINUE_FORMAT,
+        ]
+        .map(String::from),
+    );
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     let listing = tmux_capture(&borrowed).await;
     let sessions = parse_listing(&listing);

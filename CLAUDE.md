@@ -53,13 +53,14 @@ that compiles already runs under `nice -n 15` with four jobs, because a bare
 ```sh
 just build       # release binary → target/release/tmux-companion
 just test-unit   # the fast half: --lib --bins, no tmux, no daemon, no socket
-just test-e2e    # the three integration suites; e2e drives a real tmux
+just test-e2e    # the four integration suites; e2e and remote drive a real tmux
 just test        # both, --no-fail-fast, with the daemon reaper on the way out
 just lint        # clippy --all-targets -D warnings, the way ci.yml runs it
 just lint-md     # markdownlint over every .md, the way markdown.yml runs it
+just capnp       # regenerate schema/link_capnp.rs after editing schema/link.capnp
 just test-tmux 3.4   # every test with one pinned tmux first on PATH
 just test-matrix # every test on each pinned tmux, 3.4, 3.5a and 3.7c
-just ci          # review-marks, rustfmt, clippy, test-matrix and rustdoc
+just ci          # review-marks, capnp-check, rustfmt, clippy, test-matrix and rustdoc
 just install     # build, install to PREFIX, move the daemon onto the new binary
 ```
 
@@ -108,104 +109,6 @@ exits. The server keeps everything mutable in `ServerState` behind an
 map, and the three caches (git status, is-inside-work-tree, battery). There is
 no database; the caches are in-memory and die with the server, which is the
 intended lifetime -- one cold `git status` after a restart costs 51 ms, once.
-
-## Module responsibilities
-
-One row per file under `src/`, in the order `ls src src/*/` gives. The "owns"
-column is the first sentence of the file's `//!` doc, so the file is the
-source and this is the index; four files have no module doc yet and keep the
-description they had.
-
-| Path                          | Owns                                                                                                                                                                                                             |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/agent.rs`                | what an agent says about itself, and the hooks that make it say so                                                                                                                                               |
-| `src/autofetch.rs`            | fetching in the background, so ahead and behind mean something                                                                                                                                                   |
-| `src/autoreload.rs`           | sourcing tmux's config when it changes                                                                                                                                                                           |
-| `src/branch_icons.rs`         | which glyph a branch prefix gets: the config's entries, the built-in table, and for any other `word/` a lookup among the Nerd Font glyph names, kept in a file so the same prefix draws the same glyph next time |
-| `src/brief.rs`                | one screen with the state of the server, for the moment you sit down                                                                                                                                             |
-| `src/cache.rs`                | in-memory TTL maps for the server's segment caches                                                                                                                                                               |
-| `src/cheatsheet.rs`           | the cheat sheet: four boxes in a 2x2 grid, showing the bindings you keep having to look up, so you learn them and stop looking                                                                                   |
-| `src/chunk.rs`                | the chunk clock: how long you have been at tmux this sitting, and one sound when that is past the budget                                                                                                         |
-| `src/cli.rs`                  | the `Cmd` enum clap parses into, and the dispatch that turns a variant into a request to the server                                                                                                              |
-| `src/client.rs`               | find the socket, start a server if nothing answers, send one JSON line and read one back                                                                                                                         |
-| `src/click.rs`                | a mouse click on a segment of the bar                                                                                                                                                                            |
-| `src/close.rs`                | closing a project session by letting every window exit on its own                                                                                                                                                |
-| `src/config.rs`               | the configuration file: where it lives, how it is parsed, and what happens when it cannot be                                                                                                                     |
-| `src/daemon.rs`               | asking a running tmux-companion daemon for a segment, from another program                                                                                                                                       |
-| `src/dirsource.rs`            | where the project picker's directory list comes from                                                                                                                                                             |
-| `src/doctor.rs`               | `tmux-companion doctor`: the first thing to ask for on an issue from a stranger                                                                                                                                  |
-| `src/earcons.rs`              | short sounds for events: an agent that asked, one that finished, a health reason that appeared                                                                                                                   |
-| `src/identity.rs`             | what a pane is running, by the name it was started as, when tmux's name for it says too little                                                                                                                   |
-| `src/inbox.rs`                | the agents waiting on you, with the question each one asked                                                                                                                                                      |
-| `src/journal.rs`              | what happened in each project today: the commands that ran long, the questions the agents stopped on, the sessions opened and closed                                                                             |
-| `src/jump.rs`                 | jumping to any text on the screen: type a few of its characters, then the label that appears beside the one you meant                                                                                            |
-| `src/keyroute/mod.rs`         | keys that tmux and the apps in its panes both want: what each layer binds, and where they collide                                                                                                                |
-| `src/keyroute/collide.rs`     | where the layers disagree: a key tmux's root table binds that an app in a pane binds too, and the keys in scope nobody has taken yet                                                                             |
-| `src/keyroute/discover.rs`    | what each layer binds, found without asking any app to do anything new                                                                                                                                           |
-| `src/keyroute/spell.rs`       | key names in tmux's spelling, from the spellings the apps in its panes use                                                                                                                                       |
-| `src/keys.rs`                 | key bindings, parsed out of `tmux list-keys` into rows a picker can search                                                                                                                                       |
-| `src/kill.rs`                 | stopping what hangs in a pane: TERM, a wait, and KILL if it is still there                                                                                                                                       |
-| `src/lib.rs`                  | one binary in two modes; the library `tests/` links against                                                                                                                                                      |
-| `src/local.rs`                | running a segment in this process, with no daemon and no socket                                                                                                                                                  |
-| `src/main.rs`                 | the binary: parses arguments, picks a runtime, hands over to the library                                                                                                                                         |
-| `src/note.rs`                 | a one-line note on a pane, for the human who reads the bar and the picker                                                                                                                                        |
-| `src/notify.rs`               | telling you a long command finished in a pane you were not looking at                                                                                                                                            |
-| `src/online.rs`               | whether the network is there, asked on a timer and said on the health mark                                                                                                                                       |
-| `src/open.rs`                 | open a URL or a file reference found in text                                                                                                                                                                     |
-| `src/panes.rs`                | every pane on the server, as a list to jump from, and the agents among them                                                                                                                                      |
-| `src/picker/mod.rs`           | the picker: a fuzzy-matched list in a terminal, shared by every chooser in the tool                                                                                                                              |
-| `src/picker/ansi.rs`          | enough ANSI to draw a preview                                                                                                                                                                                    |
-| `src/picker/screen.rs`        | the picker's own screen: the state behind it, the matching, and the drawing                                                                                                                                      |
-| `src/picker/style.rs`         | what a picker looks like, as settings rather than as a shape compiled into the drawing                                                                                                                           |
-| `src/presets/ascii.toml`      | the 7-bit fallback: one value per Nerd Font glyph name, for a machine whose font nobody controls                                                                                                                 |
-| `src/pocket.rs`               | a pocket pane: a shell you pull out beside the editor, look at, and put away without losing it                                                                                                                   |
-| `src/ports.rs`                | who is listening on which port, and which pane started it                                                                                                                                                        |
-| `src/presets/nf-md-names.tsv` | the Nerd Fonts Material Design glyph names and codepoints, sorted, for the branch-prefix lookup; written by `scripts/nerdfont-names.sh`, MIT notice in its header                                                |
-| `src/preview.rs`              | renders the git segment for a spread of repo states in every color style                                                                                                                                         |
-| `src/probe.rs`                | probes: ask the terminal what it does, rather than assuming                                                                                                                                                      |
-| `src/promote.rs`              | giving a pane a session of its own, named for the directory it is in                                                                                                                                             |
-| `src/project.rs`              | projects: one tmux session each, with the windows a layout asks for                                                                                                                                              |
-| `src/proto.rs`                | `Request` / `Response` serde types, one args struct per command, and the build id (no module doc)                                                                                                                |
-| `src/quiet.rs`                | quiet hours: nothing nags for a while, and the bar says why                                                                                                                                                      |
-| `src/repofile.rs`             | the layout a checkout carries with it: `.tmux-companion.toml` in the project root                                                                                                                                |
-| `src/restore.rs`              | what a restore will run in each pane, decided before anything runs                                                                                                                                               |
-| `src/run.rs`                  | run a command from history in a pane beside the one you are in                                                                                                                                                   |
-| `src/saved.rs`                | per-project layouts: the file a key writes and `project` reads back                                                                                                                                              |
-| `src/search.rs`               | searching the scrollback of every pane at once, and landing on the line                                                                                                                                          |
-| `src/segments/mod.rs`         | one module per thing the status bar can draw                                                                                                                                                                     |
-| `src/segments/agents.rs`      | how many coding agents are running, and how many are busy or waiting on you                                                                                                                                      |
-| `src/segments/battery.rs`     | battery percentage and icon, read through `starship-battery`, the maintained fork of the `battery` crate                                                                                                         |
-| `src/segments/clients.rs`     | how many other clients are attached to this server, session and window                                                                                                                                           |
-| `src/segments/health.rs`      | one mark on the bar when the daemon knows something is wrong                                                                                                                                                     |
-| `src/segments/git.rs`         | git status: running the command, parsing porcelain v2, and rendering it into a tmux segment                                                                                                                      |
-| `src/segments/network.rs`     | network bandwidth: a counter read, the arithmetic that turns two reads into a rate, and the IEC formatting                                                                                                       |
-| `src/segments/sh_jobs.rs`     | jobs stopped under a pane: which ones, and what to draw for each                                                                                                                                                 |
-| `src/segments/vim_bg.rs`      | the old name for `sh_jobs`, kept one release                                                                                                                                                                     |
-| `src/segments/window.rs`      | path abbreviation, index icons, `render` (no module doc)                                                                                                                                                         |
-| `src/server/mod.rs`           | bind the socket, accept forever, hand each line to a handler                                                                                                                                                     |
-| `src/server/handlers.rs`      | `req.cmd` → segment fn; `assemble_right`, the `__rusage` probe (no module doc)                                                                                                                                   |
-| `src/server/state.rs`         | `ServerState` + caches + TTL constants + dir-aliases loader (no module doc)                                                                                                                                      |
-| `src/sessions/mod.rs`         | snapshots of the whole tmux server, and the generations they are kept in                                                                                                                                         |
-| `src/sessions/capture.rs`     | turning three tmux listings into one snapshot                                                                                                                                                                    |
-| `src/sessions/cli.rs`         | the client half of `sessions resurrect`: the confirm screen, the countdown and the crash acknowledgement, which run in the terminal and so cannot live in the daemon                                             |
-| `src/sessions/idle.rs`        | sessions nobody has looked at for days: which they are, and the picker that closes one                                                                                                                           |
-| `src/sessions/import.rs`      | reading the tab-separated format tmux-resurrect writes                                                                                                                                                           |
-| `src/sessions/portable.rs`    | a snapshot that can move house                                                                                                                                                                                   |
-| `src/sessions/restore.rs`     | rebuilding a server from a snapshot                                                                                                                                                                              |
-| `src/sessions/start.rs`       | `sessions start` and `sessions continue`: getting into a session by its name, or back into the one you left                                                                                                      |
-| `src/sessions/store.rs`       | where snapshots live, how many are kept, and which one is newest                                                                                                                                                 |
-| `src/sessions/summary.rs`     | the screen a restore shows when it does not know something                                                                                                                                                       |
-| `src/sessions/timer.rs`       | the daemon's half: a snapshot on a timer, and a marker saying it is alive                                                                                                                                        |
-| `src/shell.rs`                | the OSC 133 prompt marks, and the shell code that emits them                                                                                                                                                     |
-| `src/switcher.rs`             | the switcher: a session's windows, and the server's sessions, in the order you used them, a press to move and a pause or Enter to go                                                                             |
-| `src/tasks.rs`                | background work the daemon does on a timer, and the small tmux commands that do not need one                                                                                                                     |
-| `src/theme/mod.rs`            | theme arithmetic: the readable text colour for a theme, a visible border colour, and the lighter and darker siblings of a cube colour                                                                            |
-| `src/theme/cli.rs`            | the client half of `theme`: the subcommands that read a themes directory, run the picker and source a file into tmux, which talk to the terminal and so run in the client rather than the daemon                 |
-| `src/trace.rs`                | timing marks for the benchmark: when `TMUX_COMPANION_TRACE` names a file, each mark appends one line saying what happened and when                                                                               |
-| `src/tmux/mod.rs`             | everything that knows about tmux's own formatting language                                                                                                                                                       |
-| `src/tmux/format.rs`          | colours, styles and the string builder every segment renders through                                                                                                                                             |
-| `src/tmux/icons.rs`           | Nerd Font codepoints the status bar draws with                                                                                                                                                                   |
-| `src/window_names.rs`         | naming windows after what is running in them, from the job table                                                                                                                                                 |
 
 ## The library surface
 
@@ -331,8 +234,8 @@ says, and that has killed a live server once.
    `#()` costs ~14.6 ms of CPU per second per attached client, which is more
    than any segment here costs to compute. Put anything expensive and slow to
    change behind a `TtlMap` on `ServerState`.
-7. Update `docs/tmux.conf.example`, the module table above, and
-   `docs/tmux-companion.1`.
+7. Give the file a `//!` module doc whose first sentence says what it owns,
+   and update `docs/tmux.conf.example` and `docs/tmux-companion.1`.
 
 ## The manual
 
@@ -360,55 +263,6 @@ in the container.
 `docs/tmux.conf.starter.example` exists alongside `docs/tmux.conf.example` and
 `docs/tmux.conf.full.example`, and the e2e checks in `tests/e2e.rs` run over
 all three.
-
-## The docs site
-
-<https://with-love.lonkar.org/tmux-companion/> is `docs/` built with Starlight
-from `site/`. It is a project site under the org's Pages domain, so it has a
-base path, `/tmux-companion`, set once in `site/scripts/sync.mjs`. `site/scripts/sync.mjs` turns the docs into pages at build time: each
-H1 becomes the page title, relative links become routes or GitHub links, the
-man page goes through mandoc, and the example configs get a page each. Nothing
-it generates is committed, so `docs/` stays the one source and reads the same
-on GitHub. Only tutorial, how-to, reference and explanation are published;
-`dev/` and `backlog/` are not.
-
-`.github/workflows/docs.yml` deploys it to GitHub Pages on every push to
-main that touches `docs/`, the README, the changelog or `site/`, so a docs fix
-needs no release. While CHANGELOG.md's Unreleased section has entries, every
-page carries a banner naming the latest release, since the site can describe
-what brew can't install yet; cutting a release empties Unreleased and the
-banner goes. A pull request that touches the docs builds the site without
-deploying. `just docs-dev` serves it with live reload; `just docs-build`
-builds it the way CI does.
-
-A new page needs its file under one of the four directories, with an H1 on
-its first line. The tutorial, how-to and explanation sidebars are generated
-from their directories; reference lists its pages in `site/astro.config.mjs`,
-so a new reference page gets a line there too. A link to a file outside the
-four becomes a GitHub link at the commit the site was built from.
-
-## The skill
-
-`skills/tmux-companion/SKILL.md` is the instruction sheet a coding agent loads
-before it touches this tmux server, and the repository ships it as a Claude Code
-plugin: `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` make
-the checkout its own marketplace, and `.claude/skills/tmux-companion` is a
-symlink so a session started here picks it up with no install.
-
-An agent acts on that file without checking it, so a command removed from the
-CLI has to leave the skill in the same commit.
-`the_skill_names_no_command_that_went_away` in `tests/e2e.rs` reads every
-backticked span and fenced line in the file and holds the commands, subcommands
-and long flags against `--help`, which is the same trick the manual tests use.
-
-The plugin has its own version and its own tag namespace,
-`tmux-companion--v0.3.0`, because SKILL.md changes on a different schedule from
-the binary and `release.yml` triggers on `v*`:
-
-```sh
-just plugin-check              # is the skill ahead of its last tag?
-just plugin-release 0.3.0      # bump both manifests, validate, commit, tag, push
-```
 
 ## The changelog
 
@@ -441,18 +295,7 @@ bytes for the bar. The steps are the same shape, with one extra.
 8. A picker meets "Performance under a capped CPU" above: nothing per row
    before its first frame, and a line in `scripts/bench-capped.py`.
 
-## Changing icon codepoints
+## Workflows
 
-Edit `src/tmux/icons.rs`. Icon constants are used directly in tests via the
-constant name, so a codepoint change automatically propagates to all tests —
-no manual expected-string updates needed.
-
-After changing a codepoint that appears in tmux output, rebuild and do a
-side-by-side visual check with the previous tool:
-
-```sh
-just build
-./target/release/tmux-companion restart   # not pkill; see "Running manually"
-./target/release/tmux-companion gst /some/repo
-yrl gst /some/repo   # or the previous shell script
-```
+The docs site, releasing the Claude Code plugin and changing icon codepoints
+are in the `repo-workflows` skill (`.claude/skills/repo-workflows/SKILL.md`).

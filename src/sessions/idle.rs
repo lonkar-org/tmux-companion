@@ -115,7 +115,14 @@ pub fn now() -> u64 {
 
 /// Ask tmux, and keep the sessions idle for more than `days`.
 pub async fn list(days: u64) -> Vec<IdleSession> {
-    let listing = crate::cli::tmux_capture(&["list-sessions", "-F", FORMAT]).await;
+    let listing = crate::cli::tmux_capture(&[
+        "list-sessions",
+        "-f",
+        crate::link::NOT_MIRRORED,
+        "-F",
+        FORMAT,
+    ])
+    .await;
     parse(&listing, now(), days.saturating_mul(DAY))
 }
 

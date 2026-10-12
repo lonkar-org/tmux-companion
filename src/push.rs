@@ -483,6 +483,18 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
             continue;
         }
         let panes = crate::panes::shared(&state, TICK).await;
+        // A mirror session's bar is the mirror loop's, from its host, and a
+        // grouped session another machine attached to has its bar off.
+        let panes: Vec<crate::panes::Pane> = {
+            let st = state.lock().await;
+            panes
+                .into_iter()
+                .filter(|p| {
+                    !st.mirrors.iter().any(|m| m.session == p.session)
+                        && !st.grouped.contains(&p.session)
+                })
+                .collect()
+        };
         let attached = sessions(&panes);
         let mut memo: HashMap<String, Option<String>> = HashMap::new();
         // Once a tick, and so one network sample a tick: two would split the
@@ -590,6 +602,35 @@ pub async fn push_loop(state: Arc<Mutex<ServerState>>, mode: crate::config::BarM
             }
         }
     }
+}
+
+/// Set `@tc-right` on each of `changed`'s sessions in one tmux call, under
+/// the same lock and stop as the loop's own writes, and remember them for
+/// [`clear`]. For the mirror bar, which writes in every bar mode. False when
+/// tmux refused part of it.
+pub async fn write_sessions(changed: &[(String, String)]) -> bool {
+    if let Ok(mut pushed) = PUSHED.lock() {
+        for (s, _) in changed {
+            if !pushed.contains(s) {
+                pushed.push(s.clone());
+            }
+        }
+    }
+    let args = commands(changed, &[]);
+    tokio::task::spawn_blocking(move || {
+        let _writing = WRITE.lock();
+        if STOPPING.load(std::sync::atomic::Ordering::SeqCst) {
+            return true;
+        }
+        crate::tmux::command_sync()
+            .args(&args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Held while the loop's tmux invocation runs, so [`clear`] waits for one in
@@ -744,6 +785,7 @@ mod tests {
             accent: String::new(),
             pid: 0,
             identity: None,
+            mirrored: false,
         }
     }
 

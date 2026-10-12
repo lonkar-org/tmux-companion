@@ -131,6 +131,158 @@ async fn dirs(args: &crate::proto::DirsArgs, state: &Arc<Mutex<ServerState>>) ->
     paths
 }
 
+/// How old a pane list a link's question is answered from. The inbox reads
+/// one every two seconds, so this is usually a list already paid for.
+const LINK_TRUST: Duration = Duration::from_secs(2);
+
+/// A session's segments as structured fields, for a bridge: the git state of
+/// its active pane's directory, the host's agents and the host's health,
+/// each only when it has something to say. Text, never tmux markup: the
+/// other side builds its own bar from these.
+async fn link_segments(session: &str, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
+    let panes = crate::panes::shared(state, LINK_TRUST).await;
+    let Some(segments) = segments_of(session, &panes, state).await else {
+        anyhow::bail!("no session {session}");
+    };
+    serde_json::to_string(&crate::link::SegmentsAnswer {
+        polled_at: crate::panes::now_secs(),
+        segments,
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The segments of one session's active pane, from a pane list already
+/// read; `None` for a session the list doesn't have.
+async fn segments_of(
+    session: &str,
+    panes: &[crate::panes::Pane],
+    state: &Arc<Mutex<ServerState>>,
+) -> Option<Vec<crate::link::Segment>> {
+    use crate::link::Segment;
+    let mine: Vec<&crate::panes::Pane> = panes.iter().filter(|p| p.session == session).collect();
+    let pane = mine.iter().find(|p| p.visible).or(mine.first())?;
+    let mut segments = Vec::new();
+
+    let path = std::path::PathBuf::from(&pane.path);
+    let ttl = state.lock().await.git_ttl();
+    let cached = state.lock().await.git_cached(&path, ttl);
+    let status = match cached {
+        Some(s) => Some(s),
+        None => match segments::git::fetch_git_status(&path).await {
+            Ok(s) => {
+                state.lock().await.git_store(path.clone(), s.clone(), ttl);
+                Some(s)
+            }
+            Err(_) => None,
+        },
+    };
+    if let Some(text) = status.as_ref().and_then(crate::link::git_words) {
+        segments.push(Segment {
+            role: "git".into(),
+            text,
+            glyph: "BRANCH".into(),
+            ..Segment::default()
+        });
+    }
+
+    let (programs, reports, waiting_secs) = {
+        let st = state.lock().await;
+        (
+            st.config.agents.programs.clone(),
+            st.reports.clone(),
+            st.config.agents.waiting_secs,
+        )
+    };
+    let sample = segments::agents::sample(panes, &programs, &reports, waiting_secs);
+    if sample.total > 0 {
+        segments.push(Segment {
+            role: "agents".into(),
+            text: crate::link::agents_words(sample.total, sample.waiting, sample.busy),
+            glyph: "AGENT".into(),
+            ..Segment::default()
+        });
+    }
+
+    let reasons = health_check(state).await.reasons;
+    if !reasons.is_empty() {
+        segments.push(Segment {
+            role: "health".into(),
+            text: reasons.join("; "),
+            ..Segment::default()
+        });
+    }
+    Some(segments)
+}
+
+/// How long a `watch` waits with nothing changing before it looks at the
+/// session list itself: the inbox's own interval, so when the inbox loop
+/// runs, its listing is the one looked at and nothing more is read.
+const WATCH_LOOK: Duration = Duration::from_secs(2);
+
+/// How old a listing a `watch` takes when it looks: a beat past
+/// [`WATCH_LOOK`], so the inbox's listing, read on the same interval, is
+/// never just too old to count.
+const WATCH_TRUST: Duration = Duration::from_secs(3);
+
+/// The longest a `watch` is held with nothing to say. The bridge asks again
+/// at once, so this only bounds how long a request from a bridge that went
+/// away waits for a change to find that out.
+const WATCH_HOLD: Duration = Duration::from_secs(60);
+
+/// `__link_watch`: wait until something a bridge pushes may have changed
+/// since `since`, then everything it pushes. No timer of its own beyond a
+/// look every [`WATCH_LOOK`] at a listing up to [`WATCH_TRUST`] old, which a
+/// running inbox loop has always read already: rule 3, one poll per
+/// listing.
+async fn link_watch(
+    args: &crate::proto::LinkWatchArgs,
+    state: &Arc<Mutex<ServerState>>,
+) -> anyhow::Result<String> {
+    let mut rx = state.lock().await.watch_gen.subscribe();
+    if let Some(since) = args.since {
+        let held = std::time::Instant::now();
+        while *rx.borrow_and_update() == since && held.elapsed() < WATCH_HOLD {
+            tokio::select! {
+                _ = rx.changed() => {}
+                _ = tokio::time::sleep(WATCH_LOOK) => {
+                    crate::panes::shared(state, WATCH_TRUST).await;
+                }
+            }
+        }
+    }
+    let panes = crate::panes::shared(state, WATCH_TRUST).await;
+    let (generation, sessions, polled_at, inbox, shown) = {
+        let st = state.lock().await;
+        let (sessions, polled_at) = st.sessions_fresh(Duration::MAX).unwrap_or_default();
+        (
+            *st.watch_gen.borrow(),
+            sessions,
+            polled_at,
+            crate::inbox::ordered(&st.inbox),
+            st.grouped_shown.clone(),
+        )
+    };
+    let mut segments = Vec::new();
+    for (grouped, machine) in shown {
+        if machine != args.machine {
+            continue;
+        }
+        if let Some(segs) = segments_of(&grouped, &panes, state).await {
+            segments.push((grouped, segs));
+        }
+    }
+    serde_json::to_string(&crate::link::WatchAnswer {
+        generation,
+        sessions: crate::link::SessionsAnswer {
+            polled_at,
+            sessions,
+        },
+        inbox,
+        segments,
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response {
     if req.cmd != "__rusage" {
         REQ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -263,13 +415,29 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
                     Some(secs) => st.quiet_until = Some(now.saturating_add(secs)),
                     None => {}
                 }
-                Ok(crate::quiet::status(st.quiet_ends(now), now))
+                if args.focus_off {
+                    st.focus = None;
+                }
+                if let Some(name) = args.focus {
+                    st.focus = Some(name);
+                }
+                // The bar's check is kept a few seconds, and a Focus that
+                // just started should not wait that long to show.
+                st.health_cache = None;
+                Ok(st.quiet_status(now))
             }
             Err(e) => Err(e),
         },
         // The inbox as JSON rows, longest wait first, for the `inbox` picker.
+        // The hosts' agents come after this machine's, each saying its
+        // host, and only while that host's link is up.
         "__inbox" => {
-            let rows = crate::inbox::ordered(&state.lock().await.inbox);
+            let rows = {
+                let st = state.lock().await;
+                let mut rows = crate::inbox::ordered(&st.inbox);
+                rows.extend(st.links.inbox());
+                rows
+            };
             serde_json::to_string(&rows).map_err(|e| anyhow::anyhow!("{e}"))
         }
         // An agent saying what it is doing, from one of its hooks. Stored
@@ -320,6 +488,96 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             };
             serde_json::to_string(&facts).map_err(|e| anyhow::anyhow!("{e}"))
         }
+        // Every host and its link, after an ask to bring one up or a
+        // reload of the host list, as JSON for `hosts` and `doctor`.
+        "__hosts" => match req.parse_args::<crate::proto::HostsArgs>() {
+            Ok(args) => {
+                let reloaded = if args.reload {
+                    crate::link::manager::reload(&state).await
+                } else {
+                    Ok(())
+                };
+                match reloaded {
+                    Ok(()) => {
+                        let mut st = state.lock().await;
+                        if let (Some(host), Some(session)) =
+                            (args.forget_host.as_deref(), args.forget_session.as_deref())
+                            && let Some(c) = st.links.forget_row(host, session)
+                            && let Some(dir) = crate::link::cache::dir()
+                            && let Err(e) = crate::link::cache::write(
+                                &crate::link::cache::path_in(&dir, host),
+                                &c,
+                            )
+                        {
+                            eprintln!("tmux-companion: could not keep {host}'s sessions: {e}");
+                        }
+                        match args.connect.as_deref() {
+                            Some("") => {
+                                st.links.want(None);
+                                Ok(())
+                            }
+                            Some(name) if !st.links.want(Some(name)) => {
+                                Err(anyhow::anyhow!("no host called {name}; `hosts` lists them"))
+                            }
+                            _ => Ok(()),
+                        }
+                        .and_then(|()| {
+                            serde_json::to_string(&st.links.views())
+                                .map_err(|e| anyhow::anyhow!("{e}"))
+                        })
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        },
+        // What a bridge answers `sessions` with: this machine's sessions
+        // from the shared pane poll, mirror sessions left out.
+        "__link_sessions" => {
+            let sessions = crate::link::local_sessions(&state, LINK_TRUST).await;
+            let polled_at = state
+                .lock()
+                .await
+                .sessions_fresh(Duration::MAX)
+                .map_or(0, |(_, at)| at);
+            serde_json::to_string(&crate::link::SessionsAnswer {
+                polled_at,
+                sessions,
+            })
+            .map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        // What a bridge answers `dirs` with: the directory source this
+        // machine's own config names. The request carries nothing, so the
+        // other side never picks what runs.
+        "__link_dirs" => {
+            let config = state.lock().await.config.clone();
+            let home = std::env::var("HOME").unwrap_or_default();
+            // In this process: the daemon asking its own socket would be a
+            // second connection for an answer it can work out here.
+            let mut dirs = crate::dirsource::DirsSource::from_config(&config.project)
+                .list_here(&home)
+                .await;
+            dirs.truncate(crate::link::MAX_DIRS);
+            serde_json::to_string(&dirs).map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        // A host's directories for a picker opened inside one of its mirror
+        // sessions: the ones heard in the last half minute at once, or asked
+        // over the link and waited for, up to the host's connect time.
+        "__host_dirs" => match req.parse_args::<crate::proto::HostDirsArgs>() {
+            Ok(args) => host_dirs(&args.host, &state).await,
+            Err(e) => Err(e),
+        },
+        // What a bridge's `watch` waits on: the next change to anything it
+        // pushes, and all of it.
+        "__link_watch" => match req.parse_args::<crate::proto::LinkWatchArgs>() {
+            Ok(args) => link_watch(&args, &state).await,
+            Err(e) => Err(e),
+        },
+        // What a bridge answers `segments` with, for one session.
+        "__link_segments" => match req.parse_args::<crate::proto::LinkSegmentsArgs>() {
+            Ok(args) => link_segments(&args.session, &state).await,
+            Err(e) => Err(e),
+        },
         other => Err(anyhow::anyhow!("unknown command: {}", other)),
     };
 
@@ -343,6 +601,46 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             }
         }
         Err(e) => Response::err(e),
+    }
+}
+
+/// How long a host's directories are answered from memory before a picker's
+/// ask fetches them again.
+const DIRS_FRESH: Duration = Duration::from_secs(30);
+
+/// `__host_dirs`: a host's directories as a JSON list, or why there are none.
+async fn host_dirs(host: &str, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
+    let since = std::time::Instant::now();
+    let (asked, attempts, wait) = {
+        let mut st = state.lock().await;
+        let asked = st
+            .links
+            .ask_dirs(host, DIRS_FRESH)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let wait = st
+            .links
+            .hosts
+            .iter()
+            .find(|h| h.host.name == host)
+            .map_or(10, |h| h.host.connect_secs.max(1));
+        (asked, st.links.attempts(host), wait)
+    };
+    if let Some(dirs) = asked {
+        return serde_json::to_string(&dirs).map_err(|e| anyhow::anyhow!("{e}"));
+    }
+    // A connect and one answer: twice the connect time is the most either
+    // can take before the link calls itself down.
+    let deadline = since + Duration::from_secs(wait * 2);
+    loop {
+        if let Some(answer) = state.lock().await.links.dirs_answer(host, since, attempts) {
+            return answer
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .and_then(|d| serde_json::to_string(&d).map_err(|e| anyhow::anyhow!("{e}")));
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("{host} gave no directories in {}s", wait * 2);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -619,6 +917,20 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
     segments::health::format_health(&sample, &bar_bg)
 }
 
+/// The health reasons, from the health segment's cache when it is fresh and
+/// asked now otherwise: what the mirror bar says as `here: <reason>`.
+pub(crate) async fn health_reasons(state: &Arc<Mutex<ServerState>>) -> Vec<String> {
+    let cached = state.lock().await.health_cached();
+    match cached {
+        Some(sample) => sample.reasons,
+        None => {
+            let fresh = health_check(state).await;
+            state.lock().await.health_store(fresh.clone());
+            fresh.reasons
+        }
+    }
+}
+
 /// The three questions, answered now.
 pub(crate) async fn health_check(
     state: &Arc<Mutex<ServerState>>,
@@ -626,9 +938,7 @@ pub(crate) async fn health_check(
     let (started, failures, quiet, offline, bar_note, unclean) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
-        let quiet = s
-            .is_quiet()
-            .then(|| crate::quiet::status(s.quiet_ends(now), now));
+        let quiet = s.is_quiet().then(|| s.quiet_status(now));
         let offline = s
             .offline_since
             .map(|since| crate::online::reason(since, now, &s.config.online.probe));

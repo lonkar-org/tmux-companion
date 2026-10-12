@@ -19,8 +19,10 @@ use crate::saved::{Confidence, PaneReport, command_for};
 
 use super::{Header, Pane, Session, Snapshot, Window};
 
-/// `list-sessions -F` in the shape [`parse_sessions`] expects.
-pub const SESSION_FORMAT: &str = "#{session_name}\t#{session_path}\t#{session_attached}";
+/// `list-sessions -F` in the shape [`parse_sessions`] expects. The last two
+/// are a mirror session's `@tc-host` and `@tc-remote`, empty on any other.
+pub const SESSION_FORMAT: &str =
+    "#{session_name}\t#{session_path}\t#{session_attached}\t#{@tc-host}\t#{@tc-remote}";
 
 /// `list-windows -a -F` in the shape [`parse_windows`] expects.
 pub const WINDOW_FORMAT: &str = "#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_zoomed_flag}\t#{window_layout}";
@@ -66,6 +68,10 @@ pub struct SessionReport {
     pub path: String,
     /// `#{session_attached}`, which decides what a restore lands on.
     pub attached: bool,
+    /// `@tc-host`, set on a mirror session.
+    pub host: String,
+    /// `@tc-remote`, set on a mirror session.
+    pub remote: String,
 }
 
 /// One window as `list-windows -a` reported it.
@@ -186,11 +192,15 @@ pub fn parse_sessions(text: &str) -> (Vec<SessionReport>, Vec<String>) {
     let mut out = Vec::new();
     let mut skipped = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        match fields(line, 3) {
+        // Five fields since mirror sessions; three from a listing an older
+        // build asked for, which the fixtures still are.
+        match fields(line, 5).or_else(|| fields(line, 3)) {
             Some(f) => out.push(SessionReport {
                 name: f[0].to_string(),
                 path: f[1].to_string(),
                 attached: flag(f[2]),
+                host: f.get(3).map(|h| h.trim().to_string()).unwrap_or_default(),
+                remote: f.get(4).map(|r| r.to_string()).unwrap_or_default(),
             }),
             None => skipped.push(line.to_string()),
         }
@@ -365,6 +375,8 @@ pub fn capture(c: &Capture) -> Captured {
         let mut built = Session {
             name: session.name.clone(),
             path: session.path.clone(),
+            host: session.host.clone(),
+            remote: session.remote.clone(),
             window: Vec::new(),
         };
         for window in windows.iter().filter(|w| w.session == session.name) {
@@ -373,12 +385,23 @@ pub fn capture(c: &Capture) -> Captured {
                 .iter()
                 .filter(|p| p.session == session.name && p.pane.window == window.index)
             {
-                let (command, how) = command_for_pane(
-                    &report.pane,
-                    processes.get(&report.pid).map(String::as_str),
-                    c.shell,
-                    c.default_command,
-                );
+                // A mirror session's pane runs the shim, whose child is the
+                // host command: the ssh, which the process table would record
+                // and a restore would run bare. What it stands for is the
+                // shim for this host and session, and that is what is kept.
+                let (command, how) = if session.host.is_empty() {
+                    command_for_pane(
+                        &report.pane,
+                        processes.get(&report.pid).map(String::as_str),
+                        c.shell,
+                        c.default_command,
+                    )
+                } else {
+                    (
+                        crate::remote::recorded_shim(&session.host, &session.remote),
+                        Confidence::Exact,
+                    )
+                };
                 if how == Confidence::Guessed {
                     guessed.push((session.name.clone(), window.index, report.pane.index));
                 }
@@ -459,6 +482,34 @@ mod tests {
         assert_eq!(got.snapshot.window_count(), 14);
         assert_eq!(got.snapshot.pane_count(), 14);
         assert!(got.skipped.is_empty(), "{:?}", got.skipped);
+    }
+
+    #[test]
+    fn a_mirror_session_is_kept_as_its_shim_and_not_as_the_ssh_under_it() {
+        let c = Capture {
+            sessions: "api@vm\t/home/me\t1\tvm\tapi\nwork\t/w\t0\t\t\n",
+            windows: "api@vm\t1\tapi\t1\t0\tb25d,80x24,0,0,1\nwork\t1\tzsh\t1\t0\tb25d,80x24,0,0,2\n",
+            panes: "api@vm\t1\t0\t/home/me\tssh\t/bin/tc host attach vm api\t1\t100\t\th\n\
+                    work\t1\t0\t/w\tzsh\t\t1\t200\t\th\n",
+            processes: "100 ssh vm -t tmux new-session -A -t =api\n",
+            ..laptop(&[])
+        };
+        let got = capture(&c);
+        assert!(got.refusal().is_none(), "{:?}", got.refusal());
+        let mirror = &got.snapshot.session[0];
+        assert_eq!(
+            (mirror.host.as_str(), mirror.remote.as_str()),
+            ("vm", "api")
+        );
+        let pane = &mirror.window[0].pane[0];
+        assert_eq!(pane.command, "tmux-companion host attach vm api");
+        assert_eq!(pane.confidence, Confidence::Exact);
+        assert!(got.snapshot.session[1].host.is_empty());
+        let text = crate::sessions::render(&got.snapshot);
+        assert_eq!(
+            crate::sessions::parse(&text).expect("reads back"),
+            got.snapshot
+        );
     }
 
     #[test]

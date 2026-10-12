@@ -29,7 +29,12 @@
 # tmux's default green shows through everywhere they do not reach without it.
 set -g  status-interval 1
 set -g  status-style bg=colour233,fg=colour251
-set -g  status-left  "#[fg=colour251,bg=colour236] #S #[fg=colour240,bg=colour233] %H:%M:%S "
+# The host colour, set once: another machine's name is drawn in it on the bar
+# (the ssh hostname, the `@vm` of a mirror session) and in the session
+# switcher's rows, so a host looks the same wherever it is drawn.
+set -g @tc-host-fg colour203
+set -g @tc-host-bg colour233
+set -g  status-left  "#[fg=colour251,bg=colour236] #{?@tc-host,#{@tc-remote}#[fg=#{@tc-host-fg}#,bg=#{@tc-host-bg}]@#{@tc-host} 󰣀,#S} #[fg=colour240,bg=colour233] %H:%M:%S "
 set -g  status-left-length 80
 set -g  status-right-length 150
 
@@ -45,7 +50,11 @@ set -g  status-right-length 150
 # which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
 # per attached client per second; docs/BENCHMARKS.md has the numbers.
 # After a switch the bar follows in tens of ms in either mode, push the sooner.
-set -g  status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
+# In a mirror session (`api@vm`, a session on another machine opened from
+# M-s) @tc-host is set and the right side is the host's segments, which the
+# daemon sets as @tc-right in every bar mode: the call would show this
+# machine's directory of the pane that runs the attach.
+set -g  status-right "#{?@tc-host,#{@tc-right},#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}}"
 
 set -g window-status-format          "#I:#W#{?window_flags,#{window_flags}, }"
 set -g window-status-current-format  "#I:#W#{?window_flags,#{window_flags}, }"

@@ -324,6 +324,8 @@ mod tests {
             session: vec![Session {
                 name: name.to_string(),
                 path: "/w".to_string(),
+                host: String::new(),
+                remote: String::new(),
                 window: vec![Window {
                     index: 1,
                     name: "edit".to_string(),

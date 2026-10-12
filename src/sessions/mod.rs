@@ -147,6 +147,13 @@ pub struct Session {
     /// `#{session_path}`, which is where a new window in it would open.
     #[serde(default)]
     pub path: String,
+    /// For a mirror session, `@tc-host`: the host the session it stands for
+    /// is on. Empty for every other session.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host: String,
+    /// For a mirror session, `@tc-remote`: the session on the host.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remote: String,
     /// The windows, in index order.
     #[serde(default)]
     pub window: Vec<Window>,
@@ -332,6 +339,8 @@ mod tests {
         let project = |name: &str, path: &str, agent: &str| Session {
             name: name.to_string(),
             path: path.to_string(),
+            host: String::new(),
+            remote: String::new(),
             window: vec![
                 Window {
                     index: 1,
@@ -427,6 +436,8 @@ mod tests {
                 Session {
                     name: "y".to_string(),
                     path: "/Users/yogesh".to_string(),
+                    host: String::new(),
+                    remote: String::new(),
                     window: vec![Window {
                         index: 1,
                         name: "zsh".to_string(),

@@ -22,6 +22,12 @@
 #                                                         (default call)
 #   OUT        directory for the json and the summary   (default target/bench/<stamp>)
 #   BENCH_BIN  the binary under test                    (default target/release/…)
+#   LINK       1 adds two fake hosts and measures the link: the idle cost
+#              with one up, and the hello's time         (default off)
+#   REMOTE     N gives switch sessions N rows from a fake host, and times a
+#              pick of one to the host's first byte in the mirror pane, and
+#              the host's agent asking to the earcon here (default 0)
+#   EARCON_RUNS  asks timed with REMOTE                  (default 10)
 #
 # Load N is N busy loops at normal priority for the length of the run. This
 # machine has no efficiency cores to push work onto, so contention is the

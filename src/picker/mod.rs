@@ -121,6 +121,9 @@ pub struct Item {
     /// sessions alone and brings the directories in with the first letter,
     /// which is the project picker's search without a second popup.
     pub searched_only: bool,
+    /// Passed over by the step keys: a heading, or a row Enter does not go
+    /// to. Arrows and searching still reach it.
+    pub not_a_step: bool,
 }
 
 /// One column of a row and what kind of text it is.
@@ -208,6 +211,13 @@ impl Item {
     /// with how the row was laid out.
     pub fn in_columns(mut self, columns: Vec<impl Into<String>>) -> Self {
         self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The same item, passed over by the step keys; see
+    /// [`Item::not_a_step`].
+    pub fn not_a_step(mut self) -> Self {
+        self.not_a_step = true;
         self
     }
 
@@ -429,6 +439,11 @@ pub struct Chrome {
     /// opened the picker, so pressing it twice does the usual thing: alt-s
     /// twice goes back to the previous session.
     pub alt_picks: Vec<(char, usize)>,
+    /// Rows on which alt-enter ends the picker as one of the caller's keys,
+    /// `'\r'` on that row, rather than with the query: "do the other thing"
+    /// with the row, where the row has another thing to do. Anywhere else
+    /// alt-enter takes the query, as it always does.
+    pub alt_enter: Vec<usize>,
     /// Letters that move the cursor when pressed with alt, each with how far
     /// and which way through the list, wrapping. For a switcher: the key that
     /// opened it, pressed again inside the popup, moves to the next row, and
@@ -445,6 +460,11 @@ pub struct Chrome {
     /// The footer is somebody's own words, from `hint` in the config, and is
     /// shown as written: nothing is added to it.
     pub footer_as_written: bool,
+    /// A search filters the rows and leaves them in the order given, rather
+    /// than ranking them by how well they match. For a list whose order is
+    /// the answer, the session switcher's: sessions by last use, then the
+    /// projects by last jump, whatever is typed.
+    pub keep_order: bool,
 }
 
 /// What a picker calls with the selected row's index when a step key moves
@@ -481,10 +501,12 @@ impl Default for Chrome {
             look: Look::default(),
             icon: String::new(),
             alt_picks: Vec::new(),
+            alt_enter: Vec::new(),
             steps: Vec::new(),
             commit_after: None,
             on_step: None,
             footer_as_written: false,
+            keep_order: false,
         }
     }
 }
@@ -744,6 +766,38 @@ pub fn run_from(
             screen::Ended::Chosen(i) | screen::Ended::Key(_, i) => Outcome::Chosen(i),
             screen::Ended::Typed(q) => Outcome::Typed(q),
             screen::Ended::Cancelled => Outcome::Cancelled,
+        },
+    )
+}
+
+/// [`run_from`] with ctrl keys of the caller's own, as [`run_keyed`] has
+/// them: a key on a row ends the picker with the key and the row, `None`
+/// for every other ending.
+pub fn run_from_keys(
+    items: Vec<Item>,
+    query: &str,
+    chrome: &Chrome,
+    start_at: usize,
+    later: Option<Later>,
+    keys: &[char],
+) -> anyhow::Result<(Outcome, Option<char>)> {
+    if items.is_empty() && query.trim().is_empty() {
+        return Ok((Outcome::Cancelled, None));
+    }
+    let chrome = if previewable(chrome, &items) {
+        chrome.clone()
+    } else {
+        Chrome {
+            preview: Preview::None,
+            ..chrome.clone()
+        }
+    };
+    Ok(
+        match screen::run_keyed(&items, query, &chrome, keys, Some(start_at), later)? {
+            screen::Ended::Chosen(i) => (Outcome::Chosen(i), None),
+            screen::Ended::Key(c, i) => (Outcome::Chosen(i), Some(c)),
+            screen::Ended::Typed(q) => (Outcome::Typed(q), None),
+            screen::Ended::Cancelled => (Outcome::Cancelled, None),
         },
     )
 }

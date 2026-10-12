@@ -57,9 +57,17 @@ set -g  status-interval 1
 # hook, tmux.conf.starter.example ships it commented out, and the starter's
 # plain `#[fg=colour251,bg=colour236] #S ` is the line to use instead if you'd
 # rather not depend on a theme at all.
-set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #S "
+# The host colour, set once: another machine's name is drawn in it on the bar
+# (the ssh hostname, the `@vm` of a mirror session) and in the session
+# switcher's rows, so a host looks the same wherever it is drawn.
+set -g @tc-host-fg colour203
+set -g @tc-host-bg colour233
+#
+# In a mirror session the name is the host's session, then `@vm` and the ssh
+# glyph in the host colour, the words saying where you are; see `M-s` below.
+set -g  status-left  "#[fg=#{@theme-session-name-fg},bg=#{@theme-session-name-bg}] #{?@tc-host,#{@tc-remote}#[fg=#{@tc-host-fg}#,bg=#{@tc-host-bg}]@#{@tc-host} 󰣀,#S} "
 if-shell '[ -n "$SSH_CONNECTION" ]' \
-  'set -ga status-left "#[fg=color203,bg=color233] 󰣀 #h"'
+  'set -ga status-left "#[fg=#{@tc-host-fg},bg=#{@tc-host-bg}] 󰣀 #h"'
 set -ga status-left  "#[fg=color240,bg=color233] %H:%M:%S"
 set -ga status-left  "#[fg=color235,bg=color233] "
 
@@ -94,7 +102,11 @@ set -g  status-style bg=colour233,fg=colour251
 # which also starts a daemon, so a crash costs the bar 30 seconds at most. Push is the cheaper of the two by a call's cost
 # per attached client per second; docs/BENCHMARKS.md has the numbers.
 # After a switch the bar follows in tens of ms in either mode, push the sooner.
-set -g  status-right "#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}"
+# In a mirror session (`api@vm`, a session on another machine opened from
+# M-s) @tc-host is set and the right side is the host's segments, which the
+# daemon sets as @tc-right in every bar mode: the call would show this
+# machine's directory of the pane that runs the attach.
+set -g  status-right "#{?@tc-host,#{@tc-right},#{?#{&&:#{@tc-right},#{e|<:%s,#{e|+:#{@tc-alive},30}}},#{@tc-right},#(tmux-companion status-right --branch-max-len 40 #{pane_current_path})}}"
 
 # session name (~30 worst case) + ssh hostname (~20) + clock 9
 set -g  status-left-length 80

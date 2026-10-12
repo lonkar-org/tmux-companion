@@ -54,6 +54,8 @@ pub(super) struct Row {
     pub lazy: Option<super::LazyPreview>,
     /// Hidden until something is typed; see [`Item::searched_only`].
     pub searched_only: bool,
+    /// Passed over by the step keys; see [`Item::not_a_step`].
+    pub not_a_step: bool,
 }
 
 /// A row that survived the query, and where it matched.
@@ -91,6 +93,9 @@ pub(super) struct State {
     /// frame that did not change the selection does not parse it again.
     preview_lines: Option<(usize, Vec<Line<'static>>)>,
     matcher: Matcher,
+    /// A search filters and leaves the order alone; see
+    /// [`Chrome::keep_order`](super::Chrome::keep_order).
+    keep_order: bool,
 }
 
 /// What ended the picker.
@@ -116,6 +121,15 @@ const RESERVED: [char; 8] = ['a', 'c', 'd', 'j', 'k', 'p', 'u', 'm'];
 const PREVIEW_SHARES: [u16; 4] = [30, 50, 70, 0];
 
 impl State {
+    /// Keep the caller's order through a search, and filter again with it.
+    pub(super) fn keeping_order(mut self, keep: bool) -> Self {
+        if keep != self.keep_order {
+            self.keep_order = keep;
+            self.refilter();
+        }
+        self
+    }
+
     pub(super) fn new(items: &[Item], query: &str, preview_percent: u16, order: &[usize]) -> Self {
         let laid = super::laid_out_toned(items, order);
         let swatch_column = items.iter().any(|i| i.swatch.is_some());
@@ -132,6 +146,7 @@ impl State {
                 preview: item.preview.clone(),
                 lazy: item.lazy.clone(),
                 searched_only: item.searched_only,
+                not_a_step: item.not_a_step,
             })
             .collect();
         let icon_width = icon_width(&rows);
@@ -149,6 +164,7 @@ impl State {
             preview_percent,
             preview_lines: None,
             matcher: Matcher::new(Config::DEFAULT),
+            keep_order: false,
         };
         state.refilter();
         state
@@ -194,7 +210,11 @@ impl State {
         // long way to say zoom` score the same, and a picker where the exact
         // answer sits below a sentence containing it is one people stop
         // trusting.
-        if !self.query.trim().is_empty() {
+        //
+        // A caller whose order is the answer whatever is typed (the session
+        // switcher: sessions by last use, then projects by last jump) asks for
+        // the rows to be filtered and left in it.
+        if !self.query.trim().is_empty() && !self.keep_order {
             scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         }
 
@@ -291,6 +311,31 @@ impl State {
         // Wrapping, which is fzf's `--cycle`: the list is short and the bottom
         // of it is next to the top in everybody's head.
         self.selected = (((self.selected as isize + delta) % len + len) % len) as usize;
+        self.preview_scroll = 0;
+    }
+
+    /// A step key's move: `delta` rows along, wrapping, counting and landing
+    /// only on rows that are steps. Where no listed row is one, it stays.
+    fn step_by(&mut self, delta: isize) {
+        if self.hits.is_empty() || delta == 0 {
+            return;
+        }
+        let len = self.hits.len() as isize;
+        let is_step = |s: &Self, at: usize| !s.rows[s.hits[at].row].not_a_step;
+        if !(0..self.hits.len()).any(|i| is_step(self, i)) {
+            return;
+        }
+        let dir = delta.signum();
+        let mut at = self.selected as isize;
+        for _ in 0..delta.abs() {
+            loop {
+                at = ((at + dir) % len + len) % len;
+                if is_step(self, at as usize) {
+                    break;
+                }
+            }
+        }
+        self.selected = at as usize;
         self.preview_scroll = 0;
     }
 
@@ -1177,7 +1222,8 @@ pub(super) fn run_keyed(
         query,
         chrome.preview_percent,
         &chrome.look.column_order,
-    );
+    )
+    .keeping_order(chrome.keep_order);
     if let Some(index) = start_at {
         state.select_index(index);
     }
@@ -1252,7 +1298,7 @@ pub(super) fn run_keyed(
                     crate::trace::mark("key");
                     match step_of(key, chrome) {
                         Some(delta) => {
-                            state.move_by(delta);
+                            state.step_by(delta);
                             stepped = true;
                             deadline = chrome.commit_after.map(|d| std::time::Instant::now() + d);
                         }
@@ -1316,7 +1362,8 @@ fn grow(
         &state.query,
         state.preview_percent,
         &chrome.look.column_order,
-    );
+    )
+    .keeping_order(chrome.keep_order);
     next.opening = state.opening.clone();
     next.apply_glyphs(paint);
     if let Some(i) = on {
@@ -1365,7 +1412,12 @@ fn apply_key(
         KeyCode::Esc => return Some(Ended::Cancelled),
         KeyCode::Char('d') if ctrl => return Some(Ended::Cancelled),
         KeyCode::Char('c') if ctrl => return Some(Ended::Cancelled),
-        KeyCode::Enter if alt => return Some(Ended::Typed(state.query.clone())),
+        KeyCode::Enter if alt => {
+            return Some(match state.current() {
+                Some(row) if chrome.alt_enter.contains(&row.index) => Ended::Key('\r', row.index),
+                _ => Ended::Typed(state.query.clone()),
+            });
+        }
         KeyCode::Enter => {
             return Some(match state.current() {
                 Some(row) => Ended::Chosen(row.index),
@@ -1466,6 +1518,27 @@ mod tests {
     }
 
     #[test]
+    fn alt_enter_is_a_key_on_the_rows_that_have_another_way_and_the_query_elsewhere() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let items: Vec<Item> = ["here", "api@vm"].iter().map(|n| Item::new(*n)).collect();
+        let chrome = Chrome {
+            alt_enter: vec![1],
+            ..Chrome::default()
+        };
+        let alt_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
+        let mut state = State::new(&items, "", 0, &[]);
+        assert!(matches!(
+            apply_key(&mut state, alt_enter, &chrome, &[]),
+            Some(Ended::Typed(_))
+        ));
+        let mut state = State::new(&items, "api", 0, &[]);
+        assert!(matches!(
+            apply_key(&mut state, alt_enter, &chrome, &[]),
+            Some(Ended::Key('\r', 1))
+        ));
+    }
+
+    #[test]
     fn a_burst_of_keys_applied_together_ends_where_one_at_a_time_would() {
         use ratatui::crossterm::event::KeyCode;
         let items: Vec<Item> = ["alpha", "beta", "gamma"]
@@ -1483,6 +1556,20 @@ mod tests {
             Some(Ended::Chosen(i)) => assert_eq!(i, 2),
             _ => panic!("enter on a match chooses it"),
         }
+    }
+
+    #[test]
+    fn keeping_order_filters_a_search_without_ranking_it() {
+        let items = [
+            Item::new("api-gateway"),
+            Item::new("notes"),
+            Item::new("api").searched_only(),
+        ];
+        let ranked = State::new(&items, "api", 0, &[]);
+        let kept = State::new(&items, "api", 0, &[]).keeping_order(true);
+        let order = |s: &State| s.hits.iter().map(|h| h.row).collect::<Vec<_>>();
+        assert_eq!(order(&ranked), [2, 0], "ranked: the exact `api` first");
+        assert_eq!(order(&kept), [0, 2], "kept: the caller's order, notes gone");
     }
 
     #[test]
@@ -1575,6 +1662,36 @@ mod tests {
         assert_eq!(state.current().map(|r| r.index), Some(0));
         state.move_by(-1);
         assert_eq!(state.current().map(|r| r.index), Some(2));
+    }
+
+    #[test]
+    fn steps_pass_over_the_rows_that_are_not_steps() {
+        let items = vec![
+            Item::new("here"),
+            Item::new("vm, 2 sessions").not_a_step(),
+            Item::new("api@vm"),
+            Item::new("web@vm").not_a_step(),
+            Item::new("db@vm"),
+        ];
+        let mut state = State::new(&items, "", 0, &[]);
+        state.select_index(0);
+        state.step_by(1);
+        assert_eq!(state.current().map(|r| r.index), Some(2));
+        state.step_by(1);
+        assert_eq!(state.current().map(|r| r.index), Some(4));
+        state.step_by(1);
+        assert_eq!(state.current().map(|r| r.index), Some(0), "wraps");
+        state.step_by(-1);
+        assert_eq!(state.current().map(|r| r.index), Some(4));
+        state.step_by(2);
+        assert_eq!(state.current().map(|r| r.index), Some(2));
+        // Arrows still reach a heading.
+        state.move_by(-1);
+        assert_eq!(state.current().map(|r| r.index), Some(1));
+        let none = vec![Item::new("only").not_a_step()];
+        let mut state = State::new(&none, "", 0, &[]);
+        state.step_by(1);
+        assert_eq!(state.current().map(|r| r.index), Some(0), "nowhere to go");
     }
 
     #[test]

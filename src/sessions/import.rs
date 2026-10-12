@@ -135,6 +135,8 @@ pub fn parse(text: &str, from: &str) -> Snapshot {
                 sessions.push(Session {
                     name: name.clone(),
                     path: String::new(),
+                    host: String::new(),
+                    remote: String::new(),
                     window: Vec::new(),
                 });
                 sessions.len() - 1

@@ -96,12 +96,24 @@ act-refresh:
 build:
     nice -n 15 cargo build --release -j 4
 
+# schema/link_capnp.rs is generated from schema/link.capnp and committed, so
+# no build needs the capnp tool. These two need it (brew install capnp) and
+# install the Rust plugin into target/capnpc on first use; the script says why.
+
+# Regenerate the link's Rust from its schema, after editing schema/link.capnp.
+capnp:
+    ./scripts/capnp.sh
+
+# Fail when schema/link_capnp.rs is stale against the schema; skipped without capnp.
+capnp-check:
+    ./scripts/capnp.sh --check
+
 # review-marks first: it takes a second, and a tree with a question still in
 # it is not one worth compiling.
 
 # Everything ci.yml runs, native.
-ci: review-marks fmt-check lint lint-md test-matrix doc
-    @echo "review marks, rustfmt, clippy, tests and rustdoc all passed"
+ci: review-marks capnp-check fmt-check lint lint-md test-matrix doc
+    @echo "review marks, capnp, rustfmt, clippy, tests and rustdoc all passed"
 
 # Throw away the build output.
 clean:
@@ -143,6 +155,19 @@ bench-ab REV *LOADS:
 # bench-capped on another machine, fetched back: `just bench-remote HOST HEAD 0 4 8`.
 bench-remote HOST *ARGS:
     ./scripts/bench-remote.sh {{HOST}} {{ARGS}}
+
+# A static Linux binary of this checkout, cross-built here: `just build-linux`.
+build-linux TARGET="x86_64-unknown-linux-musl":
+    ./scripts/build-linux.sh {{TARGET}}
+
+# Clippy for Linux, cross-checked here: `just lint-linux`. The glibc target
+# because CI lints on glibc; musl's libc marks time_t deprecated.
+lint-linux TARGET="x86_64-unknown-linux-gnu":
+    ./scripts/build-linux.sh {{TARGET}} --lint
+
+# This checkout built for Linux and put on a host: `just push-host ssh vm`.
+push-host +HOST_CMD:
+    ./scripts/push-host.sh "$(./scripts/build-linux.sh)" {{HOST_CMD}}
 
 # Daemon CPU per request, today's binary only.
 bench-segments:
@@ -359,7 +384,7 @@ test:
     trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
     nice -n 15 cargo test -j 4 --all-targets --no-fail-fast
 
-# The slow half of `test`: the three integration binaries. Each starts daemons
+# The slow half of `test`: the four integration binaries. Each starts daemons
 # of its own and e2e drives a real tmux, so the reap trap comes with it.
 #
 # TC_SKIP_E2E=1 makes tests/e2e.rs skip its tmux-driving tests, announced on
@@ -369,12 +394,12 @@ test:
 # what gets remembered. CI ignores the switch: with CI set, a test that would
 # skip fails instead, which is the only way the suite going quiet gets seen.
 
-# The three integration suites: e2e, socket_round_trip, config_file.
+# The integration suites: e2e, socket_round_trip, config_file, remote.
 test-e2e:
     #!/usr/bin/env bash
     set -uo pipefail
     trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
-    nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file
+    nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file --test remote
 
 # Every test on every tmux CI tests, one after another, each built once from
 # its pinned tarball by scripts/tmux-build.sh: the same legs as ci.yml's tests

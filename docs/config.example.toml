@@ -616,6 +616,21 @@ ignore = [
 #
 #   daily = ["22:00-08:00", "13:00-14:00"]
 daily = []
+# Quiet while the system's do-not-disturb is on, and not when it ends.
+#
+# On macOS that is a Focus (Do Not Disturb, Work, Sleep, any of them): the
+# daemon stats the Focus database every two seconds and reads it when it
+# changed; no process is started. The format is Apple's and undocumented, and
+# reading it can need Full Disk Access for the terminal tmux runs in. A
+# database that can't be read says so on the health mark once and quiet keeps
+# to the timer and the windows above. Without it, a Shortcuts automation can
+# run `tmux-companion quiet --focus Work` and `quiet --focus-off` instead.
+#
+# On Linux it is the desktop's Do Not Disturb, followed over the session bus
+# with one connection and no timer: GNOME, KDE Plasma, dunst, mako's
+# `do-not-disturb` mode and SwayNotificationCenter. Anything else can call
+# the same two commands from a hook. Off until asked for on both.
+follow_focus = false
 
 [journal]
 # What happened in each project, written down as it happens: a command that
@@ -945,6 +960,14 @@ command = "{command}"
 [[restore.program]]
 match = "^ssh( |$)"
 command = "{command}"
+
+[[restore.program]]
+# A mirror session's shim, the pane of a session like api@vm that stands for a
+# session on another host. It comes back saying `vm: press r to connect` and
+# connects when r is pressed, so a restore after a reboot starts no ssh until
+# somebody asks for one. `{command}` alone connects each one at once.
+match = "^tmux-companion host attach "
+command = "{command} --wait"
 
 [run]
 # Where the commands come from: auto, zsh, bash, fish or atuin.
@@ -1468,3 +1491,48 @@ announce = true
 # your bindings use other keys, or a press inside the list types the letter.
 windows_key = "a"
 sessions_key = "s"
+
+# Other machines with their own tmux and tmux-companion, reached over ssh.
+# One [[hosts]] table each, in the order `hosts` lists them; there are none by
+# default. The local daemon keeps a link to each one's daemon, Cap'n Proto
+# over the stdio of `<command> 'tmux-companion bridge'`, and asks it for its
+# sessions while the link is up. They're listed in `M-s` after this machine's
+# own, and picking one opens it as a mirror session. `tmux-companion hosts`
+# says where each link is; `hosts add NAME -- ssh NAME` adds one without
+# editing this file. The colour a host is drawn in is the tmux options
+# @tc-host-fg and @tc-host-bg, set in the example tmux.conf files.
+#
+# Set `BatchMode yes` and a `ConnectTimeout` for the host in ~/.ssh/config:
+# the link never asks for a password or a host key, it fails and says why.
+#
+# [[hosts]]
+# # The word on every row and in every announcement: letters, digits, - and _,
+# # up to 32.
+# name = "vm"
+# # One argv that opens ssh to the host. `-t` and the remote command are
+# # appended, the remote command as one last argument.
+# command = ["ssh", "vm"]
+# # When the link is up. "on-demand": only once something asks for the host
+# # (`hosts connect`), and until idle_secs after the last ask. "while-attached":
+# # whenever a client is attached to this tmux server, which is the mode for a
+# # host where agents run long, since on-demand hears them only while something
+# # holds the link up. "off": never.
+# link = "on-demand"
+# # Seconds between two questions while the link is up, for a host whose
+# # bridge can't push. A newer one tells this side what changed when it
+# # changes, and nothing is asked on a timer.
+# poll_secs = 5
+# # Seconds an on-demand link stays up after the last ask.
+# idle_secs = 600
+# # Seconds the host has to answer before the link is called down. A failed
+# # link is tried again after 5 s, then 10, doubling to 5 minutes, and at once
+# # when something asks.
+# connect_secs = 10
+# # Seconds between two pings while the host pushes: with nothing asked on a
+# # timer, a link that died quietly would go unnoticed. Three unanswered in a
+# # row and the link is restarted.
+# ping_secs = 15
+# # What opening one of its sessions does: "mirror" opens a mirror session
+# # `api@vm` here whose pane attaches to it. "handover" is accepted and opens a
+# # mirror session until handing the terminal over is built.
+# open = "mirror"

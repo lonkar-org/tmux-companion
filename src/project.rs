@@ -38,6 +38,9 @@ pub struct Row {
     /// client is attached to. `None` for a directory and for a session
     /// somebody is in, however quiet.
     pub idle: Option<u64>,
+    /// For a mirror session, the host and the session there, from
+    /// `@tc-host` and `@tc-remote`.
+    pub mirror: Option<(String, String)>,
 }
 
 /// A tmux session name cannot hold a dot or a colon.
@@ -82,9 +85,26 @@ pub fn short_path(path: &str, home: &str) -> String {
 }
 
 /// The `list-sessions -F` format [`sessions_from`] reads: last attached, name,
-/// path, theme colour, attached clients, last activity in unix seconds, and
-/// the switcher's stamp from the last switch to it.
-const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}\t#{@tc_ses_used}";
+/// path, theme colour, attached clients, last activity in unix seconds, the
+/// switcher's stamp from the last switch to it, a mirror session's host and
+/// session there, and the host colour, a global option the same on every
+/// line, read here so the picker paints a host as the bar does without a
+/// process of its own.
+const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}\t#{@tc_ses_used}\t#{@tc-host}\t#{@tc-remote}\t#{@tc-host-fg}";
+
+/// The host colour a [`SESSIONS_FORMAT`] listing carries, `@tc-host-fg`, or
+/// nothing when it is unset.
+pub fn host_colour_in(listing: &str) -> Option<String> {
+    listing
+        .lines()
+        .find_map(|l| {
+            l.split('\t')
+                .nth(9)
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+        })
+        .map(str::to_string)
+}
 
 /// Parse `tmux list-sessions` output into rows, most recently used first.
 ///
@@ -113,6 +133,9 @@ pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
             let attached: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
             let activity: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
             let used: Option<u64> = f.next().and_then(|v| v.trim().parse().ok());
+            let host = f.next().map(str::trim).unwrap_or("");
+            let remote = f.next().unwrap_or("");
+            let mirror = (!host.is_empty()).then(|| (host.to_string(), remote.to_string()));
             let idle = match (attached, activity) {
                 (Some(attached), Some(activity)) => {
                     crate::sessions::idle::idle_for(attached, activity, now)
@@ -127,6 +150,7 @@ pub fn sessions_from(listing: &str, now: u64) -> Vec<Row> {
                     path,
                     colour,
                     idle,
+                    mirror,
                 },
             ))
         })
@@ -190,6 +214,7 @@ pub fn directories_from(
                 path: path.to_string(),
                 colour,
                 idle: None,
+                mirror: None,
             }
         })
         .collect()
@@ -289,7 +314,11 @@ pub async fn collect(config: &crate::config::Config, home: &str) -> Vec<Row> {
 /// this way, for no process of their own, and draws these before it has a
 /// single directory.
 pub async fn sessions(before: &[Vec<String>]) -> Vec<Row> {
-    sessions_from(&tmux_sessions(before).await, crate::sessions::idle::now())
+    let listing = tmux_sessions(before).await;
+    if let Some(c) = host_colour_in(&listing) {
+        crate::picker::paint::set_host_colour(&c);
+    }
+    sessions_from(&listing, crate::sessions::idle::now())
 }
 
 /// The directory source's rows, coloured by their themes. Nothing when the
@@ -327,7 +356,16 @@ async fn tmux_sessions(before: &[Vec<String>]) -> String {
         args.extend(c.iter().cloned());
         args.push(";".to_string());
     }
-    args.extend(["list-sessions", "-F", SESSIONS_FORMAT].map(String::from));
+    args.extend(
+        [
+            "list-sessions",
+            "-f",
+            crate::link::NOT_MIRRORED,
+            "-F",
+            SESSIONS_FORMAT,
+        ]
+        .map(String::from),
+    );
     let out = crate::tmux::command().args(&args).output().await;
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -588,6 +626,7 @@ mod tests {
             path: format!("/w/{label}"),
             colour: None,
             idle: None,
+            mirror: None,
         };
         let here = row(Kind::Session, "api");
         let before = row(Kind::Session, "web");
@@ -691,6 +730,7 @@ mod tests {
             path: "/x".into(),
             colour: None,
             idle,
+            mirror: None,
         };
         // Ten minutes ago is a session somebody is between, not a stale one.
         assert_eq!(idle_column(&row(Some(600))), None);

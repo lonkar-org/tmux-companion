@@ -174,6 +174,10 @@ pub const WHITE_SPACE: &str = " ";
 /// A tmux session (fa-window_restore): the project picker's live rows.
 pub const SESSION: &str = "\u{f2d2}";
 
+/// Another machine (nf-md-ssh): a host's group line in the session
+/// switcher, and the mark after `@vm` on a mirror session's bar.
+pub const SSH: &str = "\u{f08c0}";
+
 /// A directory (fa-folder): a project not yet open, a place for a window.
 pub const FOLDER: &str = "\u{f07b}";
 
@@ -311,6 +315,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("UNMERGED", UNMERGED),
     ("WHITE_SPACE", WHITE_SPACE),
     ("SESSION", SESSION),
+    ("SSH", SSH),
     ("FOLDER", FOLDER),
     ("PROJECT", PROJECT),
     ("PATH_NEW", PATH_NEW),

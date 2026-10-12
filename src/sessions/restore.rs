@@ -76,6 +76,9 @@ pub struct RestoreSpec<'a> {
     pub pane_base: u32,
     /// Directories that do not exist on this machine, so the caller can say so.
     pub missing: &'a [String],
+    /// This binary's path, which a mirror session's shim runs by: the
+    /// command a snapshot records names it as `tmux-companion`.
+    pub exe: &'a str,
 }
 
 /// One thing a restore does, in order.
@@ -206,6 +209,10 @@ pub fn rebuild(spec: &RestoreSpec) -> Result<Rebuild, Refusal> {
         .iter()
         .filter(|s| names.contains(&s.name))
     {
+        if !session.host.is_empty() {
+            mirror_session(session, spec, &mut out);
+            continue;
+        }
         let Some((first, rest)) = session.window.split_first() else {
             out.skipped
                 .push(format!("{}: no windows in the snapshot", session.name));
@@ -354,6 +361,44 @@ pub fn rebuild(spec: &RestoreSpec) -> Result<Rebuild, Refusal> {
     Ok(out)
 }
 
+/// A mirror session rebuilt as one: its one window running the shim the
+/// restore table decided on, and the options that make it a mirror session.
+/// Built the way opening one builds it, so it closes with a detach and puts
+/// the client back where it came from like any other. A shim the table
+/// didn't say to run leaves the session out, since a mirror session with a
+/// shell in it stands for nothing.
+fn mirror_session(session: &super::Session, spec: &RestoreSpec, out: &mut Rebuild) {
+    let first = session.window.first();
+    let decision = first
+        .and_then(|w| w.pane.first().map(|p| (w.index, p.index)))
+        .and_then(|(w, p)| {
+            spec.plan
+                .iter()
+                .find(|x| x.session == session.name && x.window == w && x.pane == p)
+        })
+        .map(|p| &p.decision);
+    let Some(Decision::Run(command)) = decision else {
+        out.skipped.push(format!(
+            "{}: a mirror session of {} on {}, left closed: nothing said to run its shim",
+            session.name, session.remote, session.host
+        ));
+        return;
+    };
+    let shim = crate::remote::shim_for_restore(command, spec.exe);
+    let window = first.map(|w| w.name.as_str()).unwrap_or(&session.remote);
+    let mut cmds =
+        crate::remote::mirror_commands(&session.name, &session.host, &session.remote, &shim);
+    // The window's name, as the snapshot had it, rather than the session's.
+    if let Some(c) = cmds.first_mut()
+        && let Some(i) = c.iter().position(|a| a == "-n")
+    {
+        c[i + 1] = window.to_string();
+    }
+    for c in cmds {
+        out.commands.push(Step::Tmux(c));
+    }
+}
+
 /// A pane's directory, falling back to home when it is not on this machine.
 ///
 /// These dotfiles get synced between machines and a snapshot names directories
@@ -412,6 +457,64 @@ mod tests {
         }
     }
 
+    fn mirror_snapshot() -> Snapshot {
+        Snapshot {
+            header: Header::default(),
+            session: vec![Session {
+                name: "api@vm".to_string(),
+                path: "/w".to_string(),
+                host: "vm".to_string(),
+                remote: "api".to_string(),
+                window: vec![window(
+                    1,
+                    "api",
+                    vec![pane(0, "tmux-companion host attach vm api", true)],
+                )],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_mirror_session_comes_back_waiting_for_r_without_being_asked_about() {
+        let snap = mirror_snapshot();
+        let table = crate::config::Restore::default();
+        let planned = plan(&table, &snap);
+        assert!(
+            planned.iter().all(|p| p.settled()),
+            "the shipped row claims the shim: {planned:?}"
+        );
+        let built = rebuild(&spec(&snap, &planned, &[])).expect("builds");
+        let flat = flat(&built);
+        assert_eq!(
+            flat[0],
+            "new-session -d -s api@vm -n api /bin/tc host attach vm api --wait"
+        );
+        for opt in [
+            "set-option -t =api@vm: @tc-host vm",
+            "set-option -t =api@vm: @tc-remote api",
+            "set-option -t =api@vm: prefix None",
+            "set-option -t =api@vm: detach-on-destroy previous",
+        ] {
+            assert!(flat.iter().any(|l| l == opt), "{opt} in {flat:?}");
+        }
+        assert!(
+            !flat.iter().any(|l| l.starts_with("send-keys")),
+            "the shim is the pane, not typed into a shell: {flat:?}"
+        );
+
+        let none = crate::config::Restore {
+            program: Vec::new(),
+        };
+        let planned = plan(&none, &snap);
+        let built = rebuild(&spec(&snap, &planned, &[])).expect("builds");
+        assert!(built.commands.is_empty(), "{:?}", built.commands);
+        assert!(
+            built.skipped[0].contains("left closed"),
+            "{:?}",
+            built.skipped
+        );
+    }
+
     /// A session shaped like `lonkar_org`: two windows sharing one name.
     fn two_edits() -> Snapshot {
         Snapshot {
@@ -419,6 +522,8 @@ mod tests {
             session: vec![Session {
                 name: "lonkar_org".to_string(),
                 path: "/w/proj".to_string(),
+                host: String::new(),
+                remote: String::new(),
                 window: vec![
                     window(1, "edit", vec![pane(1, "nvim", true)]),
                     window(2, "ai", vec![pane(1, "claude --resume abc", true)]),
@@ -440,6 +545,7 @@ mod tests {
             base_index: 1,
             pane_base: 1,
             missing: &[],
+            exe: "/bin/tc",
         }
     }
 
@@ -790,6 +896,8 @@ mod tests {
         snap.session.push(Session {
             name: "mysetup".to_string(),
             path: "/w/other".to_string(),
+            host: String::new(),
+            remote: String::new(),
             window: vec![window(1, "edit", vec![pane(1, "nvim", true)])],
         });
         let table = crate::config::Restore::default();

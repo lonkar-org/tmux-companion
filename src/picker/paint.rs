@@ -22,6 +22,8 @@
 //! | `Ok` | green | on, fine |
 //! | `Failed` | red | broken |
 //! | `Accent` | the theme's colour | the cursor, the query's matches, a label |
+//! | `Host` | `@tc-host-fg` | another machine's name, the `@vm` of `api@vm` |
+//! | `Offline` | dark grey, faint | a row for something that can't be reached now |
 //!
 //! Focus is the band behind the row the cursor is on, and nothing else. The
 //! accent is the theme's `@theme-color-main-1`, so a popup matches the bar it
@@ -60,6 +62,32 @@ pub enum Tone {
     Failed,
     /// The theme's colour.
     Accent,
+    /// Another machine's name: the `@vm` of a remote session, in the host
+    /// colour the bar draws it in.
+    Host,
+    /// A row for something that can't be reached now, a host's cached
+    /// sessions while its link is down. Not `Dim`, which is detail.
+    Offline,
+}
+
+/// The host colour when tmux's `@tc-host-fg` says none: the colour the ssh
+/// hostname segment drew in before it read the option.
+pub const HOST_FALLBACK: Color = Color::Indexed(203);
+
+/// A row that can't be reached: darker than `DIM`, and faint.
+pub const OFFLINE: Color = Color::Indexed(240);
+
+/// The host colour, as `@tc-host-fg` gave it to [`set_host_colour`].
+static HOST_COLOUR: std::sync::OnceLock<Color> = std::sync::OnceLock::new();
+
+/// Take the host colour from `@tc-host-fg`'s value, once per process: the
+/// session switcher reads it in the tmux call it already makes, so the
+/// picker paints `@vm` the way the bar does without a process of its own.
+/// A value that isn't a colour leaves the fallback.
+pub fn set_host_colour(spec: &str) {
+    if let Some(c) = super::colour_of(spec.trim()) {
+        let _ = HOST_COLOUR.set(c);
+    }
 }
 
 /// Amber: the colour the bar draws a waiting agent in, so the row that wants
@@ -279,6 +307,8 @@ impl Paint {
             Tone::Reading => s.fg(READING),
             Tone::Failed => s.fg(FAILED),
             Tone::Accent => s.fg(self.accent),
+            Tone::Host => s.fg(*HOST_COLOUR.get().unwrap_or(&HOST_FALLBACK)),
+            Tone::Offline => s.fg(OFFLINE).add_modifier(Modifier::DIM),
         };
         self.checked(s)
     }
@@ -472,7 +502,8 @@ pub fn readable_accent(accent: Color) -> Color {
 /// `enter jumps there   ctrl-a clears the filter` is split into its groups by
 /// the three spaces between them, and the first word of a group is a key when
 /// it looks like one. `type a path` does not start with a key and is left as
-/// words.
+/// words. A word in `**` is drawn as a key is, for the one word in a line of
+/// information that carries it (`**concealed** projects`), and the stars go.
 pub fn hint_parts(hint: &str) -> Vec<(String, bool)> {
     let mut out: Vec<(String, bool)> = Vec::new();
     for (i, group) in hint.trim().split("   ").enumerate() {
@@ -483,13 +514,28 @@ pub fn hint_parts(hint: &str) -> Vec<(String, bool)> {
         match group.split_once(' ') {
             Some((first, rest)) if is_key(first) => {
                 out.push((first.to_string(), true));
-                out.push((format!(" {rest}"), false));
+                push_marked(&mut out, &format!(" {rest}"));
             }
             None if is_key(group) => out.push((group.to_string(), true)),
-            _ => out.push((group.to_string(), false)),
+            _ => push_marked(&mut out, group),
         }
     }
     out
+}
+
+/// Words outside a key, split at each `**` pair into plain and strong runs.
+fn push_marked(out: &mut Vec<(String, bool)>, text: &str) {
+    for (n, run) in text.split("**").enumerate() {
+        if !run.is_empty() {
+            out.push((run.to_string(), n % 2 == 1));
+        }
+    }
+}
+
+/// A hint as words alone, the `**` marks gone, for measuring and for any
+/// place it is read rather than drawn.
+pub fn hint_plain(hint: &str) -> String {
+    hint.replace("**", "")
 }
 
 /// A key hint cut to fit `width` cells by whole groups.
@@ -508,7 +554,7 @@ pub fn fitted_hint(hint: &str, width: usize) -> String {
         let first = g.split(' ').next().unwrap_or("");
         matches!(first, "esc" | "q")
     };
-    while groups.join(GAP).width() > width {
+    while hint_plain(&groups.join(GAP)).width() > width {
         let Some(at) = (1..groups.len()).rev().find(|&i| !leaves(groups[i])) else {
             break;
         };
@@ -777,6 +823,20 @@ mod tests {
             parts
                 .iter()
                 .any(|(w, k)| w == "type a path for a new one" && !k)
+        );
+    }
+
+    #[test]
+    fn a_starred_word_in_a_hint_is_strong_and_loses_its_stars() {
+        let parts =
+            hint_parts("enter go   esc stay   type to filter session, **concealed** projects");
+        assert!(parts.contains(&("concealed".to_string(), true)));
+        assert!(parts.contains(&(" projects".to_string(), false)));
+        assert!(parts.iter().all(|(w, _)| !w.contains('*')));
+        assert_eq!(
+            fitted_hint("enter go   esc stay   **ab**", 24),
+            "enter go   esc stay   **ab**",
+            "the stars are not counted as width"
         );
     }
 

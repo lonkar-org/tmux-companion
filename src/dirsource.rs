@@ -267,6 +267,44 @@ pub const SOURCE_ENV: [&str; 4] = [
     "XDG_DATA_HOME",
 ];
 
+/// When each directory in zoxide's database was last jumped to, in seconds
+/// since the epoch, read from `db.zo` itself: `zoxide query -l` orders by
+/// frecency and has no way to ask for recency.
+///
+/// The format is zoxide's version 3, bincode with fixed-width little-endian
+/// integers: a `u32` version, a `u64` count, then per directory a `u64`
+/// length, the path's bytes, an `f64` rank and a `u64` last-accessed time.
+/// Any other version, or a file cut short, gives `None`, and the caller keeps
+/// zoxide's own order rather than guess.
+pub fn zoxide_last_jumped(db: &[u8]) -> Option<std::collections::HashMap<String, u64>> {
+    fn take<'a>(b: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+        if b.len() < n {
+            return None;
+        }
+        let (head, rest) = b.split_at(n);
+        *b = rest;
+        Some(head)
+    }
+    fn u64_le(b: &mut &[u8]) -> Option<u64> {
+        Some(u64::from_le_bytes(take(b, 8)?.try_into().ok()?))
+    }
+    let mut b = db;
+    let version = u32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+    if version != 3 {
+        return None;
+    }
+    let count = u64_le(&mut b)?;
+    let mut out = std::collections::HashMap::new();
+    for _ in 0..count {
+        let len = usize::try_from(u64_le(&mut b)?).ok()?;
+        let path = std::str::from_utf8(take(&mut b, len)?).ok()?.to_string();
+        take(&mut b, 8)?;
+        let last = u64_le(&mut b)?;
+        out.insert(path, last);
+    }
+    Some(out)
+}
+
 /// How long the daemon keeps a source's answer when it has no file to watch:
 /// `ghq` and a `dirs_command`. A minute, so a repository cloned a moment ago
 /// is a short wait away rather than a restart away.
@@ -348,6 +386,40 @@ pub async fn record_visit(source: &DirsSource, project: &crate::config::Project,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A db.zo of version 3 with two directories, built the way zoxide's
+    /// bincode writes it.
+    fn zo(entries: &[(&str, f64, u64)]) -> Vec<u8> {
+        let mut b = 3u32.to_le_bytes().to_vec();
+        b.extend((entries.len() as u64).to_le_bytes());
+        for (p, rank, last) in entries {
+            b.extend((p.len() as u64).to_le_bytes());
+            b.extend(p.as_bytes());
+            b.extend(rank.to_le_bytes());
+            b.extend(last.to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn zoxide_last_jumped_reads_each_directorys_time() {
+        let db = zo(&[("/a", 4.0, 100), ("/b", 1.0, 200)]);
+        let got = zoxide_last_jumped(&db).unwrap();
+        assert_eq!(got.get("/a"), Some(&100));
+        assert_eq!(got.get("/b"), Some(&200));
+    }
+
+    #[test]
+    fn zoxide_last_jumped_gives_up_on_another_version_or_a_short_file() {
+        let mut db = zo(&[("/a", 4.0, 100)]);
+        assert!(
+            zoxide_last_jumped(&db[..db.len() - 3]).is_none(),
+            "cut short"
+        );
+        db[0] = 4;
+        assert!(zoxide_last_jumped(&db).is_none(), "version 4");
+        assert!(zoxide_last_jumped(&[]).is_none());
+    }
     use crate::config::Project;
 
     #[test]

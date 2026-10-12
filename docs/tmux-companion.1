@@ -362,7 +362,7 @@ which
 .Ic [switcher] commit No = Qq enter
 turns off.
 .Bl -tag -width Ds
-.It Ic project Oo Ar directory Oc Op Fl -print
+.It Ic project Oo Ar directory Oo Fl -detached Oc Oc Op Fl -print
 Live sessions and the directories the configured source knows, in one list,
 each in its project's colour.
 The source is
@@ -383,6 +383,21 @@ is the one that closes them.
 .Fl -print
 lists the rows and exits, and opens nothing; it cannot be combined with a
 directory.
+A host's group line prints as
+.Ql host ,
+its sessions as
+.Ql session
+rows named
+.Ql api@vm ,
+and its directories, inside one of its mirror sessions, as
+.Ql dir
+rows named the same way; see
+.Sx OTHER HOSTS .
+With a
+.Ar directory ,
+.Fl -detached
+makes its session and prints the session's name, switching and attaching
+nothing: what a mirror session's pane runs on its host before the attach.
 Bound to
 .Ql M-s .
 Sessions are listed most recently attached first, so the second row is the
@@ -636,7 +651,23 @@ inside tmux, the line saying there is nothing to show also goes to the tmux
 message line, so a popup that closes does not take it with it.
 No such session is one line on stderr and exit 0, not an error.
 .It Ic sessions start Ar name Oo Ar dir Oc Op Fl -detach
-Open a session by its name, taking the first of these that knows it:
+Open a session by its name.
+.Ar name Ns Ql @ Ns Ar host ,
+where
+.Ar host
+is one of
+.Ic hosts ,
+opens the mirror session of
+.Ar name
+on that host, described under
+.Sx OTHER HOSTS ,
+and makes
+.Ar name
+there first when the host has no session by it; this works whatever the
+host's link mode, since
+.Ql off
+stops the list and not the attach.
+Otherwise it takes the first of these that knows the name:
 a live session called
 .Ar name ,
 which it attaches to, or switches to from inside tmux;
@@ -1325,7 +1356,7 @@ A snapshot carries the note and a restore puts it back.
 The pane defaults to the one the key was pressed in.
 An agent working beside you can say what it is doing in four words with this,
 and the skill file tells it to.
-.It Ic quiet Oo Ar duration Oc Op Fl -off
+.It Ic quiet Oo Ar duration Oc Oo Fl -off Oc Oo Fl -focus Op Ar name | Fl -focus-off Oc
 Quiet hours.
 For the duration given,
 .Ql 45m ,
@@ -1348,6 +1379,48 @@ turns it on at the same local times every day, such as
 .Ql 22:00-08:00 ;
 a timer and a window together last until the later one ends.
 The daemon keeps the clock, so every timer and every client agree.
+.Pp
+.Fl -focus Op Ar name
+says a Focus started and
+.Fl -focus-off
+that it ended: quiet holds until then, and
+.Ic quiet
+and
+.Ic health
+say
+.Ql quiet while Focus Work is on .
+They are for a hook to call; on macOS that is a Shortcuts automation,
+.Dq When Work turns on ,
+running
+.Ql tmux-companion quiet --focus Work
+through Run Shell Script with the binary's full path, and a second for
+.Dq turns off .
+.Fl -off
+ends the timer and leaves a Focus on.
+With
+.Ic [quiet] follow_focus
+on macOS the daemon follows the Focus itself, from the database in
+.Pa ~/Library/DoNotDisturb/DB :
+one stat every two seconds and a read when it changed.
+Reading it can need Full Disk Access for the terminal tmux runs in; when it
+cannot be read the health mark says so once and quiet keeps to the timer and
+.Ic daily .
+On Linux the same setting follows the desktop's Do Not Disturb over the
+session bus, one connection and its signals, with no timer and no process:
+GNOME's
+.Ql show-banners ,
+read from the dconf user database when dconf says it was written,
+KDE Plasma's
+.Ql Inhibited ,
+dunst's
+.Ql paused ,
+mako's
+.Ql do-not-disturb
+mode and SwayNotificationCenter's Do Not Disturb.
+The line is then
+.Ql quiet while Do Not Disturb is on ,
+as it is for the Do Not Disturb Focus on macOS.
+No session bus is one health reason.
 .It Ic chunk Op Cm status Oo Fl -json Oc | Cm snooze | Cm reset | Cm close | Cm budget Ar duration
 The chunk clock: how long you have been at tmux this sitting, across every
 session, with nothing to start.
@@ -1513,8 +1586,68 @@ stays; there is no clock.
 The project directories are in the list but hidden until something is typed,
 so the first letter turns it into the project picker's search, and a typed
 path opens as it does there.
+A search filters without reordering: the sessions stay first, by when each was
+last used, and the projects follow, by when each was last jumped to, read from
+zoxide's database; another source keeps its own order.
+.Pp
+After this machine's sessions comes each host's, in the order
+.Ic hosts
+lists them: a line for the host,
+.Ql vm, 4 sessions, last heard 15m ,
+or
+.Ql live
+while its link is up, then each of its sessions as
+.Ql api@vm ,
+in the host's own order of use, with
+.Ql idle 3d
+and
+.Ql attached on vm
+as a local row has them.
+The rows come from what the daemon last heard, kept on disk, so they are
+there before any ssh has run; opening the list asks the daemon to bring each
+host's link up afterwards, and nothing in the list waits for it.
+While a host can't be reached its rows stay, each saying
+.Ql unreachable
+and drawn in a faint tone, and the preview of any of them says why and when
+it was last tried.
+Enter on a host's line, or on one of those rows, tries the link again and
+says
+.Ql vm: connecting
+on the message line.
+The session key steps over host lines and unreachable rows, landing only on
+sessions, and the cursor starts on the second session whichever machine it
+is on.
+The message line says each step as
+.Ql api on vm, 5 of 9 .
+Enter on a host's session opens it as the host's
+.Ic open
+says, a mirror session by default, and a typed
+.Ql name@vm
+with no row for it makes that session on the host and opens it.
+alt-enter on a host's session opens it the other way, once: it hands the
+terminal over for a host that mirrors, and mirrors one that hands over.
+A mirror session that is open is listed once, among this machine's sessions.
+.Pp
+ctrl-x forgets a host's session row at once; the next answer from the host
+brings it back if the session is still there.
+On a host's line it closes the list and asks
+.Ql forget vm? y/n
+on the message line, where one key answers and only
+.Ql y
+forgets, then opens the list again on the same row; it is refused, with the
+reason, while a mirror session to the host is open.
+On one of this machine's sessions it says that only remote rows can be
+forgotten.
+ctrl-n on a host's line opens the form
+.Ic hosts add
+opens with no arguments.
+.Pp
 .Fl -print
-prints the session names, most recently used first.
+prints the session names, most recently used first, then each host's line
+with the reason after
+.Ql unreachable\&: ,
+and its sessions, the same lines in the same order with no glyph and no
+padding.
 Bound to
 .Ql M-s
 and
@@ -1660,6 +1793,404 @@ runs the script now,
 says when it last ran, and with no flag it reports, the same as
 .Fl -status .
 .El
+.Sh OTHER HOSTS
+A host is another machine with its own tmux and its own tmux-companion,
+reached by a command that opens ssh to it.
+The daemon keeps a link to each host's daemon: one host command per host,
+.Ql ssh vm 'tmux-companion bridge' ,
+carrying Cap'n Proto messages over the ssh session's stdin and stdout.
+Nothing listens on either machine and nothing new opens a socket; the local
+side starts every link and asks every question, and the host answers only the
+questions its bridge has, none of which runs a command or changes anything.
+Everything a host sends is taken as untrusted: control characters are
+dropped, a string is cut at 4 KiB and a list at 500 sessions.
+.Pp
+While a link is up the host tells this side what changed when it changes:
+its sessions, its waiting agents and the bar of each grouped session this
+machine has a client in, each sent when the host's own poll sees it change,
+so nothing is asked on a timer.
+The daemon pings the host every
+.Ic ping_secs ,
+15 by default, since a link that died quietly would otherwise go unnoticed;
+three pings unanswered in a row and the link is restarted, saying
+.Ql no answer to 3 pings in 45s .
+A host whose bridge is older and can't push is asked for its sessions every
+.Ic poll_secs ,
+5 by default, instead, and
+.Ic hosts
+says its bridge lacks
+.Ql watch .
+The last answer is kept on disk either way, so a host is listed with
+when it was last heard from before any ssh has run.
+A link that fails is tried again after 5 seconds, then 10, doubling to 5
+minutes, and at once when something asks for it.
+The link runs with no controlling terminal and
+.Ev SSH_ASKPASS_REQUIRE
+set to
+.Ql never ,
+so ssh fails and says why rather than waiting on a password or a host key
+nobody can see; host keys stay strict.
+Set
+.Ql BatchMode yes
+and a
+.Ql ConnectTimeout
+for the host in
+.Pa ~/.ssh/config
+as well.
+.Pp
+A host's sessions are listed in
+.Ic switch sessions ,
+and picking one opens a mirror session: a session here called
+.Ql api@vm
+that stands for
+.Ql api
+on
+.Ql vm ,
+holding one window whose pane runs
+.Ic host attach .
+That pane runs the host command with
+.Fl t
+and attaches to a session of its own on the host,
+.Ql api~ Ns Ar machine ,
+named for this machine and grouped with
+.Ql api ,
+so this machine keeps its own current window there and two machines don't
+collide.
+The grouped session carries
+.Ql @tc-mirror ,
+has its bar off, and goes when this machine detaches; the host's own pickers,
+.Ic brief ,
+.Ic sessions idle ,
+snapshots and bar leave it out, so a person at the host sees what they saw
+before.
+Grouped sessions share their windows, and
+.Ql window-size
+is a window option, so both machines size the same windows; the host's
+setting is left as it is.
+.Pp
+The mirror session sets
+.Ql prefix
+to
+.Ql None :
+in it, and only in it, the prefix key goes to the host's tmux, and this
+machine's prefix is out of reach.
+.Ql M-s
+is this machine's switcher there as everywhere, and is the way out.
+A
+.Ql prefix2
+you set stays this machine's.
+.Ql M-a
+and
+.Ql M-A
+go on to the host, whose own switcher moves through its windows:
+.Ic switch windows
+sees
+.Ql @tc-host
+on the session and sends the key to the mirror pane.
+The session also carries
+.Ql @tc-host
+and
+.Ql @tc-remote ,
+naming the host and the session there, and
+.Ql detach-on-destroy previous ,
+so a detach on the host closes it and puts the client back where it came
+from.
+The message line says
+.Ql api on vm
+when the switch to it happens.
+.Pp
+The bar in a mirror session is this machine's.
+The daemon asks the link for the host session's git, agents and health once
+a second while the mirror session has a client, builds the right side from
+those words itself, never from markup the host sends, and sets it as the
+session's
+.Ql @tc-right
+in every bar mode, followed by this machine's own health as
+.Ql here\&: Ar reason
+when it has one.
+With the link down the right side says
+.Ql vm: no link .
+The example configs read
+.Ql @tc-right
+first when
+.Ql @tc-host
+is set, and draw
+.Ql @vm
+and the ssh glyph on the left in the host colour, the tmux options
+.Ql @tc-host-fg
+and
+.Ql @tc-host-bg ,
+which the ssh hostname on the bar and the switcher's rows use too.
+.Pp
+When the attach ends other than by a detach the pane says how in one line,
+.Ql the connection to vm ended: Connection timed out ,
+or
+.Ql api no longer exists on vm ,
+and waits:
+.Ql r
+connects again and
+.Ql q
+closes the mirror session.
+Nothing is timed, and a link coming back does not reconnect on its own.
+.Pp
+The rest of this machine's surfaces read the hosts too.
+.Ic brief
+gives each host one line,
+.Ql vm: 4 sessions, 1 agent asked, last heard 12s ,
+or
+.Ql vm: 4 sessions, last heard 3d, unreachable: Connection timed out ,
+from what the daemon already holds; it starts no link, since it runs when a
+client attaches.
+The
+.Ic project
+picker lists every session on every host, as
+.Ic switch sessions
+does, and the directories of one place: this machine's source when it is
+opened from a local session, and inside a mirror session that host's own
+configured source, asked over the link and listed as
+.Ql api@vm .
+The host runs its own source; nothing this machine sends names a command.
+Picking a host's directory opens a mirror session whose pane runs
+.Ic project --detached Ar dir
+on the host before the attach, and a path typed there, in the picker or in
+.Ic switch sessions ,
+is the host's to read.
+.Pp
+While a host's link is up its waiting agents are in this machine's
+.Ic inbox
+and
+.Ic brief ,
+each with
+.Ql on vm
+after its place, and an agent that asks there plays this machine's earcon,
+held by quiet hours here like any other.
+Their words are text: control characters go and nothing in them reaches a
+tmux format.
+Picking one opens the mirror session with the agent's window and pane chosen
+on the host after the attach; with the mirror session already open, its
+pane's attach is started again with the same choice, one reconnect.
+The link itself stays read-only.
+.Pp
+Snapshots keep a mirror session with its host and the session there, its
+pane recorded as
+.Ql tmux-companion host attach vm api .
+.Ic sessions resurrect
+reopens it through a shipped
+.Ic [[restore.program]]
+row that adds
+.Fl -wait :
+the pane says
+.Ql vm: press r to connect
+and runs no ssh until
+.Ql r ,
+so a restore after a reboot doesn't start a dozen handshakes at once.
+.Bl -tag -width Ds
+.It Ic hosts
+Each host on one line, in the order the configuration lists them and then
+the ones added for this tmux server: its name, its link mode, whether the
+link is up and why not when it isn't, when it is up whether the host is
+.Ql pushing
+or
+.Ql polled every 5s
+(its
+.Ic poll_secs ,
+for a bridge that doesn't serve
+.Ql watch ) ,
+when the host was last heard from, how
+many sessions it has, its build and its tmux, which methods its bridge lacks
+when it is older than this one, and whether the bridge had to start the
+host's daemon.
+Under each host, one line per session in the host's own order of use, as
+.Ql api@vm, 3 windows ,
+with
+.Ql attached on vm
+when somebody there is in it.
+Sessions on the host that are another machine's view of one of its own,
+carrying
+.Ql @tc-mirror ,
+are never listed.
+It reads what the daemon has and starts no link.
+.It Ic hosts add Oo Ar name Oo Fl -save Oc Fl - Ar command ... Oc
+Add a host.
+The name is letters, digits,
+.Ql -
+and
+.Ql _ ,
+up to 32, since it ends up in session names, file names and shell lines.
+The command is an argv, or one argument split by shell-word rules without a
+shell;
+.Ql $ ,
+.Ql | ,
+.Ql \&;
+and backticks are refused either way.
+Without
+.Fl -save
+the host is kept in the tmux server option
+.Ql @tc-hosts
+until the server exits; with it, a
+.Ic [[hosts]]
+entry is added to
+.Pa config.toml ,
+keeping every comment in the file.
+A name already in use is refused with the command that host is reached with.
+.Pp
+With no arguments, in a terminal, it is a form: two labelled lines, name and
+command, Tab between them, the cursor in the one being typed into.
+The name fills itself in from the command until you type your own: the
+command's last word that doesn't start with
+.Ql - ,
+any
+.Ql user@
+dropped, cut at the first
+.Ql \&. ,
+so
+.Ql ssh dev@vm.local
+gives
+.Ql vm ,
+and
+.Ql vm-2
+when
+.Ql vm
+is taken.
+Enter tests the command with one hello and says
+.Ql vm answered: tmux-companion 0.10.0, tmux 3.4
+or why not; then
+.Ql s
+keeps the host in
+.Pa config.toml ,
+.Ql t
+keeps it for this tmux server, any other key goes back to editing, and Esc
+leaves.
+Each state is one line.
+It has no key of its own;
+.Ic setup
+offers one, and in
+.Ic switch sessions
+ctrl-n on a host's line opens it.
+.It Ic hosts forget Ar name
+Forget a host: its cached sessions, and its
+.Ic [[hosts]]
+entry in
+.Pa config.toml ,
+every comment kept, or its place in
+.Ql @tc-hosts .
+Refused, with the reason, while a mirror session to it is open.
+.It Xo Ic host attach Ar host Ar session
+.Op Fl -create
+.Op Fl -dir Ar dir
+.Op Fl -window Ar index
+.Op Fl -pane Ar id
+.Op Fl -wait
+.Xc
+What a mirror session's pane runs: one line,
+.Ql connecting to vm for api ,
+then the host command with
+.Fl t
+and the grouped attach, in this terminal, so anything ssh asks is asked
+where you can see it.
+.Fl -create
+makes the session on the host first when it isn't there.
+.Fl -dir
+runs
+.Ic project --detached Ar dir
+on the host first and attaches to the session it names.
+.Fl -window
+and
+.Fl -pane
+choose that window and that pane, a
+.Ql \&%N
+id, on the host once attached.
+.Fl -wait
+says
+.Ql vm: press r to connect
+and waits for
+.Ql r
+before the first connect, or
+.Ql q
+to close.
+Every name goes into the remote shell line quoted, so a session called
+.Ql x'; touch pwned; '
+is a name and nothing else.
+.It Ic hosts connect Op Ar name
+Start or retry a host's link now, or every host's, and say how it went on
+one line each:
+.Ql vm answered: tmux-companion 0.10.0, tmux 3.4 ,
+or the reason it didn't, such as
+.Ql vm needs a login: run ssh vm once in a terminal .
+An on-demand link stays up for
+.Ic idle_secs
+after the last ask.
+Exits 1 when any host didn't answer.
+.It Ic bridge
+Serve the link on stdin and stdout, answering from this machine's daemon and
+starting it when none runs.
+This is what a host command runs on the host, not something to type.
+.El
+.Pp
+Configuration, one table per host:
+.Bd -literal -offset indent
+[[hosts]]
+name = "vm"
+command = ["ssh", "vm"]
+link = "on-demand"
+poll_secs = 5
+idle_secs = 600
+connect_secs = 10
+ping_secs = 15
+open = "mirror"
+.Ed
+.Pp
+.Ic link
+is when the link is up.
+.Ql on-demand ,
+the default, starts none until something asks for the host and closes it
+.Ic idle_secs
+after the last ask.
+.Ql while-attached
+keeps it up while any client is attached to the local tmux server: it is the
+mode for a host where agents run long, because an on-demand link hears a
+host's agents only while something holds the link up, so a question asked
+there while you work here waits until you look.
+.Ql off
+never starts one; the host is still listed.
+.Ic connect_secs
+is how long the host has to say hello, or to answer a question, before the
+link is called down.
+.Ic ping_secs
+is how often a host that pushes is pinged, and
+.Ic poll_secs
+how often one that can't is asked.
+.Ic open
+is what picking one of the host's sessions does, in
+.Ic switch sessions ,
+the project picker and
+.Ic sessions start :
+.Ql mirror ,
+the default, opens a mirror session;
+.Ql handover
+hands this terminal to the host.
+tmux replaces this terminal's client with the host command,
+.Ql ssh vm -t 'tmux attach-session -t =api' ,
+after saying
+.Ql api on vm, handed over: detach there to come back to here
+on the message line, and the terminal says
+.Ql connecting to vm for api .
+The host's tmux then owns the terminal: its bar, its prefix and its keys,
+with one bar on the screen and it the host's.
+This machine's bar,
+.Ic switch sessions
+and the rest of its keys are out of reach until you come back, though the
+inbox's sounds still play.
+A detach on the host comes back with
+.Ql exec tmux attach-session -t =here
+on this server, to the session the client left; a connection that ends any
+other way says so in one line and waits for Enter before coming back.
+Outside tmux the attach runs in the terminal it was typed in, with nothing to
+come back to.
+.Ic sessions start Fl -detach
+always opens a mirror session, since a handover has to have a client to hand
+over, and so do an inbox pick and a host's directory, which chain a pane or a
+project onto the attach that only the mirror's attach carries.
 .Sh COPY MODE AND OPENING
 .Bl -tag -width Ds
 .It Ic open Oo Ar text Oc Op Fl s , Fl i , Fl n , Fl d Ar dir , Fl -pane Ar id , Fl -cursor-x Ar column
@@ -1857,9 +2388,9 @@ The sections are
 .Ic [window_names] , [notify] , [agents] , [project] , [autosave] ,
 .Ic [sessions] , [[restore.program]] , [run] , [clipboard] , [theme] , [bar] ,
 .Ic [picker] , [journal] , [online] , [open] , [earcons] , [chunk] ,
-.Ic [keys]
+.Ic [keys] , [switcher]
 and
-.Ic [switcher] .
+.Ic [[hosts]] .
 A
 .Ic [toggle]
 section, from a command that has gone, is ignored, and
@@ -2151,7 +2682,11 @@ The
 .Ql setup
 line counts the items
 .Ic setup
-lists as open.
+lists as open, and the
+.Ql hosts
+line says what
+.Ic hosts
+says about each host, from a daemon already running.
 .It Ic health Op Cm ack
 Why the health mark is up, one reason a line, or
 .Ql ok .
@@ -2193,8 +2728,18 @@ lists, and elsewhere the names alone are taken.
 run inside the checkout reads it too
 .It Pa ~/.config/tmux/themes/
 themes, and the two files that apply them
+.It Pa ~/Library/DoNotDisturb/DB/
+macOS's Focus database, read and never written, with
+.Ic [quiet] follow_focus
+.It Pa $XDG_CONFIG_HOME/dconf/user
+GNOME's settings database, read and never written, on Linux with
+.Ic [quiet] follow_focus
 .It Pa $XDG_STATE_HOME/tmux-companion/projects/
 saved per-project layouts
+.It Pa $XDG_STATE_HOME/tmux-companion/hosts/
+each host's last answer,
+.Pa <name>.bin ,
+kept so a host is listed before its link is up
 .It Pa $XDG_STATE_HOME/tmux-companion/branch-icons.toml
 the glyph the daemon picked for each branch prefix it looked up by glyph
 name; delete it and restart the daemon to pick again

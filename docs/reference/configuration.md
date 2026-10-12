@@ -466,6 +466,57 @@ midnight, and a time that isn't one is refused when the config is read. With
 both a timer and a window running, quiet lasts until the later of the two
 ends.
 
+### Quiet while a Focus is on
+
+```toml
+[quiet]
+follow_focus = true
+```
+
+On macOS, quiet comes on when a Focus does (Do Not Disturb, Work, Sleep or one
+of your own) and goes when it ends. The daemon stats the Focus database in
+`~/Library/DoNotDisturb/DB` every two seconds and reads it only when it
+changed, so it starts no process. `tmux-companion quiet` and `health` name the
+Focus: `quiet while Focus Work is on`, and Do Not Disturb by its name alone,
+`quiet while Do Not Disturb is on`. Off by default, because the files are
+Apple's own undocumented format and reading them can need Full Disk Access for
+the terminal tmux was started from. When they can't be read or don't parse,
+the health mark says so once and quiet keeps to the timer and `daily`.
+
+Without Full Disk Access, a Shortcuts automation does the same job by
+pushing: in the Shortcuts app, Automation, add "When Work turns on" with the
+action Run Shell Script running `tmux-companion quiet --focus Work`, set to
+run immediately, and a second for "turns off" running `tmux-companion quiet
+--focus-off`. One pair per Focus you want followed. The binary has to be
+named by its full path there, since Shortcuts doesn't read your shell's
+`PATH`.
+
+On Linux, `follow_focus` follows the desktop's Do Not Disturb instead, and
+`quiet` says `quiet while Do Not Disturb is on`, as for macOS's Do Not Disturb
+Focus. The daemon makes one connection to the session bus and listens; nothing
+runs on a timer and no process is started. It understands:
+
+- GNOME: the Do Not Disturb switch, which is the `show-banners` setting turned
+  off. dconf announces every write on the bus, and the daemon reads its
+  database, `~/.config/dconf/user`, only when the write named that setting.
+- KDE Plasma: the `Inhibited` property the notifications applet sets. Plasma
+  also counts a fullscreen window or a mirrored screen as inhibited when its
+  own settings say to, and so does this.
+- dunst: paused, as `dunstctl set-paused true` does it.
+- mako: the `do-not-disturb` mode, `makoctl mode -a do-not-disturb`, the name
+  mako's manual gives it. Another mode name isn't followed.
+- SwayNotificationCenter: its Do Not Disturb.
+
+The daemon needs the session bus's address, `DBUS_SESSION_BUS_ADDRESS` or
+`$XDG_RUNTIME_DIR/bus`, which a tmux started from the desktop has. Without
+one the health mark says so once and quiet keeps to the timer and `daily`.
+Anything else that knows when you went do-not-disturb can call
+`tmux-companion quiet --focus` and `quiet --focus-off` from a hook.
+
+A Focus has no end to count down to, so it isn't a timer: `quiet --off` ends
+the timer and leaves the Focus on, and only the Focus ending, or
+`quiet --focus-off`, ends that part.
+
 ## The journal
 
 ```toml

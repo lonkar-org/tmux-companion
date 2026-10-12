@@ -180,8 +180,11 @@ path from 08bf2ab included:
 - The order is `@tc_ses_used`, then `session_last_attached`. The session you
   are in is the first row and the cursor starts on the second.
 - The directories are there from the start and hidden while the query is
-  empty. The first letter typed brings them in, ranked with the sessions the
-  way the project picker ranks them.
+  empty. The first letter typed brings them in after the sessions, and a
+  search filters without ranking: sessions by last use, then projects by last
+  jump (zoxide's `last_accessed`, read from `db.zo`, since `zoxide query -l`
+  only gives frecency). Until 2026-10-12 a search ranked sessions and
+  projects together by match score, which mixed the two.
 - `M-s` and `M-S` move the cursor; Enter goes; Esc stays.
 
 Only the sessions are collected before the first frame; the directories come

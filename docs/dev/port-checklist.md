@@ -168,3 +168,21 @@ pid.
   sitting, one sound at the next boundary past budget, one snooze.
   `docs/dev/design-chunk-clock.md` is the spec. The daemon polls
   `list-clients` every five seconds; nothing to port.
+- `hosts`, `hosts add`, `hosts connect` and `bridge` are new, with
+  `[[hosts]]`: phase 1 of `docs/dev/design-remote-sessions.md`, the link
+  between two daemons in Cap'n Proto over a host command's stdio. The session
+  list rides in the daemon's existing pane poll; nothing to port.
+- `host attach`, `hosts forget` and the host groups in `switch sessions` are
+  new: phase 2 of `docs/dev/design-remote-sessions.md`, mirror sessions and
+  their bar. The mirror sessions ride in the daemon's existing pane poll;
+  nothing to port.
+- `project --detached` and `host attach --dir/--window/--pane/--wait` are new:
+  phase 3 of `docs/dev/design-remote-sessions.md`, the hosts in `brief`,
+  `project` and `inbox`, and mirror sessions in snapshots. The host's inbox
+  rides the link's existing poll; nothing to port.
+- `quiet --focus [NAME]` and `--focus-off` are new, with
+  `[quiet] follow_focus`: quiet while a macOS Focus is on, pushed by a
+  Shortcuts automation or read from the Focus database with one stat every
+  two seconds. `docs/dev/design-quiet-focus.md` is the spec; nothing to port.
+  On Linux it follows the desktop's Do Not Disturb over the session bus
+  (`src/dnd.rs`); nothing to port.
