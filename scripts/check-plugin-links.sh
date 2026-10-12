@@ -58,12 +58,16 @@ cd "$root"
 # unterminated process substitution.
 list=$(mktemp)
 trap 'rm -f "$list"' EXIT
-grep -rhoE '(^|[^/A-Za-z0-9_.-])[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9-]*tmux[A-Za-z0-9-]*' \
+# The name runs on through dots, so a path such as checkout/tmux.conf is taken
+# whole and dropped by its extension below, rather than read as a repository
+# called checkout/tmux; a `.git` suffix and a sentence's full stop come off.
+grep -rhoE '(^|[^/A-Za-z0-9_.-])[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9-]*tmux[A-Za-z0-9.-]*' \
   --include='*.md' --include='*.rs' --include='*.toml' --include='*.example' \
   docs src README.md 2>/dev/null |
   sed -E 's/^[^A-Za-z0-9]+//' |
   grep -vE '^(com|www|github|docs|src|scripts|target|tests|demo|playground|config|feature|home|share|man|tmp|plugins|usr|var|opt|etc)/' |
   grep -vE '\.(md|rs|toml|conf|example|sh)$' |
+  sed -E 's/\.git$//; s/\.+$//' |
   grep -vE '/tmux-companion' |
   sort -u > "$list"
 
