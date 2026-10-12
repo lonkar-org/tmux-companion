@@ -13,7 +13,7 @@
       "name": "tmux-companion",
       "source": "./",
       "description": "Drive tmux through tmux-companion: project sessions and layouts, snapshots and resurrect, and running agent panes alongside a human in one tmux server.",
-      "version": "0.3.0",
+      "version": "0.10.0",
       "category": "productivity",
       "keywords": [
         "tmux",
