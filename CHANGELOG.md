@@ -181,7 +181,12 @@ Performance improvements improving performance on avg. 57% under heavy load acro
 - A search in `M-s` filters and keeps the order: sessions first by when each
   was last used, then projects by when each was last jumped to (zoxide's own
   last-accessed time, read from its database), instead of ranking the two
-  together by match score. A picker can ask for this with `keep_order`.
+  together by match score. With the order kept, the search matches names
+  only, so a path that happens to hold the letters doesn't land Enter on the
+  wrong row. A picker can ask for this with `keep_order`.
+- The row the cursor is on reads at a glance in every picker: its band
+  carries more of the theme colour (text still at 7:1) and its words are
+  bold.
 
 - `M-s` is titled `Sessions/Projects` whatever `[picker.project] label` says,
   and its hint reads `type to filter session, concealed projects`, with

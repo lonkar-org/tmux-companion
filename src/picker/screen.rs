@@ -42,6 +42,9 @@ pub(super) struct Row {
     pub index: usize,
     /// The row laid out, with every column at the width they all share.
     pub text: String,
+    /// The row's name alone, which a list that keeps its order matches
+    /// against instead of every column; see [`State::keeping_order`].
+    pub label: String,
     /// Where each column's tone starts and ends in `text`.
     pub spans: super::Spans,
     /// The glyph in front of the row, with the preset applied, and its tone.
@@ -140,6 +143,7 @@ impl State {
             .map(|(index, (item, (text, spans)))| Row {
                 index,
                 text,
+                label: item.label.clone(),
                 spans,
                 icon: item.icon.clone(),
                 swatch: item.swatch.as_deref().and_then(super::colour_of),
@@ -186,7 +190,15 @@ impl State {
                 continue;
             }
             buf.clear();
-            let haystack = Utf32Str::new(&row.text, &mut buf);
+            // A list that keeps its order matches names only: with the order
+            // kept, a loose match in a path column would sit above an exact
+            // name further down, and Enter would go to the wrong place.
+            let hay = if self.keep_order {
+                &row.label
+            } else {
+                &row.text
+            };
+            let haystack = Utf32Str::new(hay, &mut buf);
             let mut positions = Vec::new();
             if let Some(score) = pattern.indices(haystack, &mut self.matcher, &mut positions) {
                 positions.sort_unstable();
@@ -1570,6 +1582,18 @@ mod tests {
         let order = |s: &State| s.hits.iter().map(|h| h.row).collect::<Vec<_>>();
         assert_eq!(order(&ranked), [2, 0], "ranked: the exact `api` first");
         assert_eq!(order(&kept), [0, 2], "kept: the caller's order, notes gone");
+    }
+
+    #[test]
+    fn keeping_order_matches_names_not_the_other_columns() {
+        let mut far = Item::new("payments-api");
+        far.columns = vec!["payments-api".into(), "/tmp/projects/payments-api".into()];
+        let mut near = Item::new("train@gpu");
+        near.columns = vec!["train".into(), "@gpu".into()];
+        let items = [far, near];
+        let kept = State::new(&items, "train", 0, &[]).keeping_order(true);
+        let rows: Vec<usize> = kept.hits.iter().map(|h| h.row).collect();
+        assert_eq!(rows, [1], "the path's t-r-a-i-n matches nothing here");
     }
 
     #[test]

@@ -116,9 +116,10 @@ pub const BAND: Color = Color::Indexed(238);
 /// whatever the accent, and not the terminal's own black, so the band shows on
 /// a background that is.
 const BAND_BASE: (u8, u8, u8) = (0x1c, 0x1c, 0x1c);
-/// How much of the accent is in the band. Enough to say "this theme", little
-/// enough that the band is a surface rather than a highlight.
-const BAND_TINT: f64 = 0.28;
+/// How much of the accent is in the band. Enough to say "this theme" and to
+/// find the cursor at a glance; the contrast loop in `band_for` still holds
+/// the band's text at 7:1.
+const BAND_TINT: f64 = 0.40;
 /// Plain text on the band. The band sets its own foreground because the
 /// terminal's default could be dark, and dark on 236 cannot be read.
 pub const ON_BAND: Color = Color::Indexed(253);
@@ -321,7 +322,9 @@ impl Paint {
             return s.add_modifier(Modifier::REVERSED);
         }
         let s = if s.fg.is_none() { s.fg(ON_BAND) } else { s };
-        s.bg(self.band)
+        // Bold as well as the band: the row you act on, which is what bold
+        // means everywhere else here, and visible on a band that is faint.
+        s.bg(self.band).add_modifier(Modifier::BOLD)
     }
 
     /// What the query matched: the accent, in bold.
