@@ -283,10 +283,10 @@ bind -N "companion: window which pane listens on which port" P \
 # keeping it. In M-s, ctrl-n on a host's line opens the same form.
 %if "#{>=:#{version},3.3}"
 bind -N "companion: project add a host to the session list" M-h \
-  display-popup -B -E -w 70% -h 30% "tmux-companion hosts add"
+  display-popup -B -E -w 90% -h 8 "tmux-companion hosts add"
 %else
 bind -N "companion: project add a host to the session list" M-h \
-  display-popup -E -w 70% -h 30% "tmux-companion hosts add"
+  display-popup -E -w 90% -h 10 "tmux-companion hosts add"
 %endif
 %if "#{>=:#{version},3.3}"
 bind -N "companion: project the agents waiting on you" M-g \

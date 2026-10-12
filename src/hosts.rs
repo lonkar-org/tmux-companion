@@ -958,7 +958,9 @@ impl Form {
 fn draw_form(f: &Form) -> std::io::Result<()> {
     use crate::picker::paint::{Paint, Tone, hint_parts};
     use std::io::Write;
-    let paint = Paint::detect();
+    // The stdout paint: `detect` alone is the pickers', whose escapes are off
+    // because ratatui draws their styles, and the form prints its own.
+    let paint = Paint::for_stdout(false);
     let (lines, (row, col)) = f.screen();
     let width = ratatui::crossterm::terminal::size().map_or(80, |(w, _)| w as usize);
     let mut out = String::from("\x1b[H\x1b[2J ");

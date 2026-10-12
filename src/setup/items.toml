@@ -102,7 +102,7 @@ command = "hosts add"
 key = "M-h"
 table = "prefix"
 fallback = ["M-H", "C-M-h"]
-snippet = '''bind -N "companion: project add a host to the session list" {key} display-popup -B -E -w 70% -h 30% "tmux-companion hosts add"'''
+snippet = '''bind -N "companion: project add a host to the session list" {key} display-popup -B -E -w 90% -h 8 "tmux-companion hosts add"'''
 goes = "tmux.conf"
 
 [[item]]

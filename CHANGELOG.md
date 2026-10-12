@@ -184,6 +184,12 @@ Performance improvements improving performance on avg. 57% under heavy load acro
   together by match score. With the order kept, the search matches names
   only, so a path that happens to hold the letters doesn't land Enter on the
   wrong row. A picker can ask for this with `keep_order`.
+- The add-host form draws its keys bold and its answer in colour, which the
+  previous change meant to and didn't: it asked for the pickers' paint, whose
+  escapes are off. Its popup in the examples and in `setup` is 90% wide and
+  8 rows high rather than 30% of the height, so a large font can't cut it.
+- config.example.toml lists the right side as agents, the chunk clock, git,
+  the network and the battery: what needs you, where you are, the machine.
 - The row the cursor is on reads at a glance in every picker: its band
   carries more of the theme colour (text still at 7:1) and its words are
   bold.
