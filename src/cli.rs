@@ -1375,7 +1375,7 @@ pub(crate) fn config_or_default() -> crate::config::Config {
 static CACHE_CONFIG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Read the configuration once for the rest of this process; see
-/// [`config_or_default`].
+/// `config_or_default`.
 pub fn cache_config_for_this_process() {
     CACHE_CONFIG.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -2785,7 +2785,7 @@ async fn pane_base_index() -> usize {
 pub enum SwitchWhat {
     /// This session's windows, most recently used first. From run-shell it is
     /// a press: the first goes to the window you were on before, a second
-    /// opens the list ([switcher] first). In a terminal it is the list
+    /// opens the list (`[switcher]` first). In a terminal it is the list
     Windows {
         /// The session, by name or `$id`; the client's when only --client is
         /// given

@@ -700,12 +700,14 @@ fn a_watching_host_that_stops_answering_pings_is_restarted() {
     p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
     let pid = p.dir.join("bridge.pid");
     // The bridge in the background with its stdin kept, so the test can
-    // stop it by its pid: a host that is there and says nothing.
+    // stop it by its pid: a host that is there and says nothing. Through
+    // fd 3: dash, Ubuntu's sh, points a background job's stdin at /dev/null
+    // before its own redirects, so `<&0` there hands the bridge nothing.
     let path = wrapped_bridge(
         &p,
         "stoppable",
         &format!(
-            "#!/bin/sh\n{} \"$@\" <&0 &\necho $! > '{}'\nwait\n",
+            "#!/bin/sh\nexec 3<&0\n{} \"$@\" <&3 &\necho $! > '{}'\nwait\n",
             binary().display(),
             pid.display()
         ),

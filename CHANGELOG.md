@@ -184,6 +184,10 @@ Performance improvements improving performance on avg. 57% under heavy load acro
   together by match score. With the order kept, the search matches names
   only, so a path that happens to hold the letters doesn't land Enter on the
   wrong row. A picker can ask for this with `keep_order`.
+- Saving or forgetting a host no longer puts "config.toml changed after the
+  daemon started" on the bar: the daemon already took in the host list, and
+  when nothing else in the file changed it counts the file as read. An edit
+  anywhere else still asks for a restart.
 - The add-host form draws its keys bold and its answer in colour, which the
   previous change meant to and didn't: it asked for the pickers' paint, whose
   escapes are off. Its popup in the examples and in `setup` is 90% wide and

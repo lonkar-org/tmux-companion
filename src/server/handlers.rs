@@ -935,7 +935,7 @@ pub(crate) async fn health_reasons(state: &Arc<Mutex<ServerState>>) -> Vec<Strin
 pub(crate) async fn health_check(
     state: &Arc<Mutex<ServerState>>,
 ) -> segments::health::HealthSample {
-    let (started, failures, quiet, offline, bar_note, unclean) = {
+    let (started, read_at, failures, quiet, offline, bar_note, unclean) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
         let quiet = s.is_quiet().then(|| s.quiet_status(now));
@@ -944,6 +944,7 @@ pub(crate) async fn health_check(
             .map(|since| crate::online::reason(since, now, &s.config.online.probe));
         (
             s.started_at,
+            s.config_read_at,
             s.recent_failures(),
             quiet,
             offline,
@@ -952,7 +953,7 @@ pub(crate) async fn health_check(
         )
     };
     let config_changed = match crate::config::load() {
-        Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, started),
+        Ok((_, crate::config::Source::File(path))) => segments::health::newer_than(&path, read_at),
         _ => false,
     };
     let binary_newer = std::env::current_exe()

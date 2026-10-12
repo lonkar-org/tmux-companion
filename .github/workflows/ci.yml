@@ -233,7 +233,10 @@ jobs:
   # left out of the comparison, since apt's and brew's differ.
   capnp:
     name: capnp schema is fresh
-    runs-on: ubuntu-latest
+    # macOS, with Homebrew's capnp, the compiler the committed file is made
+    # with: apt's older one encodes the schema's nodes differently, not only
+    # its header line, so the comparison failed on a schema that was fresh.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain
@@ -245,7 +248,7 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           rustup show active-toolchain || rustup toolchain install
-      - run: sudo apt-get update && sudo apt-get install -y capnproto
+      - run: brew install capnp
       - run: ./scripts/capnp.sh --check
 
   # Every other job runs the pinned toolchain, so `rust-version` in Cargo.toml

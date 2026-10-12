@@ -123,6 +123,11 @@ pub struct ServerState {
     /// When this daemon came up, for telling a file edited since from one
     /// edited before.
     pub started_at: std::time::SystemTime,
+    /// When config.toml was last taken in whole: the start, or a hosts
+    /// reload that found nothing but `[[hosts]]` had changed, which is the
+    /// daemon's own write from `hosts add --save` or `hosts forget`. The
+    /// health mark's "config.toml changed" is measured from here.
+    pub config_read_at: std::time::SystemTime,
     /// What failed and when, for the health mark, under the name of the
     /// timer or segment it came from: one entry each, so a timer that works
     /// again can take its own failure back and leave the others standing.
@@ -226,6 +231,7 @@ impl ServerState {
             bar_note: None,
             unclean: Vec::new(),
             started_at: std::time::SystemTime::now(),
+            config_read_at: std::time::SystemTime::now(),
             failures: std::collections::BTreeMap::new(),
             health_cache: None,
             offline_since: None,

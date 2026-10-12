@@ -92,7 +92,7 @@ pub fn short_path(path: &str, home: &str) -> String {
 /// process of its own.
 const SESSIONS_FORMAT: &str = "#{session_last_attached}\t#{session_name}\t#{session_path}\t#{@theme-color-main-1}\t#{session_attached}\t#{session_activity}\t#{@tc_ses_used}\t#{@tc-host}\t#{@tc-remote}\t#{@tc-host-fg}";
 
-/// The host colour a [`SESSIONS_FORMAT`] listing carries, `@tc-host-fg`, or
+/// The host colour a `SESSIONS_FORMAT` listing carries, `@tc-host-fg`, or
 /// nothing when it is unset.
 pub fn host_colour_in(listing: &str) -> Option<String> {
     listing

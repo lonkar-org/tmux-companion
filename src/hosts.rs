@@ -425,7 +425,7 @@ pub enum HostsAction {
     Add {
         /// The word on every row: letters, digits, - and _, up to 32
         name: Option<String>,
-        /// Write it to config.toml as a [[hosts]] entry
+        /// Write it to config.toml as a `[[hosts]]` entry
         #[arg(long)]
         save: bool,
         /// The command that opens ssh to it, after `--`
@@ -438,7 +438,7 @@ pub enum HostsAction {
         /// The host; every host without one
         name: Option<String>,
     },
-    /// Forget a host: its cached sessions, and its [[hosts]] entry in
+    /// Forget a host: its cached sessions, and its `[[hosts]]` entry in
     /// config.toml or its place on this tmux server. Refused while a mirror
     /// session to it is open
     Forget {

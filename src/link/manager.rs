@@ -726,8 +726,27 @@ pub async fn start(state: &Arc<Mutex<ServerState>>) {
 /// anything else that changed them, and start or stop threads to match.
 pub async fn reload(state: &Arc<Mutex<ServerState>>) -> anyhow::Result<()> {
     let config = crate::config::load().map_err(|e| anyhow::anyhow!("{e}"))?.0;
+    {
+        // `hosts add --save` and `hosts forget` write config.toml and then
+        // ask for this; when nothing but the host list differs, the file is
+        // taken in whole again, so the health mark doesn't ask for a restart
+        // that would change nothing. Any other edit still does.
+        let mut st = state.lock().await;
+        if only_hosts_differ(&st.config, &config) {
+            st.config.hosts = config.hosts.clone();
+            st.config_read_at = std::time::SystemTime::now();
+            st.health_cache = None;
+        }
+    }
     load(state, &config.hosts, server_hosts().await).await;
     Ok(())
+}
+
+/// Whether `new` is `old` with, at most, another `[[hosts]]` list.
+pub fn only_hosts_differ(old: &crate::config::Config, new: &crate::config::Config) -> bool {
+    let mut same = new.clone();
+    same.hosts = old.hosts.clone();
+    same == *old
 }
 
 async fn load(state: &Arc<Mutex<ServerState>>, config_hosts: &[Host], server: Vec<Host>) {
@@ -1190,6 +1209,22 @@ async fn polling(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_changed_host_list_is_taken_in_without_a_restart() {
+        let old = crate::config::Config::default();
+        let mut hosts = old.clone();
+        hosts.hosts = vec![crate::config::Host::new(
+            "vm",
+            vec!["ssh".into(), "vm".into()],
+        )];
+        assert!(only_hosts_differ(&old, &hosts), "a host added");
+        assert!(only_hosts_differ(&hosts, &old), "a host forgotten");
+        assert!(only_hosts_differ(&old, &old), "nothing changed");
+        let mut other = hosts.clone();
+        other.chunk.enabled = !other.chunk.enabled;
+        assert!(!only_hosts_differ(&old, &other), "an edit beside the hosts");
+    }
 
     fn host(name: &str, mode: LinkMode) -> Host {
         Host {

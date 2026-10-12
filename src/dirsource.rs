@@ -349,7 +349,7 @@ async fn run(cmd: &[String]) -> String {
     run_with(cmd, &[]).await
 }
 
-/// [`run`] with variables set for it.
+/// `run` with variables set for it.
 pub async fn run_with(cmd: &[String], env: &[(String, String)]) -> String {
     let Some((program, args)) = cmd.split_first() else {
         return String::new();

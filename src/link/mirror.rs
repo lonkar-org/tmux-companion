@@ -166,9 +166,9 @@ const LOOK: Duration = Duration::from_secs(5);
 /// The daemon's mirror bar: once a tick, for each mirror session with a
 /// client, the host's segments rendered and set as its `@tc-right` when they
 /// changed. It reads the shared pane poll, which carries the session list,
-/// up to [`LOOK`] old, so it starts no process of its own when another loop
+/// up to `LOOK` old, so it starts no process of its own when another loop
 /// has read one; with no host configured it reads nothing at all. With no
-/// mirror open it looks once every [`LOOK`] rather than every tick.
+/// mirror open it looks once every `LOOK` rather than every tick.
 pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
     let machine = machine();
     let mut tick = crate::push::ticker();
