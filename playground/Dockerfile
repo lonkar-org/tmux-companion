@@ -41,6 +41,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
  && cargo fetch --locked \
  && rm -rf src
 COPY build.rs ./
+COPY schema ./schema
 COPY src ./src
 RUN cargo build --release --locked && strip target/release/tmux-companion
 
