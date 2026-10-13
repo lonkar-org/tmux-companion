@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, ReadBuf};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::{
-    BRIDGE_LINE, Hello, PROTOCOL, Segment, Session, clean, read_dirs, read_entries, read_segments,
-    read_sessions, reader_options,
+    BRIDGE_LINE, Hello, PROTOCOL, Segment, Session, Window, clean, read_dirs, read_entries,
+    read_segments, read_sessions, read_windows, reader_options,
 };
 use crate::{
     config::Host,
@@ -284,14 +284,14 @@ impl Link {
         }
     }
 
-    /// One session's segments, within the connect time. The outer error is
-    /// the link breaking; the inner one is the host saying no, which leaves
-    /// the link up: a grouped session not there yet is an answer, not a
-    /// failure.
+    /// One session's segments and windows, within the connect time; a
+    /// bridge from before windows answers none. The outer error is the link
+    /// breaking; the inner one is the host saying no, which leaves the link
+    /// up: a grouped session not there yet is an answer, not a failure.
     pub async fn segments(
         &mut self,
         session: &str,
-    ) -> Result<Result<Vec<Segment>, String>, String> {
+    ) -> Result<Result<(Vec<Segment>, Vec<Window>), String>, String> {
         let mut req = self.bridge.segments_request();
         req.get().set_session(session);
         let answer = match tokio::time::timeout(self.connect, req.send().promise).await {
@@ -302,7 +302,12 @@ impl Link {
             Ok(Err(e)) => return Err(self.fail_with(e).await),
             Ok(Ok(a)) => a,
         };
-        match answer.get().and_then(|r| read_segments(r.get_segments()?)) {
+        match answer.get().and_then(|r| {
+            Ok((
+                read_segments(r.get_segments()?)?,
+                read_windows(r.get_windows()?)?,
+            ))
+        }) {
             Ok(v) => Ok(Ok(v)),
             Err(e) => Err(self.fail_with(e).await),
         }

@@ -5,6 +5,29 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Fixed
+
+- The bar in a mirror session listed one window, the mirror's own, while
+  `M-a` there listed every window on the host. The host now sends the
+  grouped session's windows with its segments, and the mirror window's entry
+  in the list is all of them, `1:ai 2:dynamic*`, in the list's own styles;
+  `switch windows --print` there prints them too. Both machines need this
+  build: a host from before it sends no windows and the bar stays as it was.
+- The project picker left out a session in the directory a mirror session
+  was opened from, `micro1` beside the mirror opened in `~/micro1`, and
+  showed that local directory as the mirror's path. A mirror session now
+  hides nothing and shows its host session's path.
+
+### Changed
+
+- `M-s` drops a host's line once something stands for the host: its
+  sessions, or a mirror session open here. Those rows carry the ssh glyph and
+  `@vm` in the host's colour, a mirror session included, and a session's
+  preview says the host's line. The line used to sit above the host's
+  sessions as a row the cursor could land on, and stayed behind on its own
+  when the mirror session it headed moved up by recency. `--print` keeps every
+  host's line, and ctrl-n works on any of the host's rows.
+
 ## 0.10.0 - 2026-10-12
 
 Sessions on your other machines are in `M-s` now. Add a host with `hosts add` and picking one of its sessions opens it as a mirror session, with the prefix going to the VM and your own bar showing the VM's branch, agents and health, so there's no more ssh, then attach, then remembering whose prefix is whose. Quiet hours can follow macOS Focus, or Do Not Disturb on a Linux desktop, when you turn on `follow_focus` and in `M-s` a search keeps sessions first and brings projects in by when you last jumped to them.

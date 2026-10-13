@@ -10,6 +10,13 @@
 //! it sends goes through [`super::clean`] and has its `#` doubled before it
 //! reaches a tmux format, and a colour is used only when it reads as one, so
 //! nothing a host says can reach `#(`.
+//!
+//! The window list is the host's too. A mirror session has one window of its
+//! own, the pane the attach runs in, so its bar listed one window while
+//! `M-a`, which goes to the host, listed them all. The host sends the grouped
+//! session's windows with its segments, and while they are known the mirror
+//! window's entry in the list is all of them, from `@tc-windows`; see
+//! [`render_windows`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -157,6 +164,258 @@ pub fn render(host: &str, segments: Option<&[Segment]>, link_up: bool, here: &[S
     out
 }
 
+/// The session option holding the host's windows as the bar draws them.
+pub const WINDOWS_OPTION: &str = "@tc-windows";
+
+/// The session option keeping the mirror window's own `window-status-style`,
+/// `window-status-current-style` and `window-status-separator`, tab
+/// separated, while the host's windows stand in for it: a window entry's
+/// `#[default]` is the window's own style, so the loop blanks both to give
+/// each host tab a clean start, and puts them back from here, whichever
+/// daemon set them.
+pub const SAVED_OPTION: &str = "@tc-windows-style";
+
+/// The host's windows as one window entry: each `index:name` with `*` on the
+/// current one and `!` on one that rang, in the styles the window list
+/// itself uses, `current` for the current tab and `normal` for the rest,
+/// joined by the list's separator. Names go through [`literal`].
+pub fn render_windows(windows: &[super::Window], normal: &str, current: &str, sep: &str) -> String {
+    let style = |s: &str| {
+        let s = s.trim();
+        if s.is_empty() || s == "default" {
+            String::new()
+        } else {
+            format!("#[{s}]")
+        }
+    };
+    windows
+        .iter()
+        .map(|w| {
+            let mut flags = String::new();
+            if w.active {
+                flags.push('*');
+            }
+            if w.bell {
+                flags.push('!');
+            }
+            format!(
+                "#[default]{}{}:{}{flags}#[default]",
+                style(if w.active { current } else { normal }),
+                w.index,
+                literal(&w.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
+/// The window list's styles and separator for one mirror window, as saved
+/// in [`SAVED_OPTION`] or read off the window before it was blanked.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ListStyle {
+    /// `window-status-style`.
+    pub normal: String,
+    /// `window-status-current-style`.
+    pub current: String,
+    /// `window-status-separator`.
+    pub sep: String,
+}
+
+impl ListStyle {
+    fn saved(&self) -> String {
+        format!("{}\t{}\t{}", self.normal, self.current, self.sep)
+    }
+
+    /// Read from the one line [`STYLE_FORMAT`] prints: the saved copy when
+    /// there is one, with true, since the window is already showing the
+    /// host's; the window's own values otherwise, with false.
+    fn read(line: &str) -> (ListStyle, bool) {
+        let f: Vec<&str> = line.split('\t').collect();
+        let get = |i: usize| f.get(i).copied().unwrap_or("").to_string();
+        if !get(0).is_empty() || !get(1).is_empty() || !get(2).is_empty() {
+            (
+                ListStyle {
+                    normal: get(0),
+                    current: get(1),
+                    sep: get(2),
+                },
+                true,
+            )
+        } else {
+            (
+                ListStyle {
+                    normal: get(3),
+                    current: get(4),
+                    sep: get(5),
+                },
+                false,
+            )
+        }
+    }
+}
+
+/// What the loop reads off a mirror window before it first draws the host's
+/// windows there: the saved copy, three fields, then the window's own three.
+const STYLE_FORMAT: &str = "#{@tc-windows-style}\t#{E:window-status-style}\t#{E:window-status-current-style}\t#{window-status-separator}";
+
+/// The tmux commands that put the host's windows in a mirror window's entry,
+/// `value` from [`render_windows`]: the window's own styles kept in
+/// [`SAVED_OPTION`] and blanked, both formats reading [`WINDOWS_OPTION`].
+pub fn show_commands(session: &str, value: &str, style: &ListStyle) -> Vec<Vec<String>> {
+    let t = format!("={session}:");
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let reads = format!("#{{{WINDOWS_OPTION}}}");
+    vec![
+        s(&["set-option", "-t", &t, SAVED_OPTION, &style.saved()]),
+        s(&["set-option", "-t", &t, WINDOWS_OPTION, value]),
+        s(&[
+            "set-option",
+            "-w",
+            "-t",
+            &t,
+            "window-status-style",
+            "default",
+        ]),
+        s(&[
+            "set-option",
+            "-w",
+            "-t",
+            &t,
+            "window-status-current-style",
+            "default",
+        ]),
+        s(&["set-option", "-w", "-t", &t, "window-status-format", &reads]),
+        s(&[
+            "set-option",
+            "-w",
+            "-t",
+            &t,
+            "window-status-current-format",
+            &reads,
+        ]),
+    ]
+}
+
+/// The tmux commands that give a mirror window its own entry back: its
+/// styles from `style`, the formats the global ones again, and both options
+/// gone.
+pub fn release_commands(session: &str, style: &ListStyle) -> Vec<Vec<String>> {
+    let t = format!("={session}:");
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let or_default = |v: &str| {
+        if v.is_empty() {
+            "default".to_string()
+        } else {
+            v.to_string()
+        }
+    };
+    vec![
+        s(&[
+            "set-option",
+            "-w",
+            "-t",
+            &t,
+            "window-status-style",
+            &or_default(&style.normal),
+        ]),
+        s(&[
+            "set-option",
+            "-w",
+            "-t",
+            &t,
+            "window-status-current-style",
+            &or_default(&style.current),
+        ]),
+        s(&["set-option", "-wu", "-t", &t, "window-status-format"]),
+        s(&[
+            "set-option",
+            "-wu",
+            "-t",
+            &t,
+            "window-status-current-format",
+        ]),
+        s(&["set-option", "-u", "-t", &t, WINDOWS_OPTION]),
+        s(&["set-option", "-u", "-t", &t, SAVED_OPTION]),
+    ]
+}
+
+/// One tmux call for many commands, `a ; b ; c`.
+fn chained(cmds: Vec<Vec<String>>) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in cmds {
+        if !out.is_empty() {
+            out.push(";".to_string());
+        }
+        out.extend(c);
+    }
+    out
+}
+
+/// A mirror window's list style, read in one call.
+async fn read_style(session: &str) -> Option<(ListStyle, bool)> {
+    let out = crate::tmux::command()
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            &format!("={session}:"),
+            STYLE_FORMAT,
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(ListStyle::read(
+        String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'),
+    ))
+}
+
+/// Draw or release the host's windows in each of `changed`'s mirror windows:
+/// `Some` draws them, `None` gives the window its own entry back. A window
+/// whose styles can't be read is left for the next tick.
+async fn write_windows(
+    changed: &[(String, Option<Vec<super::Window>>)],
+    styles: &mut HashMap<String, ListStyle>,
+) -> Vec<String> {
+    let mut cmds = Vec::new();
+    let mut done = Vec::new();
+    for (session, wins) in changed {
+        let style = match styles.get(session) {
+            Some(st) => Some((st.clone(), true)),
+            None => read_style(session).await,
+        };
+        let Some((style, taken)) = style else {
+            continue;
+        };
+        match wins {
+            Some(w) => {
+                let value = render_windows(w, &style.normal, &style.current, &style.sep);
+                cmds.extend(show_commands(session, &value, &style));
+                styles.insert(session.clone(), style);
+            }
+            None if taken => {
+                cmds.extend(release_commands(session, &style));
+                styles.remove(session);
+            }
+            None => {}
+        }
+        done.push(session.clone());
+    }
+    if !cmds.is_empty() {
+        let ok = crate::tmux::command()
+            .args(chained(cmds))
+            .output()
+            .await
+            .is_ok_and(|o| o.status.success());
+        if !ok {
+            return Vec::new();
+        }
+    }
+    done
+}
+
 /// How old a session listing the loop takes: mirror sessions open and close
 /// far less often than a bar changes, so the listing can be the one another
 /// loop (the inbox's every two seconds, the push loop's every one) already
@@ -173,6 +432,10 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
     let machine = machine();
     let mut tick = crate::push::ticker();
     let mut last: HashMap<String, String> = HashMap::new();
+    // The windows last drawn in each mirror window, and the styles they
+    // were drawn in.
+    let mut drawn: HashMap<String, Option<Vec<super::Window>>> = HashMap::new();
+    let mut styles: HashMap<String, ListStyle> = HashMap::new();
     let mut looked: Option<Instant> = None;
     let mut any = false;
     loop {
@@ -196,17 +459,31 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
             .collect();
         state.lock().await.links.set_mirrors(&open, &wants);
         last.retain(|s, _| shown.iter().any(|m| &m.session == s));
+        drawn.retain(|s, _| shown.iter().any(|m| &m.session == s));
+        styles.retain(|s, _| mirrors.iter().any(|m| &m.session == s));
         if shown.is_empty() {
             continue;
         }
         let here = crate::server::health_reasons(&state).await;
         let mut changed = Vec::new();
+        let mut windows_changed = Vec::new();
         for (m, (_, grouped)) in shown.iter().zip(&wants) {
+            let wins = state.lock().await.links.windows_for(&m.host, grouped);
+            if drawn.get(&m.session) != Some(&wins) {
+                windows_changed.push((m.session.clone(), wins));
+            }
             let (segs, up) = state.lock().await.links.segments_for(&m.host, grouped);
             let value = render(&m.host, segs.as_ref().map(|(s, _)| s.as_slice()), up, &here);
             if last.get(&m.session) != Some(&value) {
                 last.insert(m.session.clone(), value.clone());
                 changed.push((m.session.clone(), value));
+            }
+        }
+        if !windows_changed.is_empty() {
+            for s in write_windows(&windows_changed, &mut styles).await {
+                if let Some((_, w)) = windows_changed.iter().find(|(x, _)| *x == s) {
+                    drawn.insert(s, w.clone());
+                }
             }
         }
         if changed.is_empty() {
@@ -292,6 +569,59 @@ mod tests {
         assert!(starts(&out).iter().all(|c| *c == '['), "{out}");
         let down = render(evil, Some(&segs), false, &[evil.to_string()]);
         assert!(starts(&down).iter().all(|c| *c == '['), "{down}");
+    }
+
+    fn win(index: u32, name: &str, active: bool, bell: bool) -> crate::link::Window {
+        crate::link::Window {
+            index,
+            name: name.into(),
+            active,
+            bell,
+        }
+    }
+
+    #[test]
+    fn the_hosts_windows_are_one_entry_in_the_lists_own_styles() {
+        let wins = [
+            win(1, "ai", false, false),
+            win(2, "dynamic", true, false),
+            win(3, "run", false, true),
+        ];
+        assert_eq!(
+            render_windows(&wins, "default", "fg=red,bold", " "),
+            "#[default]1:ai#[default] #[default]#[fg=red,bold]2:dynamic*#[default] #[default]3:run!#[default]"
+        );
+        // A name is text: the `#` doubled, so tmux draws it and runs nothing.
+        let evil = render_windows(
+            &[win(1, "#(touch pwned)#[fg=red]", true, false)],
+            "",
+            "",
+            "",
+        );
+        assert_eq!(evil, "#[default]1:##(touch pwned)##[fg=red]*#[default]");
+    }
+
+    #[test]
+    fn a_saved_style_wins_over_the_blanked_one() {
+        let (st, taken) = ListStyle::read("\t\t\tfg=grey\tfg=red,bold\t ");
+        assert!(!taken);
+        assert_eq!(
+            st,
+            ListStyle {
+                normal: "fg=grey".into(),
+                current: "fg=red,bold".into(),
+                sep: " ".into()
+            }
+        );
+        // Blanked by an earlier daemon: the saved copy is the window's own.
+        let (st, taken) = ListStyle::read("fg=grey\tfg=red,bold\t \tdefault\tdefault\t ");
+        assert!(taken);
+        assert_eq!(st.current, "fg=red,bold");
+        let cmds = release_commands("api@vm", &st);
+        assert!(cmds.iter().any(|c| c.ends_with(&[
+            "window-status-current-style".to_string(),
+            "fg=red,bold".to_string()
+        ])));
     }
 
     #[test]

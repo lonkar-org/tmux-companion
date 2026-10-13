@@ -147,6 +147,7 @@ async fn link_segments(session: &str, state: &Arc<Mutex<ServerState>>) -> anyhow
     serde_json::to_string(&crate::link::SegmentsAnswer {
         polled_at: crate::panes::now_secs(),
         segments,
+        windows: crate::link::windows_of(session, &panes),
     })
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -263,11 +264,13 @@ async fn link_watch(
         )
     };
     let mut segments = Vec::new();
+    let mut windows = Vec::new();
     for (grouped, machine) in shown {
         if machine != args.machine {
             continue;
         }
         if let Some(segs) = segments_of(&grouped, &panes, state).await {
+            windows.push((grouped.clone(), crate::link::windows_of(&grouped, &panes)));
             segments.push((grouped, segs));
         }
     }
@@ -279,6 +282,7 @@ async fn link_watch(
         },
         inbox,
         segments,
+        windows,
     })
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -571,6 +575,25 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
         // pushes, and all of it.
         "__link_watch" => match req.parse_args::<crate::proto::LinkWatchArgs>() {
             Ok(args) => link_watch(&args, &state).await,
+            Err(e) => Err(e),
+        },
+        // The host's windows for one mirror session, for `switch windows
+        // --print`: what the mirror bar draws, in words.
+        "__mirror_windows" => match req.parse_args::<crate::proto::MirrorWindowsArgs>() {
+            Ok(args) => {
+                let grouped = crate::link::mirror::grouped_name(
+                    &args.remote,
+                    &crate::link::mirror::machine(),
+                );
+                let wins = state.lock().await.links.windows_for(&args.host, &grouped);
+                match wins {
+                    Some(w) => serde_json::to_string(&w).map_err(|e| anyhow::anyhow!("{e}")),
+                    None => Err(anyhow::anyhow!(
+                        "{}'s windows haven't been heard here",
+                        args.host
+                    )),
+                }
+            }
             Err(e) => Err(e),
         },
         // What a bridge answers `segments` with, for one session.

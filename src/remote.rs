@@ -2,7 +2,8 @@
 //!
 //! `switch sessions` lists each host after the local sessions: one group line
 //! per host in config order, `vm, 4 sessions, last heard 15m` or `live`, then
-//! the host's sessions as `api@vm` in the host's own recency. The rows come
+//! the host's sessions as `api@vm` in the host's own recency. The popup shows
+//! a group line only for a host nothing else stands for; see [`for_picker`]. The rows come
 //! from the local daemon's memory or its cache on disk with the first frame;
 //! the one socket question that fetches them also asks the daemon to bring
 //! each on-demand link up, which it does after answering. Nothing here waits
@@ -204,6 +205,10 @@ pub fn rows(views: &[HostView], open: &[(String, String)], now: u64) -> Vec<Row>
                     p.push_str(&s.path);
                     p.push('\n');
                 }
+                // The host's own line, which the picker no longer shows as a
+                // row of its own once a session stands for the host.
+                p.push_str(&group_line(v, now, true));
+                p.push('\n');
                 p
             } else {
                 why.clone()
@@ -220,6 +225,27 @@ pub fn rows(views: &[HostView], open: &[(String, String)], now: u64) -> Vec<Row>
         }
     }
     out
+}
+
+/// The rows a picker shows: a host's group line only while nothing else
+/// stands for the host, which is neither a session row of its own nor a
+/// mirror session open here. A host with sessions is those sessions, each
+/// with the ssh glyph and `@vm`; a second row naming it read as one more
+/// place to go, and sat apart from the mirror session recency moved away.
+/// `--print` keeps every group line: there it is the host's heading, and the
+/// only line that says why it can't be reached.
+pub fn for_picker(rows: Vec<Row>, open: &[(String, String)]) -> Vec<Row> {
+    let stood_for: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|r| match &r.target {
+            Target::Session { host, .. } => Some(host.clone()),
+            Target::Group(_) => None,
+        })
+        .chain(open.iter().map(|(h, _)| h.clone()))
+        .collect();
+    rows.into_iter()
+        .filter(|r| !matches!(&r.target, Target::Group(h) if stood_for.contains(h)))
+        .collect()
 }
 
 /// The lines `switch sessions --print` gives after the local sessions: each
@@ -324,8 +350,9 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
 }
 
 /// The remote rows as picker items: the group line with the ssh glyph and
-/// the host's name in the host tone, each session as `api` with `@vm` in a
-/// column of the host tone so the words read `api@vm`, and while a host is
+/// the host's name in the host tone, each session with the same glyph, as
+/// `api` with `@vm` in a column of the host tone so the words read `api@vm`,
+/// and while a host is
 /// unreachable its rows in the `offline` tone with the word on each. Group
 /// lines and unreachable rows are not steps: Enter on one goes nowhere.
 pub fn items(rows: &[Row], views: &[HostView], now: u64) -> Vec<crate::picker::Item> {
@@ -378,7 +405,10 @@ pub fn items(rows: &[Row], views: &[HostView], now: u64) -> Vec<crate::picker::I
                     }
                     let item = Item::with_preview(r.line.clone(), r.preview.clone())
                         .in_cells(cells)
-                        .with_icon(crate::tmux::icons::SESSION, Tone::Dim);
+                        .with_icon(
+                            crate::tmux::icons::SSH,
+                            if up { Tone::Host } else { Tone::Offline },
+                        );
                     if up { item } else { item.not_a_step() }
                 }
             }
@@ -473,6 +503,24 @@ pub async fn host_dirs(host: &str) -> Result<Vec<String>, String> {
         return Err(e);
     }
     serde_json::from_str(&resp.output).map_err(|e| format!("{host}'s directories: {e}"))
+}
+
+/// The host's windows for a mirror session, as the daemon last heard them,
+/// or why there are none.
+pub async fn mirror_windows(host: &str, remote: &str) -> Result<Vec<crate::link::Window>, String> {
+    let resp = crate::client::send(Request::build(
+        "__mirror_windows",
+        &crate::proto::MirrorWindowsArgs {
+            host: host.to_string(),
+            remote: remote.to_string(),
+        },
+    ))
+    .await
+    .map_err(|e| format!("{e:#}"))?;
+    if let Some(e) = resp.error {
+        return Err(e);
+    }
+    serde_json::from_str(&resp.output).map_err(|e| format!("{host}'s windows: {e}"))
 }
 
 /// A host's directories as project rows: `api@vm` in the words, the path as
@@ -1069,6 +1117,26 @@ fn wait_for_close(reconnect: bool) -> anyhow::Result<bool> {
     Ok(answer)
 }
 
+/// Give each mirror session's row the path of the session it stands for on
+/// the host, as the daemon last heard it, or none: its own path is wherever
+/// it was opened from here, which says nothing about the host.
+pub fn host_paths(local: &mut [crate::project::Row], views: &[HostView]) {
+    for r in local.iter_mut() {
+        if r.kind != crate::project::Kind::Session {
+            continue;
+        }
+        let Some((host, remote)) = &r.mirror else {
+            continue;
+        };
+        r.path = views
+            .iter()
+            .find(|v| v.name == *host)
+            .and_then(|v| v.sessions.iter().find(|s| s.name == *remote))
+            .map(|s| s.path.clone())
+            .unwrap_or_default();
+    }
+}
+
 /// The mirror sessions open on this tmux server, as (host, session there),
 /// from the local rows the switcher already read.
 pub fn open_mirrors(local: &[crate::project::Row]) -> Vec<(String, String)> {
@@ -1199,6 +1267,38 @@ mod tests {
         assert_eq!(it[1].columns[..2], ["api", "@vm"]);
         assert_eq!(it[1].tones[1], crate::picker::Tone::Host);
         assert_eq!(it[4].tones[0], crate::picker::Tone::Offline);
+        assert!(
+            r[1].preview.contains("vm, 3 sessions, live"),
+            "a session's preview says where its host is: {}",
+            r[1].preview
+        );
+    }
+
+    #[test]
+    fn the_picker_drops_a_group_line_a_session_stands_for() {
+        let mut never = view("new", State::Idle, &[]);
+        never.heard_at = 0;
+        let views = vec![
+            view("vm", State::Up, &[("api", 0)]),
+            view("box", State::Up, &[("x", 0)]),
+            never,
+        ];
+        // box's one session is open here, so it has no remote row left.
+        let open = vec![("box".to_string(), "x".to_string())];
+        let r = for_picker(rows(&views, &open, NOW), &open);
+        let lines: Vec<&str> = r.iter().map(|r| r.line.as_str()).collect();
+        assert_eq!(
+            lines,
+            ["api@vm, idle 5d", "new, never heard from"],
+            "vm is its session, box its open mirror, new has only its line"
+        );
+        let it = items(&r, &views, NOW);
+        assert_eq!(it[0].columns[..2], ["api", "@vm"]);
+        assert_eq!(
+            print_lines(&views, &open, NOW)[0],
+            "vm, 1 session, live",
+            "--print keeps every host's line"
+        );
     }
 
     #[test]

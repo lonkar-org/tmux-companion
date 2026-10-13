@@ -17,7 +17,7 @@ use capnp_rpc::{RpcSystem, rpc_twoparty_capnp, twoparty};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::{
-    METHODS, PROTOCOL, Segment, SegmentsAnswer, Session, SessionsAnswer, WatchAnswer,
+    METHODS, PROTOCOL, Segment, SegmentsAnswer, Session, SessionsAnswer, WatchAnswer, Window,
     reader_options, sessions_differ, write_sessions,
 };
 use crate::{
@@ -129,9 +129,11 @@ impl bridge::Server for Bridge {
         let mut r = results.get();
         r.set_polled_at(answer.polled_at);
         write_segments(
-            r.init_segments(answer.segments.len() as u32),
+            r.reborrow().init_segments(answer.segments.len() as u32),
             &answer.segments,
         );
+        let windows = &answer.windows[..answer.windows.len().min(super::MAX_WINDOWS)];
+        write_windows(r.init_windows(windows.len() as u32), windows);
         Ok(())
     }
 
@@ -213,7 +215,7 @@ impl bridge::Server for Bridge {
 struct Pushed {
     sessions: Option<Vec<Session>>,
     inbox: Option<Vec<crate::inbox::Entry>>,
-    segments: std::collections::HashMap<String, Vec<Segment>>,
+    segments: std::collections::HashMap<String, (Vec<Segment>, Vec<Window>)>,
 }
 
 /// Whether two inbox lists differ in anything the other side keeps.
@@ -242,7 +244,8 @@ fn inbox_differs(a: &[crate::inbox::Entry], b: &[crate::inbox::Entry]) -> bool {
 
 /// The sink calls one watch answer earns against what was sent before: the
 /// sessions and the inbox when they differ, each grouped session's segments
-/// when they differ or are new, and an empty list for one no longer there.
+/// and windows when either differs or is new, and empty lists for one no
+/// longer there.
 /// Each call is waited for, so the other side hears them in order.
 async fn push(
     sink: &session_sink::Client,
@@ -280,23 +283,33 @@ async fn push(
     }
     let now = crate::panes::now_secs();
     let mut gone: Vec<String> = pushed.segments.keys().cloned().collect();
+    let mut windows = answer.windows;
     for (grouped, segs) in answer.segments {
         gone.retain(|g| *g != grouped);
-        if pushed.segments.get(&grouped) == Some(&segs) {
+        let mut wins = windows
+            .iter_mut()
+            .find(|(g, _)| *g == grouped)
+            .map(|(_, w)| std::mem::take(w))
+            .unwrap_or_default();
+        wins.truncate(super::MAX_WINDOWS);
+        let bar = (segs, wins);
+        if pushed.segments.get(&grouped) == Some(&bar) {
             continue;
         }
         let mut req = sink.segments_request();
         req.get().set_session(&grouped);
         req.get().set_polled_at(now);
-        write_segments(req.get().init_segments(segs.len() as u32), &segs);
+        write_segments(req.get().init_segments(bar.0.len() as u32), &bar.0);
+        write_windows(req.get().init_windows(bar.1.len() as u32), &bar.1);
         req.send().promise.await?;
-        pushed.segments.insert(grouped, segs);
+        pushed.segments.insert(grouped, bar);
     }
     for grouped in gone {
         let mut req = sink.segments_request();
         req.get().set_session(&grouped);
         req.get().set_polled_at(now);
         req.get().init_segments(0);
+        req.get().init_windows(0);
         req.send().promise.await?;
         pushed.segments.remove(&grouped);
     }
@@ -332,6 +345,20 @@ fn write_segments(
         b.set_fg(&s.fg);
         b.set_bg(&s.bg);
         b.set_glyph(&s.glyph);
+    }
+}
+
+/// Write windows into a list builder sized for them.
+fn write_windows(
+    mut list: capnp::struct_list::Builder<'_, crate::link_capnp::window::Owned>,
+    windows: &[Window],
+) {
+    for (i, w) in windows.iter().enumerate() {
+        let mut b = list.reborrow().get(i as u32);
+        b.set_index(w.index);
+        b.set_name(&w.name);
+        b.set_active(w.active);
+        b.set_bell(w.bell);
     }
 }
 

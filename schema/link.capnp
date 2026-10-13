@@ -42,6 +42,15 @@ struct Segment {
   glyph @4 :Text;         # an icons.rs constant's name, empty for none
 }
 
+# One window of a grouped session, for the mirror session's bar to list in
+# place of its own one window. Text, never markup, like a segment.
+struct Window {
+  index @0 :UInt32;       # `#{window_index}`
+  name @1 :Text;          # `#{window_name}`
+  active @2 :Bool;        # the grouped session's current window
+  bell @3 :Bool;          # `#{window_bell_flag}`
+}
+
 # One agent waiting on the host, as its inbox holds it.
 struct Entry {
   pane @0 :Text;          # `#{pane_id}`
@@ -69,7 +78,8 @@ interface SessionSink {
   # The segments of one grouped session the local side's mirror has a client
   # in, as `segments` answers them, when they changed; an empty list when the
   # session lost its client or went.
-  segments @2 (session :Text, polledAt :UInt64, segments :List(Segment)) -> ();
+  segments @2 (session :Text, polledAt :UInt64, segments :List(Segment),
+               windows :List(Window)) -> ();
 }
 
 interface Bridge {
@@ -83,8 +93,10 @@ interface Bridge {
   # The host's sessions, and when its daemon read them (unix seconds).
   sessions @1 () -> (polledAt :UInt64, sessions :List(Session));
 
-  # The segments of one session's active pane: git, agents and health.
-  segments @2 (session :Text) -> (polledAt :UInt64, segments :List(Segment));
+  # The segments of one session's active pane: git, agents and health; and
+  # its windows, which a bridge from before them leaves empty.
+  segments @2 (session :Text)
+           -> (polledAt :UInt64, segments :List(Segment), windows :List(Window));
 
   # The agents waiting on the host, longest wait first.
   inbox @3 () -> (entries :List(Entry));

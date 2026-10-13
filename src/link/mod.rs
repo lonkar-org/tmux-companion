@@ -96,6 +96,19 @@ pub struct Segment {
     pub glyph: String,
 }
 
+/// One window of a grouped session, for the mirror session's bar.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Window {
+    /// `#{window_index}`.
+    pub index: u32,
+    /// `#{window_name}`.
+    pub name: String,
+    /// The grouped session's current window.
+    pub active: bool,
+    /// `#{window_bell_flag}`.
+    pub bell: bool,
+}
+
 /// The sessions answer: when the host's daemon read them, and the list.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SessionsAnswer {
@@ -112,6 +125,10 @@ pub struct SegmentsAnswer {
     pub polled_at: u64,
     /// Git, agents and health, each only when it has something to say.
     pub segments: Vec<Segment>,
+    /// The session's windows, in index order. Empty from a daemon from
+    /// before them.
+    #[serde(default)]
+    pub windows: Vec<Window>,
 }
 
 /// What a bridge's `watch` is told each time its daemon wakes it: the
@@ -128,6 +145,11 @@ pub struct WatchAnswer {
     /// Each grouped session with a client whose `@tc-mirror` is the machine
     /// asked about, with its segments.
     pub segments: Vec<(String, Vec<Segment>)>,
+    /// The same grouped sessions' windows, in index order: a field of its
+    /// own rather than a third member of each `segments` pair, so a bridge
+    /// and a daemon from either side of the change still read each other.
+    #[serde(default)]
+    pub windows: Vec<(String, Vec<Window>)>,
 }
 
 /// Untrusted text made safe to keep and print: control characters gone
@@ -207,6 +229,50 @@ pub fn read_segments(
                 fg: text(r.get_fg())?,
                 bg: text(r.get_bg())?,
                 glyph: text(r.get_glyph())?,
+            })
+        })
+        .collect()
+}
+
+/// One session's windows from a pane list already read, in index order:
+/// one per window, current when one of its panes is the one a client sees,
+/// ringing when any of its panes rang. No listing of its own: the pane poll
+/// has every window of every session, grouped ones included.
+pub fn windows_of(session: &str, panes: &[crate::panes::Pane]) -> Vec<Window> {
+    let mut out: Vec<Window> = Vec::new();
+    for p in panes.iter().filter(|p| p.session == session) {
+        match out.iter_mut().find(|w| w.index == p.window_index) {
+            Some(w) => {
+                w.active |= p.visible;
+                w.bell |= p.bell;
+            }
+            None => out.push(Window {
+                index: p.window_index,
+                name: p.window_name.clone(),
+                active: p.visible,
+                bell: p.bell,
+            }),
+        }
+    }
+    out.sort_by_key(|w| w.index);
+    out
+}
+
+/// The most windows a grouped session's bar takes from a host.
+pub const MAX_WINDOWS: usize = 64;
+
+/// A window list off the wire, each name cleaned, at most [`MAX_WINDOWS`].
+pub fn read_windows(
+    list: capnp::struct_list::Reader<'_, link_capnp::window::Owned>,
+) -> capnp::Result<Vec<Window>> {
+    list.iter()
+        .take(MAX_WINDOWS)
+        .map(|r| {
+            Ok(Window {
+                index: r.get_index(),
+                name: text(r.get_name())?,
+                active: r.get_active(),
+                bell: r.get_bell(),
             })
         })
         .collect()
@@ -509,6 +575,43 @@ impl Hello {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sessions_windows_come_one_each_in_index_order() {
+        let line = |s: &str, w: u32, name: &str, p: u32, active: bool, bell: bool| {
+            format!(
+                "{s}\t{w}\t{name}\t{p}\t%{w}{p}\tzsh\t/\t\t{}\t{}\t1\t0\t0\th\t{}\t$1\t\t1\t",
+                u8::from(active),
+                u8::from(active),
+                u8::from(bell)
+            )
+        };
+        let text = [
+            line("api~mac", 2, "dynamic", 0, false, false),
+            line("api~mac", 2, "dynamic", 1, true, false),
+            line("api~mac", 1, "ai", 0, false, true),
+            line("other", 1, "x", 0, true, false),
+        ]
+        .join("\n");
+        let panes = crate::panes::parse(&text);
+        assert_eq!(
+            windows_of("api~mac", &panes),
+            [
+                Window {
+                    index: 1,
+                    name: "ai".into(),
+                    active: false,
+                    bell: true
+                },
+                Window {
+                    index: 2,
+                    name: "dynamic".into(),
+                    active: true,
+                    bell: false
+                },
+            ]
+        );
+    }
 
     #[test]
     fn git_words_says_nothing_outside_a_repository() {

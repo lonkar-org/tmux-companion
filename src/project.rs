@@ -227,11 +227,16 @@ pub fn directories_from(
 /// not always derivable from the path. Session `y` sits at the home directory,
 /// and deriving its name from that path opened a brand new session called
 /// `yogesh` the first time this was got wrong.
+///
+/// A mirror session is kept whatever its path and takes no path from
+/// anything else: its path is wherever it was opened from on this machine,
+/// or the host's, and neither is a local project. Deduplicated with the
+/// rest, the mirror opened from `~/micro1` hid the `micro1` session.
 pub fn merge(sessions: Vec<Row>, directories: Vec<Row>) -> Vec<Row> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(sessions.len() + directories.len());
     for row in sessions.into_iter().chain(directories) {
-        if seen.insert(row.path.clone()) {
+        if row.mirror.is_some() || seen.insert(row.path.clone()) {
             out.push(row);
         }
     }
@@ -801,6 +806,24 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].kind, Kind::Session);
         assert_eq!(merged[0].label, "y");
+    }
+
+    #[test]
+    fn a_mirror_session_hides_no_local_session_in_its_directory() {
+        let row = |label: &str, mirror: Option<(&str, &str)>| Row {
+            kind: Kind::Session,
+            label: label.into(),
+            path: "/home/me/micro1".into(),
+            colour: None,
+            idle: None,
+            mirror: mirror.map(|(h, r)| (h.into(), r.into())),
+        };
+        let merged = merge(
+            vec![row("api@vm", Some(("vm", "api"))), row("micro1", None)],
+            Vec::new(),
+        );
+        let labels: Vec<&str> = merged.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["api@vm", "micro1"]);
     }
 
     #[test]

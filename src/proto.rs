@@ -113,6 +113,18 @@ pub struct HostDirsArgs {
 }
 
 #[doc(hidden)]
+/// `__mirror_windows`: the host's windows for one mirror session, as the
+/// daemon last heard them over the link.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MirrorWindowsArgs {
+    /// The host, `@tc-host`.
+    pub host: String,
+    /// The session on the host, `@tc-remote`.
+    pub remote: String,
+}
+
+#[doc(hidden)]
 /// `__link_segments`: one session's bar segments, for a bridge.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

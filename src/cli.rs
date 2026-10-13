@@ -2425,6 +2425,7 @@ async fn run_project(dir: Option<String>, print: bool, detached: bool) -> anyhow
         crate::remote::say(why).await;
     }
 
+    let remote = crate::remote::for_picker(remote, &crate::remote::open_mirrors(&sessions));
     let n_local = sessions.len();
     let n_remote = remote.len();
     let mut items = project_items(&sessions, &config, &home);
@@ -2523,8 +2524,9 @@ async fn project_rows(config: &crate::config::Config, home: &str) -> ProjectRows
         let (config, home) = (config.clone(), home.to_string());
         tokio::spawn(async move { crate::project::directories(&config, &home).await })
     };
-    let sessions = crate::project::sessions(&[]).await;
+    let mut sessions = crate::project::sessions(&[]).await;
     let views = crate::remote::views_for_picker();
+    crate::remote::host_paths(&mut sessions, &views);
     let now = crate::sessions::idle::now();
     let open = crate::remote::open_mirrors(&sessions);
     let remote = crate::remote::rows(&views, &open, now);
@@ -2607,7 +2609,26 @@ pub(crate) fn project_items(
                     Cell::dim(where_it_is),
                 ]
             }
+            // A mirror session the same, so it reads as the host's whether it
+            // is open here or not.
+            (Kind::Session, Some((host, _))) => {
+                let base = r
+                    .label
+                    .strip_suffix(&format!("@{host}"))
+                    .unwrap_or(&r.label)
+                    .to_string();
+                vec![
+                    Cell::new(base, name),
+                    Cell::new(format!("@{host}"), Tone::Host),
+                    Cell::dim(where_it_is),
+                ]
+            }
             _ => vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)],
+        };
+        // A mirror session wears the ssh glyph its host's remote rows do.
+        let (icon, icon_tone) = match (&r.kind, &r.mirror) {
+            (Kind::Session, Some(_)) => (crate::tmux::icons::SSH, Tone::Host),
+            _ => (icon, Tone::Dim),
         };
         if let Some(idle) = idle {
             // In the label too, so typing `idle` filters down to them.
@@ -2624,7 +2645,7 @@ pub(crate) fn project_items(
                 project_preview(&row, &preferred)
             })
             .in_cells(cells)
-            .with_icon(icon, Tone::Dim)
+            .with_icon(icon, icon_tone)
             // The project's own theme colour as a block in front of the row.
             // Painting the whole line in it, which is what this did before,
             // makes a dark project colour unreadable on a dark popup.
@@ -3052,6 +3073,10 @@ fn project_preview(row: &crate::project::Row, preferred: &str) -> String {
         if !tail.is_empty() {
             return tail;
         }
+    }
+    // A mirror session's path is the host's, not one to list here.
+    if row.mirror.is_some() {
+        return String::new();
     }
     crate::project::listing_of(std::path::Path::new(&row.path), 40)
 }
@@ -3967,8 +3992,9 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
         // directories are hidden until a letter is typed, so collecting them
         // (the source's process and every theme file) waits until the frame
         // is up; see `picker::Later`.
-        let sessions = crate::project::sessions(&crate::switcher::hooks()).await;
+        let mut sessions = crate::project::sessions(&crate::switcher::hooks()).await;
         let views = crate::remote::views_for_picker();
+        crate::remote::host_paths(&mut sessions, &views);
         // Inside a mirror session a typed path is the host's: its
         // directories are listed and a path opens there.
         let here = here_host(&sessions);
@@ -3986,6 +4012,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
             return Ok(());
         }
 
+        let remote_rows = crate::remote::for_picker(remote_rows, &open);
         let mut footer = format!(
             "enter go   alt-{key} next   alt-{upper} back   esc stay   type to filter session, **concealed** projects"
         );
@@ -4070,8 +4097,11 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                 // `merge` leaves it out of the project picker. Not through
                 // `merge` itself: it would drop a second session in the same
                 // directory as well, and the sessions are already listed.
-                let taken: std::collections::HashSet<String> =
-                    sessions.iter().map(|r| r.path.clone()).collect();
+                let taken: std::collections::HashSet<String> = sessions
+                    .iter()
+                    .filter(|r| r.mirror.is_none())
+                    .map(|r| r.path.clone())
+                    .collect();
                 let rows = crate::project::merge(
                     Vec::new(),
                     found
@@ -4231,12 +4261,10 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                         }
                     }
                 },
-                ('n', true)
-                    if matches!(
-                        remote_rows[i - n_local].target,
-                        crate::remote::Target::Group(_)
-                    ) =>
-                {
+                // A host's row: its line, one of its sessions, or a mirror
+                // session open here, since the line is left out once a
+                // session stands for the host.
+                ('n', _) if remote_at(i) || sessions.get(i).is_some_and(|r| r.mirror.is_some()) => {
                     let said = crate::hosts::form().await?;
                     if let Some(said) = said {
                         crate::remote::say(&said).await;
@@ -4245,7 +4273,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                 }
                 ('n', _) => {
                     crate::remote::say(
-                        "ctrl-n on a host's line adds a host; tmux-companion hosts add does it from anywhere",
+                        "ctrl-n on a host's row adds a host; tmux-companion hosts add does it from anywhere",
                     )
                     .await;
                     start_index = Some(i);

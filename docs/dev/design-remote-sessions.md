@@ -195,6 +195,7 @@ tmux's message line says `api on vm` on the switch, the way the switcher announc
 One bar, the Mac's. The VM's is off for the grouped session only, so a person at the VM sees theirs as before.
 
 - Left: `api@vm`, with `@vm` and the nf-md-ssh glyph (U+F08C0) in the host colour. The host colour is two tmux options, `@tc-host-fg` and `@tc-host-bg`, defined once: the example configs set them and the bar's ssh hostname segment reads them too instead of its own `color203` on `color233`, so the host looks the same wherever it's drawn and nothing in the code holds a colour.
+- Windows: the VM's, not the mirror session's one. The `segments` answer and push carry the grouped session's windows (`Window`: index, name, current, bell), read from the VM daemon's pane poll, and the Mac draws them as the mirror window's single entry through `@tc-windows`, in the window list's own styles. Added after 0.10.0, when the bar listed one window while `M-a` listed four; a VM from before it sends none and the entry stays the mirror window's own. `switch windows --print` reads the same list from the daemon.
 - Right: the VM pane's segments, git, agents and health, from `segments` over the link for the grouped session's active pane, rendered by the Mac. The daemon sets them on the mirror session as `@tc-right` in every bar mode, call mode included, followed by this machine's own health as `here: <reason>` when it has one. When the link is down the right side says `vm: no link` in words, not an empty space.
 
 ## What each surface shows

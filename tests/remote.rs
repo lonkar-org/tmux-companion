@@ -975,6 +975,44 @@ fn a_remote_session_opens_as_a_mirror_session_and_closes_with_a_detach() {
     let bar = opt("@tc-right");
     assert!(!bar.contains("#("), "{bar}");
 
+    // The window list: B's two windows in the mirror window's one entry,
+    // and the same two in words from `switch windows --print`.
+    let b_names = p.b.must(
+        &p.bin,
+        &[
+            "list-windows",
+            "-t",
+            "=api",
+            "-F",
+            "#{window_index}:#{window_name}",
+        ],
+    );
+    let names: Vec<&str> = b_names.lines().collect();
+    assert_eq!(names.len(), 2, "{b_names}");
+    wait_for(15, "B's windows in A's bar", || {
+        let w = opt("@tc-windows");
+        names.iter().all(|n| w.contains(n))
+    });
+    let a_window_opt = |name: &str| {
+        p.a.tmux(&p.bin, &["show-options", "-wv", "-t", "=api@b:", name])
+            .0
+    };
+    assert_eq!(
+        a_window_opt("window-status-current-format"),
+        "#{@tc-windows}"
+    );
+    assert_eq!(a_window_opt("window-status-current-style"), "default");
+    let (out, err, ok) = p.a(&["switch", "windows", "api@b", "--print"]);
+    assert!(ok, "{out}{err}");
+    let printed: Vec<&str> = out.lines().collect();
+    assert_eq!(printed.len(), 2, "both of B's windows, in words: {out}");
+    assert!(
+        printed
+            .iter()
+            .all(|l| names.contains(&l.replacen(' ', ":", 1).as_str())),
+        "{out} against {b_names}"
+    );
+
     // M-a in api@b: the key goes on to B, whose switcher moves the grouped
     // session to its other window.
     let b_window = || {

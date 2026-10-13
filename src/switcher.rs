@@ -373,6 +373,8 @@ struct Seen {
     /// `@tc-host` on the session: set on a mirror session, whose windows are
     /// the host's, so the key goes to the host.
     host: String,
+    /// `@tc-remote` on a mirror session: the session on the host.
+    remote: String,
     windows: Vec<Window>,
 }
 
@@ -394,8 +396,9 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
         display.extend(args(&["-t", t]));
     }
     display.push(format!(
-        "#{{session_id}}\t#{{window_id}}\t#{{client_width}}\t#{{client_height}}\t#{{version}}\t#{{{HOST}}}\t#{{{STATE}}}",
-        HOST = crate::link::HOST_OPTION
+        "#{{session_id}}\t#{{window_id}}\t#{{client_width}}\t#{{client_height}}\t#{{version}}\t#{{{HOST}}}\t#{{{REMOTE}}}\t#{{{STATE}}}",
+        HOST = crate::link::HOST_OPTION,
+        REMOTE = crate::link::REMOTE_OPTION
     ));
     let mut list = args(&["list-windows", "-F", LIST_FORMAT]);
     if let Some(t) = &target {
@@ -419,6 +422,7 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
     let h = f.next().and_then(|v| v.parse().ok()).unwrap_or(24);
     let version = f.next().unwrap_or_default().to_string();
     let host = f.next().unwrap_or_default().to_string();
+    let remote = f.next().unwrap_or_default().to_string();
     let kept = f.next().and_then(Pressed::decode);
     let rest: String = lines.map(|l| format!("{l}\n")).collect();
     Seen {
@@ -428,6 +432,7 @@ async fn look(session: Option<&str>, client: Option<&str>) -> Seen {
         kept,
         version,
         host,
+        remote,
         windows: parse(&rest),
     }
 }
@@ -703,8 +708,25 @@ pub async fn list(
 }
 
 /// `switch windows --print`: index and name, most recent first, one a line.
+///
+/// In a mirror session the windows are the host's, as its bar shows them:
+/// the current one first, then the rest by index, from what the daemon last
+/// heard. Until it has heard them it says so in one line and lists the
+/// mirror session's own window.
 pub async fn print(session: Option<String>, client: Option<String>) -> anyhow::Result<()> {
     let seen = look(session.as_deref(), client.as_deref()).await;
+    if !seen.host.is_empty() {
+        match crate::remote::mirror_windows(&seen.host, &seen.remote).await {
+            Ok(mut wins) => {
+                wins.sort_by_key(|w| (!w.active, w.index));
+                for w in wins {
+                    println!("{} {}", w.index, w.name);
+                }
+                return Ok(());
+            }
+            Err(why) => println!("{why}"),
+        }
+    }
     for w in by_recency(seen.windows) {
         println!("{} {}", w.index, w.name);
     }

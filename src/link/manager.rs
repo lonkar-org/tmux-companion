@@ -24,7 +24,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
-use super::{Hello, Segment, Session, cache};
+use super::{Hello, Segment, Session, Window, cache};
 use crate::{
     config::{Host, LinkMode},
     server::state::ServerState,
@@ -133,6 +133,9 @@ pub struct HostLink {
     /// The last segments heard for each grouped session, with when (unix
     /// seconds).
     pub segments: std::collections::HashMap<String, (Vec<Segment>, u64)>,
+    /// The last windows heard for each grouped session, kept and dropped
+    /// with its segments; none from a host from before windows.
+    pub windows: std::collections::HashMap<String, Vec<Window>>,
     /// Whether the link is up and watching, the host pushing, rather than
     /// polled.
     pub watching: bool,
@@ -181,6 +184,7 @@ impl HostLink {
             mirrored_at: None,
             segment_wants: Vec::new(),
             segments: std::collections::HashMap::new(),
+            windows: std::collections::HashMap::new(),
             watching: false,
             inbox: Vec::new(),
             inbox_known: std::collections::HashSet::new(),
@@ -489,6 +493,7 @@ impl Links {
             // mirror's client; it says when one goes, so nothing is pruned.
             if !h.watching {
                 h.segments.retain(|g, _| mine.contains(g));
+                h.windows.retain(|g, _| mine.contains(g));
             }
             if mine != h.segment_wants {
                 let gained = h.segment_wants.is_empty() && !mine.is_empty();
@@ -509,24 +514,53 @@ impl Links {
         }
     }
 
-    fn segments_heard(&mut self, name: &str, heard: Vec<(String, Vec<Segment>)>, now: u64) {
+    /// The windows last heard for one grouped session on `host`, while that
+    /// host's link is up; `None` otherwise, or when it sent none, so the
+    /// bar goes back to the mirror session's own window rather than showing
+    /// a list that may be old.
+    pub fn windows_for(&self, host: &str, grouped: &str) -> Option<Vec<Window>> {
+        self.hosts
+            .iter()
+            .find(|h| h.host.name == host && h.state == State::Up)
+            .and_then(|h| h.windows.get(grouped))
+            .filter(|w| !w.is_empty())
+            .cloned()
+    }
+
+    fn segments_heard(
+        &mut self,
+        name: &str,
+        heard: Vec<(String, Vec<Segment>, Vec<Window>)>,
+        now: u64,
+    ) {
         if let Some(h) = self.get_mut(name) {
-            for (g, segs) in heard {
+            for (g, segs, wins) in heard {
                 if h.segment_wants.contains(&g) {
+                    h.windows.insert(g.clone(), wins);
                     h.segments.insert(g, (segs, now));
                 }
             }
         }
     }
 
-    /// Segments a watching host pushed for one of its grouped sessions:
-    /// kept, or forgotten when the list is empty, which is the host saying
-    /// the session lost its client or went.
-    fn segments_pushed(&mut self, name: &str, grouped: String, segs: Vec<Segment>, now: u64) {
+    /// Segments and windows a watching host pushed for one of its grouped
+    /// sessions: kept, or forgotten when both are empty, which is the host
+    /// saying the session lost its client or went. A session with nothing
+    /// to say on the right still has windows.
+    fn segments_pushed(
+        &mut self,
+        name: &str,
+        grouped: String,
+        segs: Vec<Segment>,
+        wins: Vec<Window>,
+        now: u64,
+    ) {
         if let Some(h) = self.get_mut(name) {
-            if segs.is_empty() {
+            if segs.is_empty() && wins.is_empty() {
                 h.segments.remove(&grouped);
+                h.windows.remove(&grouped);
             } else {
+                h.windows.insert(grouped.clone(), wins);
                 h.segments.insert(grouped, (segs, now));
             }
         }
@@ -640,6 +674,7 @@ impl Links {
                 // so are the bar's segments.
                 h.inbox.clear();
                 h.segments.clear();
+                h.windows.clear();
                 h.watching = false;
             }
             h.state = state;
@@ -1017,10 +1052,12 @@ impl crate::link_capnp::session_sink::Server for Sink {
         let p = params.get()?;
         let grouped = super::clean(&String::from_utf8_lossy(p.get_session()?.as_bytes()));
         let segs = super::read_segments(p.get_segments()?)?;
+        let wins = super::read_windows(p.get_windows()?)?;
         self.state.lock().await.links.segments_pushed(
             &self.name,
             grouped,
             segs,
+            wins,
             crate::panes::now_secs(),
         );
         Ok(())
@@ -1175,10 +1212,10 @@ async fn polling(
         let mut heard = Vec::new();
         for g in &wants {
             match link.segments(g).await {
-                Ok(Ok(segs)) => heard.push((g.clone(), segs)),
+                Ok(Ok((segs, wins))) => heard.push((g.clone(), segs, wins)),
                 // The host said no: no such session yet, say. The bar shows
                 // nothing from it until it says yes.
-                Ok(Err(_)) => heard.push((g.clone(), Vec::new())),
+                Ok(Err(_)) => heard.push((g.clone(), Vec::new(), Vec::new())),
                 Err(reason) => return Up::Failed(reason),
             }
         }
@@ -1475,16 +1512,27 @@ mod tests {
             ..Segment::default()
         }];
         // Before the mirror loop has seen the mirror's client.
-        links.segments_pushed("vm", "api~mac".into(), segs.clone(), 7);
+        let wins = vec![Window {
+            index: 1,
+            name: "ai".into(),
+            active: true,
+            bell: false,
+        }];
+        links.segments_pushed("vm", "api~mac".into(), segs.clone(), wins.clone(), 7);
         links.set_mirrors(&[], &[]);
         assert_eq!(
             links.segments_for("vm", "api~mac"),
             (Some((segs, 7)), true),
             "a watching host's push isn't pruned"
         );
-        links.segments_pushed("vm", "api~mac".into(), Vec::new(), 8);
+        assert_eq!(links.windows_for("vm", "api~mac"), Some(wins.clone()));
+        // Nothing to say on the right, and still windows: kept.
+        links.segments_pushed("vm", "api~mac".into(), Vec::new(), wins.clone(), 8);
+        assert_eq!(links.windows_for("vm", "api~mac"), Some(wins.clone()));
+        links.segments_pushed("vm", "api~mac".into(), Vec::new(), Vec::new(), 8);
         assert_eq!(links.segments_for("vm", "api~mac").0, None);
-        links.segments_pushed("vm", "web~mac".into(), vec![Segment::default()], 9);
+        assert_eq!(links.windows_for("vm", "api~mac"), None);
+        links.segments_pushed("vm", "web~mac".into(), vec![Segment::default()], wins, 9);
         links.set_state(
             "vm",
             State::Down {
@@ -1493,6 +1541,7 @@ mod tests {
             },
         );
         assert_eq!(links.segments_for("vm", "web~mac"), (None, false));
+        assert_eq!(links.windows_for("vm", "web~mac"), None, "nothing old");
         assert!(!links.hosts[0].watching);
     }
 

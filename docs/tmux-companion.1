@@ -1543,6 +1543,10 @@ and
 .Fl -print
 prints the windows, index and name, most recently used first, one to a
 line.
+In a mirror session the windows are the host's: the current one first, then
+the rest by index, as the daemon last heard them over the link, or a line
+saying they haven't been heard yet followed by the mirror session's own
+window.
 Run in a terminal, such as a popup, it is the list.
 .Pp
 The order comes from hooks that only set options, so a switch starts no
@@ -1603,6 +1607,13 @@ in the host's own order of use, with
 and
 .Ql attached on vm
 as a local row has them.
+In the list a host's line shows only while nothing else stands for the host:
+once it has a session row, or a mirror session open here, those rows are the
+host, each with the ssh glyph and
+.Ql @vm
+in the host's colour, and the preview of a session says the host's line.
+.Fl -print
+keeps every host's line.
 The rows come from what the daemon last heard, kept on disk, so they are
 there before any ssh has run; opening the list asks the daemon to bring each
 host's link up afterwards, and nothing in the list waits for it.
@@ -1638,9 +1649,12 @@ forgets, then opens the list again on the same row; it is refused, with the
 reason, while a mirror session to the host is open.
 On one of this machine's sessions it says that only remote rows can be
 forgotten.
-ctrl-n on a host's line opens the form
+ctrl-n on a host's line, one of its sessions or a mirror session opens the
+form
 .Ic hosts add
 opens with no arguments.
+A host whose line is not shown is forgotten with
+.Ic hosts forget .
 .Pp
 .Fl -print
 prints the session names, most recently used first, then each host's line
@@ -1922,6 +1936,38 @@ and
 .Ql @tc-host-bg ,
 which the ssh hostname on the bar and the switcher's rows use too.
 .Pp
+The window list in a mirror session is the host's.
+A mirror session has one window here, the pane the attach runs in, so the
+host sends the grouped session's windows with its segments and the daemon
+draws them in that window's entry: each as
+.Ql index:name ,
+with
+.Ql *
+on the current one and
+.Ql \&!
+on one that rang, the current one in the window's own
+.Ql window-status-current-style
+and the rest in its
+.Ql window-status-style ,
+joined by
+.Ql window-status-separator .
+It does so by setting the session option
+.Ql @tc-windows
+and pointing the window's
+.Ql window-status-format
+and
+.Ql window-status-current-format
+at it, with the window's two styles kept in
+.Ql @tc-windows-style
+and blanked meanwhile; with the link down, or a host whose build sends no
+windows, the window gets its own entry and styles back.
+A window name is text: a
+.Ql #
+in it is drawn, never expanded.
+A click on one of the host's windows in the list selects the mirror
+window and nothing more; the window key, or the host's prefix, moves
+between them.
+.Pp
 When the attach ends other than by a detach the pane says how in one line,
 .Ql the connection to vm ended: Connection timed out ,
 or
@@ -2066,7 +2112,7 @@ It has no key of its own;
 .Ic setup
 offers one, and in
 .Ic switch sessions
-ctrl-n on a host's line opens it.
+ctrl-n on a host's row opens it.
 .It Ic hosts forget Ar name
 Forget a host: its cached sessions, and its
 .Ic [[hosts]]
