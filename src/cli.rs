@@ -1225,6 +1225,15 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 }
             }
             SessionsAction::List { json } => run_sessions_list(json)?,
+            SessionsAction::Rename { new, session } => {
+                match crate::link::mirror::rename_command(session, &new).await {
+                    Ok(said) => println!("{said}"),
+                    Err(e) => {
+                        eprintln!("{e:#}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             SessionsAction::Show { stamp, json } => run_sessions_show(stamp, json)?,
             SessionsAction::Idle { days, print } => {
                 // The picker answers with a name and the close is the same
@@ -2900,6 +2909,17 @@ pub enum SessionsAction {
         #[arg(long)]
         no_map: bool,
     },
+    /// Rename a session, its mirrors following: on a host, a session's
+    /// grouped mirror sessions become NEW~machine and each machine's mirror
+    /// NEW@host; inside a mirror's grouped session, the session renamed is
+    /// the one it stands for. The project colour moves with it
+    Rename {
+        /// The new name
+        new: String,
+        /// The session to rename, defaulting to the one this runs in
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Capture every session now, as a new generation
     Save {
         /// Record the sessions and skip what was on each pane's screen
@@ -4017,7 +4037,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
             "enter go   alt-{key} next   alt-{upper} back   esc stay   type to filter session, **concealed** projects"
         );
         if !views.is_empty() {
-            footer.push_str("   ctrl-x forget   ctrl-n add host");
+            footer.push_str("   ctrl-o new on host   ctrl-x forget   ctrl-n add host");
             footer.push_str(crate::remote::alt_enter_hint(&views));
         }
         let chrome = crate::picker::Chrome {
@@ -4210,15 +4230,44 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
             })
             .map(|(i, _)| n_local + i)
             .collect();
+        // `name@vm` that no row is: a row saying it makes that session on
+        // vm, first, so a loose match below can't take Enter. `ab@vm` was a
+        // fuzzy match for `ghsa-xm5q-backstage@vm` and opened that instead.
+        let create = {
+            let hosts: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
+            let taken: std::collections::HashSet<String> = sessions
+                .iter()
+                .map(|r| r.label.clone())
+                .chain(remote_rows.iter().filter_map(|r| match &r.target {
+                    crate::remote::Target::Session { host, name, .. } => {
+                        Some(crate::link::mirror::session_name(name, host))
+                    }
+                    _ => None,
+                }))
+                .collect();
+            (!hosts.is_empty()).then(|| {
+                crate::picker::Create::new(move |q| {
+                    let (name, host) = crate::remote::split_at_host(q, &hosts)?;
+                    let made = crate::link::mirror::session_name(name, host);
+                    (!taken.contains(&made)).then(|| {
+                        format!(
+                            "new session {} on {host}",
+                            crate::sessions::start::tmux_name(name)
+                        )
+                    })
+                })
+            })
+        };
         let chrome = crate::picker::Chrome {
             steps: vec![(key, 1), (upper, -1)],
             on_step,
             alt_enter,
+            create,
             ..chrome
         };
 
         let (outcome, pressed) =
-            crate::picker::run_from_keys(items, "", &chrome, start, Some(later), &['x', 'n'])?;
+            crate::picker::run_from_keys(items, "", &chrome, start, Some(later), &['x', 'n', 'o'])?;
         let mut rows = sessions.clone();
         if let Ok(mut d) = directories.lock() {
             rows.append(&mut d);
@@ -4278,6 +4327,25 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                     .await;
                     start_index = Some(i);
                 }
+                // A new session on the row's host: its name, then the
+                // directory there, each in a picker in this popup. Its line,
+                // one of its sessions, or a mirror session open here.
+                ('o', true) => {
+                    let host = remote_rows[i - n_local].target.host().to_string();
+                    return crate::remote::new_session(&host, None, &views).await;
+                }
+                ('o', false)
+                    if let Some((host, _)) = sessions.get(i).and_then(|r| r.mirror.clone()) =>
+                {
+                    return crate::remote::new_session(&host, None, &views).await;
+                }
+                ('o', _) => {
+                    crate::remote::say(
+                        "ctrl-o on a host's row starts a session there; type name@host for one by name",
+                    )
+                    .await;
+                    start_index = Some(i);
+                }
                 _ => {
                     crate::remote::say(
                         "ctrl-x forgets a remote row or a host; a directory is not kept to forget",
@@ -4307,12 +4375,13 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                 }
             };
         }
-        // A typed `name@vm` with no row for it makes the session on the host
-        // and opens it, the way a typed path opens a project.
+        // A typed `name@vm` with no row for it, or Enter on the create row,
+        // makes the session on the host and opens it, once a picker has
+        // asked where on the host it starts.
         if let crate::picker::Outcome::Typed(q) = &outcome {
             let hosts: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
             if let Some((name, host)) = crate::remote::split_at_host(q, &hosts) {
-                return crate::remote::open(host, name, true, false).await;
+                return crate::remote::new_session(host, Some(name), &views).await;
             }
         }
         let outcome = match outcome {

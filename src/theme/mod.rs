@@ -826,6 +826,120 @@ pub fn theme_for_session(
         .find(|path| path.is_file())
 }
 
+/// The name a session's theme is kept under, and every session that shows it.
+///
+/// `listing` is `list-sessions -F '#{session_name}\t#{session_group}\t#{@tc-mirror}'`.
+/// A session in a group is the group: they share their windows, and a window
+/// option a theme sets lands on all of them anyway, so a pick in one paints
+/// them all. It is remembered under the name of the group's one session that
+/// isn't a mirror's rather than the group's: tmux keeps a group's first name
+/// for good, so after `api` became `web` the group was still `api`. That is how a mirror
+/// attach, which reaches `api` through the grouped session `api~mac` with its
+/// bar off, picks the colour `api` shows to everybody, and how the hook on
+/// `api~mac` paints it with `api`'s colour rather than one of its own.
+pub fn theme_group(listing: &str, session: &str) -> (String, Vec<String>) {
+    let rows: Vec<(&str, &str, &str)> = listing
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            Some((f.next()?, f.next()?.trim(), f.next().unwrap_or("").trim()))
+        })
+        .collect();
+    let group = rows
+        .iter()
+        .find(|(name, _, _)| *name == session)
+        .map(|(_, g, _)| *g)
+        .unwrap_or("");
+    if group.is_empty() {
+        return (session.to_string(), vec![session.to_string()]);
+    }
+    let members: Vec<String> = rows
+        .iter()
+        .filter(|(_, g, _)| *g == group)
+        .map(|(name, _, _)| name.to_string())
+        .collect();
+    let own: Vec<&str> = rows
+        .iter()
+        .filter(|(_, g, mirror)| *g == group && mirror.is_empty())
+        .map(|(name, _, _)| *name)
+        .collect();
+    let key = match own.as_slice() {
+        [one] => one.to_string(),
+        _ => group.to_string(),
+    };
+    (key, members)
+}
+
+/// The session `$TMUX` names, as a target: `$3` from `/tmp/tmux-501/default,812,3`.
+/// `None` for `-1`, which tmux writes when the job belongs to no session.
+pub fn session_in_tmux_env(tmux: &str) -> Option<String> {
+    let id = tmux.rsplit(',').next()?.trim();
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit())).then(|| format!("${id}"))
+}
+
+/// `_project-map.tsv` with `session` mapped to `stem`: its line rewritten in
+/// place, or one added at the end. Comments and every other line stay as they
+/// were, and so does their order.
+///
+/// Rewritten rather than appended, because the map is read last-line-wins and
+/// a pick now writes it every time: appending would grow one line per press.
+pub fn with_map_line(text: &str, session: &str, stem: &str) -> String {
+    let line = format!("{session}\t{stem}");
+    let mut out: Vec<String> = Vec::new();
+    let mut placed = false;
+    for l in text.lines() {
+        let ours = !l.trim_start().starts_with('#')
+            && l.split_once('\t').is_some_and(|(k, _)| k.trim() == session);
+        if !ours {
+            out.push(l.to_string());
+        } else if !placed {
+            out.push(line.clone());
+            placed = true;
+        }
+    }
+    if !placed {
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
+/// `_project-map.tsv` with the line for `old` now `new`'s, for a session
+/// renamed; `None` when there is no line for `old`, or `new` has one of its
+/// own already, which a rename doesn't overrule.
+pub fn with_map_moved(text: &str, old: &str, new: &str) -> Option<String> {
+    let map = crate::project::parse_project_map(text);
+    let stem = map.get(old)?;
+    if map.contains_key(new) {
+        return None;
+    }
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| {
+            l.trim_start().starts_with('#')
+                || l.split_once('\t').is_none_or(|(k, _)| k.trim() != old)
+        })
+        .collect();
+    Some(with_map_line(&kept.join("\n"), new, stem))
+}
+
+/// The clients to tell that `members` changed colour, from
+/// `list-clients -F '#{client_name}\t#{client_session}\t#{@tc-mirror}'`.
+///
+/// Not a mirror's: its bar is off on the host and its message line is inside
+/// a pane on another machine, whose daemon says it there when the colour
+/// reaches it.
+pub fn clients_to_tell(listing: &str, members: &[String]) -> Vec<String> {
+    listing
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let (client, session, mirror) = (f.next()?, f.next()?, f.next().unwrap_or(""));
+            (members.iter().any(|m| m == session) && mirror.trim().is_empty())
+                .then(|| client.to_string())
+        })
+        .collect()
+}
+
 /// The `[theme] default` that means "one of the bundled six, chosen from the
 /// session's name".
 ///
@@ -968,6 +1082,96 @@ mod picker_tests {
         assert!(label.contains("Indigo"), "{label}");
         assert!(label.contains("colour60"), "{label}");
         assert!(label.contains("#5f5f87"), "{label}");
+    }
+
+    #[test]
+    fn a_grouped_session_is_its_group_and_paints_every_member() {
+        let listing = "api\tapi\napi~mac\tapi\nother\t\napi~m1\tapi\n";
+        let (key, members) = theme_group(listing, "api~mac");
+        assert_eq!(key, "api");
+        assert_eq!(members, ["api", "api~mac", "api~m1"]);
+    }
+
+    #[test]
+    fn a_renamed_group_is_kept_under_its_own_sessions_name() {
+        // tmux kept the group's first name, `api`, through the rename.
+        let listing = "web\tapi\t\nweb~mac\tapi\tmac\n";
+        assert_eq!(
+            theme_group(listing, "web~mac"),
+            (
+                "web".to_string(),
+                vec!["web".to_string(), "web~mac".to_string()]
+            )
+        );
+    }
+
+    #[test]
+    fn a_session_in_no_group_is_itself() {
+        let listing = "api\tapi\napi~mac\tapi\nw/thing\t\n";
+        assert_eq!(
+            theme_group(listing, "w/thing"),
+            ("w/thing".to_string(), vec!["w/thing".to_string()])
+        );
+        // One the listing doesn't have, a session gone between the two
+        // questions, is still itself rather than nothing.
+        assert_eq!(
+            theme_group(listing, "gone"),
+            ("gone".to_string(), vec!["gone".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_pick_rewrites_its_own_map_line_and_keeps_the_rest() {
+        let text = "# project\ttheme\napi\tamber\nweb\tplum\napi\tink\n";
+        assert_eq!(
+            with_map_line(text, "api", "azure"),
+            "# project\ttheme\napi\tazure\nweb\tplum\n"
+        );
+        assert_eq!(
+            with_map_line("web\tplum", "api", "azure"),
+            "web\tplum\napi\tazure\n"
+        );
+        assert_eq!(with_map_line("", "api", "azure"), "api\tazure\n");
+        // What the map reads back is the pick.
+        let back = crate::project::parse_project_map(&with_map_line(text, "api", "azure"));
+        assert_eq!(back.get("api").map(String::as_str), Some("azure"));
+    }
+
+    #[test]
+    fn tmux_env_names_the_session_a_popup_was_opened_from() {
+        assert_eq!(
+            session_in_tmux_env("/tmp/tmux-501/default,812,3").as_deref(),
+            Some("$3")
+        );
+        // A socket path with a comma in it still ends in the id.
+        assert_eq!(
+            session_in_tmux_env("/tmp/a,b/default,812,14").as_deref(),
+            Some("$14")
+        );
+        assert_eq!(session_in_tmux_env("/tmp/tmux-501/default,812,-1"), None);
+        assert_eq!(session_in_tmux_env(""), None);
+    }
+
+    #[test]
+    fn a_rename_moves_its_map_line_and_overrules_nothing() {
+        let text = "# project\ttheme\napi\tamber\nweb2\tplum\n";
+        assert_eq!(
+            with_map_moved(text, "api", "web").as_deref(),
+            Some("# project\ttheme\nweb2\tplum\nweb\tamber\n")
+        );
+        assert_eq!(
+            with_map_moved(text, "api", "web2"),
+            None,
+            "web2 has its own"
+        );
+        assert_eq!(with_map_moved(text, "gone", "web"), None);
+    }
+
+    #[test]
+    fn a_mirror_client_is_not_told_on_the_host() {
+        let members = vec!["api".to_string(), "api~mac".to_string()];
+        let listing = "/dev/ttys001\tapi\t\n/dev/pts/3\tapi~mac\tmac\n/dev/pts/4\tweb\t\n";
+        assert_eq!(clients_to_tell(listing, &members), ["/dev/ttys001"]);
     }
 
     #[test]
@@ -1935,6 +2139,27 @@ pub fn base_theme_file(stem: &str, label: &str, index: u8, dir: &str) -> String 
          source-file \"{dir}/_apply.tmux\"\n"
     )
     .replace("{stem}", stem)
+}
+
+/// A theme file for a theme a mirror session's host painted it with, when
+/// this machine has none by that name: the same shape `theme add` writes, so
+/// the picker here lists it and `theme gen` can work on it like any other.
+/// Every setting has passed [`crate::link::theme_setting_ok`], so none of
+/// them holds a quote, a `;` or a newline.
+pub fn mirrored_theme_file(host: &str, theme: &crate::link::Theme, dir: &str) -> String {
+    let host = crate::link::clean(host).replace(['\n', '\r'], " ");
+    let mut out = format!(
+        "# {}\n\
+         # Written by tmux-companion from the theme of a session on {host}. Yours\n\
+         # to edit; nothing writes it again while it is here.\n\n\
+         source-file \"{dir}/_reset.tmux\"\n\n",
+        theme.name()
+    );
+    for (k, v) in &theme.settings {
+        out.push_str(&format!("set {k} \"{v}\"\n"));
+    }
+    out.push_str(&format!("\nsource-file \"{dir}/_apply.tmux\"\n"));
+    out
 }
 
 /// The file that puts the themed options back to something neutral.

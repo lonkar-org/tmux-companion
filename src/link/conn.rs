@@ -284,14 +284,14 @@ impl Link {
         }
     }
 
-    /// One session's segments and windows, within the connect time; a
-    /// bridge from before windows answers none. The outer error is the link
+    /// One session's segments, windows and theme, within the connect time;
+    /// a bridge from before windows or the theme answers none. The outer error is the link
     /// breaking; the inner one is the host saying no, which leaves the link
     /// up: a grouped session not there yet is an answer, not a failure.
     pub async fn segments(
         &mut self,
         session: &str,
-    ) -> Result<Result<(Vec<Segment>, Vec<Window>), String>, String> {
+    ) -> Result<Result<(Vec<Segment>, Vec<Window>, super::Theme), String>, String> {
         let mut req = self.bridge.segments_request();
         req.get().set_session(session);
         let answer = match tokio::time::timeout(self.connect, req.send().promise).await {
@@ -306,6 +306,7 @@ impl Link {
             Ok((
                 read_segments(r.get_segments()?)?,
                 read_windows(r.get_windows()?)?,
+                super::read_theme(r.get_theme()?)?,
             ))
         }) {
             Ok(v) => Ok(Ok(v)),

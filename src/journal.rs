@@ -319,7 +319,7 @@ pub async fn run(print: bool, project: Option<String>, days: u64) -> anyhow::Res
         preview_title: String::new(),
         ..Default::default()
     }
-    .configured(&config.picker, crate::config::Picker::Project);
+    .laid_out_like(&config.picker, crate::config::Picker::Project);
     if let Some(index) = crate::picker::run(items, "", &chrome)?
         && let Some(e) = events.get(index)
     {

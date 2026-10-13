@@ -109,6 +109,33 @@ pub struct Window {
     pub bell: bool,
 }
 
+/// The theme a grouped session shows: its file's stem and the `@theme-*`
+/// settings that file makes, for the mirror session to show the same. Every
+/// key and value has passed [`theme_setting_ok`], on whichever side made it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Theme {
+    /// `@theme-file`, `amber-light`; empty for a theme with no file.
+    pub file: String,
+    /// `@theme-color-main-1` and the rest, sorted by key.
+    pub settings: Vec<(String, String)>,
+}
+
+impl Theme {
+    /// Whether it says anything to paint with.
+    pub fn is_empty(&self) -> bool {
+        self.settings.is_empty()
+    }
+
+    /// `@theme-name`, or the file when the theme doesn't name itself.
+    pub fn name(&self) -> &str {
+        self.settings
+            .iter()
+            .find(|(k, _)| k == "@theme-name")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or(&self.file)
+    }
+}
+
 /// The sessions answer: when the host's daemon read them, and the list.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SessionsAnswer {
@@ -129,6 +156,9 @@ pub struct SegmentsAnswer {
     /// before them.
     #[serde(default)]
     pub windows: Vec<Window>,
+    /// The session's theme. Empty from a daemon from before it.
+    #[serde(default)]
+    pub theme: Theme,
 }
 
 /// What a bridge's `watch` is told each time its daemon wakes it: the
@@ -150,6 +180,10 @@ pub struct WatchAnswer {
     /// and a daemon from either side of the change still read each other.
     #[serde(default)]
     pub windows: Vec<(String, Vec<Window>)>,
+    /// The same grouped sessions' themes, a field of its own for the same
+    /// reason.
+    #[serde(default)]
+    pub themes: Vec<(String, Theme)>,
 }
 
 /// Untrusted text made safe to keep and print: control characters gone
@@ -258,6 +292,116 @@ pub fn windows_of(session: &str, panes: &[crate::panes::Pane]) -> Vec<Window> {
     out
 }
 
+/// The most settings a theme takes from a host: a theme file makes four or
+/// five, and `_apply.tmux` derives the rest.
+pub const MAX_THEME_SETTINGS: usize = 24;
+
+/// A theme file's stem a host may name: what `theme add` and `theme init`
+/// write, letters, digits, `-` and `_`, never one of the `_` files that
+/// apply a theme rather than being one. The stem becomes a file name here.
+pub fn theme_file_ok(stem: &str) -> bool {
+    !stem.is_empty()
+        && stem.len() <= 64
+        && !stem.starts_with('_')
+        && stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Whether a host's theme setting may be set here. The key is `@theme-`
+/// and lowercase letters, digits and `-`; `@theme-name` is words, and every
+/// other value is a colour [`mirror::colour`] takes. Nothing else passes,
+/// because these go into `set-option` here, and into a theme file written
+/// for the picker, where a quote or a `;` would be a command.
+pub fn theme_setting_ok(key: &str, value: &str) -> bool {
+    let key_ok = key.len() <= 48
+        && key.strip_prefix("@theme-").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        });
+    let value_ok = if key == "@theme-name" {
+        !value.trim().is_empty()
+            && value.len() <= 40
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_')
+    } else {
+        mirror::colour(value).as_deref() == Some(value)
+    };
+    key_ok && value_ok
+}
+
+/// A theme with every setting and the file checked: what fails is dropped,
+/// and the file goes when it isn't a stem [`theme_file_ok`] takes.
+pub fn checked_theme(file: &str, settings: impl IntoIterator<Item = (String, String)>) -> Theme {
+    Theme {
+        file: if theme_file_ok(file) {
+            file.to_string()
+        } else {
+            String::new()
+        },
+        settings: settings
+            .into_iter()
+            .filter(|(k, v)| theme_setting_ok(k, v))
+            .take(MAX_THEME_SETTINGS)
+            .collect(),
+    }
+}
+
+/// A grouped session's theme on this machine, for a link: the file its
+/// `@theme-file` names in `dir`, read for its `@theme-*` settings. A theme
+/// with no file, set before `@theme-file` was or sourced by hand, is its
+/// `@theme-color-main-1` alone, which `_apply.tmux` builds the rest from.
+pub fn theme_of(session: &str, panes: &[crate::panes::Pane], dir: &std::path::Path) -> Theme {
+    let Some(p) = panes.iter().find(|p| p.session == session) else {
+        return Theme::default();
+    };
+    let text = theme_file_ok(&p.theme_file)
+        .then(|| std::fs::read_to_string(dir.join(format!("{}.tmux", p.theme_file))).ok())
+        .flatten();
+    match text {
+        Some(text) => {
+            // Sorted, so the same file makes the same theme every time and a
+            // push compares it equal rather than sending it again.
+            let mut settings: Vec<(String, String)> = crate::theme::parse_settings(&text)
+                .into_iter()
+                .filter(|(k, _)| k != "@theme-file")
+                .collect();
+            settings.sort();
+            checked_theme(&p.theme_file, settings)
+        }
+        None if !p.accent.is_empty() => checked_theme(
+            &p.theme_file,
+            [("@theme-color-main-1".to_string(), p.accent.clone())],
+        ),
+        None => Theme::default(),
+    }
+}
+
+/// A theme off the wire, checked as [`checked_theme`] does: a host is
+/// trusted with nothing it sends.
+pub fn read_theme(r: link_capnp::theme::Reader<'_>) -> capnp::Result<Theme> {
+    let mut settings = Vec::new();
+    for s in r.get_settings()?.iter().take(MAX_THEME_SETTINGS) {
+        settings.push((text(s.get_key())?, text(s.get_value())?));
+    }
+    Ok(checked_theme(&text(r.get_file())?, settings))
+}
+
+/// Write a theme into its builder.
+pub fn write_theme(mut b: link_capnp::theme::Builder<'_>, theme: &Theme) {
+    b.set_file(&theme.file);
+    let n = theme.settings.len().min(MAX_THEME_SETTINGS);
+    let mut list = b.init_settings(n as u32);
+    for (i, (k, v)) in theme.settings.iter().take(n).enumerate() {
+        let mut s = list.reborrow().get(i as u32);
+        s.set_key(k);
+        s.set_value(v);
+    }
+}
+
 /// The most windows a grouped session's bar takes from a host.
 pub const MAX_WINDOWS: usize = 64;
 
@@ -318,13 +462,26 @@ pub fn read_dirs(list: capnp::text_list::Reader<'_>) -> capnp::Result<Vec<String
 const SESSION_MARK: &str = "tc-session";
 
 /// The `list-sessions -F` the daemon's pane poll chains after `list-panes`.
-/// The last three fields are the mirror options: `@tc-mirror` on a grouped
-/// session another machine attached to, `@tc-host` and `@tc-remote` on a
-/// mirror session this machine opened.
-pub const SESSION_FORMAT: &str = "tc-session\t#{session_name}\t#{session_id}\t#{session_windows}\t#{session_attached}\t#{session_last_attached}\t#{session_activity}\t#{@tc_ses_used}\t#{session_path}\t#{@tc-mirror}\t#{@tc-host}\t#{@tc-remote}";
+/// Then the mirror options: `@tc-mirror` on a grouped session another
+/// machine attached to, `@tc-host` and `@tc-remote` on a mirror session this
+/// machine opened; last the session's group, for following a rename through
+/// it.
+pub const SESSION_FORMAT: &str = "tc-session\t#{session_name}\t#{session_id}\t#{session_windows}\t#{session_attached}\t#{session_last_attached}\t#{session_activity}\t#{@tc_ses_used}\t#{session_path}\t#{@tc-mirror}\t#{@tc-host}\t#{@tc-remote}\t#{session_group}";
 
 /// How many fields a [`SESSION_FORMAT`] line has.
-const SESSION_FIELDS: usize = 12;
+const SESSION_FIELDS: usize = 13;
+
+/// One session in a group, as a rename sees it: its name, its group, and
+/// the machine its `@tc-mirror` names, empty for one that isn't a mirror's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Member {
+    /// `#{session_name}`.
+    pub name: String,
+    /// `#{session_group}`.
+    pub group: String,
+    /// `@tc-mirror`, empty for a session of the host's own.
+    pub mirror: String,
+}
 
 /// A `list-sessions -f` filter that leaves out every grouped session another
 /// machine's mirror attached to: what each of this machine's own session
@@ -371,6 +528,8 @@ pub struct Listing {
     /// The grouped sessions with a client attached, each with the machine
     /// its `@tc-mirror` names.
     pub shown: Vec<(String, String)>,
+    /// Every session in a group, mirror ones included.
+    pub members: Vec<Member>,
 }
 
 /// Read a listing that holds [`SESSION_FORMAT`] lines among others.
@@ -381,6 +540,13 @@ pub fn parse_listing(text: &str) -> Listing {
         let f: Vec<&str> = l.split('\t').collect();
         if f.len() != SESSION_FIELDS || f[0] != SESSION_MARK {
             continue;
+        }
+        if !f[12].trim().is_empty() {
+            out.members.push(Member {
+                name: f[1].to_string(),
+                group: f[12].trim().to_string(),
+                mirror: f[9].trim().to_string(),
+            });
         }
         if !f[9].trim().is_empty() {
             out.grouped.push(f[1].to_string());
@@ -577,6 +743,130 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_theme_setting_from_a_host_is_a_colour_or_words_and_nothing_else() {
+        assert!(theme_setting_ok("@theme-color-main-1", "colour172"));
+        assert!(theme_setting_ok("@theme-color-border", "#d78700"));
+        assert!(theme_setting_ok("@theme-name", "Amber Light"));
+        // Each of these would be a second command in a file or a format.
+        for (k, v) in [
+            ("@theme-color-main-1", "colour172\"; run-shell 'touch x'"),
+            ("@theme-color-main-1", "colour172;run-shell x"),
+            ("@theme-color-main-1", "#(touch x)"),
+            ("@theme-color-main-1", "red,bold"),
+            ("@theme-name", "Amber\" ; run-shell \"x"),
+            ("@theme-name", "#(id)"),
+            ("@theme-name", "Amber\nrun-shell x"),
+            ("@theme-name", ""),
+            ("status-right", "red"),
+            ("@tc-right", "red"),
+            ("@theme-Color", "red"),
+            ("@theme-", "red"),
+        ] {
+            assert!(!theme_setting_ok(k, v), "{k} {v}");
+        }
+    }
+
+    #[test]
+    fn a_theme_file_from_a_host_is_a_plain_stem() {
+        assert!(theme_file_ok("amber-light"));
+        assert!(theme_file_ok("my_theme2"));
+        for bad in [
+            "",
+            "_apply",
+            "_reset",
+            "../amber",
+            "a/b",
+            "amber.tmux",
+            "a b",
+        ] {
+            assert!(!theme_file_ok(bad), "{bad}");
+        }
+        let t = checked_theme(
+            "../x",
+            [
+                ("@theme-name".to_string(), "X".to_string()),
+                ("@theme-color-main-1".to_string(), "#(x)".to_string()),
+            ],
+        );
+        assert_eq!(t.file, "");
+        assert_eq!(t.settings, [("@theme-name".to_string(), "X".to_string())]);
+    }
+
+    fn pane_in(session: &str, theme_file: &str, accent: &str) -> crate::panes::Pane {
+        let line = format!(
+            "{session}\t1\tzsh\t0\t%1\tzsh\t/\t\t1\t1\t1\t0\t0\th\t0\t$1\t{accent}\t1\t\t{theme_file}"
+        );
+        crate::panes::parse(&line).remove(0)
+    }
+
+    #[test]
+    fn a_grouped_sessions_theme_is_its_files_settings() {
+        let dir = std::env::temp_dir().join(format!("tc-link-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(
+            dir.join("amber-light.tmux"),
+            "source-file \"x/_reset.tmux\"\nset @theme-name \"Amber Light\"\n\
+             set @theme-color-main-1 colour215\nset @theme-color-on-main colour16\n\
+             set @theme-color-sneaky \"#(id)\"\nsource-file \"x/_apply.tmux\"\n",
+        )
+        .expect("write");
+        let panes = [pane_in("api~mac", "amber-light", "colour215")];
+        let t = theme_of("api~mac", &panes, &dir);
+        assert_eq!(t.file, "amber-light");
+        assert_eq!(t.name(), "Amber Light");
+        assert_eq!(
+            t.settings,
+            [
+                ("@theme-color-main-1".to_string(), "colour215".to_string()),
+                ("@theme-color-on-main".to_string(), "colour16".to_string()),
+                ("@theme-name".to_string(), "Amber Light".to_string()),
+            ]
+        );
+        // A theme with no file on this host, sourced by hand or from before
+        // `@theme-file`, is its colour.
+        let panes = [pane_in("api~mac", "gone", "colour33")];
+        let t = theme_of("api~mac", &panes, &dir);
+        assert_eq!(
+            t.settings,
+            [("@theme-color-main-1".to_string(), "colour33".to_string())]
+        );
+        assert!(theme_of("api~mac", &[pane_in("api~mac", "", "")], &dir).is_empty());
+        assert!(theme_of("other", &panes, &dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_theme_crosses_the_wire_checked() {
+        let mut msg = capnp::message::Builder::new_default();
+        {
+            let mut b = msg.init_root::<link_capnp::theme::Builder>();
+            b.set_file("amber");
+            let mut list = b.init_settings(2);
+            list.reborrow().get(0).set_key("@theme-color-main-1");
+            list.reborrow().get(0).set_value("colour172");
+            list.reborrow().get(1).set_key("@theme-name");
+            list.reborrow().get(1).set_value("x\"; run-shell y");
+        }
+        let r = msg
+            .get_root_as_reader::<link_capnp::theme::Reader>()
+            .expect("reader");
+        let t = read_theme(r).expect("read");
+        assert_eq!(t.file, "amber");
+        assert_eq!(
+            t.settings,
+            [("@theme-color-main-1".to_string(), "colour172".to_string())]
+        );
+        let mut back = capnp::message::Builder::new_default();
+        write_theme(back.init_root(), &t);
+        let again = read_theme(
+            back.get_root_as_reader::<link_capnp::theme::Reader>()
+                .expect("reader"),
+        )
+        .expect("read");
+        assert_eq!(again, t);
+    }
+
+    #[test]
     fn a_sessions_windows_come_one_each_in_index_order() {
         let line = |s: &str, w: u32, name: &str, p: u32, active: bool, bell: bool| {
             format!(
@@ -665,15 +955,30 @@ mod tests {
     #[test]
     fn session_lines_ride_with_the_pane_list_and_mirrors_are_left_out() {
         let listing = "work\t1\tzsh\t0\t%1\tzsh\t/tmp\th\t1\t1\t1\t5\t0\th\t0\t$1\t\t42\n\
-                       tc-session\tapi\t$1\t3\t1\t100\t200\t300\t/src/api\t\t\t\n\
-                       tc-session\tapi~mac\t$2\t3\t1\t100\t200\t0\t/src/api\tmac\t\t\n\
-                       tc-session\tx'; touch pwned; '\t$3\t1\t0\t\t5\t\t/\t\t\t\n\
-                       tc-session\tweb@vm\t$4\t1\t2\t0\t5\t\t/\t\tvm\tweb\n";
+                       tc-session\tapi\t$1\t3\t1\t100\t200\t300\t/src/api\t\t\t\tapi\n\
+                       tc-session\tapi~mac\t$2\t3\t1\t100\t200\t0\t/src/api\tmac\t\t\tapi\n\
+                       tc-session\tx'; touch pwned; '\t$3\t1\t0\t\t5\t\t/\t\t\t\t\n\
+                       tc-session\tweb@vm\t$4\t1\t2\t0\t5\t\t/\t\tvm\tweb\t\n";
         let s = parse_sessions(listing);
         let names: Vec<&str> = s.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["api", "x'; touch pwned; '", "web@vm"]);
         let all = parse_listing(listing);
         assert_eq!(all.grouped, ["api~mac"]);
+        assert_eq!(
+            all.members,
+            [
+                Member {
+                    name: "api".into(),
+                    group: "api".into(),
+                    mirror: String::new()
+                },
+                Member {
+                    name: "api~mac".into(),
+                    group: "api".into(),
+                    mirror: "mac".into()
+                },
+            ]
+        );
         assert_eq!(
             all.shown,
             [("api~mac".to_string(), "mac".to_string())],

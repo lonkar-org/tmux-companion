@@ -154,12 +154,13 @@ pub async fn run(name: &str, dir: Option<String>, detach: bool) -> i32 {
 async fn start(asked: &str, dir: Option<String>, detach: bool) -> anyhow::Result<i32> {
     // `NAME@HOST` with a host after the `@`: a mirror session of NAME on
     // that host, made there when the host has no session by that name. The
-    // link's mode doesn't matter: `off` stops the list, not the attach.
+    // link's mode doesn't matter: `off` stops the list, not the attach. DIR
+    // is where a session made there starts, on the host, `~` its home.
     if let Some((remote, host)) = asked.trim().rsplit_once('@')
         && !remote.is_empty()
         && crate::remote::find_host(host).await.is_some()
     {
-        crate::remote::open(host, remote, true, detach).await?;
+        crate::remote::open_new(host, remote, true, dir.as_deref(), detach).await?;
         return Ok(0);
     }
     let name = tmux_name(asked);
@@ -354,7 +355,7 @@ fn pick(
         preview_title: "[ Where ]".into(),
         ..Default::default()
     }
-    .configured(&config.picker, crate::config::Picker::Project);
+    .laid_out_like(&config.picker, crate::config::Picker::Project);
     let items = crate::cli::project_items(rows, config, home);
     let outcome = crate::picker::run_with_query(items, "", &chrome)?;
     let cwd = std::env::current_dir()

@@ -102,6 +102,9 @@ pub struct ServerState {
     /// its `@tc-mirror` names: the ones a bridge's `watch` pushes segments
     /// for.
     pub grouped_shown: Vec<(String, String)>,
+    /// Every session in a group, from the same listing: what following a
+    /// rename through a mirror's group reads.
+    pub members: Vec<crate::link::Member>,
     /// Bumped whenever something a bridge's `watch` pushes may have changed:
     /// the session list, the inbox, or, while a grouped session has a
     /// client, any new listing, since its segments ride on that. A `watch`
@@ -224,6 +227,7 @@ impl ServerState {
             session_list: None,
             mirrors: Vec::new(),
             grouped: Vec::new(),
+            members: Vec::new(),
             grouped_shown: Vec::new(),
             watch_gen: tokio::sync::watch::Sender::new(0),
             links: crate::link::manager::Links::default(),
@@ -413,6 +417,7 @@ impl ServerState {
         self.mirrors = listing.mirrors;
         self.grouped = listing.grouped;
         self.grouped_shown = listing.shown;
+        self.members = listing.members;
         if changed || shown {
             self.watch_bump();
         }

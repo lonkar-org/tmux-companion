@@ -1136,6 +1136,7 @@ mod tests {
             pid: 0,
             identity: None,
             mirrored: false,
+            theme_file: String::new(),
         };
         let asked = |lines: &str| {
             crate::inbox::entry(
@@ -1222,6 +1223,7 @@ mod tests {
             pid: 0,
             identity: None,
             mirrored: false,
+            theme_file: String::new(),
         };
         crate::inbox::entry(
             &pane,

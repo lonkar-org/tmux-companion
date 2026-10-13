@@ -34,6 +34,11 @@ set -g  status-style bg=colour233,fg=colour251
 # switcher's rows, so a host looks the same wherever it is drawn.
 set -g @tc-host-fg colour203
 set -g @tc-host-bg colour233
+# A copy made inside a mirror session is the host's tmux sending it here as
+# OSC 52, and tmux's default, `external`, drops what a program in a pane
+# sends, so it never reaches your terminal's clipboard. `on` lets any program
+# in a pane set the clipboard, never read it, which is what a mirror needs.
+set -s set-clipboard on
 set -g  status-left  "#[fg=colour251,bg=colour236] #{?@tc-host,#{@tc-remote}#[fg=#{@tc-host-fg}#,bg=#{@tc-host-bg}]@#{@tc-host} 󰣀,#S} #[fg=colour240,bg=colour233] %H:%M:%S "
 set -g  status-left-length 80
 set -g  status-right-length 150

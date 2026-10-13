@@ -1072,6 +1072,469 @@ fn a_remote_session_opens_as_a_mirror_session_and_closes_with_a_detach() {
     let _ = client.wait();
 }
 
+/// With one of B's sessions open as a mirror, `M-s` still lists B's other
+/// sessions: the mirror is listed once among A's own, and `web@b` beside it.
+#[test]
+fn a_hosts_other_sessions_stay_listed_beside_an_open_mirror() {
+    let Some(p) = Pair::start("mirrorothers") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "web"]);
+    p.a_config(
+        &p.fake_ssh(),
+        "poll_secs = 1\n[project]\ndirs_source = \"none\"\n[switcher]\nannounce = false",
+    );
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let (out, err, ok) = p.a(&["hosts", "connect", "b"]);
+    assert!(ok, "{out}{err}");
+    p.hosts_until(15, |o| o.contains("api@b") && o.contains("web@b"));
+    let (out, err, ok) = p.a(&["sessions", "start", "api@b", "--detach"]);
+    assert!(ok, "{out}{err}");
+    wait_until(
+        15,
+        || grouped_on_b(&p, "api").is_some(),
+        || {
+            format!(
+                "no grouped session on B: {:?}",
+                p.b.tmux(&p.bin, &["list-sessions"]).0
+            )
+        },
+    );
+    // Long enough for a poll and a push after the grouped session appeared.
+    std::thread::sleep(Duration::from_secs(3));
+    let (out, err, ok) = p.a(&["switch", "sessions", "--print"]);
+    assert!(ok, "{err}");
+    eprintln!("M-s --print:\n{out}");
+    let (hosts, _, _) = p.a(&["hosts"]);
+    eprintln!("hosts:\n{hosts}");
+    assert!(out.lines().any(|l| l == "api@b"), "the mirror: {out}");
+    assert!(
+        out.lines().any(|l| l == "web@b"),
+        "B's other session: {out}"
+    );
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
+/// A session made on B starts where it was asked to: `~/proj` is B's home,
+/// whatever A's is; a directory B doesn't have makes nothing and the mirror
+/// pane says so. In `M-s`, a typed `docs@b` and ctrl-o on one of B's rows
+/// both ask where, in the popup, and make the session there.
+#[test]
+fn a_new_remote_session_starts_in_the_directory_asked_for() {
+    let Some(p) = Pair::start("newindir") else {
+        return;
+    };
+    let b_proj = p.b.root.join("home/proj x");
+    std::fs::create_dir_all(&b_proj).expect("B's directory");
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "keep"]);
+    p.a_config(
+        &p.fake_ssh(),
+        "poll_secs = 1\n[project]\ndirs_source = \"none\"\n[switcher]\nannounce = false",
+    );
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let b_path = |s: &str| {
+        p.b.tmux(
+            &p.bin,
+            &[
+                "display-message",
+                "-p",
+                "-t",
+                &format!("={s}:"),
+                "#{session_path}",
+            ],
+        )
+        .0
+    };
+
+    let (out, err, ok) = p.a(&["sessions", "start", "web@b", "~/proj x", "--detach"]);
+    assert!(ok, "{out}{err}");
+    wait_until(
+        15,
+        || !b_path("web").is_empty(),
+        || format!("no web on B: {}", p.b.tmux(&p.bin, &["list-sessions"]).0),
+    );
+    assert_eq!(b_path("web"), b_proj.display().to_string());
+
+    let (out, err, ok) = p.a(&["sessions", "start", "nope@b", "~/not here", "--detach"]);
+    assert!(ok, "{out}{err}");
+    let pane = || {
+        p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=nope@b:"])
+            .0
+    };
+    wait_until(
+        15,
+        || pane().contains("isn't there"),
+        || format!("the mirror pane: {}", pane()),
+    );
+    let (_, _, there) = p.b.tmux(&p.bin, &["has-session", "-t", "=nope"]);
+    assert!(!there, "B made nope anyway");
+
+    // The switcher in a pane of `here`, as M-s opens it in a popup.
+    let picker = format!(
+        "env PATH='{}:{}' '{}' switch sessions",
+        p.bin.display(),
+        std::env::var("PATH").unwrap_or_default(),
+        binary().display()
+    );
+    let screen = || p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=here:"]).0;
+    let keys = |k: &[&str]| {
+        let mut args = vec!["send-keys", "-t", "=here:"];
+        args.extend_from_slice(k);
+        p.a.must(&p.bin, &args);
+    };
+    let open_picker = || {
+        keys(&["-l", &picker]);
+        keys(&["Enter"]);
+        wait_until(
+            10,
+            || screen().contains("@b"),
+            || format!("no picker:\n{}", screen()),
+        );
+    };
+
+    // `docs@b` typed: the create row, then where.
+    open_picker();
+    keys(&["-l", "docs@b"]);
+    wait_until(5, || screen().contains("new session docs on b"), screen);
+    keys(&["Enter"]);
+    wait_until(
+        10,
+        || screen().contains("directory>"),
+        || format!("no directory step:\n{}", screen()),
+    );
+    keys(&["-l", "~/proj x"]);
+    wait_until(5, || screen().contains("start in ~/proj x on b"), screen);
+    keys(&["Enter"]);
+    wait_until(
+        15,
+        || b_path("docs") == b_proj.display().to_string(),
+        || format!("docs on B: {:?}\n{}", b_path("docs"), screen()),
+    );
+    let (_, _, mirror) = p.a.tmux(&p.bin, &["has-session", "-t", "=docs@b"]);
+    assert!(mirror, "no mirror docs@b on A");
+
+    // ctrl-o on one of B's rows: a name, then Enter on the home directory.
+    p.a.must(&p.bin, &["switch-client", "-t", "=here"]);
+    wait_until(
+        10,
+        || {
+            p.a.tmux(&p.bin, &["list-clients", "-F", "#{client_session}"])
+                .0
+                == "here"
+        },
+        || "the client never came back to here".to_string(),
+    );
+    open_picker();
+    keys(&["-l", "keep@b"]);
+    wait_until(5, || screen().contains("keep"), screen);
+    keys(&["C-o"]);
+    wait_until(
+        10,
+        || screen().contains("name>"),
+        || format!("no name step:\n{}", screen()),
+    );
+    keys(&["-l", "notes"]);
+    wait_until(5, || screen().contains("new session notes on b"), screen);
+    keys(&["Enter"]);
+    wait_until(10, || screen().contains("directory>"), screen);
+    keys(&["Enter"]);
+    let b_home = p.b.root.join("home").display().to_string();
+    wait_until(
+        15,
+        || b_path("notes") == b_home,
+        || format!("notes on B: {:?}\n{}", b_path("notes"), screen()),
+    );
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
+/// When the session a mirror stands for loses its last pane on B, the mirror
+/// closes, even on a host with `detach-on-destroy off`: B moved the mirror's
+/// client to another of its sessions, so `api@b` went on showing `web` and
+/// every mirror row led there.
+#[test]
+fn a_mirror_closes_when_its_host_session_ends() {
+    let Some(p) = Pair::start("mirrorends") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "web"]);
+    p.b.must(&p.bin, &["set-option", "-g", "detach-on-destroy", "off"]);
+    p.a_config(
+        &p.fake_ssh(),
+        "poll_secs = 1\n[project]\ndirs_source = \"none\"\n[switcher]\nannounce = false",
+    );
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let (out, err, ok) = p.a(&["sessions", "start", "api@b", "--detach"]);
+    assert!(ok, "{out}{err}");
+    wait_until(
+        15,
+        || grouped_on_b(&p, "api").is_some(),
+        || {
+            format!(
+                "no grouped session on B: {}",
+                p.b.tmux(&p.bin, &["list-sessions"]).0
+            )
+        },
+    );
+    // Every pane of `api` gone, the way `exit` in each of them would.
+    p.b.must(&p.bin, &["kill-window", "-t", "=api:"]);
+    let a_has = || p.a.tmux(&p.bin, &["has-session", "-t", "=api@b"]).2;
+    wait_until(
+        15,
+        || !a_has(),
+        || {
+            format!(
+                "api@b is still open; its pane says:\n{}\nB's clients: {}",
+                p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=api@b:"]).0,
+                p.b.tmux(&p.bin, &["list-clients", "-F", "#{client_session}"])
+                    .0
+            )
+        },
+    );
+    let (b_clients, _, _) =
+        p.b.tmux(&p.bin, &["list-clients", "-F", "#{client_session}"]);
+    assert!(
+        !b_clients.contains("web"),
+        "the mirror's client went to web: {b_clients}"
+    );
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
+/// A rename follows through a mirror. `prefix $` inside `api@b` runs on B
+/// and renames the grouped session, `api~<machine>`, to what was typed: B's
+/// daemon takes that as the session's new name, so `api` becomes `web` and
+/// the grouped session `web~<machine>`, and A's mirror becomes `web@b`.
+/// Then `sessions rename` on B, and the project colour moves each time.
+#[test]
+fn a_rename_on_the_host_carries_through_to_the_mirror() {
+    let Some(p) = Pair::start("mirrorrename") else {
+        return;
+    };
+    let b_themes = p.b.root.join("config/tmux/themes");
+    std::fs::create_dir_all(&b_themes).expect("B's themes");
+    std::fs::write(b_themes.join("_project-map.tsv"), "api\tink\n").expect("B's map");
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.a_config(
+        &p.fake_ssh(),
+        "poll_secs = 1\n[project]\ndirs_source = \"none\"\n[switcher]\nannounce = false",
+    );
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let (out, err, ok) = p.a(&["sessions", "start", "api@b", "--detach"]);
+    assert!(ok, "{out}{err}");
+    let (grouped, machine) = {
+        let mut found = None;
+        wait_until(
+            15,
+            || {
+                found = grouped_on_b(&p, "api");
+                found.is_some()
+            },
+            || {
+                format!(
+                    "no grouped session on B: {}",
+                    p.b.tmux(&p.bin, &["list-sessions"]).0
+                )
+            },
+        );
+        found.expect("grouped")
+    };
+    // A has heard `api` under its id before anything is renamed.
+    p.hosts_until(15, |o| o.contains("api@b"));
+    let b_sessions = || {
+        p.b.tmux(&p.bin, &["list-sessions", "-F", "#{session_name}"])
+            .0
+    };
+    let a_has = |s: &str| p.a.tmux(&p.bin, &["has-session", "-t", &format!("={s}")]).2;
+
+    // What `prefix $` inside the mirror does on B.
+    p.b.must(
+        &p.bin,
+        &["rename-session", "-t", &format!("={grouped}"), "web"],
+    );
+    let want = format!("web~{machine}");
+    wait_until(
+        15,
+        || {
+            let s = b_sessions();
+            s.lines().any(|l| l == "web") && s.lines().any(|l| l == want)
+        },
+        || format!("B has:\n{}", b_sessions()),
+    );
+    wait_until(
+        15,
+        || a_has("web@b"),
+        || {
+            format!(
+                "A has: {}",
+                p.a.tmux(&p.bin, &["list-sessions", "-F", "#{session_name}"])
+                    .0
+            )
+        },
+    );
+    assert!(!a_has("api@b"));
+    assert_eq!(
+        p.a.tmux(
+            &p.bin,
+            &["show-options", "-v", "-t", "=web@b:", "@tc-remote"]
+        )
+        .0,
+        "web"
+    );
+    let map = || std::fs::read_to_string(b_themes.join("_project-map.tsv")).unwrap_or_default();
+    assert_eq!(map(), "web\tink\n");
+
+    // The command, on B, from outside the session.
+    let (out, err, ok) = p.b(&["sessions", "rename", "docs", "--session", "web"]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "web is now docs");
+    let want = format!("docs~{machine}");
+    wait_until(15, || b_sessions().lines().any(|l| l == want), b_sessions);
+    wait_until(
+        15,
+        || a_has("docs@b"),
+        || {
+            format!(
+                "A has: {}",
+                p.a.tmux(&p.bin, &["list-sessions", "-F", "#{session_name}"])
+                    .0
+            )
+        },
+    );
+    assert_eq!(map(), "docs\tink\n");
+    // A name already taken is refused, and nothing moves.
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "other"]);
+    let (_, err, ok) = p.b(&["sessions", "rename", "other", "--session", "docs"]);
+    assert!(!ok && err.contains("other is taken"), "{err}");
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
+/// A theme on B reaches the mirror of `api` on A: B's own theme, which A
+/// doesn't have, painted from the settings B sends and written to A's themes
+/// directory, and then B's next pick, followed.
+#[test]
+fn a_mirror_session_shows_its_host_sessions_theme() {
+    let Some(p) = Pair::start("mirrortheme") else {
+        return;
+    };
+    for (side, run) in [
+        ("A", p.a(&["theme", "init"])),
+        ("B", p.b(&["theme", "init"])),
+    ] {
+        assert!(run.2, "theme init on {side}: {}{}", run.0, run.1);
+    }
+    let b_themes = p.b.root.join("config/tmux/themes");
+    let a_themes = p.a.root.join("config/tmux/themes");
+    std::fs::write(
+        b_themes.join("skytest.tmux"),
+        format!(
+            "source-file \"{d}/_reset.tmux\"\nset @theme-name \"Sky Test\"\n\
+             set @theme-color-main-1 colour33\nset @theme-color-on-main colour16\n\
+             source-file \"{d}/_apply.tmux\"\n",
+            d = b_themes.display()
+        ),
+    )
+    .expect("B's theme");
+    assert!(!a_themes.join("skytest.tmux").exists());
+    std::fs::write(b_themes.join("_project-map.tsv"), "api\tskytest\n").expect("B's map");
+
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    // B's hook, the way the example configs set it, so the grouped session
+    // the mirror attaches through is painted as it is made.
+    p.b.must(
+        &p.bin,
+        &[
+            "set-hook",
+            "-g",
+            "session-created",
+            "run-shell 'tmux-companion theme apply \"#{session_name}\" -t \"#{session_name}\"'",
+        ],
+    );
+    let (out, err, ok) = p.b(&["theme", "apply", "api"]);
+    assert!(ok, "{out}{err}");
+    p.a_config(
+        &p.fake_ssh(),
+        "poll_secs = 1\n[project]\ndirs_source = \"none\"\n[switcher]\nannounce = false",
+    );
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let (out, err, ok) = p.a(&["hosts", "connect", "b"]);
+    assert!(ok, "{out}{err}");
+    p.hosts_until(15, |o| o.contains("api@b"));
+
+    let picker = format!(
+        "env PATH='{}:{}' '{}' switch sessions",
+        p.bin.display(),
+        std::env::var("PATH").unwrap_or_default(),
+        binary().display()
+    );
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:", &picker, "Enter"]);
+    let screen = || p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=here:"]).0;
+    wait_until(
+        10,
+        || screen().contains("@b"),
+        || format!("the picker never drew:\n{}", screen()),
+    );
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:", "Enter"]);
+    let opt = |name: &str| {
+        p.a.tmux(&p.bin, &["show-options", "-v", "-t", "=api@b:", name])
+            .0
+    };
+    wait_until(
+        20,
+        || opt("@theme-file") == "skytest",
+        || {
+            format!(
+                "api@b has @theme-file {:?}; B's grouped session: {:?}",
+                opt("@theme-file"),
+                grouped_on_b(&p, "api")
+            )
+        },
+    );
+    assert_eq!(opt("@theme-color-main-1"), "colour33");
+    assert_eq!(opt("@theme-name"), "Sky Test");
+    // Through this machine's _apply.tmux, so the bar's block took it.
+    assert_eq!(opt("@theme-session-name-bg"), "colour33");
+    let written = std::fs::read_to_string(a_themes.join("skytest.tmux")).unwrap_or_default();
+    assert!(
+        written.contains("colour33"),
+        "A's copy of the theme: {written:?}"
+    );
+
+    // B picks another for the group; A follows. Not one A could have reached
+    // on its own, by name or as the default.
+    let six: Vec<&str> = tmux_companion::theme::BASE_THEMES
+        .iter()
+        .map(|(stem, _, _)| *stem)
+        .collect();
+    let by_name = tmux_companion::theme::theme_by_name("api", &six).unwrap_or_default();
+    let default = tmux_companion::config::Theme::default().default;
+    let next = six
+        .iter()
+        .find(|s| **s != by_name && **s != default)
+        .expect("another");
+    std::fs::write(b_themes.join("_project-map.tsv"), format!("api\t{next}\n")).expect("B's map");
+    let (out, err, ok) = p.b(&["theme", "apply", "--all"]);
+    assert!(ok, "{out}{err}");
+    wait_until(
+        20,
+        || opt("@theme-file") == *next,
+        || format!("api@b still has {:?}", opt("@theme-file")),
+    );
+    assert_ne!(opt("@theme-color-main-1"), "colour33");
+
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
 /// `sessions start NAME@HOST` with the name holding a quote and a semicolon:
 /// the mirror session opens and the grouped session on B is made, every name
 /// arriving as a name and nothing in it run. A typed name B has no session

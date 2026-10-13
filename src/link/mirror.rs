@@ -411,6 +411,453 @@ async fn write_windows(
     done
 }
 
+/// The tmux commands that paint the mirror session `session` with its host
+/// session's theme: this machine's `_reset.tmux`, the host's settings as
+/// `set-option` arguments, this machine's `_apply.tmux`, then `@theme-file`.
+///
+/// Arguments and never a sourced file, because the settings came from
+/// another machine: [`super::read_theme`] has already checked each one, and
+/// an argument can't become a second command whatever it holds. The two `_`
+/// files are this machine's own, so what a theme changes here is still what
+/// this machine's `_apply.tmux` says.
+pub fn theme_commands(
+    session: &str,
+    theme: &super::Theme,
+    dir: &std::path::Path,
+) -> Vec<Vec<String>> {
+    let t = format!("={session}:");
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let reset = dir.join("_reset.tmux").display().to_string();
+    let apply = dir.join("_apply.tmux").display().to_string();
+    let mut cmds = vec![s(&["source-file", "-t", &t, &reset])];
+    for (k, v) in &theme.settings {
+        cmds.push(s(&["set-option", "-t", &t, k, v]));
+    }
+    cmds.push(s(&["source-file", "-t", &t, &apply]));
+    cmds.push(if theme.file.is_empty() {
+        s(&["set-option", "-u", "-t", &t, "@theme-file"])
+    } else {
+        s(&["set-option", "-t", &t, "@theme-file", &theme.file])
+    });
+    cmds
+}
+
+/// Paint each of `changed`'s mirror sessions with its host session's theme,
+/// returning the ones painted. Nothing when this machine has no
+/// `_apply.tmux`: without `theme init` here there is nothing to paint with,
+/// and the session keeps whatever it had.
+///
+/// A theme this machine doesn't have is written to the themes directory
+/// too, so the picker here lists it; a file already there by that name is
+/// left alone, it may be somebody's own.
+async fn paint(
+    changed: &[(String, super::Theme)],
+    host_of: &HashMap<String, String>,
+) -> Vec<String> {
+    let dir = crate::theme::default_themes_dir();
+    if !dir.join("_apply.tmux").is_file() || !dir.join("_reset.tmux").is_file() {
+        return Vec::new();
+    }
+    let mut cmds = Vec::new();
+    for (session, theme) in changed {
+        cmds.extend(theme_commands(session, theme, &dir));
+    }
+    let ok = crate::tmux::command()
+        .args(chained(cmds))
+        .output()
+        .await
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        return Vec::new();
+    }
+    for (session, theme) in changed {
+        if theme.file.is_empty() {
+            continue;
+        }
+        let path = dir.join(format!("{}.tmux", theme.file));
+        if !path.exists() {
+            let host = host_of.get(session).map(String::as_str).unwrap_or("");
+            let text = crate::theme::mirrored_theme_file(host, theme, &dir.display().to_string());
+            let _ = std::fs::write(&path, text);
+        }
+    }
+    changed.iter().map(|(s, _)| s.clone()).collect()
+}
+
+/// Say `theme Amber on api@vm` on the message line of each client in a
+/// mirror session whose colour changed while somebody was in it.
+async fn tell(said: &[(String, String)]) {
+    let listing = crate::tmux::command()
+        .args(["list-clients", "-F", "#{client_name}\t#{client_session}"])
+        .output()
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut cmds = Vec::new();
+    for (session, message) in said {
+        for client in crate::theme::clients_to_tell(&listing, std::slice::from_ref(session)) {
+            cmds.push(vec![
+                "display-message".to_string(),
+                "-c".to_string(),
+                client,
+                message.clone(),
+            ]);
+        }
+    }
+    if !cmds.is_empty() {
+        let _ = crate::tmux::command().args(chained(cmds)).status().await;
+    }
+}
+
+/// Whether a mirror session needs painting with its host's `theme`: never
+/// painted, painted with another, or repainted since by something here. A
+/// `theme apply --all` after a reload paints every session from this
+/// machine's map, a mirror session included, and the pane poll's
+/// `@theme-file` is how the loop sees it. Trusted only once the paint is
+/// older than any poll the loop takes, or a poll from before it would read
+/// as the paint undone and repaint every tick until the next one.
+pub fn needs_paint(
+    painted: Option<&(super::Theme, Instant)>,
+    theme: &super::Theme,
+    session: &str,
+    panes: &[crate::panes::Pane],
+) -> bool {
+    match painted {
+        Some((t, _)) if t != theme => true,
+        None => true,
+        Some((_, at)) => {
+            at.elapsed() > LOOK
+                && panes
+                    .iter()
+                    .find(|p| p.session == session)
+                    .is_some_and(|p| p.theme_file != theme.file)
+        }
+    }
+}
+
+/// The `rename-session`s that rename `session` to `new`, in the order they
+/// have to run: every mirror's grouped session to `new~machine` first, then
+/// the session itself. Run inside a mirror's grouped session, `api~mac`,
+/// the session renamed is its group's own, `api`: what a rename there
+/// means. `names` is every session on the server, for the names a rename
+/// would take. Empty when there is nothing to do.
+pub fn rename_plan(
+    members: &[super::Member],
+    names: &[String],
+    session: &str,
+    new: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let new = crate::sessions::start::tmux_name(new.trim());
+    if new.is_empty() {
+        return Err("a session needs a name".to_string());
+    }
+    let me = members.iter().find(|m| m.name == session);
+    let base = match me {
+        Some(m) if !m.mirror.is_empty() => {
+            let own: Vec<&super::Member> = members
+                .iter()
+                .filter(|o| o.group == m.group && o.mirror.is_empty())
+                .collect();
+            match own.as_slice() {
+                [one] => one.name.clone(),
+                [] => return Err(format!("{session} is a mirror's, and its session is gone")),
+                _ => {
+                    return Err(format!(
+                        "{session} is in a group with more than one session of its own; rename one of them"
+                    ));
+                }
+            }
+        }
+        _ => session.to_string(),
+    };
+    let group = members
+        .iter()
+        .find(|m| m.name == base)
+        .map(|m| m.group.clone());
+    let mut plan: Vec<(String, String)> = members
+        .iter()
+        .filter(|m| !m.mirror.is_empty() && Some(&m.group) == group.as_ref())
+        .map(|m| (m.name.clone(), grouped_name(&new, &m.mirror)))
+        .filter(|(from, to)| from != to)
+        .collect();
+    if base != new {
+        plan.push((base, new));
+    }
+    let freed: Vec<&String> = plan.iter().map(|(f, _)| f).collect();
+    if let Some((_, to)) = plan
+        .iter()
+        .find(|(_, to)| names.contains(to) && !freed.contains(&to))
+    {
+        return Err(format!("{to} is taken"));
+    }
+    Ok(plan)
+}
+
+/// One step of [`follow_plan`]: the renames, in order, and the project-map
+/// key they move from one name to another.
+pub type FollowStep = (Vec<(String, String)>, Option<(String, String)>);
+
+/// What the host has to do to keep each mirror's grouped session named
+/// `session~machine` after a rename made some other way, each step with the
+/// project-map key it moves. A grouped session still named for the session's
+/// old name, `api~mac` beside `web`, follows it. One renamed to a plain name
+/// is somebody pressing `prefix $` inside a mirror, which renames the
+/// grouped session: that name is meant for the session, and it is renamed
+/// there, with every mirror following.
+pub fn follow_plan(members: &[super::Member], names: &[String]) -> Vec<FollowStep> {
+    let mut steps = Vec::new();
+    let mut groups: Vec<&str> = members.iter().map(|m| m.group.as_str()).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    for g in groups {
+        let own: Vec<&super::Member> = members
+            .iter()
+            .filter(|m| m.group == g && m.mirror.is_empty())
+            .collect();
+        let [base] = own.as_slice() else {
+            continue;
+        };
+        let mut renames = Vec::new();
+        let mut moved = None;
+        for m in members
+            .iter()
+            .filter(|m| m.group == g && !m.mirror.is_empty())
+        {
+            let want = grouped_name(&base.name, &m.mirror);
+            if m.name == want {
+                continue;
+            }
+            match m.name.strip_suffix(&format!("~{}", m.mirror)) {
+                Some(old) => {
+                    moved.get_or_insert((old.to_string(), base.name.clone()));
+                    renames.push((m.name.clone(), want));
+                }
+                None => {
+                    if let Ok(plan) = rename_plan(members, names, &base.name, &m.name) {
+                        steps.push((plan, Some((base.name.clone(), m.name.clone()))));
+                    }
+                    renames.clear();
+                    moved = None;
+                    break;
+                }
+            }
+        }
+        if !renames.is_empty() {
+            steps.push((renames, moved));
+        }
+    }
+    steps
+}
+
+/// Run a rename plan and move its project-map key, saying `api is now web`
+/// on the message line of each client on the renamed session.
+pub async fn apply_rename(plan: &[(String, String)], moved: Option<&(String, String)>) -> bool {
+    if plan.is_empty() {
+        return true;
+    }
+    let cmds: Vec<Vec<String>> = plan
+        .iter()
+        .map(|(from, to)| {
+            vec![
+                "rename-session".to_string(),
+                "-t".to_string(),
+                format!("={from}"),
+                to.clone(),
+            ]
+        })
+        .collect();
+    let ok = crate::tmux::command()
+        .args(chained(cmds))
+        .output()
+        .await
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        return false;
+    }
+    if let Some((old, new)) = moved {
+        let map = crate::theme::default_themes_dir().join("_project-map.tsv");
+        if let Ok(text) = std::fs::read_to_string(&map)
+            && let Some(moved) = crate::theme::with_map_moved(&text, old, new)
+        {
+            let _ = std::fs::write(&map, moved);
+        }
+        let _ = crate::tmux::command()
+            .args([
+                "display-message",
+                "-t",
+                &format!("={new}:"),
+                &crate::picker::literal_for_tmux(&format!("{old} is now {new}")),
+            ])
+            .output()
+            .await;
+    }
+    true
+}
+
+/// `sessions rename NEW`: [`rename_plan`] for the session this runs in, or
+/// the one named, then run. A mirror session here stands for a session on
+/// its host, and is renamed there, by `prefix $` inside it or this command
+/// on the host; this machine's mirror follows.
+pub async fn rename_command(session: Option<String>, new: &str) -> anyhow::Result<String> {
+    let target = session
+        .or_else(crate::theme::cli::calling_session)
+        .ok_or_else(|| anyhow::anyhow!("not inside tmux; say which session with --session"))?;
+    let session = crate::theme::cli::session_of(&format!("={target}:"))
+        .or_else(|| crate::theme::cli::session_of(&target))
+        .ok_or_else(|| anyhow::anyhow!("no session {target}"))?;
+    let out = crate::tmux::command()
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_group}\t#{@tc-mirror}\t#{@tc-host}\t#{@tc-remote}",
+        ])
+        .output()
+        .await?;
+    let listing = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut members = Vec::new();
+    let mut names = Vec::new();
+    for l in listing.lines() {
+        let f: Vec<&str> = l.split('\t').collect();
+        let [name, group, mirror, host, remote] = f[..] else {
+            continue;
+        };
+        if name == session && !host.is_empty() {
+            anyhow::bail!(
+                "{session} stands for {remote} on {host}: rename it there, where prefix $ inside it already does, and this mirror follows"
+            );
+        }
+        names.push(name.to_string());
+        if !group.is_empty() {
+            members.push(super::Member {
+                name: name.to_string(),
+                group: group.to_string(),
+                mirror: mirror.to_string(),
+            });
+        }
+    }
+    let plan = rename_plan(&members, &names, &session, new).map_err(anyhow::Error::msg)?;
+    let Some(moved) = plan
+        .iter()
+        .find(|(from, _)| {
+            !members
+                .iter()
+                .any(|m| &m.name == from && !m.mirror.is_empty())
+        })
+        .cloned()
+    else {
+        return Ok(format!("{session} is already called that"));
+    };
+    if !apply_rename(&plan, Some(&moved)).await {
+        anyhow::bail!("tmux refused the rename of {}", moved.0);
+    }
+    Ok(format!("{} is now {}", moved.0, moved.1))
+}
+
+/// The host's half of following a rename: the steps [`follow_plan`] finds
+/// in the listing the daemon last read, run, and the listing read again so
+/// the next tick doesn't find them twice. Starts no process while every
+/// grouped session is named as it should be.
+async fn follow_renames(state: &Arc<Mutex<ServerState>>) {
+    let (members, names) = {
+        let st = state.lock().await;
+        if st.members.iter().all(|m| m.mirror.is_empty()) {
+            return;
+        }
+        let names: Vec<String> = st
+            .session_list
+            .as_ref()
+            .map(|(s, _, _)| s.iter().map(|s| s.name.clone()).collect())
+            .unwrap_or_default();
+        (st.members.clone(), names)
+    };
+    let mut names = names;
+    names.extend(members.iter().map(|m| m.name.clone()));
+    let steps = follow_plan(&members, &names);
+    if steps.is_empty() {
+        return;
+    }
+    for (plan, moved) in &steps {
+        apply_rename(plan, moved.as_ref()).await;
+    }
+    let _ = crate::panes::shared(state, Duration::ZERO).await;
+}
+
+/// The host session's new name when the session `mirror` stands for was
+/// renamed there: tmux keeps a session's `$N` through a rename, so the id
+/// learned while the name still matched finds it under the new one. Learns
+/// the id into `ids` as it goes. `None` while the name matches, and while
+/// the host's list hasn't been heard.
+pub fn renamed_remote(
+    mirror: &super::Mirror,
+    sessions: &[super::Session],
+    ids: &mut HashMap<String, String>,
+) -> Option<String> {
+    if let Some(s) = sessions.iter().find(|s| s.name == mirror.remote) {
+        ids.insert(mirror.session.clone(), s.id.clone());
+        return None;
+    }
+    let id = ids.get(&mirror.session)?;
+    sessions
+        .iter()
+        .find(|s| &s.id == id && !s.id.is_empty())
+        .map(|s| s.name.clone())
+}
+
+/// This machine's half of following a rename: each mirror session whose
+/// host session now has another name takes it, `api@vm` to `web@vm` with
+/// `@tc-remote` `web`, and says `api on vm is now web` to its clients.
+/// True when something was renamed, so the loop reads the listing again
+/// before anything else uses the old name.
+async fn follow_hosts(
+    state: &Arc<Mutex<ServerState>>,
+    mirrors: &[super::Mirror],
+    ids: &mut HashMap<String, String>,
+) -> bool {
+    let found: Vec<(super::Mirror, String)> = {
+        let st = state.lock().await;
+        mirrors
+            .iter()
+            .filter_map(|m| {
+                let h = st.links.hosts.iter().find(|h| h.host.name == m.host)?;
+                if h.sessions.is_empty() {
+                    return None;
+                }
+                renamed_remote(m, &h.sessions, ids).map(|new| (m.clone(), new))
+            })
+            .collect()
+    };
+    let mut any = false;
+    for (m, new) in found {
+        let to = session_name(&new, &m.host);
+        let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let said =
+            crate::picker::literal_for_tmux(&format!("{} on {} is now {new}", m.remote, m.host));
+        let cmds = vec![
+            s(&["rename-session", "-t", &format!("={}", m.session), &to]),
+            s(&[
+                "set-option",
+                "-t",
+                &format!("={to}:"),
+                super::REMOTE_OPTION,
+                &new,
+            ]),
+            s(&["display-message", "-t", &format!("={to}:"), &said]),
+        ];
+        let ok = crate::tmux::command()
+            .args(chained(cmds))
+            .output()
+            .await
+            .is_ok_and(|o| o.status.success());
+        if ok {
+            if let Some(id) = ids.remove(&m.session) {
+                ids.insert(to, id);
+            }
+            any = true;
+        }
+    }
+    any
+}
+
 /// How old a session listing the loop takes: mirror sessions open and close
 /// far less often than a bar changes, so the listing can be the one another
 /// loop (the inbox's every two seconds, the push loop's every one) already
@@ -431,10 +878,18 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
     // were drawn in.
     let mut drawn: HashMap<String, Option<Vec<super::Window>>> = HashMap::new();
     let mut styles: HashMap<String, ListStyle> = HashMap::new();
+    // The theme each mirror session was last painted with, and when. Kept
+    // while the session is open, so a client coming back doesn't repaint it
+    // or hear about a colour it already had.
+    let mut painted: HashMap<String, (super::Theme, Instant)> = HashMap::new();
+    // Each mirror session's host session id, learned while its name
+    // matched, to find it again after a rename on the host.
+    let mut ids: HashMap<String, String> = HashMap::new();
     let mut looked: Option<Instant> = None;
     let mut any = false;
     loop {
         tick.tick().await;
+        follow_renames(&state).await;
         if state.lock().await.links.hosts.is_empty() {
             last.clear();
             continue;
@@ -443,9 +898,14 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
             continue;
         }
         looked = Some(Instant::now());
-        let _ = crate::panes::shared(&state, LOOK).await;
+        let panes = crate::panes::shared(&state, LOOK).await;
         let mirrors = state.lock().await.mirrors.clone();
         any = !mirrors.is_empty();
+        ids.retain(|s, _| mirrors.iter().any(|m| &m.session == s));
+        if follow_hosts(&state, &mirrors, &mut ids).await {
+            let _ = crate::panes::shared(&state, Duration::ZERO).await;
+            continue;
+        }
         let open: Vec<String> = mirrors.iter().map(|m| m.host.clone()).collect();
         let shown: Vec<&super::Mirror> = mirrors.iter().filter(|m| m.attached > 0).collect();
         let wants: Vec<(String, String)> = shown
@@ -456,13 +916,20 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
         last.retain(|s, _| shown.iter().any(|m| &m.session == s));
         drawn.retain(|s, _| shown.iter().any(|m| &m.session == s));
         styles.retain(|s, _| mirrors.iter().any(|m| &m.session == s));
+        painted.retain(|s, _| mirrors.iter().any(|m| &m.session == s));
         if shown.is_empty() {
             continue;
         }
         let here = crate::server::health_reasons(&state).await;
         let mut changed = Vec::new();
         let mut windows_changed = Vec::new();
+        let mut themes_changed = Vec::new();
         for (m, (_, grouped)) in shown.iter().zip(&wants) {
+            if let Some(theme) = state.lock().await.links.theme_for(&m.host, grouped)
+                && needs_paint(painted.get(&m.session), &theme, &m.session, &panes)
+            {
+                themes_changed.push((m.session.clone(), theme));
+            }
             let wins = state.lock().await.links.windows_for(&m.host, grouped);
             if drawn.get(&m.session) != Some(&wins) {
                 windows_changed.push((m.session.clone(), wins));
@@ -481,6 +948,25 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
                 }
             }
         }
+        if !themes_changed.is_empty() {
+            let host_of: HashMap<String, String> = shown
+                .iter()
+                .map(|m| (m.session.clone(), m.host.clone()))
+                .collect();
+            let mut said = Vec::new();
+            for s in paint(&themes_changed, &host_of).await {
+                if let Some((_, theme)) = themes_changed.iter().find(|(x, _)| *x == s) {
+                    // Said only for a change of theme: opening a mirror
+                    // paints it without a word, as opening a session here
+                    // does, and so does putting back one a reload undid.
+                    if painted.get(&s).is_some_and(|(t, _)| t != theme) {
+                        said.push((s.clone(), format!("theme {} on {s}", theme.name())));
+                    }
+                    painted.insert(s, (theme.clone(), Instant::now()));
+                }
+            }
+            tell(&said).await;
+        }
         if changed.is_empty() {
             continue;
         }
@@ -495,6 +981,195 @@ pub async fn mirror_loop(state: Arc<Mutex<ServerState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn member(name: &str, group: &str, mirror: &str) -> super::super::Member {
+        super::super::Member {
+            name: name.into(),
+            group: group.into(),
+            mirror: mirror.into(),
+        }
+    }
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_rename_inside_a_mirror_renames_its_session_and_every_mirror_follows() {
+        let members = [
+            member("api", "api", ""),
+            member("api~mac", "api", "mac"),
+            member("api~m1", "api", "m1"),
+        ];
+        let names: Vec<String> = ["api", "api~mac", "api~m1", "other"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            rename_plan(&members, &names, "api~mac", "web"),
+            Ok(pairs(&[
+                ("api~mac", "web~mac"),
+                ("api~m1", "web~m1"),
+                ("api", "web")
+            ]))
+        );
+        assert_eq!(
+            rename_plan(&members, &names, "api", "web"),
+            rename_plan(&members, &names, "api~mac", "web")
+        );
+        assert_eq!(
+            rename_plan(&members, &names, "api", "other"),
+            Err("other is taken".to_string())
+        );
+        assert_eq!(
+            rename_plan(&members, &names, "other", "x.y"),
+            Ok(pairs(&[("other", "x_y")]))
+        );
+        assert!(rename_plan(&members, &names, "api", " ").is_err());
+    }
+
+    #[test]
+    fn a_mirror_finds_its_session_again_by_id_after_a_rename() {
+        let m = super::super::Mirror {
+            session: "api@vm".into(),
+            host: "vm".into(),
+            remote: "api".into(),
+            attached: 1,
+        };
+        let session = |name: &str, id: &str| super::super::Session {
+            name: name.into(),
+            id: id.into(),
+            ..Default::default()
+        };
+        let mut ids = HashMap::new();
+        // Never heard the name: nothing learned, nothing to follow.
+        assert_eq!(renamed_remote(&m, &[session("web", "$3")], &mut ids), None);
+        assert!(ids.is_empty());
+        assert_eq!(renamed_remote(&m, &[session("api", "$3")], &mut ids), None);
+        assert_eq!(ids.get("api@vm").map(String::as_str), Some("$3"));
+        assert_eq!(
+            renamed_remote(&m, &[session("web", "$3"), session("x", "$4")], &mut ids).as_deref(),
+            Some("web")
+        );
+        // Gone altogether: nothing to follow.
+        assert_eq!(renamed_remote(&m, &[session("x", "$4")], &mut ids), None);
+    }
+
+    #[test]
+    fn the_host_follows_a_rename_made_any_other_way() {
+        let names =
+            |m: &[super::super::Member]| m.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+        // `api` renamed `web` on the host: its mirrors follow it.
+        let moved = [member("web", "api", ""), member("api~mac", "api", "mac")];
+        assert_eq!(
+            follow_plan(&moved, &names(&moved)),
+            [(
+                pairs(&[("api~mac", "web~mac")]),
+                Some(("api".to_string(), "web".to_string()))
+            )]
+        );
+        // `prefix $` inside the mirror renamed `api~mac` to `web`: that is
+        // the session's new name.
+        let typed = [
+            member("api", "api", ""),
+            member("web", "api", "mac"),
+            member("api~m1", "api", "m1"),
+        ];
+        assert_eq!(
+            follow_plan(&typed, &names(&typed)),
+            [(
+                pairs(&[("web", "web~mac"), ("api~m1", "web~m1"), ("api", "web")]),
+                Some(("api".to_string(), "web".to_string()))
+            )]
+        );
+        // Named as they should be: nothing.
+        let fine = [member("api", "api", ""), member("api~mac", "api", "mac")];
+        assert!(follow_plan(&fine, &names(&fine)).is_empty());
+        // A group of the host's own with two sessions and no mirror: not ours.
+        let own = [member("a", "a", ""), member("b", "a", "")];
+        assert!(follow_plan(&own, &names(&own)).is_empty());
+    }
+
+    fn amber() -> super::super::Theme {
+        super::super::Theme {
+            file: "amber".into(),
+            settings: vec![
+                ("@theme-color-main-1".into(), "colour172".into()),
+                ("@theme-name".into(), "Amber".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_host_theme_is_set_as_arguments_between_this_machines_files() {
+        let cmds = theme_commands("api@vm", &amber(), std::path::Path::new("/t"));
+        let want: Vec<Vec<&str>> = vec![
+            vec!["source-file", "-t", "=api@vm:", "/t/_reset.tmux"],
+            vec![
+                "set-option",
+                "-t",
+                "=api@vm:",
+                "@theme-color-main-1",
+                "colour172",
+            ],
+            vec!["set-option", "-t", "=api@vm:", "@theme-name", "Amber"],
+            vec!["source-file", "-t", "=api@vm:", "/t/_apply.tmux"],
+            vec!["set-option", "-t", "=api@vm:", "@theme-file", "amber"],
+        ];
+        assert_eq!(cmds, want);
+    }
+
+    #[test]
+    fn a_mirror_is_painted_when_new_changed_or_undone_here() {
+        let pane = |file: &str| {
+            crate::panes::parse(&format!(
+                "api@vm\t1\tzsh\t0\t%1\tzsh\t/\t\t1\t1\t1\t0\t0\th\t0\t$1\t\t1\t\t{file}"
+            ))
+        };
+        let t = amber();
+        let long_ago = Instant::now() - LOOK - Duration::from_secs(1);
+        assert!(needs_paint(None, &t, "api@vm", &pane("amber")));
+        let mut other = t.clone();
+        other.file = "ink".into();
+        assert!(needs_paint(
+            Some(&(other, long_ago)),
+            &t,
+            "api@vm",
+            &pane("amber")
+        ));
+        assert!(!needs_paint(
+            Some(&(t.clone(), long_ago)),
+            &t,
+            "api@vm",
+            &pane("amber")
+        ));
+        // A reload painted it from this machine's map.
+        assert!(needs_paint(
+            Some(&(t.clone(), long_ago)),
+            &t,
+            "api@vm",
+            &pane("pine")
+        ));
+        // The same, read off a poll that may be older than the paint.
+        assert!(!needs_paint(
+            Some(&(t.clone(), Instant::now())),
+            &t,
+            "api@vm",
+            &pane("pine")
+        ));
+    }
+
+    #[test]
+    fn a_theme_written_for_a_mirror_reads_back_the_same() {
+        let text = crate::theme::mirrored_theme_file("vm", &amber(), "/t");
+        assert!(text.contains("source-file \"/t/_reset.tmux\""), "{text}");
+        assert!(text.contains("source-file \"/t/_apply.tmux\""), "{text}");
+        let back = crate::theme::parse_settings(&text);
+        for (k, v) in amber().settings {
+            assert_eq!(back.get(&k), Some(&v), "{text}");
+        }
+    }
 
     fn seg(role: &str, text: &str, fg: &str, bg: &str, glyph: &str) -> Segment {
         Segment {

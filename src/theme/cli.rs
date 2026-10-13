@@ -294,20 +294,118 @@ fn theme_pick(
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let map = dir.join("_project-map.tsv");
-        use std::io::Write;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(map)?;
-        writeln!(f, "{session}\t{stem}")?;
+        remember(dir, &session, &stem)?;
         println!("{}", row.path.display());
         return Ok(());
     }
 
-    let target = target.or_else(attached_session_sync);
-    source_theme(&row.path, target.as_deref());
+    // The session the key was pressed in, not the first client tmux lists: on
+    // a host a mirror's grouped session was often first, so the theme went to
+    // `api~mac`, whose bar is off, and `api` never changed.
+    let Some(session) = target
+        .or_else(calling_session)
+        .or_else(attached_session_sync)
+        .and_then(|t| session_of(&t))
+    else {
+        source_theme(&row.path, None);
+        return Ok(());
+    };
+    let (key, members) = crate::theme::theme_group(&sessions_with_groups(), &session);
+    for m in &members {
+        source_theme(&row.path, Some(&format!("={m}:")));
+    }
+    // Remembered under the group, so the session keeps the colour through a
+    // restart and every machine that attaches to it is painted the same.
+    let stem = row
+        .path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    remember(dir, &key, &stem)?;
+    tell(&members, &format!("theme {} on {key}", row.name));
     Ok(())
+}
+
+/// `session` mapped to `stem` in the project map, its line rewritten.
+fn remember(dir: &std::path::Path, session: &str, stem: &str) -> anyhow::Result<()> {
+    let map = dir.join("_project-map.tsv");
+    let text = std::fs::read_to_string(&map).unwrap_or_default();
+    std::fs::write(&map, crate::theme::with_map_line(&text, session, stem))?;
+    Ok(())
+}
+
+/// The session this was run from: the pane's when there is one, otherwise
+/// the one `$TMUX` names.
+///
+/// A popup has no pane and tmux 3.4 expands no format in its command or its
+/// `-e`, so a binding can't pass `#{session_name}`. Every job tmux starts,
+/// a popup's included, gets `TMUX=<socket>,<pid>,<session id>` naming the
+/// session it was started for, which is the one the key was pressed in.
+pub(crate) fn calling_session() -> Option<String> {
+    if let Some(pane) = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty()) {
+        return Some(pane);
+    }
+    crate::theme::session_in_tmux_env(&std::env::var("TMUX").ok()?)
+}
+
+/// The session a target names, or `None` when tmux finds none.
+pub(crate) fn session_of(target: &str) -> Option<String> {
+    let out = crate::tmux::command_sync()
+        .args(["display-message", "-p", "-t", target, "#{session_name}"])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !name.is_empty()).then_some(name)
+}
+
+/// The session on the host a mirror session stands for, its `@tc-remote`;
+/// `None` for any other session.
+fn mirror_remote(session: &str) -> Option<String> {
+    let out = crate::tmux::command_sync()
+        .args([
+            "show-options",
+            "-qv",
+            "-t",
+            &format!("={session}:"),
+            crate::link::REMOTE_OPTION,
+        ])
+        .output()
+        .ok()?;
+    let remote = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!remote.is_empty()).then_some(remote)
+}
+
+/// Every session with its group, the listing [`crate::theme::theme_group`]
+/// reads.
+fn sessions_with_groups() -> String {
+    crate::tmux::command_sync()
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_group}\t#{@tc-mirror}",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Say `message` on the message line of every client looking at one of
+/// `members`, but a mirror's; see [`crate::theme::clients_to_tell`].
+fn tell(members: &[String], message: &str) {
+    let listing = crate::tmux::command_sync()
+        .args([
+            "list-clients",
+            "-F",
+            "#{client_name}\t#{client_session}\t#{@tc-mirror}",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    for client in crate::theme::clients_to_tell(&listing, members) {
+        let _ = crate::tmux::command_sync()
+            .args(["display-message", "-c", &client, message])
+            .status();
+    }
 }
 
 /// `theme init`: write the starter themes and the machinery that applies them.
@@ -490,10 +588,21 @@ fn theme_apply(session: &str, target: Option<String>, dir: &std::path::Path) -> 
     // the theme was sourced with no target at all, so it landed on whichever
     // session happened to be current -- which, at `session-created` time, is
     // not the session being created.
+    //
+    // The session's own name, which is what the hook passes, becomes the
+    // exact `=name:`, so a session gone by the time this runs isn't matched
+    // by prefix to another one, `api` to `api~mac`.
     let target = target
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| session.to_string());
-    if let Some(path) = crate::theme::theme_for_session(session, &map, &config.theme, dir) {
+        .filter(|t| !t.is_empty() && t != session)
+        .unwrap_or_else(|| format!("={session}:"));
+    // A grouped session takes its group's theme: the hook on `api~mac` paints
+    // it, and the windows it shares with `api`, in `api`'s colour. A mirror
+    // session is the session on its host, `api` for `api@vm`, so by name it
+    // gets the colour the host gives `api` until the host's own theme comes
+    // over the link, and keeps it while the link is down.
+    let key = mirror_remote(session)
+        .unwrap_or_else(|| crate::theme::theme_group(&sessions_with_groups(), session).0);
+    if let Some(path) = crate::theme::theme_for_session(&key, &map, &config.theme, dir) {
         source_theme(&path, Some(&target));
     }
     Ok(())
@@ -530,13 +639,6 @@ fn theme_preview(row: &crate::theme::ThemeRow) -> String {
     format!("{card}\n{listed}\n")
 }
 
-/// `tmux source-file`, honouring a target.
-///
-/// The target matters: `_apply.tmux` sets window options, and a window option
-/// lands on one window, so without a target the theme paints whichever window
-/// happened to be current and every other window in the session keeps the
-/// global default. That is why copy-mode selection could be readable in one
-/// window and not the next.
 /// The attached client's session, for the synchronous callers.
 ///
 /// `theme pick` draws in a popup like every other picker, and a popup is not a
@@ -555,13 +657,31 @@ fn attached_session_sync() -> Option<String> {
         .map(|s| format!("{s}:"))
 }
 
+/// `tmux source-file`, honouring a target, then `@theme-file` set to the
+/// file's stem on the session it painted.
+///
+/// The target matters: `_apply.tmux` sets window options, and a window option
+/// lands on one window, so without a target the theme paints whichever window
+/// happened to be current and every other window in the session keeps the
+/// global default. That is why copy-mode selection could be readable in one
+/// window and not the next.
+///
+/// `@theme-file` is the name a theme travels under: `@theme-name` is what a
+/// theme calls itself, `Amber Light`, and the file is `amber-light.tmux`.
 fn source_theme(path: &std::path::Path, target: Option<&str>) {
-    let path = path.display().to_string();
+    let shown = path.display().to_string();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut args: Vec<&str> = vec!["source-file"];
     if let Some(t) = target {
-        args.push("-t");
-        args.push(t);
+        args.extend(["-t", t]);
     }
-    args.push(&path);
+    args.extend([shown.as_str(), ";", "set-option"]);
+    if let Some(t) = target {
+        args.extend(["-t", t]);
+    }
+    args.extend(["@theme-file", stem.as_str()]);
     let _ = crate::tmux::command_sync().args(args).status();
 }

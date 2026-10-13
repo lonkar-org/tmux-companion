@@ -21,6 +21,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One grouped session's bar as a link heard it: segments, windows, theme.
+type Heard = (String, Vec<Segment>, Vec<Window>, super::Theme);
+
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
@@ -136,6 +139,9 @@ pub struct HostLink {
     /// The last windows heard for each grouped session, kept and dropped
     /// with its segments; none from a host from before windows.
     pub windows: std::collections::HashMap<String, Vec<Window>>,
+    /// The last theme heard for each grouped session, kept and dropped with
+    /// its segments; none from a host from before themes.
+    pub themes: std::collections::HashMap<String, super::Theme>,
     /// Whether the link is up and watching, the host pushing, rather than
     /// polled.
     pub watching: bool,
@@ -185,6 +191,7 @@ impl HostLink {
             segment_wants: Vec::new(),
             segments: std::collections::HashMap::new(),
             windows: std::collections::HashMap::new(),
+            themes: std::collections::HashMap::new(),
             watching: false,
             inbox: Vec::new(),
             inbox_known: std::collections::HashSet::new(),
@@ -494,6 +501,7 @@ impl Links {
             if !h.watching {
                 h.segments.retain(|g, _| mine.contains(g));
                 h.windows.retain(|g, _| mine.contains(g));
+                h.themes.retain(|g, _| mine.contains(g));
             }
             if mine != h.segment_wants {
                 let gained = h.segment_wants.is_empty() && !mine.is_empty();
@@ -527,15 +535,26 @@ impl Links {
             .cloned()
     }
 
-    fn segments_heard(
-        &mut self,
-        name: &str,
-        heard: Vec<(String, Vec<Segment>, Vec<Window>)>,
-        now: u64,
-    ) {
+    /// The theme last heard for one grouped session on `host`; `None` when
+    /// the host sent none. Kept while the link is down, unlike the windows:
+    /// a colour that may be old still says which session this is, where a
+    /// window list that may be old says something about now.
+    pub fn theme_for(&self, host: &str, grouped: &str) -> Option<super::Theme> {
+        self.hosts
+            .iter()
+            .find(|h| h.host.name == host)
+            .and_then(|h| h.themes.get(grouped))
+            .filter(|t| !t.is_empty())
+            .cloned()
+    }
+
+    fn segments_heard(&mut self, name: &str, heard: Vec<Heard>, now: u64) {
         if let Some(h) = self.get_mut(name) {
-            for (g, segs, wins) in heard {
+            for (g, segs, wins, theme) in heard {
                 if h.segment_wants.contains(&g) {
+                    if !theme.is_empty() {
+                        h.themes.insert(g.clone(), theme);
+                    }
                     h.windows.insert(g.clone(), wins);
                     h.segments.insert(g, (segs, now));
                 }
@@ -553,6 +572,7 @@ impl Links {
         grouped: String,
         segs: Vec<Segment>,
         wins: Vec<Window>,
+        theme: super::Theme,
         now: u64,
     ) {
         if let Some(h) = self.get_mut(name) {
@@ -560,6 +580,9 @@ impl Links {
                 h.segments.remove(&grouped);
                 h.windows.remove(&grouped);
             } else {
+                if !theme.is_empty() {
+                    h.themes.insert(grouped.clone(), theme);
+                }
                 h.windows.insert(grouped.clone(), wins);
                 h.segments.insert(grouped, (segs, now));
             }
@@ -1053,11 +1076,13 @@ impl crate::link_capnp::session_sink::Server for Sink {
         let grouped = super::clean(&String::from_utf8_lossy(p.get_session()?.as_bytes()));
         let segs = super::read_segments(p.get_segments()?)?;
         let wins = super::read_windows(p.get_windows()?)?;
+        let theme = super::read_theme(p.get_theme()?)?;
         self.state.lock().await.links.segments_pushed(
             &self.name,
             grouped,
             segs,
             wins,
+            theme,
             crate::panes::now_secs(),
         );
         Ok(())
@@ -1212,10 +1237,10 @@ async fn polling(
         let mut heard = Vec::new();
         for g in &wants {
             match link.segments(g).await {
-                Ok(Ok((segs, wins))) => heard.push((g.clone(), segs, wins)),
+                Ok(Ok((segs, wins, theme))) => heard.push((g.clone(), segs, wins, theme)),
                 // The host said no: no such session yet, say. The bar shows
                 // nothing from it until it says yes.
-                Ok(Err(_)) => heard.push((g.clone(), Vec::new(), Vec::new())),
+                Ok(Err(_)) => heard.push((g.clone(), Vec::new(), Vec::new(), Default::default())),
                 Err(reason) => return Up::Failed(reason),
             }
         }
@@ -1518,7 +1543,14 @@ mod tests {
             active: true,
             bell: false,
         }];
-        links.segments_pushed("vm", "api~mac".into(), segs.clone(), wins.clone(), 7);
+        links.segments_pushed(
+            "vm",
+            "api~mac".into(),
+            segs.clone(),
+            wins.clone(),
+            Default::default(),
+            7,
+        );
         links.set_mirrors(&[], &[]);
         assert_eq!(
             links.segments_for("vm", "api~mac"),
@@ -1527,12 +1559,33 @@ mod tests {
         );
         assert_eq!(links.windows_for("vm", "api~mac"), Some(wins.clone()));
         // Nothing to say on the right, and still windows: kept.
-        links.segments_pushed("vm", "api~mac".into(), Vec::new(), wins.clone(), 8);
+        links.segments_pushed(
+            "vm",
+            "api~mac".into(),
+            Vec::new(),
+            wins.clone(),
+            Default::default(),
+            8,
+        );
         assert_eq!(links.windows_for("vm", "api~mac"), Some(wins.clone()));
-        links.segments_pushed("vm", "api~mac".into(), Vec::new(), Vec::new(), 8);
+        links.segments_pushed(
+            "vm",
+            "api~mac".into(),
+            Vec::new(),
+            Vec::new(),
+            Default::default(),
+            8,
+        );
         assert_eq!(links.segments_for("vm", "api~mac").0, None);
         assert_eq!(links.windows_for("vm", "api~mac"), None);
-        links.segments_pushed("vm", "web~mac".into(), vec![Segment::default()], wins, 9);
+        links.segments_pushed(
+            "vm",
+            "web~mac".into(),
+            vec![Segment::default()],
+            wins,
+            Default::default(),
+            9,
+        );
         links.set_state(
             "vm",
             State::Down {

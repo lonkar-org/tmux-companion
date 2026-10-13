@@ -99,6 +99,9 @@ pub(super) struct State {
     /// A search filters and leaves the order alone; see
     /// [`Chrome::keep_order`](super::Chrome::keep_order).
     keep_order: bool,
+    /// The create row's words from the query; its row, when there is one,
+    /// is the last of `rows`. See [`super::Create`].
+    create: Option<super::Create>,
 }
 
 /// What ended the picker.
@@ -169,9 +172,33 @@ impl State {
             preview_lines: None,
             matcher: Matcher::new(Config::DEFAULT),
             keep_order: false,
+            create: None,
         };
         state.refilter();
         state
+    }
+
+    /// Offer a create row for what the query asks for; see
+    /// [`super::Create`]. Its row is kept at the end of `rows` and is a hit
+    /// only when `create` gives it words.
+    pub(super) fn creating(mut self, create: Option<super::Create>) -> Self {
+        if create.is_some() && self.create.is_none() {
+            self.rows.push(Row {
+                index: super::CREATE,
+                text: String::new(),
+                label: String::new(),
+                spans: Vec::new(),
+                icon: None,
+                swatch: None,
+                preview: String::new(),
+                lazy: None,
+                searched_only: true,
+                not_a_step: true,
+            });
+            self.create = create;
+            self.refilter();
+        }
+        self
     }
 
     /// Re-run the query over every row.
@@ -186,7 +213,7 @@ impl State {
         let searching = !self.query.trim().is_empty();
 
         for (i, row) in self.rows.iter().enumerate() {
-            if row.searched_only && !searching {
+            if (row.searched_only && !searching) || row.index == super::CREATE {
                 continue;
             }
             buf.clear();
@@ -234,6 +261,22 @@ impl State {
             .into_iter()
             .map(|(_, _, row, positions)| Hit { row, positions })
             .collect();
+        // First, so Enter takes what was typed rather than a loose match
+        // that happens to sit at the top.
+        if let Some(words) = self.create.as_ref().and_then(|c| c.row_for(&self.query)) {
+            let at = self.rows.len() - 1;
+            let row = &mut self.rows[at];
+            row.preview = format!("Enter: {words}.");
+            row.label = words.clone();
+            row.text = words;
+            self.hits.insert(
+                0,
+                Hit {
+                    row: at,
+                    positions: Vec::new(),
+                },
+            );
+        }
         self.selected = 0;
         self.offset = 0;
         self.preview_scroll = 0;
@@ -1235,7 +1278,8 @@ pub(super) fn run_keyed(
         chrome.preview_percent,
         &chrome.look.column_order,
     )
-    .keeping_order(chrome.keep_order);
+    .keeping_order(chrome.keep_order)
+    .creating(chrome.create.clone());
     if let Some(index) = start_at {
         state.select_index(index);
     }
@@ -1354,8 +1398,10 @@ pub(super) fn run_keyed(
 /// the cursor is on and how the query was first typed.
 ///
 /// The whole list is laid out again because column widths are measured
-/// across every row: a long directory name widens the path column for the
-/// sessions too.
+/// across the rows that arrived together with the ones already there. Rows
+/// only a search shows have widths of their own (see
+/// [`super::laid_out_toned`]), so a long directory name widens the
+/// directories and leaves the sessions on screen as they were.
 fn grow(
     state: &mut State,
     all: &mut Vec<Item>,
@@ -1375,7 +1421,8 @@ fn grow(
         state.preview_percent,
         &chrome.look.column_order,
     )
-    .keeping_order(chrome.keep_order);
+    .keeping_order(chrome.keep_order)
+    .creating(chrome.create.clone());
     next.opening = state.opening.clone();
     next.apply_glyphs(paint);
     if let Some(i) = on {
@@ -1432,6 +1479,7 @@ fn apply_key(
         }
         KeyCode::Enter => {
             return Some(match state.current() {
+                Some(row) if row.index == super::CREATE => Ended::Typed(state.query.clone()),
                 Some(row) => Ended::Chosen(row.index),
                 None => Ended::Typed(state.query.clone()),
             });
@@ -1461,7 +1509,7 @@ fn apply_key(
             return Some(Ended::Chosen(i));
         }
         KeyCode::Char(c) if ctrl && keys.contains(&c) && !RESERVED.contains(&c) => {
-            if let Some(row) = state.current() {
+            if let Some(row) = state.current().filter(|r| r.index != super::CREATE) {
                 return Some(Ended::Key(c, row.index));
             }
         }
@@ -1527,6 +1575,43 @@ mod tests {
 
     fn press(c: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
         ratatui::crossterm::event::KeyEvent::new(c, ratatui::crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_create_row_comes_first_and_enter_on_it_is_the_query() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let items: Vec<Item> = ["here", "ghsa-xm5q-backstage@vm"]
+            .iter()
+            .map(|n| Item::new(*n))
+            .collect();
+        let create = super::super::Create::new(|q: &str| {
+            q.strip_suffix("@vm")
+                .filter(|n| !n.is_empty())
+                .map(|n| format!("new session {n} on vm"))
+        });
+        let chrome = Chrome {
+            create: Some(create.clone()),
+            ..Chrome::default()
+        };
+        // `ab@vm` is a fuzzy match for the backstage row, and Enter took it.
+        let mut state = State::new(&items, "ab@vm", 0, &[]).creating(Some(create.clone()));
+        assert_eq!(state.hits.len(), 2, "the create row and the loose match");
+        assert_eq!(
+            state.current().map(|r| r.text.as_str()),
+            Some("new session ab on vm")
+        );
+        assert!(matches!(
+            apply_key(&mut state, press(KeyCode::Enter), &chrome, &['o']),
+            Some(Ended::Typed(q)) if q == "ab@vm"
+        ));
+        // A caller's key on it is nobody's row.
+        let mut state = State::new(&items, "ab@vm", 0, &[]).creating(Some(create.clone()));
+        let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(apply_key(&mut state, ctrl_o, &chrome, &['o']).is_none());
+        // No words, no row: the list is what it was.
+        let state = State::new(&items, "here", 0, &[]).creating(Some(create));
+        assert_eq!(state.hits.len(), 1);
+        assert_eq!(state.current().map(|r| r.index), Some(0));
     }
 
     #[test]

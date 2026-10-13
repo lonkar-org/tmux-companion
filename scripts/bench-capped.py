@@ -492,6 +492,53 @@ def pick_to_first_byte(t, runs):
     return stats(times)
 
 
+def until_bytes(t, marker, timeout=10.0):
+    """ms until `marker` reaches the client from now, or None."""
+    seen = b""
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < timeout:
+        try:
+            chunk = os.read(t.fd, 65536)
+        except (BlockingIOError, OSError):
+            time.sleep(0.0005)
+            continue
+        if not chunk:
+            break
+        seen += chunk
+        if flat(marker) in flat(seen):
+            return (time.perf_counter() - t0) * 1000.0
+    t.missed = flat(seen)[-600:]
+    return None
+
+
+def new_session_steps(t, runs):
+    """ms from ctrl-o on a remote row in `switch sessions` to the name
+    step's title, and from Enter on a typed name to the directory step's.
+    The directory step lists the host's directories over the link after its
+    first frame, so its title is the frame that counts. Esc leaves before
+    anything is made on the host. The titles are matched after their icon,
+    which sits between the bracket and the words."""
+    named, dired = [], []
+    for i in range(runs):
+        _, opened, _ = t.press("M-o", b"fx-")
+        if opened is None:
+            continue
+        t.keys(*f"r{i % max(REMOTE, 1):02d}@bench-rows")
+        time.sleep(0.4)
+        t.drain()
+        t.keys("C-o")
+        named.append(until_bytes(t, b"New session on bench-rows ]"))
+        if named[-1] is not None:
+            time.sleep(0.2)
+            t.drain()
+            t.keys(*f"n{i:02d}", "Enter")
+            dired.append(until_bytes(t, f"n{i:02d} on bench-rows: where ]".encode()))
+        t.keys("Escape")
+        time.sleep(0.3)
+        t.drain()
+    return {"name": stats(named), "directory": stats(dired)}
+
+
 def ask(cmd, args, sock=SOCK):
     """One request to a daemon socket, its output."""
     import socket
@@ -672,7 +719,8 @@ LONG = list("abcdefghijklmnopqrst")
 BURST = ["d", "i", "r", "-", "0"]
 # The bytes a terminal sends for the named keys the bench types; anything else
 # is its own character.
-KEYBYTES = {"Escape": b"\x1b", "Enter": b"\r", "BSpace": b"\x7f", "C-c": b"\x03"}
+KEYBYTES = {"Escape": b"\x1b", "Enter": b"\r", "BSpace": b"\x7f", "C-c": b"\x03",
+            "C-o": b"\x0f"}
 
 
 def phases(wall, marks):
@@ -980,6 +1028,16 @@ def main():
             print("  pick to the host's first byte: "
                   + (f"p50 {f['p50']:.0f} p95 {f['p95']:.0f} ms (n={f['n']})" if f
                      else "never drew"), flush=True)
+        # A binary from before ctrl-o made sessions on a host opens nothing.
+        if REMOTE and "--in" in subprocess.run([BIN, "host", "attach", "--help"],
+                                               capture_output=True, text=True).stdout:
+            out["new_session_steps"] = new_session_steps(t, args.runs)
+            for step, f in out["new_session_steps"].items():
+                print(f"  ctrl-o new session, {step} step: "
+                      + (f"p50 {f['p50']:.0f} p95 {f['p95']:.0f} ms (n={f['n']})" if f
+                         else "never drew"), flush=True)
+            if not all(out["new_session_steps"].values()) and getattr(t, "missed", None):
+                print(f"    last bytes: {t.missed!r}", flush=True)
         # The host's agent asking to the earcon here, phase 3's budget.
         if REMOTE:
             out["earcon_after_ask"] = earcon_after_ask(int(os.environ.get("EARCON_RUNS", "10")))

@@ -51,6 +51,20 @@ struct Window {
   bell @3 :Bool;          # `#{window_bell_flag}`
 }
 
+# The theme a grouped session shows, for the mirror session to show too: the
+# theme file's stem, `@theme-file`, and the `@theme-*` settings that file
+# makes. Text, never markup: the receiving side checks every key and value
+# and sets them as arguments, it never sources what a host sent.
+struct Theme {
+  file @0 :Text;          # `amber-light`, empty when the theme has no file
+  settings @1 :List(Setting);
+}
+
+struct Setting {
+  key @0 :Text;           # `@theme-color-main-1`
+  value @1 :Text;         # `colour172`
+}
+
 # One agent waiting on the host, as its inbox holds it.
 struct Entry {
   pane @0 :Text;          # `#{pane_id}`
@@ -77,9 +91,9 @@ interface SessionSink {
 
   # The segments of one grouped session the local side's mirror has a client
   # in, as `segments` answers them, when they changed; an empty list when the
-  # session lost its client or went.
+  # session lost its client or went. An older bridge sends no theme.
   segments @2 (session :Text, polledAt :UInt64, segments :List(Segment),
-               windows :List(Window)) -> ();
+               windows :List(Window), theme :Theme) -> ();
 }
 
 interface Bridge {
@@ -94,9 +108,10 @@ interface Bridge {
   sessions @1 () -> (polledAt :UInt64, sessions :List(Session));
 
   # The segments of one session's active pane: git, agents and health; and
-  # its windows, which a bridge from before them leaves empty.
+  # its windows and theme, which a bridge from before them leaves empty.
   segments @2 (session :Text)
-           -> (polledAt :UInt64, segments :List(Segment), windows :List(Window));
+           -> (polledAt :UInt64, segments :List(Segment), windows :List(Window),
+               theme :Theme);
 
   # The agents waiting on the host, longest wait first.
   inbox @3 () -> (entries :List(Entry));

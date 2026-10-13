@@ -133,7 +133,8 @@ impl bridge::Server for Bridge {
             &answer.segments,
         );
         let windows = &answer.windows[..answer.windows.len().min(super::MAX_WINDOWS)];
-        write_windows(r.init_windows(windows.len() as u32), windows);
+        write_windows(r.reborrow().init_windows(windows.len() as u32), windows);
+        super::write_theme(r.init_theme(), &answer.theme);
         Ok(())
     }
 
@@ -215,7 +216,7 @@ impl bridge::Server for Bridge {
 struct Pushed {
     sessions: Option<Vec<Session>>,
     inbox: Option<Vec<crate::inbox::Entry>>,
-    segments: std::collections::HashMap<String, (Vec<Segment>, Vec<Window>)>,
+    segments: std::collections::HashMap<String, (Vec<Segment>, Vec<Window>, super::Theme)>,
 }
 
 /// Whether two inbox lists differ in anything the other side keeps.
@@ -244,8 +245,8 @@ fn inbox_differs(a: &[crate::inbox::Entry], b: &[crate::inbox::Entry]) -> bool {
 
 /// The sink calls one watch answer earns against what was sent before: the
 /// sessions and the inbox when they differ, each grouped session's segments
-/// and windows when either differs or is new, and empty lists for one no
-/// longer there.
+/// windows and theme when any of them differs or is new, and empty lists for
+/// one no longer there.
 /// Each call is waited for, so the other side hears them in order.
 async fn push(
     sink: &session_sink::Client,
@@ -284,6 +285,7 @@ async fn push(
     let now = crate::panes::now_secs();
     let mut gone: Vec<String> = pushed.segments.keys().cloned().collect();
     let mut windows = answer.windows;
+    let mut themes = answer.themes;
     for (grouped, segs) in answer.segments {
         gone.retain(|g| *g != grouped);
         let mut wins = windows
@@ -292,7 +294,12 @@ async fn push(
             .map(|(_, w)| std::mem::take(w))
             .unwrap_or_default();
         wins.truncate(super::MAX_WINDOWS);
-        let bar = (segs, wins);
+        let theme = themes
+            .iter_mut()
+            .find(|(g, _)| *g == grouped)
+            .map(|(_, t)| std::mem::take(t))
+            .unwrap_or_default();
+        let bar = (segs, wins, theme);
         if pushed.segments.get(&grouped) == Some(&bar) {
             continue;
         }
@@ -301,6 +308,7 @@ async fn push(
         req.get().set_polled_at(now);
         write_segments(req.get().init_segments(bar.0.len() as u32), &bar.0);
         write_windows(req.get().init_windows(bar.1.len() as u32), &bar.1);
+        super::write_theme(req.get().init_theme(), &bar.2);
         req.send().promise.await?;
         pushed.segments.insert(grouped, bar);
     }

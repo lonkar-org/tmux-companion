@@ -62,6 +62,11 @@ set -g  status-interval 1
 # switcher's rows, so a host looks the same wherever it is drawn.
 set -g @tc-host-fg colour203
 set -g @tc-host-bg colour233
+# A copy made inside a mirror session is the host's tmux sending it here as
+# OSC 52, and tmux's default, `external`, drops what a program in a pane
+# sends, so it never reaches your terminal's clipboard. `on` lets any program
+# in a pane set the clipboard, never read it, which is what a mirror needs.
+set -s set-clipboard on
 #
 # In a mirror session the name is the host's session, then `@vm` and the ssh
 # glyph in the host colour, the words saying where you are; see `M-s` below.

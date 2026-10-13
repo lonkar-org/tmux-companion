@@ -33,6 +33,23 @@ use crate::{
 /// for anything of their own.
 pub const GONE: i32 = 75;
 
+/// The status `host attach` asks the host to exit with when the directory a
+/// new session was to start in isn't there. tmux itself would start the
+/// session in the home directory and record the missing one as its path.
+pub const NO_DIR: i32 = 76;
+
+/// A directory on the host as one shell word for the host's shell: `~` and
+/// `~/...` are the host's home, which nothing here knows, and anything else
+/// is quoted as it is.
+pub fn host_dir_word(dir: &str) -> String {
+    use crate::link::quote;
+    match dir.strip_prefix('~') {
+        Some("") | Some("/") => "\"$HOME\"".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("\"$HOME\"{}", quote(rest)),
+        _ => quote(dir),
+    }
+}
+
 /// What a remote row stands for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
@@ -284,6 +301,11 @@ pub enum HostAction {
         /// attach to the session it names
         #[arg(long, conflicts_with = "create")]
         dir: Option<String>,
+        /// With --create, start the session it makes in DIR on the host; `~`
+        /// is the host's home. A DIR that isn't there makes nothing and says
+        /// so
+        #[arg(long = "in", value_name = "DIR", requires = "create")]
+        start_in: Option<String>,
         /// After attaching, go to this window of the session on the host
         #[arg(long)]
         window: Option<u32>,
@@ -305,6 +327,8 @@ pub struct Shim {
     pub create: bool,
     /// Start the session with `project --detached DIR` on the host first.
     pub dir: Option<String>,
+    /// With `create`, the directory on the host the session starts in.
+    pub start_in: Option<String>,
     /// The window on the host to go to once attached.
     pub window: Option<u32>,
     /// The pane on the host to go to once attached, `%N`.
@@ -328,6 +352,7 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
             session,
             create,
             dir,
+            start_in,
             window,
             pane,
             wait,
@@ -340,6 +365,7 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
             let shim = Shim {
                 create,
                 dir,
+                start_in,
                 window,
                 pane,
                 wait,
@@ -347,6 +373,150 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
             attach(&host, &session, &shim).await
         }
     }
+}
+
+/// A new session on `host`, asked for in two pickers in this popup: its
+/// name, unless one was typed as `name@host`, then the directory on the host
+/// it starts in. Nothing typed goes through tmux's parser or a shell on the
+/// way: the name and the directory travel as arguments and are quoted once,
+/// for the host's shell. Esc at either step makes nothing.
+pub async fn new_session(host: &str, name: Option<&str>, views: &[HostView]) -> anyhow::Result<()> {
+    let config = crate::cli::config_or_default();
+    let theirs: Vec<String> = views
+        .iter()
+        .filter(|v| v.name == host)
+        .flat_map(|v| v.sessions.iter().map(|s| s.name.clone()))
+        .collect();
+    let name = match name {
+        Some(n) => n.to_string(),
+        None => match ask_name(host, &theirs, &config)? {
+            Asked::New(n) => n,
+            Asked::Existing(n) => return open(host, &n, false, false).await,
+            Asked::Nothing => return Ok(()),
+        },
+    };
+    let Some(dir) = ask_dir(host, &name, &config)? else {
+        return Ok(());
+    };
+    // `~` too, as `"$HOME"`: without `-c` tmux starts the session wherever
+    // the remote shell happens to be, which isn't always the home directory.
+    open_new(host, &name, true, Some(&dir), false).await
+}
+
+/// What the name step ended with.
+enum Asked {
+    /// A name no session on the host has.
+    New(String),
+    /// One of the host's sessions, picked from the list.
+    Existing(String),
+    /// Esc.
+    Nothing,
+}
+
+/// The words of the create row for a typed name on `host`, or `None` for an
+/// empty one or one the host already has.
+pub fn new_name_row(typed: &str, host: &str, theirs: &[String]) -> Option<String> {
+    let name = crate::sessions::start::tmux_name(typed.trim());
+    (!name.is_empty() && !theirs.contains(&name)).then(|| format!("new session {name} on {host}"))
+}
+
+/// The words of the create row for a typed directory on `host`, or `None`
+/// for an empty one or one already listed.
+pub fn new_dir_row(typed: &str, host: &str, listed: &[String]) -> Option<String> {
+    let dir = typed.trim();
+    (!dir.is_empty() && !listed.iter().any(|l| l == dir))
+        .then(|| format!("start in {dir} on {host}"))
+}
+
+fn ask_name(
+    host: &str,
+    theirs: &[String],
+    config: &crate::config::Config,
+) -> anyhow::Result<Asked> {
+    let items: Vec<crate::picker::Item> = theirs.iter().map(crate::picker::Item::new).collect();
+    let chrome = crate::picker::Chrome {
+        title: format!("[ New session on {host} ]"),
+        footer: "type a name   enter make it   esc cancel".into(),
+        prompt: "name> ".into(),
+        icon: crate::tmux::icons::SESSION.into(),
+        create: Some({
+            let (host, theirs) = (host.to_string(), theirs.to_vec());
+            crate::picker::Create::new(move |q| new_name_row(q, &host, &theirs))
+        }),
+        ..Default::default()
+    }
+    .laid_out_like(&config.picker, crate::config::Picker::Project);
+    Ok(match crate::picker::run_with_query(items, "", &chrome)? {
+        crate::picker::Outcome::Typed(q) => {
+            let name = crate::sessions::start::tmux_name(q.trim());
+            if name.is_empty() {
+                Asked::Nothing
+            } else if theirs.contains(&name) {
+                Asked::Existing(name)
+            } else {
+                Asked::New(name)
+            }
+        }
+        crate::picker::Outcome::Chosen(i) => match theirs.get(i) {
+            Some(n) => Asked::Existing(n.clone()),
+            None => Asked::Nothing,
+        },
+        _ => Asked::Nothing,
+    })
+}
+
+/// The directory step: the host's home first, then the directories the host
+/// lists, which come over the link after the first frame, and a typed path
+/// as a row of its own. `~` stands for the home directory.
+fn ask_dir(
+    host: &str,
+    name: &str,
+    config: &crate::config::Config,
+) -> anyhow::Result<Option<String>> {
+    let listed = std::sync::Arc::new(std::sync::Mutex::new(vec!["~".to_string()]));
+    let items = vec![crate::picker::Item::new("~").in_cells(vec![
+        crate::picker::Cell::strong("~".to_string()),
+        crate::picker::Cell::dim(format!("{host}'s home")),
+    ])];
+    let later = {
+        let (host, listed) = (host.to_string(), listed.clone());
+        crate::picker::Later::new(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return Vec::new();
+            };
+            let paths = rt.block_on(host_dirs(&host)).unwrap_or_default();
+            if let Ok(mut l) = listed.lock() {
+                l.extend(paths.iter().cloned());
+            }
+            paths.iter().map(crate::picker::Item::new).collect()
+        })
+    };
+    let chrome = crate::picker::Chrome {
+        title: format!("[ {name} on {host}: where ]"),
+        footer: "enter start there   type a path on the host   esc cancel".into(),
+        prompt: "directory> ".into(),
+        icon: crate::tmux::icons::SESSION.into(),
+        keep_order: true,
+        create: Some({
+            let (host, listed) = (host.to_string(), listed.clone());
+            crate::picker::Create::new(move |q| {
+                let l = listed.lock().map(|l| l.clone()).unwrap_or_default();
+                new_dir_row(q, &host, &l)
+            })
+        }),
+        ..Default::default()
+    }
+    .laid_out_like(&config.picker, crate::config::Picker::Project);
+    let outcome = crate::picker::run_from(items, "", &chrome, 0, Some(later))?;
+    let listed = listed.lock().map(|l| l.clone()).unwrap_or_default();
+    Ok(match outcome {
+        crate::picker::Outcome::Typed(q) if !q.trim().is_empty() => Some(q.trim().to_string()),
+        crate::picker::Outcome::Chosen(i) => listed.get(i).cloned(),
+        _ => None,
+    })
 }
 
 /// The remote rows as picker items: the group line with the ssh glyph and
@@ -612,6 +782,9 @@ pub fn shim_line(exe: &str, host: &str, remote: &str, shim: &Shim) -> String {
     if let Some(dir) = &shim.dir {
         line.push_str(&format!(" --dir {}", quote(dir)));
     }
+    if let Some(dir) = shim.start_in.as_deref().filter(|_| shim.create) {
+        line.push_str(&format!(" --in {}", quote(dir)));
+    }
     if let Some(w) = shim.window {
         line.push_str(&format!(" --window {w}"));
     }
@@ -689,11 +862,23 @@ fn chained(cmds: Vec<Vec<String>>) -> Vec<String> {
 /// A host whose `open` is `handover` hands this terminal over instead,
 /// unless `detach` asks for nothing to be gone to.
 pub async fn open(host: &str, remote: &str, create: bool, detach: bool) -> anyhow::Result<()> {
+    open_new(host, remote, create, None, detach).await
+}
+
+/// [`open`], with the directory on the host a session it makes starts in:
+/// the create row and ctrl-o in `M-s`, and `sessions start NAME@HOST DIR`.
+pub async fn open_new(
+    host: &str,
+    remote: &str,
+    create: bool,
+    start_in: Option<&str>,
+    detach: bool,
+) -> anyhow::Result<()> {
     let handover = !detach
         && find_host(host)
             .await
             .is_some_and(|h| h.open == crate::config::HostOpen::Handover);
-    open_as(host, remote, create, detach, handover).await
+    open_as(host, remote, create, start_in, detach, handover).await
 }
 
 /// [`open`] the other way from the host's `open`: what alt-enter on a
@@ -703,21 +888,24 @@ pub async fn open_other(host: &str, remote: &str) -> anyhow::Result<()> {
     let mirrors = find_host(host)
         .await
         .is_none_or(|h| h.open == crate::config::HostOpen::Mirror);
-    open_as(host, remote, false, false, mirrors).await
+    open_as(host, remote, false, None, false, mirrors).await
 }
 
 async fn open_as(
     host: &str,
     remote: &str,
     create: bool,
+    start_in: Option<&str>,
     detach: bool,
     handover: bool,
 ) -> anyhow::Result<()> {
+    let start_in = start_in.filter(|_| create);
     if handover {
-        return hand_over(host, remote, create).await;
+        return hand_over(host, remote, create, start_in).await;
     }
     let shim = Shim {
         create,
+        start_in: start_in.map(str::to_string),
         ..Shim::default()
     };
     open_with(host, remote, &shim, detach).await
@@ -725,16 +913,23 @@ async fn open_as(
 
 /// The remote command a handover runs on the host: this terminal attached
 /// to the session itself, with the host's own bar and keys. `create` makes
-/// it first when the host has none by that name.
-pub fn handover_remote_line(remote: &str, create: bool) -> String {
+/// it first when the host has none by that name, in `start_in` when given.
+pub fn handover_remote_line(remote: &str, create: bool, start_in: Option<&str>) -> String {
     use crate::link::quote;
-    if create {
-        format!("exec tmux new-session -A -s {}", quote(remote))
-    } else {
-        format!(
+    match (create, start_in) {
+        (true, Some(dir)) => {
+            let d = host_dir_word(dir);
+            format!(
+                "tmux has-session -t {} 2>/dev/null || [ -d {d} ] || exit {NO_DIR}; exec tmux new-session -A -s {} -c {d}",
+                quote(&format!("={remote}")),
+                quote(remote)
+            )
+        }
+        (true, None) => format!("exec tmux new-session -A -s {}", quote(remote)),
+        (false, _) => format!(
             "exec tmux attach-session -t {}",
             quote(&format!("={remote}"))
-        )
+        ),
     }
 }
 
@@ -746,9 +941,16 @@ pub fn handover_remote_line(remote: &str, create: bool) -> String {
 /// says so in one line and waits for Enter first, so the reason isn't wiped
 /// before it is read. Every word is quoted for the shell: the session names
 /// come from the host and from this server.
-pub fn handover_line(host: &Host, remote: &str, create: bool, socket: &str, left: &str) -> String {
+pub fn handover_line(
+    host: &Host,
+    remote: &str,
+    create: bool,
+    start_in: Option<&str>,
+    socket: &str,
+    left: &str,
+) -> String {
     use crate::link::quote;
-    let ssh: Vec<String> = attach_argv(host, &handover_remote_line(remote, create))
+    let ssh: Vec<String> = attach_argv(host, &handover_remote_line(remote, create, start_in))
         .iter()
         .map(|w| quote(w))
         .collect();
@@ -771,12 +973,17 @@ pub fn handover_line(host: &Host, remote: &str, create: bool, socket: &str, left
 /// in. Said on the message line first, since the screen is about to become
 /// somebody else's. Outside tmux there is no client to replace, and the
 /// attach runs in this terminal.
-pub async fn hand_over(host_name: &str, remote: &str, create: bool) -> anyhow::Result<()> {
+pub async fn hand_over(
+    host_name: &str,
+    remote: &str,
+    create: bool,
+    start_in: Option<&str>,
+) -> anyhow::Result<()> {
     let Some(host) = find_host(host_name).await else {
         anyhow::bail!("no host called {host_name}; `tmux-companion hosts` lists them");
     };
     if std::env::var_os("TMUX").is_none() {
-        let argv = attach_argv(&host, &handover_remote_line(remote, create));
+        let argv = attach_argv(&host, &handover_remote_line(remote, create, start_in));
         println!("connecting to {host_name} for {remote}");
         let status = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -800,7 +1007,7 @@ pub async fn hand_over(host_name: &str, remote: &str, create: bool) -> anyhow::R
     else {
         anyhow::bail!("no client to hand over: tmux didn't say which session this is");
     };
-    let line = handover_line(&host, remote, create, socket, left);
+    let line = handover_line(&host, remote, create, start_in, socket, left);
     let said = format!("{remote} on {host_name}, handed over: detach there to come back to {left}");
     let out = crate::tmux::command()
         .args([
@@ -940,6 +1147,10 @@ pub async fn open_with(host: &str, remote: &str, shim: &Shim, detach: bool) -> a
 /// it as a project with `dir`), then a grouped session for this machine's
 /// mirror attached to it, with `@tc-mirror` naming this machine, its bar off
 /// and gone when this machine detaches, then the window and pane asked for.
+/// `detach-on-destroy on` is the grouped session's own: when the session's
+/// last pane goes, a host with it `off` moved this client to another of its
+/// sessions, so `vagrant@vm` went on showing `workspace` and every mirror
+/// row led there. Detached, the shim ends cleanly and the mirror closes.
 /// Every name goes through [`crate::link::quote`], since ssh joins its
 /// arguments into one line for the remote shell; `machine` is already made
 /// of letters, digits, `-` and `_`, and a pane is `%` and digits or left out.
@@ -959,10 +1170,19 @@ pub fn remote_line(remote: &str, grouped: &str, machine: &str, shim: &Shim) -> S
         None => {
             let exact = quote(&format!("={remote}"));
             let first = if shim.create {
-                format!(
-                    "tmux has-session -t {exact} 2>/dev/null || tmux new-session -d -s {}; ",
-                    quote(remote)
-                )
+                // In the directory asked for, checked first: tmux would start
+                // a missing one in the home directory without a word.
+                let made = match shim.start_in.as_deref() {
+                    Some(dir) => {
+                        let d = host_dir_word(dir);
+                        format!(
+                            "{{ [ -d {d} ] || exit {NO_DIR}; tmux new-session -d -s {} -c {d}; }}",
+                            quote(remote)
+                        )
+                    }
+                    None => format!("tmux new-session -d -s {}", quote(remote)),
+                };
+                format!("tmux has-session -t {exact} 2>/dev/null || {made}; ")
             } else {
                 format!("tmux has-session -t {exact} 2>/dev/null || exit {GONE}; ")
             };
@@ -970,7 +1190,7 @@ pub fn remote_line(remote: &str, grouped: &str, machine: &str, shim: &Shim) -> S
         }
     };
     let mut line = format!(
-        "{first}exec tmux new-session -A -t {exact} -s {grouped} \\; set-option {} {} \\; set-option status off \\; set-option destroy-unattached on",
+        "{first}exec tmux new-session -A -t {exact} -s {grouped} \\; set-option {} {} \\; set-option status off \\; set-option destroy-unattached on \\; set-option detach-on-destroy on",
         crate::link::MIRROR_OPTION,
         quote(machine),
     );
@@ -1002,6 +1222,9 @@ pub fn ending(host: &str, remote: &str, status: Option<i32>, tail: &[String]) ->
     match status {
         Some(0) => None,
         Some(GONE) => Some(format!("{remote} no longer exists on {host}")),
+        Some(NO_DIR) => Some(format!(
+            "{remote} wasn't made on {host}: the directory asked for isn't there"
+        )),
         Some(code) => Some(format!(
             "the connection to {host} ended: {}",
             last.unwrap_or_else(|| format!("exit status {code}"))
@@ -1035,10 +1258,18 @@ pub async fn attach(host_name: &str, remote: &str, shim: &Shim) -> anyhow::Resul
         }
     }
     let machine = mirror::machine();
-    let grouped = mirror::grouped_name(remote, &machine);
-    let line = remote_line(remote, &grouped, &machine, shim);
-    let argv = attach_argv(&host, &line);
+    let mut remote = remote.to_string();
     loop {
+        // The session's name on the host, as the mirror session says it
+        // now: a rename there renames the mirror session and its
+        // `@tc-remote`, and this pane's own arguments still say the old one.
+        if let Some(now) = own_remote() {
+            remote = now;
+        }
+        let remote = remote.as_str();
+        let grouped = mirror::grouped_name(remote, &machine);
+        let line = remote_line(remote, &grouped, &machine, shim);
+        let argv = attach_argv(&host, &line);
         print!("\x1b[H\x1b[2J");
         println!("connecting to {host_name} for {remote}");
         let _ = std::io::stdout().flush();
@@ -1055,6 +1286,17 @@ pub async fn attach(host_name: &str, remote: &str, shim: &Shim) -> anyhow::Resul
         }
         return Ok(());
     }
+}
+
+/// The `@tc-remote` of the session this pane is in, when it has one.
+fn own_remote() -> Option<String> {
+    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty())?;
+    let out = crate::tmux::command_sync()
+        .args(["display-message", "-p", "-t", &pane, "#{@tc-remote}"])
+        .output()
+        .ok()?;
+    let r = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !r.is_empty()).then_some(r)
 }
 
 /// Run the attach with this terminal, keeping the last lines its command
@@ -1161,6 +1403,74 @@ pub async fn forget_row(host: &str, session: &str) {
 mod tests {
     use super::*;
     use crate::{config::LinkMode, link::manager::Kept};
+
+    #[test]
+    fn a_directory_on_the_host_is_one_shell_word_with_its_own_home() {
+        assert_eq!(host_dir_word("~"), "\"$HOME\"");
+        assert_eq!(host_dir_word("~/"), "\"$HOME\"");
+        assert_eq!(host_dir_word("~/src/x"), "\"$HOME\"/src/x");
+        assert_eq!(host_dir_word("~/proj x"), "\"$HOME\"'/proj x'");
+        assert_eq!(host_dir_word("/srv/a b"), "'/srv/a b'");
+        assert_eq!(host_dir_word("/x'; rm -rf /"), r"'/x'\''; rm -rf /'");
+        // `~user` is somebody's home on the host only by the host's say.
+        assert_eq!(host_dir_word("~bob/x"), "'~bob/x'");
+    }
+
+    #[test]
+    fn a_new_session_made_in_a_directory_checks_it_first() {
+        let shim = Shim {
+            create: true,
+            start_in: Some("~/proj x".into()),
+            ..Shim::default()
+        };
+        let line = remote_line("docs", "docs~mac", "mac", &shim);
+        assert!(
+            line.starts_with(&format!(
+                "tmux has-session -t '=docs' 2>/dev/null || {{ [ -d \"$HOME\"'/proj x' ] || exit {NO_DIR}; tmux new-session -d -s docs -c \"$HOME\"'/proj x'; }}; "
+            )),
+            "{line}"
+        );
+        assert!(line.contains("set-option detach-on-destroy on"), "{line}");
+        assert!(shim_line("tc", "vm", "docs", &shim).ends_with(" --create --in '~/proj x'"));
+        // Without --create there is nothing to start anywhere.
+        let plain = Shim {
+            start_in: Some("~/x".into()),
+            ..Shim::default()
+        };
+        assert!(!shim_line("tc", "vm", "docs", &plain).contains("--in"));
+        assert_eq!(
+            ending("vm", "docs", Some(NO_DIR), &[]).as_deref(),
+            Some("docs wasn't made on vm: the directory asked for isn't there")
+        );
+        assert!(
+            handover_remote_line("docs", true, Some("~")).contains(&format!(
+                "[ -d \"$HOME\" ] || exit {NO_DIR}; exec tmux new-session -A -s docs -c \"$HOME\""
+            ))
+        );
+    }
+
+    #[test]
+    fn the_create_rows_say_what_enter_makes_and_only_when_it_is_new() {
+        let theirs = vec!["api".to_string()];
+        assert_eq!(
+            new_name_row("docs", "vm", &theirs).as_deref(),
+            Some("new session docs on vm")
+        );
+        assert_eq!(
+            new_name_row("my.app", "vm", &theirs).as_deref(),
+            Some("new session my_app on vm"),
+            "the name tmux will keep"
+        );
+        assert_eq!(new_name_row("api", "vm", &theirs), None);
+        assert_eq!(new_name_row("  ", "vm", &theirs), None);
+        let listed = vec!["~".to_string(), "/srv/a".to_string()];
+        assert_eq!(
+            new_dir_row("~/x", "vm", &listed).as_deref(),
+            Some("start in ~/x on vm")
+        );
+        assert_eq!(new_dir_row("/srv/a", "vm", &listed), None);
+        assert_eq!(new_dir_row("", "vm", &listed), None);
+    }
 
     fn view(name: &str, state: State, sessions: &[(&str, u32)]) -> HostView {
         HostView {
@@ -1352,7 +1662,14 @@ mod tests {
             .filter(|s| *s == "sh" || std::path::Path::new(s).exists())
             .collect();
         for shell in shells {
-            let line = handover_line(&host(&ssh), nasty, false, "/tmp/a b/default", "here's");
+            let line = handover_line(
+                &host(&ssh),
+                nasty,
+                false,
+                None,
+                "/tmp/a b/default",
+                "here's",
+            );
             let said = run(shell, &line);
             let lines: Vec<&str> = said.lines().collect();
             assert_eq!(
@@ -1369,7 +1686,7 @@ mod tests {
                 "{shell}: a name ran something"
             );
 
-            let line = handover_line(&host(&dropped), "api", false, "/tmp/s", "here");
+            let line = handover_line(&host(&dropped), "api", false, None, "/tmp/s", "here");
             let said = run(shell, &line);
             assert_eq!(
                 said.lines().collect::<Vec<_>>(),
@@ -1382,7 +1699,7 @@ mod tests {
             );
         }
         assert_eq!(
-            handover_remote_line("api", true),
+            handover_remote_line("api", true, None),
             "exec tmux new-session -A -s api"
         );
     }

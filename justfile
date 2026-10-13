@@ -374,6 +374,16 @@ reap-tmux *ARGS:
 # behind with nothing to stop it; they accumulate one per run. --min-age keeps
 # the reaper off a suite running in another terminal.
 
+# A throwaway tmux server and daemon for trying something by hand: HOME, XDG,
+# TMUX_TMPDIR and TMUX_COMPANION_SOCK all inside one directory, TMUX unset,
+# and both torn down on the way out. Anything run by hand against a debug
+# build goes through this; scripts/sandbox-tmux.sh says what leaked before.
+
+# A shell, or a command, in a sandbox: `just sandbox bash -c '...'`.
+[positional-arguments]
+sandbox *CMD:
+    ./scripts/sandbox-tmux.sh "$@"
+
 # Every test, including the ones a failure would otherwise hide.
 test:
     #!/usr/bin/env bash
@@ -400,6 +410,25 @@ test-e2e:
     set -uo pipefail
     trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
     nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file --test remote
+
+# The loop while fixing one behaviour: the integration tests whose names hold
+# FILTER, reaped on the way out like `test-e2e`, on one pinned tmux when
+# VERSION is given and on whatever tmux is on PATH when it isn't. A bare
+# `cargo test --test e2e -- name` leaks a daemon when it fails and runs one
+# suite; this runs all four, so a name in `remote.rs` is found too.
+
+# Integration tests matching a name: `just test-match grouped 3.4`.
+test-match FILTER VERSION="":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if [ -n "{{VERSION}}" ]; then
+      bin=$(./scripts/tmux-build.sh "{{VERSION}}") || exit 1
+      export PATH="$bin:$PATH"
+      [ "$(tmux -V)" = "tmux {{VERSION}}" ] || { echo "PATH gives $(tmux -V), not {{VERSION}}" >&2; exit 1; }
+    fi
+    echo "== $(tmux -V)"
+    trap './scripts/reap-daemons.sh --force --sweep-files --quiet || true' EXIT INT TERM
+    nice -n 15 cargo test -j 4 --no-fail-fast --test e2e --test socket_round_trip --test config_file --test remote -- "{{FILTER}}"
 
 # Every test on every tmux CI tests, one after another, each built once from
 # its pinned tarball by scripts/tmux-build.sh: the same legs as ci.yml's tests

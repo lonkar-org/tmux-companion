@@ -1544,6 +1544,218 @@ fn a_new_session_is_painted_by_the_hook_the_example_config_sets() {
     );
 }
 
+/// A stem from the bundled six that neither name would get by itself, by
+/// name or as the configured default, so a test that finds it on a session
+/// knows the pick or the map put it there, with the `@theme-name` it sets.
+fn a_theme_neither_would_get(a: &str, b: &str) -> (String, String) {
+    let six: Vec<&str> = tmux_companion::theme::BASE_THEMES
+        .iter()
+        .map(|(stem, _, _)| *stem)
+        .collect();
+    let by = |n: &str| tmux_companion::theme::theme_by_name(n, &six).unwrap_or_default();
+    let (ta, tb) = (by(a), by(b));
+    let default = tmux_companion::config::Theme::default().default;
+    let stem = six
+        .iter()
+        .find(|s| **s != ta && **s != tb && **s != default)
+        .expect("six themes, two names and the default leave one");
+    let (_, name, _) = tmux_companion::theme::BASE_THEMES
+        .iter()
+        .find(|(s, _, _)| s == stem)
+        .expect("a stem from the list");
+    (stem.to_string(), name.to_string())
+}
+
+/// A mirror attach reaches `api` on its host through the grouped session
+/// `api~mac`, whose bar is off. A theme picked there went to `api~mac` alone,
+/// so nobody saw it: not the mirror, not somebody attached to `api` over a
+/// plain ssh. The pick has to paint the group and be remembered under its
+/// name.
+#[test]
+fn a_pick_in_a_grouped_session_paints_the_group_and_is_remembered() {
+    let Some(t) = Tmux::start("themegroup") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    let (_, err, ok) = t.run(&["theme", "init"]);
+    assert!(ok, "theme init failed: {err}");
+
+    t.session("api", &dir);
+    t.must(&["new-session", "-d", "-t", "=api", "-s", "api~mac"]);
+    t.must(&["set-option", "-t", "=api~mac:", "@tc-mirror", "mac"]);
+    // The hook paints both as they are made; let it finish before the pick,
+    // or it lands after it and the test reads the hook's colour.
+    for s in ["=api:", "=api~mac:"] {
+        assert!(
+            t.until(5, |t| !t
+                .tmux(&["show", "-t", s, "-v", "@theme-name"])
+                .is_empty()),
+            "the hook never painted {s}"
+        );
+    }
+
+    let (want, name) = a_theme_neither_would_get("api", "api~mac");
+    let exe = t.binary.display().to_string();
+    let pane = t
+        .must(&[
+            "new-window",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            "=api~mac:",
+            &format!("{exe} theme pick"),
+        ])
+        .trim()
+        .to_string();
+    assert!(
+        t.until(10, |t| t.capture(&pane).contains("Theme")),
+        "the picker never drew: {}",
+        t.capture(&pane)
+    );
+    t.must(&["send-keys", "-t", &pane, "-l", &want]);
+    t.must(&["send-keys", "-t", &pane, "Enter"]);
+
+    for s in ["=api:", "=api~mac:"] {
+        assert!(
+            t.until(5, |t| t.tmux(&["show", "-t", s, "-v", "@theme-name"])
+                == name),
+            "{s} shows {:?}, picked {name}",
+            t.tmux(&["show", "-t", s, "-v", "@theme-name"])
+        );
+    }
+    // The name the theme travels under to a mirror, the file's and not the
+    // one it calls itself.
+    assert_eq!(t.tmux(&["show", "-t", "=api:", "-v", "@theme-file"]), want);
+    let map = std::fs::read_to_string(t.sandbox.join("config/tmux/themes/_project-map.tsv"))
+        .unwrap_or_default();
+    assert!(
+        map.lines().any(|l| l == format!("api\t{want}")),
+        "the pick was not remembered under the group's name: {map:?}"
+    );
+    assert!(!map.contains("api~mac"), "{map:?}");
+}
+
+/// The `session-created` hook on a grouped session paints it with its
+/// group's theme. With its own, a mirror attaching to `api` repainted the
+/// windows the two share in a colour `api` never had.
+#[test]
+fn the_hook_paints_a_grouped_session_with_its_groups_theme() {
+    let Some(t) = Tmux::start("themegroupedhook") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    let (_, err, ok) = t.run(&["theme", "init"]);
+    assert!(ok, "theme init failed: {err}");
+    let (want, name) = a_theme_neither_would_get("api", "api~mac");
+    std::fs::write(
+        t.sandbox.join("config/tmux/themes/_project-map.tsv"),
+        format!("api\t{want}\n"),
+    )
+    .unwrap();
+
+    t.session("api", &dir);
+    t.must(&["new-session", "-d", "-t", "=api", "-s", "api~mac"]);
+    assert!(
+        t.until(5, |t| t.tmux(&[
+            "show",
+            "-t",
+            "=api~mac:",
+            "-v",
+            "@theme-name"
+        ]) == name),
+        "api~mac shows {:?}, its group has {name}",
+        t.tmux(&["show", "-t", "=api~mac:", "-v", "@theme-name"])
+    );
+}
+
+/// With `[theme] default = "by-name"`, a mirror session is painted by name as
+/// the session on its host, `api` for `api@vm`, so before the host's theme
+/// comes over the link it already has the colour the host gives `api`. The
+/// hook does it: `@tc-remote` is set in the same command as `new-session`,
+/// as `remote::mirror_commands` does, and the hook's `theme apply` sees it.
+#[test]
+fn a_mirror_session_is_painted_by_its_remote_name() {
+    let Some(t) = Tmux::start("thememirror") else {
+        return;
+    };
+    let dir = repo_with_changes(&t.sandbox);
+    let (_, err, ok) = t.run(&["theme", "init"]);
+    assert!(ok, "theme init failed: {err}");
+    std::fs::write(
+        t.sandbox.join("config/tmux-companion/config.toml"),
+        "[theme]\ndefault = \"by-name\"\n",
+    )
+    .unwrap();
+    t.session("here", &dir);
+    let six: Vec<&str> = tmux_companion::theme::BASE_THEMES
+        .iter()
+        .map(|(stem, _, _)| *stem)
+        .collect();
+    let by = |n: &str| tmux_companion::theme::theme_by_name(n, &six).unwrap_or_default();
+    // Names whose two colours differ, or the test can't tell them apart.
+    let remote = ["api", "web", "docs", "infra", "blog"]
+        .into_iter()
+        .find(|r| by(r) != by(&format!("{r}@vm")))
+        .expect("a name that hashes apart from its mirror's");
+    let session = format!("{remote}@vm");
+    t.must(&[
+        "new-session",
+        "-d",
+        "-s",
+        &session,
+        ";",
+        "set-option",
+        "-t",
+        &format!("={session}:"),
+        "@tc-remote",
+        remote,
+    ]);
+    let target = format!("={session}:");
+    assert!(
+        t.until(5, |t| t.tmux(&["show", "-t", &target, "-v", "@theme-file"])
+            == by(remote)),
+        "{session} has {:?}, {remote} by name is {}",
+        t.tmux(&["show", "-t", &target, "-v", "@theme-file"]),
+        by(remote)
+    );
+}
+
+/// ctrl-x on a host's line in `M-s` asks `forget vm? y/n` on the message
+/// line from inside the popup. Without `-b`, `command-prompt` holds the
+/// command that asked until it is answered, so the popup stayed open over
+/// the prompt and took the key meant for it. A real client in a real popup
+/// runs the prompt the switcher runs, with a stub for the binary that
+/// writes what it was asked, and `y` has to reach it.
+#[test]
+fn the_forget_question_can_be_answered_from_the_popup() {
+    let Some(h) = KeyHold::start_any("forgetprompt", "") else {
+        return;
+    };
+    let said = h.dir.join("said");
+    let stub = h.dir.join("stub.sh");
+    std::fs::write(
+        &stub,
+        format!("#!/bin/sh\necho \"$@\" > '{}'\n", said.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let prompt = tmux_companion::hosts::forget_prompt(&stub.display().to_string(), "vm");
+    let line = std::iter::once("tmux".to_string())
+        .chain(prompt.iter().map(|w| tmux_companion::link::quote(w)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    h.inner_tmux(&["display-popup", "-E", &line]);
+    h.wait_for("the question", || {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("forget vm?")
+    });
+    h.outer_tmux(&["send-keys", "-t", "o:0", "y"]);
+    h.wait_for("the answer to reach hosts forget", || {
+        std::fs::read_to_string(&said).is_ok_and(|s| s.contains("--answer=y"))
+    });
+}
+
 /// What the theme test needs to say when it fails on a machine nobody can
 /// reach: which tmux, which themes are on disk, what the tool printed, and
 /// what the sessions actually hold.

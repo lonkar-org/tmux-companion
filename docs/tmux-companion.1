@@ -631,6 +631,23 @@ The command is marked with how sure the capture was of it:
 for what the pane was started with,
 .Ql Guessed
 for what it happened to be running, and a shell for a pane sitting at a prompt.
+.It Ic sessions rename Ar new Op Fl -session Ar name
+Rename a session, the one this runs in unless
+.Fl -session
+names another, and its project colour with it.
+On a host, the grouped session each machine's mirror attached through
+becomes
+.Ql new~ Ns Ar machine
+in the same step, and each machine's mirror session follows on its own as
+.Ql new@host .
+Run inside such a grouped session, it renames the session the mirror
+stands for.
+Run on a mirror session here, it says to rename it on its host instead.
+A name another session has is refused and nothing moves.
+tmux's own
+.Ql prefix $
+keeps doing what it does, and inside a mirror it ends the same way: see
+.Sx OTHER HOSTS .
 .It Ic sessions idle Oo Fl -days Ar n Oc Op Fl -print
 Every live session with no client attached and nothing happening in it for
 longer than
@@ -663,7 +680,14 @@ on that host, described under
 .Sx OTHER HOSTS ,
 and makes
 .Ar name
-there first when the host has no session by it; this works whatever the
+there first when the host has no session by it, in
+.Ar dir
+on the host when one is given, where
+.Ql ~
+is the host's home; a
+.Ar dir
+the host doesn't have makes nothing and the mirror pane says so.
+This works whatever the
 host's link mode, since
 .Ql off
 stops the list and not the attach.
@@ -1332,12 +1356,31 @@ Bound to
 .Ql prefix e .
 .It Ic theme pick Op Fl -themes Ar dir
 Every theme with its colour beside it, applied on the spot and remembered
-against the project.
+against the project in
+.Pa _project-map.tsv .
+It goes to the session the key was pressed in, found from
+.Ev TMUX_PANE
+in a pane and from the session
+.Ev TMUX
+names in a popup;
 .Fl t
-applies it somewhere other than where you are; with nothing given it is the
-session an attached client is looking at, because the picker is a popup and a
-popup is not a client, so tmux's own idea of the current session is the one it
-touched last.
+applies it somewhere else.
+A session in a group is the group: every session in it is painted, the pick
+is remembered under the group's name, and a grouped session made later takes
+the group's theme from the
+.Ql session-created
+hook.
+That is what makes a pick inside a mirror session reach the host session for
+everybody, since the mirror attaches through a grouped session whose bar is
+off.
+Each client looking at the group is told
+.Ql theme Amber on api
+on its message line, a mirror's excepted.
+The session also gets
+.Ql @theme-file ,
+the theme's file name, which
+.Ql @theme-name
+is not.
 Bound to
 .Ql prefix C-t .
 .El
@@ -1634,7 +1677,22 @@ Enter on a host's session opens it as the host's
 .Ic open
 says, a mirror session by default, and a typed
 .Ql name@vm
-with no row for it makes that session on the host and opens it.
+that is no session's name gets a row of its own at the top,
+.Ql new session name on vm ,
+so a loose match further down can't take Enter.
+Enter on it asks where on the host the session starts, in a second list
+in the same popup: the host's home,
+.Ql ~ ,
+first, then the directories the host lists, and a typed path as a row
+saying
+.Ql start in ~/src/x on vm .
+Esc makes nothing.
+ctrl-o on a host's line, one of its sessions or a mirror session open here
+asks for the name first, in a list of the sessions the host already has
+with the same kind of row for a new one, then where.
+Nothing typed in either goes through tmux's command parser or a shell
+here: the name and the directory are arguments, quoted once for the
+host's shell.
 alt-enter on a host's session opens it the other way, once: it hands the
 terminal over for a host that mirrors, and mirrors one that hands over.
 A mirror session that is open is listed once, among this machine's sessions.
@@ -1872,7 +1930,17 @@ so this machine keeps its own current window there and two machines don't
 collide.
 The grouped session carries
 .Ql @tc-mirror ,
-has its bar off, and goes when this machine detaches; the host's own pickers,
+has its bar off, and goes when this machine detaches.
+It sets
+.Ql detach-on-destroy on
+for itself, whatever the host sets globally: when the last pane of
+.Ql api
+goes, the attach ends and
+.Ql api@vm
+closes, rather than the host moving it to another of its sessions while
+it is still called
+.Ql api@vm .
+The host's own pickers,
 .Ic brief ,
 .Ic sessions idle ,
 snapshots and bar leave it out, so a person at the host sees what they saw
@@ -1881,6 +1949,34 @@ Grouped sessions share their windows, and
 .Ql window-size
 is a window option, so both machines size the same windows; the host's
 setting is left as it is.
+.Pp
+A rename follows through.
+.Ql prefix $
+inside a mirror session goes to the host, where tmux renames the grouped
+session to what was typed; the host's daemon takes that as the session's
+new name, renames
+.Ql api
+to it and the grouped session to
+.Ql web~ Ns Ar machine ,
+and moves the session's project colour.
+A session renamed on the host any other way, with
+.Ic sessions rename
+or tmux itself, has its grouped sessions renamed to match.
+This machine finds the session again by its tmux id, which a rename keeps,
+renames the mirror session
+.Ql api@vm
+to
+.Ql web@vm
+and its
+.Ql @tc-remote
+to
+.Ql web ,
+and says
+.Ql api on vm is now web
+on the message line; the mirror pane attaches to the new name when it next
+connects.
+A host from before this build does neither, and the mirror keeps the old
+name until it is opened again.
 .Pp
 The mirror session sets
 .Ql prefix
@@ -1967,6 +2063,46 @@ in it is drawn, never expanded.
 A click on one of the host's windows in the list selects the mirror
 window and nothing more; the window key, or the host's prefix, moves
 between them.
+.Pp
+The theme in a mirror session is the host session's.
+.Ql prefix C-t
+there goes to the host, as every prefix key does, and the pick paints the
+host session and every session grouped with it; see
+.Ic theme pick .
+The host sends the theme with its segments, as its file name and the
+.Ql @theme-*
+settings that file makes, and the daemon here sets them on the mirror
+session between this machine's own
+.Pa _reset.tmux
+and
+.Pa _apply.tmux .
+They are set as arguments, never sourced: a key is
+.Ql @theme-
+and lowercase letters, digits and
+.Ql - ,
+a value a tmux colour, or words for
+.Ql @theme-name ,
+and anything else is dropped.
+A theme this machine has no file for is written to its themes directory, so
+the picker here lists it; a file already there by that name is left alone.
+A change of theme is said on the message line,
+.Ql theme Amber on api@vm ;
+opening a mirror session paints it without a word.
+The last theme heard is kept while the link is down.
+Before the first one arrives, and with a host whose build sends none, the
+.Ql session-created
+hook paints the mirror session as the session on the host,
+.Ql api
+rather than
+.Ql api@vm ,
+which with
+.Ic [theme] default = Qq by-name
+is the colour the host gives it by itself.
+Nothing is painted without a
+.Pa _apply.tmux
+here; run
+.Ic theme init
+first.
 .Pp
 When the attach ends other than by a detach the pane says how in one line,
 .Ql the connection to vm ended: Connection timed out ,
@@ -2122,7 +2258,7 @@ every comment kept, or its place in
 .Ql @tc-hosts .
 Refused, with the reason, while a mirror session to it is open.
 .It Xo Ic host attach Ar host Ar session
-.Op Fl -create
+.Op Fl -create Op Fl -in Ar dir
 .Op Fl -dir Ar dir
 .Op Fl -window Ar index
 .Op Fl -pane Ar id
@@ -2135,7 +2271,14 @@ then the host command with
 and the grouped attach, in this terminal, so anything ssh asks is asked
 where you can see it.
 .Fl -create
-makes the session on the host first when it isn't there.
+makes the session on the host first when it isn't there, in
+.Fl -in Ar dir
+when given, with
+.Ql ~
+the host's home; a
+.Ar dir
+the host doesn't have makes nothing, and the pane says
+.Ql docs wasn't made on vm: the directory asked for isn't there .
 .Fl -dir
 runs
 .Ic project --detached Ar dir
@@ -2711,9 +2854,13 @@ over five or of zero,
 .Ql monitor-bell
 or
 .Ql mouse
-turned off, and a
+turned off, a
 .Ql default-terminal
-with no 256 colours in its name.
+with no 256 colours in its name, and, with hosts configured, a
+.Ql set-clipboard
+other than
+.Ql on ,
+which keeps a copy made in a mirror session on the host.
 Each gets the value it has, what that costs, and the line for
 .Pa tmux.conf
 under it.

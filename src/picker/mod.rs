@@ -336,11 +336,31 @@ pub fn laid_out_toned(items: &[Item], order: &[usize]) -> Vec<(String, Spans)> {
             reordered(&all, order)
         })
         .collect();
-    let widths = column_widths(&cells);
+    // Two sets of widths: the rows shown before anything is typed, and the
+    // ones a search brings in. One set over both let a directory nobody can
+    // see yet widen the name column past the list's edge, and every
+    // session's host and path went off the right the moment the
+    // directories joined, which is the first key pressed.
+    let group = |searched: bool| -> Vec<Vec<&str>> {
+        cells
+            .iter()
+            .zip(items)
+            .filter(|(_, i)| i.searched_only == searched)
+            .map(|(c, _)| c.clone())
+            .collect()
+    };
+    let shown_widths = column_widths(&group(false));
+    let searched_widths = column_widths(&group(true));
     cells
         .iter()
         .zip(tones)
-        .map(|(row, tones)| {
+        .zip(items)
+        .map(|((row, tones), item)| {
+            let widths = if item.searched_only {
+                &searched_widths
+            } else {
+                &shown_widths
+            };
             let mut spans = Vec::new();
             let mut at = 0;
             for (i, cell) in row.iter().enumerate() {
@@ -348,7 +368,7 @@ pub fn laid_out_toned(items: &[Item], order: &[usize]) -> Vec<(String, Spans)> {
                 spans.push((at..at + len, tones.get(i).copied().unwrap_or_default()));
                 at += widths.get(i).copied().unwrap_or(len).max(len) + COLUMN_GAP;
             }
-            (lay_out(row, &widths), spans)
+            (lay_out(row, widths), spans)
         })
         .collect()
 }
@@ -465,6 +485,8 @@ pub struct Chrome {
     /// the answer, the session switcher's: sessions by last use, then the
     /// projects by last jump, whatever is typed.
     pub keep_order: bool,
+    /// A row for what the query asks for and no row is; see [`Create`].
+    pub create: Option<Create>,
 }
 
 /// What a picker calls with the selected row's index when a step key moves
@@ -482,6 +504,36 @@ impl OnStep {
         (self.0)(index)
     }
 }
+
+/// The row a picker puts first when the query asks for something no row is:
+/// given the query, the words for that row, or `None` for no row. Enter on it
+/// ends with the query, [`Outcome::Typed`], as Enter on a query that matched
+/// nothing does, so a fuzzy match further down can't take what was typed.
+#[derive(Clone)]
+pub struct Create(std::sync::Arc<CreateFn>);
+
+/// What a [`Create`] calls: the query in, the row's words or none out.
+type CreateFn = dyn Fn(&str) -> Option<String> + Send + Sync;
+
+impl Create {
+    /// A create row from `f`.
+    pub fn new(f: impl Fn(&str) -> Option<String> + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(f))
+    }
+
+    pub(crate) fn row_for(&self, query: &str) -> Option<String> {
+        (self.0)(query)
+    }
+}
+
+impl std::fmt::Debug for Create {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Create")
+    }
+}
+
+/// The index a create row reports: past any list a caller could build.
+pub const CREATE: usize = usize::MAX;
 
 impl std::fmt::Debug for OnStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -507,6 +559,7 @@ impl Default for Chrome {
             on_step: None,
             footer_as_written: false,
             keep_order: false,
+            create: None,
         }
     }
 }
@@ -552,6 +605,19 @@ impl Chrome {
             self.preview_title = v;
         }
         self.laid_out_by(&resolved)
+    }
+
+    /// `which` picker's size and place, none of its words: for a picker of
+    /// its own that has no table in the config and borrows another's layout.
+    /// `configured` would put that picker's label and hint on it, so a
+    /// `label` set for the project picker titled the journal, the `sessions
+    /// start` directory step and both steps of a new session on a host.
+    pub fn laid_out_like(
+        self,
+        layout: &crate::config::PickerLayout,
+        which: crate::config::Picker,
+    ) -> Self {
+        self.laid_out_by(&layout.resolved(which))
     }
 }
 
@@ -750,7 +816,9 @@ pub fn run_from(
     start_at: usize,
     later: Option<Later>,
 ) -> anyhow::Result<Outcome> {
-    if items.is_empty() && query.trim().is_empty() {
+    // A picker with a create row is asking for something new, and an empty
+    // list is where it starts: a host with no sessions yet.
+    if items.is_empty() && query.trim().is_empty() && chrome.create.is_none() {
         return Ok(Outcome::Cancelled);
     }
     let chrome = if previewable(chrome, &items) {
@@ -1096,6 +1164,23 @@ mod tests {
     }
 
     #[test]
+    fn a_row_only_a_search_shows_does_not_widen_the_rows_on_screen() {
+        let session = Item::new("api").in_cells(vec![Cell::strong("api"), Cell::dim("@vm")]);
+        let dir = Item::searched_only(Item::new("x").in_cells(vec![
+            Cell::strong("a-really-long-project-directory-name"),
+            Cell::dim("/home/x"),
+        ]));
+        let laid = laid_out_toned(&[session, dir], &[]);
+        assert!(laid[0].0.starts_with("api"), "{:?}", laid[0].0);
+        assert!(
+            laid[0].0.find("@vm").is_some_and(|at| at < 10),
+            "the host column sits after the session names, not after a hidden directory: {:?}",
+            laid[0].0
+        );
+        assert!(laid[1].0.contains("/home/x"), "{:?}", laid[1].0);
+    }
+
+    #[test]
     fn each_tone_covers_its_own_column_and_nothing_else() {
         // The whole point of cells: the state is amber, the path beside it is
         // not, and the padding between them belongs to neither.
@@ -1314,6 +1399,26 @@ mod tests {
         }
         .configured(&layout, crate::config::Picker::Theme);
         assert_eq!(other.title, "[ Theme ]");
+    }
+
+    #[test]
+    fn a_picker_that_borrows_a_layout_keeps_its_own_words() {
+        let layout = crate::config::PickerLayout {
+            project: crate::config::PickerOverride {
+                label: Some("[ Project ]".into()),
+                hint: Some("enter go".into()),
+                ..crate::config::PickerOverride::default()
+            },
+            ..crate::config::PickerLayout::default()
+        };
+        let chrome = Chrome {
+            title: "[ New session on vm ]".into(),
+            footer: "type a name".into(),
+            ..Chrome::default()
+        }
+        .laid_out_like(&layout, crate::config::Picker::Project);
+        assert_eq!(chrome.title, "[ New session on vm ]");
+        assert_eq!(chrome.footer, "type a name");
     }
 
     #[test]

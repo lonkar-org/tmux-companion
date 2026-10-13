@@ -113,6 +113,24 @@ pub fn parse_options(text: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
+/// The advice only a machine with hosts needs: a copy made inside a mirror
+/// session is the host's tmux writing OSC 52 into the mirror's pane, and
+/// with `set-clipboard external`, tmux's default, this machine's tmux drops
+/// what a program in a pane writes. `None` without hosts, or with it on.
+pub fn mirror_advice(
+    options: &std::collections::HashMap<String, String>,
+    has_hosts: bool,
+) -> Option<Advice> {
+    let value = options.get("set-clipboard")?;
+    (has_hosts && value != "on").then(|| Advice {
+        found: format!("set-clipboard {value}"),
+        why: "a copy made in a mirror session stays on the host: the host's tmux sends it \
+              to this one, which drops what a program in a pane sends"
+            .to_string(),
+        fix: "set -s set-clipboard on",
+    })
+}
+
 /// What is worth changing in a set of options.
 ///
 /// An option that is not there is an older tmux that doesn't have it, and
@@ -229,7 +247,12 @@ pub fn options_section_in(
         ));
         return out;
     };
-    let advice = advice(options);
+    let mut advice = advice(options);
+    let has_hosts = !crate::cli::config_or_default().hosts.is_empty();
+    // `off` already has its own line; this one is about `external`.
+    if options.get("set-clipboard").map(String::as_str) != Some("off") {
+        advice.extend(mirror_advice(options, has_hosts));
+    }
     if advice.is_empty() {
         out.push_str(&format!(
             "  {}\n",
@@ -711,6 +734,16 @@ mod tests {
     #[test]
     fn an_option_this_tmux_lacks_or_a_value_nobody_can_read_gets_no_line() {
         assert!(advice(&parse_options("")).is_empty());
+        let ext = parse_options("set-clipboard external");
+        assert_eq!(
+            mirror_advice(&ext, true).map(|a| a.fix),
+            Some("set -s set-clipboard on")
+        );
+        assert_eq!(mirror_advice(&ext, false), None, "no hosts, no mirrors");
+        assert_eq!(
+            mirror_advice(&parse_options("set-clipboard on"), true),
+            None
+        );
         assert!(advice(&parse_options("escape-time soon\nhistory-limit\n")).is_empty());
     }
 

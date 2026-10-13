@@ -633,6 +633,7 @@ mod tests {
             pid: 0,
             identity: None,
             mirrored: false,
+            theme_file: String::new(),
         }
     }
 

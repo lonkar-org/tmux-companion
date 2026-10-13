@@ -777,8 +777,12 @@ pub fn forget_prompt(exe: &str, host: &str) -> Vec<String> {
         crate::link::quote(exe),
         crate::link::quote(host)
     );
+    // `-b`: without it the tmux command waits for the answer, and the
+    // switcher's process, which asks from inside its popup, waited with it,
+    // the popup open over the question and taking the key meant for it.
     vec![
         "command-prompt".to_string(),
+        "-b".to_string(),
         "-1".to_string(),
         "-p".to_string(),
         format!("forget {host}? y/n"),
@@ -1366,9 +1370,12 @@ mod tests {
     #[test]
     fn the_forget_question_runs_the_answer_through_one_key_and_reopens() {
         let p = forget_prompt("/opt/tc bin/tmux-companion", "vm");
-        assert_eq!(p[..4], ["command-prompt", "-1", "-p", "forget vm? y/n"]);
         assert_eq!(
-            p[4],
+            p[..5],
+            ["command-prompt", "-b", "-1", "-p", "forget vm? y/n"]
+        );
+        assert_eq!(
+            p[5],
             "run-shell -b \"'/opt/tc bin/tmux-companion' hosts forget vm --answer=%1 --client '#{client_name}' --reopen\""
         );
     }

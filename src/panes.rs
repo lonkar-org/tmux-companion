@@ -142,6 +142,9 @@ pub struct Pane {
     /// grouped with a second time. Its active pane is what that machine's
     /// bar shows; counted as an agent, it would be every agent twice.
     pub mirrored: bool,
+    /// `#{@theme-file}`: the stem of the theme file the session was painted
+    /// from, empty before a theme or from a listing older than it.
+    pub theme_file: String,
 }
 
 impl Pane {
@@ -162,12 +165,13 @@ pub fn pane_format() -> &'static str {
     "#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t\
      #{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_active}\t\
      #{window_active}\t#{session_attached}\t#{window_activity}\t#{pane_in_mode}\t#{host}\t\
-     #{window_bell_flag}\t#{session_id}\t#{@theme-color-main-1}\t#{pane_pid}\t#{@tc-mirror}"
+     #{window_bell_flag}\t#{session_id}\t#{@theme-color-main-1}\t#{pane_pid}\t#{@tc-mirror}\t#{@theme-file}"
 }
 
 /// How many fields [`pane_format`] produces, and how many a listing from
-/// before the last one, `@tc-mirror`, has.
-const FIELDS: usize = 19;
+/// before each of the last two, `@tc-mirror` and `@theme-file`, has.
+const FIELDS: usize = 20;
+const FIELDS_BEFORE_THEME_FILE: usize = 19;
 const FIELDS_BEFORE_MIRRORS: usize = 18;
 
 /// Parse what [`pane_format`] produces, sorted by session, window and pane.
@@ -181,7 +185,7 @@ pub fn parse(text: &str) -> Vec<Pane> {
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            if f.len() != FIELDS && f.len() != FIELDS_BEFORE_MIRRORS {
+            if ![FIELDS, FIELDS_BEFORE_THEME_FILE, FIELDS_BEFORE_MIRRORS].contains(&f.len()) {
                 return None;
             }
             let on = |s: &str| s.trim() == "1";
@@ -205,6 +209,7 @@ pub fn parse(text: &str) -> Vec<Pane> {
                 pid: f[17].trim().parse().unwrap_or(0),
                 identity: None,
                 mirrored: f.get(18).is_some_and(|m| !m.trim().is_empty()),
+                theme_file: f.get(19).map(|t| t.trim().to_string()).unwrap_or_default(),
             })
         })
         .collect();

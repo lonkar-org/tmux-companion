@@ -148,6 +148,7 @@ async fn link_segments(session: &str, state: &Arc<Mutex<ServerState>>) -> anyhow
         polled_at: crate::panes::now_secs(),
         segments,
         windows: crate::link::windows_of(session, &panes),
+        theme: crate::link::theme_of(session, &panes, &crate::theme::default_themes_dir()),
     })
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -265,12 +266,18 @@ async fn link_watch(
     };
     let mut segments = Vec::new();
     let mut windows = Vec::new();
+    let mut themes = Vec::new();
+    let dir = crate::theme::default_themes_dir();
     for (grouped, machine) in shown {
         if machine != args.machine {
             continue;
         }
         if let Some(segs) = segments_of(&grouped, &panes, state).await {
             windows.push((grouped.clone(), crate::link::windows_of(&grouped, &panes)));
+            themes.push((
+                grouped.clone(),
+                crate::link::theme_of(&grouped, &panes, &dir),
+            ));
             segments.push((grouped, segs));
         }
     }
@@ -283,6 +290,7 @@ async fn link_watch(
         inbox,
         segments,
         windows,
+        themes,
     })
     .map_err(|e| anyhow::anyhow!("{e}"))
 }

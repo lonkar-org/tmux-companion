@@ -5,7 +5,78 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Added
+
+- The example configs set `set-clipboard on`, and `doctor` says to when
+  hosts are configured and it isn't: a copy in a mirror session is the
+  host's tmux sending OSC 52 here, and tmux's default `external` drops what
+  a program in a pane sends, so the copy stayed on the host.
+
+- Renames follow through mirrors. `prefix $` inside a mirror session renames
+  the session it stands for on the host, the host's daemon reading the
+  grouped session's new name as the session's; a session renamed on the
+  host any other way has its grouped sessions renamed to match; and each
+  machine's mirror follows, `api@vm` to `web@vm`, said on the message line.
+  `sessions rename NEW` does it on purpose. The project colour moves with
+  the name. Both machines need this build.
+
+- `M-s` makes a session on a host where it can be found. A typed `name@vm`
+  that is no session's name gets a row of its own at the top, `new session
+  name on vm`, and ctrl-o on any of a host's rows asks for the name, from a
+  list of the host's sessions. Either then asks where on the host it
+  starts: `~`, the host's directories, or a typed path. `sessions start
+  NAME@HOST DIR` and `host attach --create --in DIR` do the same; a
+  directory the host doesn't have makes nothing and says so, where tmux
+  would have started the session in the home directory without a word.
+
+- A mirror session shows its host session's theme. The host sends the theme's
+  file name and its `@theme-*` settings with its segments, and this machine
+  sets them on the mirror session as arguments between its own `_reset.tmux`
+  and `_apply.tmux`, checked first: a colour, or words for `@theme-name`, and
+  nothing else. A theme this machine doesn't have is written to its themes
+  directory. A pick on the host is followed within a second and said on the
+  message line here. With `default = "by-name"`, a mirror session is named
+  as its host session, `api` and not `api@vm`, so it has the host's colour
+  before the link says anything. Both machines need this build.
+
 ### Fixed
+
+- A `label` or `hint` set under `[picker.project]` also titled the journal,
+  the directory step of `sessions start`, and both steps of a new session on
+  a host, which share the project picker's size but are pickers of their own.
+  They keep that size and their own words now.
+
+- ctrl-x on a host's line in `M-s` asked `forget vm? y/n` and couldn't be
+  answered: the question waited for its answer from inside the popup, which
+  stayed open over it and took the key. It now asks and lets the popup go.
+
+- A theme picked in a renamed session was remembered under the session's
+  old name: tmux keeps a group's first name for good, and the pick used it.
+  It now uses the name of the group's own session.
+
+- Every row in `M-s` lost its second and third columns, `@vm` and the
+  path, at the first key pressed. The directories join the list then, still
+  hidden until something is typed, and a long directory name widened the
+  name column for the sessions too, past the list's edge. Rows only a search
+  shows now have column widths of their own.
+
+- A typed `name@vm` in `M-s` could open another session: Enter takes the
+  first fuzzy match, and `ab@vm` matched `ghsa-xm5q-backstage@vm`. The new
+  create row comes first.
+- Closing every pane of a remote session left its mirror open on a host
+  with `detach-on-destroy off`: the host moved the mirror's client to
+  another of its sessions, so `vagrant@vm` showed `workspace` and both rows
+  in `M-s` led there. The mirror's grouped session now detaches when its
+  session goes, and the mirror closes.
+
+- `prefix C-t` in a mirror session picked a theme on the host and changed
+  nothing anybody could see: the pick went to the first client tmux listed,
+  often the mirror's grouped session `api~mac`, whose bar is off, so `api`
+  kept its colour over a plain ssh too. A pick now goes to the session the key
+  was pressed in, paints every session in its group, and is remembered under
+  the group's name, which `theme pick` hadn't done for a session that exists
+  at all. The `session-created` hook gives a grouped session its group's
+  theme rather than one hashed from its own name.
 
 - The bar in a mirror session listed one window, the mirror's own, while
   `M-a` there listed every window on the host. The host now sends the
