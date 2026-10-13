@@ -230,32 +230,27 @@ impl ListStyle {
     /// there is one, with true, since the window is already showing the
     /// host's; the window's own values otherwise, with false.
     fn read(line: &str) -> (ListStyle, bool) {
+        // The saved copy is itself three fields, or nothing: six fields with
+        // one, four without. Telling them apart by whether the first fields
+        // were empty read a window's own `default` style as a saved
+        // separator, and the bar said `1:aidefault2:zsh*`.
         let f: Vec<&str> = line.split('\t').collect();
-        let get = |i: usize| f.get(i).copied().unwrap_or("").to_string();
-        if !get(0).is_empty() || !get(1).is_empty() || !get(2).is_empty() {
-            (
-                ListStyle {
-                    normal: get(0),
-                    current: get(1),
-                    sep: get(2),
-                },
-                true,
-            )
+        let at = |i: usize| ListStyle {
+            normal: f.get(i).copied().unwrap_or("").to_string(),
+            current: f.get(i + 1).copied().unwrap_or("").to_string(),
+            sep: f.get(i + 2).copied().unwrap_or("").to_string(),
+        };
+        if f.len() >= 6 {
+            (at(0), true)
         } else {
-            (
-                ListStyle {
-                    normal: get(3),
-                    current: get(4),
-                    sep: get(5),
-                },
-                false,
-            )
+            (at(1), false)
         }
     }
 }
 
 /// What the loop reads off a mirror window before it first draws the host's
-/// windows there: the saved copy, three fields, then the window's own three.
+/// windows there: the saved copy, three fields or none, then the window's
+/// own three.
 const STYLE_FORMAT: &str = "#{@tc-windows-style}\t#{E:window-status-style}\t#{E:window-status-current-style}\t#{window-status-separator}";
 
 /// The tmux commands that put the host's windows in a mirror window's entry,
@@ -603,7 +598,8 @@ mod tests {
 
     #[test]
     fn a_saved_style_wins_over_the_blanked_one() {
-        let (st, taken) = ListStyle::read("\t\t\tfg=grey\tfg=red,bold\t ");
+        // Nothing saved: the empty option, then the window's own three.
+        let (st, taken) = ListStyle::read("\tfg=grey\tfg=red,bold\t ");
         assert!(!taken);
         assert_eq!(
             st,

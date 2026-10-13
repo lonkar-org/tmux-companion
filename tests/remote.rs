@@ -997,6 +997,17 @@ fn a_remote_session_opens_as_a_mirror_session_and_closes_with_a_detach() {
         p.a.tmux(&p.bin, &["show-options", "-wv", "-t", "=api@b:", name])
             .0
     };
+    // What the entry says, styles taken out: the tabs and the separator,
+    // nothing else. A misread separator once put `default` between them.
+    let said: String = opt("@tc-windows")
+        .split("#[")
+        .map(|p| p.split_once(']').map_or(p, |(_, t)| t))
+        .collect();
+    let mut want: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    if let Some(cur) = want.iter_mut().find(|n| said.contains(&format!("{n}*"))) {
+        cur.push('*');
+    }
+    assert_eq!(said, want.join(" "), "{}", opt("@tc-windows"));
     assert_eq!(
         a_window_opt("window-status-current-format"),
         "#{@tc-windows}"
