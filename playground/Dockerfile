@@ -25,7 +25,7 @@
 # bytes until somebody changes it on purpose, and .github/dependabot.yml is
 # what does that, as a pull request. Resolve one by hand with
 #   docker buildx imagetools inspect rust:1-alpine
-FROM rust:1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS build
+FROM rust:1-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627 AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 # Cargo.lock and the manifest first, then every dependency fetched, so a
