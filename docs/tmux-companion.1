@@ -357,10 +357,9 @@ in the config.
 The terminal's cursor sits on the selected row, which is what a screen reader
 or a braille display follows, and on the end of the filter when nothing is
 listed.
-Nothing in a picker is timed, except the window switcher's commit on a pause,
-which
-.Ic [switcher] commit No = Qq enter
-turns off.
+Nothing in a picker is timed unless asked for: the window switcher commits on
+a pause only with
+.Ic [switcher] commit No = Qq pause .
 .Bl -tag -width Ds
 .It Ic project Oo Ar directory Oo Fl -detached Oc Oc Op Fl -print
 Live sessions and the directories the configured source knows, in one list,
@@ -1560,16 +1559,15 @@ With
 .Ql list ,
 the first press opens that list and nothing moves until a commit.
 Inside the list the same key moves on and, with shift, back;
-the list commits
-.Ic pause_ms
-after the last press, or at once on Enter, and Esc goes back to the window
-the presses began in.
+Enter commits, and Esc goes back to the window the presses began in.
 With
 .Ic [switcher] commit
 set to
-.Ql enter ,
-only Enter commits.
-Typing filters the list, and stops the clock.
+.Ql pause ,
+the list also commits
+.Ic pause_ms
+after the last press.
+Typing filters the list, and stops that clock.
 The window you are in carries the word
 .Ql now .
 With
@@ -1609,9 +1607,10 @@ sets them each time it runs.
 A window never stamped comes after every stamped one, tmux's last window
 first.
 .Pp
-Two things are timed: the commit on a pause, and under
+Under
 .Ql flip
-the second press opening the list.
+the second press opening the list is timed, and so is the commit under
+.Ic commit No = Qq pause .
 .Ic [switcher] first No = Qq list
 with
 .Ic commit No = Qq enter

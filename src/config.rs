@@ -215,8 +215,8 @@ pub enum HostOpen {
 /// How `switch` behaves: what the first press does, and what commits.
 ///
 /// The order is most recently used, Cmd-Tab's. A terminal never sees Alt let
-/// go, so for windows a pause after the last press stands in for it, and
-/// `commit = "enter"` takes the clock out altogether.
+/// go, so a list that commits only on Enter is the default, and
+/// `commit = "pause"` lets a pause after the last press stand in for it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Switcher {
@@ -225,8 +225,8 @@ pub struct Switcher {
     /// inside `pause_ms`; `list` opens the list on that window and moves
     /// nothing until you commit.
     pub first: SwitchFirst,
-    /// What commits the window list: `pause`, `pause_ms` after the last press
-    /// or at once on Enter; `enter`, only Enter. The session list commits on
+    /// What commits the window list: `enter`, only Enter; `pause`, `pause_ms`
+    /// after the last press or at once on Enter. The session list commits on
     /// Enter only, whatever this says.
     pub commit: SwitchCommit,
     /// How long a pause after a press counts as letting go, in milliseconds.
@@ -247,7 +247,10 @@ impl Default for Switcher {
     fn default() -> Self {
         Self {
             first: SwitchFirst::Flip,
-            commit: SwitchCommit::Pause,
+            // Enter: a list that goes on its own leaves somebody reading the
+            // candidate and pressing for the next one at once no time to do
+            // either, and a screen reader no time to say it.
+            commit: SwitchCommit::Enter,
             // 500 ms: long enough for a deliberate second press, short enough
             // that a single one doesn't feel held.
             pause_ms: 500,
@@ -274,9 +277,9 @@ pub enum SwitchFirst {
 #[serde(rename_all = "kebab-case")]
 pub enum SwitchCommit {
     /// When the presses pause, or on Enter.
-    #[default]
     Pause,
     /// On Enter only.
+    #[default]
     Enter,
 }
 

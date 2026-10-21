@@ -1015,7 +1015,7 @@ fn switch_windows_goes_in_the_order_they_were_used_and_esc_stays() {
 }
 
 /// With `first = "list"` the first press opens the list and moves nothing,
-/// and a pause commits: the one timed path, tested with a pause long enough
+/// and under `commit = "pause"` a pause commits: the one timed path, tested with a pause long enough
 /// that a press can't land after it and short enough to wait out.
 #[test]
 fn switch_windows_lists_first_and_commits_on_a_pause() {
@@ -1024,7 +1024,7 @@ fn switch_windows_lists_first_and_commits_on_a_pause() {
     };
     bind_switcher(
         &h,
-        "[switcher]\nfirst = \"list\"\npause_ms = 1500\nannounce = false\n",
+        "[switcher]\nfirst = \"list\"\ncommit = \"pause\"\npause_ms = 1500\nannounce = false\n",
     );
     for _ in 0..2 {
         h.inner_tmux(&["new-window", "-d", "-t", "i:", "sleep 100000"]);
@@ -1042,6 +1042,41 @@ fn switch_windows_lists_first_and_commits_on_a_pause() {
     assert_eq!(active(&h), "2", "the list moved something before a commit");
     h.wait_for("the commit on the pause", || active(&h) == "1");
     assert_eq!(switch_order(&h), ["1", "2", "0"]);
+}
+
+/// With `commit` left at its default the list waits for Enter: well past
+/// `pause_ms` it is still up and nothing has moved, and Enter goes.
+#[test]
+fn switch_windows_waits_for_enter_by_default() {
+    let Some(h) = KeyHold::start_any("switchenter", "") else {
+        return;
+    };
+    bind_switcher(
+        &h,
+        "[switcher]\nfirst = \"list\"\npause_ms = 300\nannounce = false\n",
+    );
+    for _ in 0..2 {
+        h.inner_tmux(&["new-window", "-d", "-t", "i:", "sleep 100000"]);
+    }
+    switch_order(&h);
+    for w in ["i:1", "i:2"] {
+        h.inner_tmux(&["select-window", "-t", w]);
+    }
+    let active = |h: &KeyHold| h.inner_tmux(&["display", "-p", "-t", "i", "#{window_index}"]);
+    let popup_up = |h: &KeyHold| {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Windows")
+    };
+    h.press("M-a");
+    h.wait_for("the list", || popup_up(&h));
+    // Several pauses' worth: a commit on the clock would have landed.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(popup_up(&h), "the list went without Enter");
+    assert_eq!(active(&h), "2", "the list moved something before Enter");
+    h.press("Enter");
+    h.wait_for("the commit to window 1", || {
+        active(&h) == "1" && !popup_up(&h)
+    });
 }
 
 /// `switch sessions` opens on the session you were in before, and Enter

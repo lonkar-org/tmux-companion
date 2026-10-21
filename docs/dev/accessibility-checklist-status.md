@@ -67,7 +67,7 @@ What each status means:
 | --- | --- | --- |
 | A modal "companion mode" key table | build | A tmux key table entered once with single keys inside. A tmux-side design, small code |
 | Every binding reachable from that table; `keys` shows the table | build | Part of the above. `keys` already shows the table a binding lives in |
-| No timing requirements | done | No `-r` bindings shipped, pickers have no timeouts, resurrect can wait (`confirm_wait`), `hold_ms` can be raised. Advice on `escape-time` is easy to add. One limit: `switch windows` (`M-a` in the examples now) commits on a pause, and under `[switcher] first = "flip"` a second press has to come within `pause_ms`, 500 ms, to open the list; `first = "list"` with `commit = "enter"` has no clock |
+| No timing requirements | done | No `-r` bindings shipped, pickers have no timeouts, resurrect can wait (`confirm_wait`), `hold_ms` can be raised. Advice on `escape-time` is easy to add. One limit: under `[switcher] first = "flip"`, `switch windows` (`M-a` in the examples now) needs a second press within `pause_ms`, 500 ms, to open the list, and it commits on a pause only when `commit = "pause"` is set; `first = "list"` has no clock |
 | Confirmations take one key | done | `confirm-before` y/n for kill, close and forget; `sessions idle` asks on a line |
 | Wide click targets on the bar | done | The click range covers the whole segment, not one glyph |
 | Pickers take numbers and arrows | done | Arrows on main, numbers in line mode on the branch |

@@ -926,13 +926,9 @@ async fn chunk_segment(state: &Arc<Mutex<ServerState>>) -> String {
 }
 
 async fn health(state: &Arc<Mutex<ServerState>>) -> String {
-    let (wanted, cached, bar_bg) = {
+    let (wanted, cached) = {
         let s = state.lock().await;
-        (
-            s.health_wanted(),
-            s.health_cached(),
-            s.config.bar.background.clone(),
-        )
+        (s.health_wanted(), s.health_cached())
     };
     if !wanted {
         return String::new();
@@ -945,7 +941,7 @@ async fn health(state: &Arc<Mutex<ServerState>>) -> String {
             fresh
         }
     };
-    segments::health::format_health(&sample, &bar_bg)
+    segments::health::format_health(&sample)
 }
 
 /// The health reasons, from the health segment's cache when it is fresh and

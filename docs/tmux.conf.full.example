@@ -341,9 +341,9 @@ bind -N "companion: window jump to an agent" G \
 %endif
 # The windows of this session in the order you used them, Cmd-Tab's shape:
 # one press goes back to the window you were on, a second within half a
-# second opens a list, more presses move down it, and a pause or Enter goes.
-# Esc stays. M-A walks the other way. [switcher] in config.toml has the
-# timing, and first = "list" with commit = "enter" takes the clock out.
+# second opens a list, more presses move down it, and Enter goes. Esc
+# stays. M-A walks the other way. [switcher] in config.toml has the timing,
+# and first = "list" takes the last clock out.
 bind -N "companion: project switch window, most recent first" -n M-a \
   run-shell "tmux-companion switch windows '#{session_id}' --client '#{client_name}'"
 bind -N "companion: project switch window, oldest first" -n M-A \

@@ -1473,14 +1473,15 @@ hold_ms = 170
 # moves nothing until you commit. Sessions always open the list.
 first = "flip"
 
-# What commits the window list. "pause": pause_ms after the last press, or at
-# once on Enter. "enter": only Enter. Typing or an arrow stops the clock either
-# way. The session list commits on Enter only.
+# What commits the window list. "enter": only Enter, so you can read the
+# candidate before you go. "pause": pause_ms after the last press, or at once
+# on Enter; typing or an arrow stops that clock. The session list commits on
+# Enter only.
 #
-# Two things here are timed: the commit on a pause, and, under "flip", a second
-# press having to come within pause_ms to open the list. first = "list" with
-# commit = "enter" has no clock in it at all.
-commit = "pause"
+# Under "flip", a second press has to come within pause_ms to open the list,
+# and "pause" adds a commit on a clock. first = "list" with commit = "enter"
+# has no clock in it at all.
+commit = "enter"
 
 # How long a pause after a press counts as letting go of Alt, in milliseconds.
 pause_ms = 500

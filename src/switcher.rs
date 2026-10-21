@@ -1,9 +1,9 @@
-//! the switcher: a session's windows, and the server's sessions, in the order you used them, a press to move and a pause or Enter to go
+//! the switcher: a session's windows, and the server's sessions, in the order you used them, a press to move and Enter to go
 //!
 //! Cmd-Tab's shape. One press is where you just were, each further press the
 //! next older, Shift goes back, and you move only when you commit. A terminal
-//! never sees Alt let go, so for windows a pause after the last press stands
-//! in for it; `[switcher] commit = "enter"` takes the clock out.
+//! never sees Alt let go, so the list waits for Enter; `[switcher] commit =
+//! "pause"` lets a pause after the last press stand in for letting go.
 //!
 //! The order comes from two tmux hooks that only set options, so a switch
 //! starts no process: every window entered takes the next number of a

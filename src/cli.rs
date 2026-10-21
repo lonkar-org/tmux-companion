@@ -334,7 +334,7 @@ pub enum Cmd {
     },
 
     /// Move between windows or sessions in the order you used them, Cmd-Tab's
-    /// shape: a press moves, a pause or enter goes, esc stays
+    /// shape: a press moves, enter goes, esc stays
     Switch {
         #[command(subcommand)]
         what: SwitchWhat,

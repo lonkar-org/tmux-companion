@@ -15,8 +15,8 @@ The switcher is that shape for windows (`M-a`, `M-A` backwards) and sessions
    recent. Shift walks the other way.
 2. While pressing, a small list in that order with the candidate on it. You
    move only when you commit. Esc leaves you where you were.
-3. Windows commit when the presses pause (`pause_ms`, 500) or at once on
-   Enter. Sessions commit on Enter only, and a letter typed into the session
+3. Windows commit on Enter, and with `commit = "pause"` also when the
+   presses pause (`pause_ms`, 500). Sessions commit on Enter only, and a letter typed into the session
    list turns it into the project picker's search, in the same popup.
 
 It replaces `toggle`, which is gone, with its `[toggle]` section (ignored if
@@ -158,7 +158,10 @@ for a much bigger move.
 
 ## Committing
 
-`[switcher] commit` is `"pause"` or `"enter"`.
+`[switcher] commit` is `"enter"`, the default, or `"pause"`. It was
+`"pause"` until 2026-10-19: a list that goes on its own left no time to read
+which window was the candidate before pressing on, so knowing where you were
+in the list meant racing the clock.
 
 - `pause`: the window list commits `pause_ms` after the last `M-a` or `M-A`,
   or at once on Enter. Any other key (a letter, an arrow) stops the clock, and
@@ -205,8 +208,8 @@ What job: moving to a window or session you were just in, without the prefix.
   message line (`[switcher] announce`). While the switcher is up the message
   line covers nothing the person is using, unlike `toggle`'s, which covered
   the window list mid-sweep. The flip announces where it landed the same way.
-- Timed: `commit = "pause"` and, under `first = "flip"`, the second press
-  opening the list. The untimed path is `first = "list"` with
+- Timed: under `first = "flip"`, the second press opening the list, and
+  `commit = "pause"` when it is set. The untimed path is `first = "list"` with
   `commit = "enter"`: each press opens or moves the list, Enter commits,
   nothing happens on a clock. That limit and that path go in the manual, the
   configuration page, the CHANGELOG line and the checklist status.
@@ -220,7 +223,7 @@ What job: moving to a window or session you were just in, without the prefix.
 ```toml
 [switcher]
 first = "flip"      # or "list": the first M-a goes at once, or opens the list
-commit = "pause"    # or "enter": the window list commits on a pause, or only on Enter
+commit = "enter"    # or "pause": the window list commits only on Enter, or on a pause too
 pause_ms = 500
 announce = true     # the candidate on the message line, each press
 ```

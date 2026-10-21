@@ -1300,7 +1300,7 @@ opened anyway rather than showing a picker with nothing in it.
 ```toml
 [switcher]
 first = "flip"
-commit = "pause"
+commit = "enter"
 pause_ms = 500
 announce = true
 windows_key = "a"
@@ -1319,15 +1319,16 @@ candidate on the next older window; from then on the presses move the
 candidate. With `first = "list"` the first press opens the list and nothing
 moves until you commit.
 
-`commit = "pause"` commits `pause_ms` after the last press, or at once on
-Enter. `commit = "enter"` commits on Enter only. Typing filters the list and
-an arrow moves through it, and either stops the clock. Esc goes back to the
-window the presses began in.
+`commit = "enter"`, the default, commits on Enter only, so the list stays
+up while you read which window the candidate is. `commit = "pause"` commits
+`pause_ms` after the last press, or at once on Enter; typing filters the list
+and an arrow moves through it, and either stops that clock. Esc goes back to
+the window the presses began in.
 
-A terminal never tells tmux a key was let go, so a pause stands in for letting
-go of Alt, and that makes two things timed: the commit on a pause, and, under
-`flip`, the second press having to come within `pause_ms` to open the list.
-`first = "list"` with `commit = "enter"` has no clock in it at all.
+A terminal never tells tmux a key was let go, so `commit = "pause"` lets a
+pause stand in for letting go of Alt. Under `flip` the second press has to
+come within `pause_ms` to open the list, which is timed whatever `commit`
+says. `first = "list"` with `commit = "enter"` has no clock in it at all.
 
 `switch sessions`, `M-s`, is the project picker opened on the sessions alone,
 most recently used first, with the cursor on the one you were in before.

@@ -89,7 +89,18 @@ entry per phase of the comrades port.
   showed that local directory as the mirror's path. A mirror session now
   hides nothing and shows its host session's path.
 
+- The health mark after the battery left a strip of bar colour between the
+  two that looked like a gap. It sets only its colour now and stays in the
+  battery's block.
+
 ### Changed
+
+- The window list from `M-a` waits for Enter: `[switcher] commit` is
+  `"enter"` by default. One press still flips to the window you were on at
+  once, and a second within `pause_ms` still opens the list, but the list no
+  longer goes on its own a pause after the last press, which left no time to
+  read the candidate, or for a screen reader to say it. `commit = "pause"`
+  brings the old behaviour back.
 
 - `M-s` drops a host's line once something stands for the host: its
   sessions, or a mirror session open here. Those rows carry the ssh glyph and

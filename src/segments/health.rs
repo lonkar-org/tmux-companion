@@ -17,10 +17,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::panes::WAITING_COLOUR;
-use crate::tmux::{
-    format::colored_segment,
-    icons::{HEALTH, QUIET},
-};
+use crate::tmux::icons::{HEALTH, QUIET};
 
 /// How long a failed timer keeps the mark up after its last failure.
 ///
@@ -124,7 +121,12 @@ pub fn short_word(reason: &str) -> &'static str {
 
 /// The segment: the glyph and the first reason's word, `+N` when there are
 /// more, or nothing.
-pub fn format_health(sample: &HealthSample, bar_bg: &str) -> String {
+///
+/// Only the foreground is set. The mark sits on whatever background the
+/// segment before it left, so after the battery's block it stays in that
+/// block; a `bg=` of its own put a strip of bar colour after the battery that
+/// looked like a gap.
+pub fn format_health(sample: &HealthSample) -> String {
     let Some(first) = sample.reasons.first() else {
         return String::new();
     };
@@ -141,18 +143,16 @@ pub fn format_health(sample: &HealthSample, bar_bg: &str) -> String {
     } else {
         format!("{head} +{more}")
     };
-    colored_segment(false, WAITING_COLOUR, bar_bg, &text)
+    format!("#[fg={WAITING_COLOUR}]{text}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const BAR: &str = "colour233";
-
     #[test]
     fn healthy_is_nothing_at_all() {
-        assert_eq!(format_health(&HealthSample::default(), BAR), "");
+        assert_eq!(format_health(&HealthSample::default()), "");
         assert!(reasons(&[], false, false).is_empty());
     }
 
@@ -163,7 +163,7 @@ mod tests {
         assert!(r[0].contains("autosave: script missing"), "{}", r[0]);
         assert!(r[1].contains("config.toml"), "{}", r[1]);
         assert!(r[2].contains("binary"), "{}", r[2]);
-        let drawn = format_health(&HealthSample { reasons: r }, BAR);
+        let drawn = format_health(&HealthSample { reasons: r });
         assert!(drawn.contains("timer +2"), "{drawn}");
         assert!(drawn.contains(WAITING_COLOUR), "{drawn}");
     }
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(r.len(), 2, "{r:?}");
         assert!(r[0].ends_with("sessions autosave: disk full"), "{}", r[0]);
         assert!(r[1].ends_with("net segment: no counters"), "{}", r[1]);
-        let drawn = format_health(&HealthSample { reasons: r }, BAR);
+        let drawn = format_health(&HealthSample { reasons: r });
         assert!(drawn.contains("timer +1"), "{drawn}");
     }
 
@@ -214,36 +214,30 @@ mod tests {
     fn offline_is_said_in_one_word() {
         let reason = crate::online::reason(100, 280, "1.1.1.1:443");
         assert_eq!(short_word(&reason), "offline");
-        let drawn = format_health(
-            &HealthSample {
-                reasons: vec![reason],
-            },
-            BAR,
-        );
+        let drawn = format_health(&HealthSample {
+            reasons: vec![reason],
+        });
         assert!(drawn.contains("offline"), "{drawn}");
         assert!(!drawn.contains("1.1.1.1"), "the bar has no room: {drawn}");
     }
 
     #[test]
     fn quiet_is_the_bell_crossed_out_without_a_word() {
-        let drawn = format_health(
-            &HealthSample {
-                reasons: vec![crate::quiet::status(Some(1000), None, 700)],
-            },
-            BAR,
-        );
+        let drawn = format_health(&HealthSample {
+            reasons: vec![crate::quiet::status(Some(1000), None, 700)],
+        });
         assert!(drawn.contains(QUIET), "{drawn}");
         assert!(!drawn.contains("quiet"), "{drawn}");
         assert!(!drawn.contains(HEALTH), "{drawn}");
-        let two = format_health(
-            &HealthSample {
-                reasons: vec![
-                    crate::quiet::status(Some(1000), None, 700),
-                    "config.toml changed".into(),
-                ],
-            },
-            BAR,
-        );
+        // After the battery the mark stays in the battery's block: it
+        // carries a foreground and leaves the background alone.
+        assert!(!drawn.contains("bg="), "{drawn}");
+        let two = format_health(&HealthSample {
+            reasons: vec![
+                crate::quiet::status(Some(1000), None, 700),
+                "config.toml changed".into(),
+            ],
+        });
         assert!(two.contains(&format!("{QUIET} +1")), "{two}");
     }
 
@@ -252,7 +246,7 @@ mod tests {
         let sample = HealthSample {
             reasons: reasons(&[], true, false),
         };
-        let drawn = format_health(&sample, BAR);
+        let drawn = format_health(&sample);
         assert!(
             drawn.ends_with(&format!("{HEALTH}config")) || drawn.contains("config"),
             "{drawn}"
