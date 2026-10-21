@@ -145,8 +145,10 @@ Two shapes:
 A quick second press used to land on top of the flip: the first press had
 already moved before the list opened. Since 2026-10-21 the first press waits
 `flip_wait_ms`, 150, before it goes. A second press inside the wait opens the
-list from where the presses began with nothing moved; one after the wait but
-inside `pause_ms` opens it over the flip as before. 150 ms is about as long
+list from where the presses began with nothing moved, on MRU #1: the second
+press opens rather than steps, or it would skip the window the flip was
+going to, and with two windows wrap round to the one you are in. One after
+the wait but inside `pause_ms` opens it over the flip on MRU #2 as before. 150 ms is about as long
 as a single tap can wait before it feels slow, so it catches a quick double
 press and not a deliberate slow one. The wait is a detached process the
 press starts, because a press that slept in its own `run-shell` would hold

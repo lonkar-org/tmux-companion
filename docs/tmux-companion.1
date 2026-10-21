@@ -1555,11 +1555,12 @@ draws nothing, once
 .Ic [switcher] flip_wait_ms ,
 150 milliseconds unless set, has gone without a second press.
 A second press inside that wait opens a popup listing the windows, most
-recently used first, on the next older one, with nothing moved;
+recently used first, with nothing moved and the candidate on the window you
+were on before;
 a second press after it but within
 .Ic [switcher] pause_ms ,
-500 milliseconds unless set, opens the same list over the window the flip
-went to.
+500 milliseconds unless set, opens the list over the window the flip went
+to, on the next older one.
 .Ic flip_wait_ms No = 0
 flips at once.
 With

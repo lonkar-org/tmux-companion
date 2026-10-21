@@ -271,12 +271,17 @@ pub fn on_press(
             p.flipped_to.as_deref() == Some(here)
         };
         if still {
+            // Before a waiting flip went anywhere the second press only opens
+            // the list, on the window the flip was going to: counted as a
+            // step it would skip that window, and with two windows wrap
+            // round to the one you are in.
+            let pos = if p.waiting { p.pos } else { p.pos + step };
             return Act::Open(Pressed {
                 ms: now,
                 origin: p.origin.clone(),
                 flipped_to: None,
                 waiting: false,
-                pos: p.pos + step,
+                pos,
             });
         }
     }
@@ -1018,9 +1023,24 @@ mod tests {
             panic!("the second press opens the list");
         };
         assert!(p.opening());
-        // The same row a second press after a landed flip opens on.
+        // On the window the flip was going to, the one you were on before.
         let list = origin_first(order, &p.origin);
         assert_eq!(names(&list), "c b a d");
+        assert_eq!(list[wrap(p.pos, list.len())].name, "b");
+    }
+
+    #[test]
+    fn with_two_windows_a_quick_second_press_is_on_the_other_one() {
+        let order = by_recency(session("a:1 b*:2"));
+        let Act::Wait(_, kept) = on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500, 150)
+        else {
+            panic!("the first press waits");
+        };
+        let Act::Open(p) = on_press(&order, Some(&kept), 1_100, 1, SwitchFirst::Flip, 500, 150)
+        else {
+            panic!("the second press opens the list");
+        };
+        let list = origin_first(order, &p.origin);
         assert_eq!(list[wrap(p.pos, list.len())].name, "a");
     }
 

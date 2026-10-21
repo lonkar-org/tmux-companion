@@ -1045,7 +1045,8 @@ fn switch_windows_lists_first_and_commits_on_a_pause() {
 }
 
 /// Under `first = "flip"`, a second press inside `flip_wait_ms` opens the
-/// list with nothing moved, and a single press still flips once the wait is
+/// list with nothing moved, on the window you were on before, and a single
+/// press still flips once the wait is
 /// over. The wait is two seconds here so the second press lands inside it
 /// however slow the machine; the default is 150 ms.
 #[test]
@@ -1076,11 +1077,12 @@ fn switch_windows_a_quick_second_press_opens_the_list_without_moving() {
     // Past the wait: the flip the first press was waiting with stays put.
     std::thread::sleep(Duration::from_millis(2500));
     assert_eq!(active(&h), "3", "the waiting flip landed under the list");
+    // The list is on window 2, the one you were on before.
     h.press("Enter");
-    h.wait_for("the commit to window 1", || {
-        active(&h) == "1" && !popup_up(&h)
+    h.wait_for("the commit to window 2", || {
+        active(&h) == "2" && !popup_up(&h)
     });
-    assert_eq!(switch_order(&h), ["1", "3", "2", "0"]);
+    assert_eq!(switch_order(&h), ["2", "3", "1", "0"]);
 
     // One press alone goes once the wait is over.
     h.press("M-a");

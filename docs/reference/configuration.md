@@ -1315,11 +1315,13 @@ one, `M-A` goes back, and the window you land on becomes the most recent.
 
 With `first = "flip"` the first press goes there `flip_wait_ms` (150) after
 it and draws nothing. A second press inside that wait opens a small list,
-in the order as it was before the first press, with the candidate on the
-next older window, and nothing has moved. A second press after the wait but
-within `pause_ms` opens the same list over the window the flip went to, and
-Esc goes back. From then on the presses move the candidate.
-`flip_wait_ms = 0` flips at once. With `first = "list"` the first press opens the list and nothing
+in the order as it was before the first press, with nothing moved and the
+candidate on the window you were on before. A second press after the wait
+but within `pause_ms` opens the list over the window the flip went to, with
+the candidate on the next older one, and Esc goes back. From then on the
+presses move the candidate. `flip_wait_ms = 0` flips at once.
+
+With `first = "list"` the first press opens the list and nothing
 moves until you commit.
 
 `commit = "enter"`, the default, commits on Enter only, so the list stays
