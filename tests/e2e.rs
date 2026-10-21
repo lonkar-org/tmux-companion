@@ -1044,6 +1044,50 @@ fn switch_windows_lists_first_and_commits_on_a_pause() {
     assert_eq!(switch_order(&h), ["1", "2", "0"]);
 }
 
+/// Under `first = "flip"`, a second press inside `flip_wait_ms` opens the
+/// list with nothing moved, and a single press still flips once the wait is
+/// over. The wait is two seconds here so the second press lands inside it
+/// however slow the machine; the default is 150 ms.
+#[test]
+fn switch_windows_a_quick_second_press_opens_the_list_without_moving() {
+    let Some(h) = KeyHold::start_any("switchwait", "") else {
+        return;
+    };
+    bind_switcher(
+        &h,
+        "[switcher]\nflip_wait_ms = 2000\npause_ms = 60000\nannounce = false\n",
+    );
+    for _ in 0..3 {
+        h.inner_tmux(&["new-window", "-d", "-t", "i:", "sleep 100000"]);
+    }
+    switch_order(&h);
+    for w in ["i:1", "i:2", "i:3"] {
+        h.inner_tmux(&["select-window", "-t", w]);
+    }
+    let active = |h: &KeyHold| h.inner_tmux(&["display", "-p", "-t", "i", "#{window_index}"]);
+    let popup_up = |h: &KeyHold| {
+        h.outer_tmux(&["capture-pane", "-p", "-t", "o:0"])
+            .contains("Windows")
+    };
+    h.press("M-a");
+    h.press("M-a");
+    h.wait_for("the list", || popup_up(&h));
+    assert_eq!(active(&h), "3", "the first press moved before the list");
+    // Past the wait: the flip the first press was waiting with stays put.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(active(&h), "3", "the waiting flip landed under the list");
+    h.press("Enter");
+    h.wait_for("the commit to window 1", || {
+        active(&h) == "1" && !popup_up(&h)
+    });
+    assert_eq!(switch_order(&h), ["1", "3", "2", "0"]);
+
+    // One press alone goes once the wait is over.
+    h.press("M-a");
+    h.wait_for("the flip to window 3", || active(&h) == "3");
+    assert!(!popup_up(&h), "one press drew the list");
+}
+
 /// With `commit` left at its default the list waits for Enter: well past
 /// `pause_ms` it is still up and nothing has moved, and Enter goes.
 #[test]

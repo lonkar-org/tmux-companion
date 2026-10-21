@@ -1302,6 +1302,7 @@ opened anyway rather than showing a picker with nothing in it.
 first = "flip"
 commit = "enter"
 pause_ms = 500
+flip_wait_ms = 150
 announce = true
 windows_key = "a"
 sessions_key = "s"
@@ -1312,11 +1313,13 @@ windows the way Cmd-Tab goes through applications: most recently used first.
 One press is the window you were just on, each further press the next older
 one, `M-A` goes back, and the window you land on becomes the most recent.
 
-With `first = "flip"` the first press goes there at once and draws nothing,
-so a single tap is as quick as it ever was. A second press within `pause_ms`
-opens a small list, in the order as it was before the first press, with the
-candidate on the next older window; from then on the presses move the
-candidate. With `first = "list"` the first press opens the list and nothing
+With `first = "flip"` the first press goes there `flip_wait_ms` (150) after
+it and draws nothing. A second press inside that wait opens a small list,
+in the order as it was before the first press, with the candidate on the
+next older window, and nothing has moved. A second press after the wait but
+within `pause_ms` opens the same list over the window the flip went to, and
+Esc goes back. From then on the presses move the candidate.
+`flip_wait_ms = 0` flips at once. With `first = "list"` the first press opens the list and nothing
 moves until you commit.
 
 `commit = "enter"`, the default, commits on Enter only, so the list stays

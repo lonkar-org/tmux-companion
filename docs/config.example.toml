@@ -1468,8 +1468,8 @@ hold_ms = 170
 # shift moves back, Esc stays where you were.
 #
 # What the first press of M-a does. "flip" goes to the window you were on
-# before at once and draws nothing; a second press within pause_ms opens the
-# list on the one before that. "list" opens the list on the first press and
+# before, flip_wait_ms after the press, and draws nothing; a second press
+# opens the list on the one before that. "list" opens the list on the first press and
 # moves nothing until you commit. Sessions always open the list.
 first = "flip"
 
@@ -1485,6 +1485,12 @@ commit = "enter"
 
 # How long a pause after a press counts as letting go of Alt, in milliseconds.
 pause_ms = 500
+
+# Under "flip", how long the first press waits for a second before it goes,
+# in milliseconds. A second press inside the wait opens the list with nothing
+# moved; one after it, still within pause_ms, opens the list over the flip.
+# 0 flips at once.
+flip_wait_ms = 150
 
 # Put the candidate's name and its place, `ai, 2 of 4`, on tmux's message line
 # on every press, for anybody who is listening rather than watching.

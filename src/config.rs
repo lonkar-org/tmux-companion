@@ -232,6 +232,10 @@ pub struct Switcher {
     /// How long a pause after a press counts as letting go, in milliseconds.
     /// Also how soon a second press has to follow a flip to open the list.
     pub pause_ms: u64,
+    /// Under `flip`, how long the first press waits for a second before it
+    /// goes, in milliseconds. A second press inside it opens the list with
+    /// nothing moved; 0 flips at once.
+    pub flip_wait_ms: u64,
     /// Say the candidate, its name and place, on tmux's message line on every
     /// press, for anybody who isn't watching the list.
     pub announce: bool,
@@ -254,6 +258,9 @@ impl Default for Switcher {
             // 500 ms: long enough for a deliberate second press, short enough
             // that a single one doesn't feel held.
             pause_ms: 500,
+            // 150 ms: about as long as a single press can wait before it
+            // feels slow, and long enough to catch a quick double press.
+            flip_wait_ms: 150,
             announce: true,
             windows_key: 'a',
             sessions_key: 's',

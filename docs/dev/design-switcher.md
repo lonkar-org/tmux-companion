@@ -142,6 +142,20 @@ Two shapes:
   nothing moves until commit. A single tap shows the list for `pause_ms` and
   then goes. Nothing behind the popup changes while it is up.
 
+A quick second press used to land on top of the flip: the first press had
+already moved before the list opened. Since 2026-10-21 the first press waits
+`flip_wait_ms`, 150, before it goes. A second press inside the wait opens the
+list from where the presses began with nothing moved; one after the wait but
+inside `pause_ms` opens it over the flip as before. 150 ms is about as long
+as a single tap can wait before it feels slow, so it catches a quick double
+press and not a deliberate slow one. The wait is a detached process the
+press starts, because a press that slept in its own `run-shell` would hold
+the client's keys, the second press among them. It is a debounce, the thing
+the capped-CPU rules say not to add for a frame; here it costs one sleeping
+process per tap and replaces a visible move, and `flip_wait_ms = 0` takes it
+out. It asks nothing new of the person pressing: the second press already
+had to come within `pause_ms`.
+
 Decided: **flip** is the default. The single tap is the common press, and it stays as
 fast as it is now and draws nothing. Cmd-Tab and VS Code's Ctrl-Tab both show
 nothing on a quick tap either. What it costs: during a longer run the window
@@ -222,9 +236,10 @@ What job: moving to a window or session you were just in, without the prefix.
 
 ```toml
 [switcher]
-first = "flip"      # or "list": the first M-a goes at once, or opens the list
+first = "flip"      # or "list": the first M-a goes, or opens the list
 commit = "enter"    # or "pause": the window list commits only on Enter, or on a pause too
 pause_ms = 500
+flip_wait_ms = 150  # how long the first M-a waits for a second; 0: at once
 announce = true     # the candidate on the message line, each press
 ```
 

@@ -102,6 +102,12 @@ entry per phase of the comrades port.
   read the candidate, or for a screen reader to say it. `commit = "pause"`
   brings the old behaviour back.
 
+- A quick double `M-a` opens the window list without moving first. The first
+  press waits `[switcher] flip_wait_ms`, 150 ms, before it flips, and a
+  second press inside that wait opens the list from where you began. A
+  second press after the wait, within `pause_ms`, opens it over the flip as
+  before. `flip_wait_ms = 0` flips at once.
+
 - `M-s` drops a host's line once something stands for the host: its
   sessions, or a mirror session open here. Those rows carry the ssh glyph and
   `@vm` in the host's colour, a mirror session included, and a session's

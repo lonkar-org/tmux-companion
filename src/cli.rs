@@ -1110,7 +1110,8 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
                 client,
                 print,
                 pressed,
-            } => run_switch_windows(session, client, reverse, print, pressed).await?,
+                land,
+            } => run_switch_windows(session, client, reverse, print, pressed, land).await?,
             SwitchWhat::Sessions { reverse, print, at } => {
                 run_switch_sessions(reverse, print, at).await?
             }
@@ -1118,7 +1119,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         // Silent on purpose: from run-shell anything printed opens a view
         // over the pane on every press. The CHANGELOG says to rebind.
         Cmd::Toggle { session, .. } => {
-            run_switch_windows(session, None, false, false, false).await?
+            run_switch_windows(session, None, false, false, false, None).await?
         }
         Cmd::Autosave { once, status } => run_autosave(once, status).await?,
         Cmd::Start { dir, last, hook } => run_start(dir, last, hook).await?,
@@ -2833,6 +2834,9 @@ pub enum SwitchWhat {
         /// Internal: opened by a press, which left where the presses began
         #[arg(long, hide = true)]
         pressed: bool,
+        /// Internal: a press's waiting flip, landed after `flip_wait_ms`
+        #[arg(long, hide = true)]
+        land: Option<String>,
     },
     /// Every session, most recently used first, with the cursor on the one
     /// you were in before; typing searches the project directories too
@@ -3967,12 +3971,16 @@ async fn run_switch_windows(
     reverse: bool,
     print: bool,
     pressed: bool,
+    land: Option<String>,
 ) -> anyhow::Result<()> {
     use std::io::IsTerminal;
     if print {
         return crate::switcher::print(session, client).await;
     }
     let config = config_or_default();
+    if let Some(waiting) = land {
+        return crate::switcher::land(session, client, &waiting, &config.switcher).await;
+    }
     if std::io::stdout().is_terminal() {
         crate::switcher::list(
             session,

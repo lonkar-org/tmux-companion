@@ -13,8 +13,12 @@
 //! can't tie. `docs/dev/design-switcher.md` has the measurements.
 //!
 //! Before a popup is open each press is a `run-shell` and a process. With
-//! `first = "flip"` the first press goes to the last window at once and
-//! draws nothing; a second inside `pause_ms` opens the list. Once
+//! `first = "flip"` the first press goes to the last window and draws
+//! nothing, `flip_wait_ms` after the press: a second press inside that wait
+//! opens the list where the presses began, with nothing moved, and one
+//! after it but inside `pause_ms` opens it over the flip. The wait is a
+//! process of its own, so the press returns at once and tmux reads the next
+//! key. Once
 //! the popup is up, tmux hands it every key, so the rest of the presses are
 //! key events in one process. What a press needs to know about the ones
 //! before it is kept in the session option `@tc_switch`.
@@ -171,20 +175,23 @@ pub struct Pressed {
     pub origin: String,
     /// Where a flip landed, or `None` once a popup has been asked for.
     pub flipped_to: Option<String>,
+    /// The flip is still waiting out `flip_wait_ms`: `flipped_to` is where
+    /// it will go, and nothing has moved yet.
+    pub waiting: bool,
     /// How many presses forward, less how many back, since they began.
     pub pos: i64,
 }
 
 impl Pressed {
-    /// `1790067600000 @3 @5 1`, or `... - 2` once a popup is on its way.
+    /// `1790067600000 @3 @5 1`, `... ~@5 1` while the flip waits, or
+    /// `... - 2` once a popup is on its way.
     pub fn encode(&self) -> String {
-        format!(
-            "{} {} {} {}",
-            self.ms,
-            self.origin,
-            self.flipped_to.as_deref().unwrap_or("-"),
-            self.pos
-        )
+        let to = match (&self.flipped_to, self.waiting) {
+            (None, _) => "-".to_string(),
+            (Some(id), true) => format!("~{id}"),
+            (Some(id), false) => id.clone(),
+        };
+        format!("{} {} {} {}", self.ms, self.origin, to, self.pos)
     }
 
     /// The other half of [`Pressed::encode`]; anything else is no presses.
@@ -192,15 +199,19 @@ impl Pressed {
         let mut f = s.split_whitespace();
         let ms = f.next()?.parse().ok()?;
         let origin = f.next()?.to_string();
-        let flipped_to = match f.next()? {
-            "-" => None,
-            id => Some(id.to_string()),
+        let (flipped_to, waiting) = match f.next()? {
+            "-" => (None, false),
+            id => match id.strip_prefix('~') {
+                Some(id) => (Some(id.to_string()), true),
+                None => (Some(id.to_string()), false),
+            },
         };
         let pos = f.next()?.parse().ok()?;
         Some(Self {
             ms,
             origin,
             flipped_to,
+            waiting,
             pos,
         })
     }
@@ -218,6 +229,9 @@ pub enum Act {
     Nothing,
     /// Go to the window at this place in the order now, and keep the presses.
     Flip(usize, Pressed),
+    /// Keep the presses, and go to the window at this place once
+    /// `flip_wait_ms` has gone without another press.
+    Wait(usize, Pressed),
     /// Open the list, and keep the presses for it to read.
     Open(Pressed),
     /// A popup is on its way: count this press for it.
@@ -226,6 +240,7 @@ pub enum Act {
 
 /// What a press does, given the windows most recent first, the presses kept
 /// by the last one, the time, and which way this press goes (`1` or `-1`).
+/// `wait_ms` is `flip_wait_ms`: 0 flips at once.
 pub fn on_press(
     order: &[Window],
     kept: Option<&Pressed>,
@@ -233,6 +248,7 @@ pub fn on_press(
     step: i64,
     first: SwitchFirst,
     pause_ms: u64,
+    wait_ms: u64,
 ) -> Act {
     if order.len() < 2 {
         return Act::Nothing;
@@ -247,12 +263,19 @@ pub fn on_press(
                 ..p.clone()
             });
         }
-        // A second press after a flip, still on the window the flip went to.
-        if p.flipped_to.as_deref() == Some(here) {
+        // A second press after a flip, still on the window the flip went to,
+        // or before a waiting flip went anywhere.
+        let still = if p.waiting {
+            p.flipped_to.is_some() && &p.origin == here
+        } else {
+            p.flipped_to.as_deref() == Some(here)
+        };
+        if still {
             return Act::Open(Pressed {
                 ms: now,
                 origin: p.origin.clone(),
                 flipped_to: None,
+                waiting: false,
                 pos: p.pos + step,
             });
         }
@@ -260,20 +283,24 @@ pub fn on_press(
     match first {
         SwitchFirst::Flip => {
             let i = wrap(step, order.len());
-            Act::Flip(
-                i,
-                Pressed {
-                    ms: now,
-                    origin: here.clone(),
-                    flipped_to: Some(order[i].id.clone()),
-                    pos: step,
-                },
-            )
+            let p = Pressed {
+                ms: now,
+                origin: here.clone(),
+                flipped_to: Some(order[i].id.clone()),
+                waiting: wait_ms > 0,
+                pos: step,
+            };
+            if wait_ms > 0 {
+                Act::Wait(i, p)
+            } else {
+                Act::Flip(i, p)
+            }
         }
         SwitchFirst::List => Act::Open(Pressed {
             ms: now,
             origin: here.clone(),
             flipped_to: None,
+            waiting: false,
             pos: step,
         }),
     }
@@ -507,6 +534,7 @@ pub async fn press(
         step,
         settings.first,
         settings.pause_ms,
+        settings.flip_wait_ms,
     ) {
         Act::Nothing => Ok(()),
         Act::Count(p) => {
@@ -514,18 +542,24 @@ pub async fn press(
             Ok(())
         }
         Act::Flip(i, p) => {
-            let w = &order[i];
-            let mut cmds = vec![
-                args(&["select-window", "-t", &format!("{at}{}", w.id)]),
-                keep(&p),
-            ];
-            if settings.announce {
-                cmds.push(say(
-                    client.as_deref(),
-                    &announcement(&w.name, i + 1, order.len()),
-                ));
+            flip(&order, i, &p, &at, client.as_deref(), settings.announce).await;
+            Ok(())
+        }
+        Act::Wait(_, p) => {
+            crate::cli::tmux(&borrow(&keep(&p))).await;
+            // Not waited for, like the popup: this press returns now, so tmux
+            // reads the next key while the wait runs.
+            let exe = std::env::current_exe()?;
+            let mut waiter = std::process::Command::new(exe);
+            waiter.args(["switch", "windows", &seen.session, "--land", &p.encode()]);
+            if let Some(c) = &client {
+                waiter.args(["--client", c]);
             }
-            crate::cli::tmux(&borrow(&chained(cmds))).await;
+            waiter
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
             Ok(())
         }
         Act::Open(p) => {
@@ -578,6 +612,75 @@ pub async fn press(
             Ok(())
         }
     }
+}
+
+/// Go to the window at `i` in `order`, keep the presses, and say where.
+async fn flip(
+    order: &[Window],
+    i: usize,
+    p: &Pressed,
+    at: &str,
+    client: Option<&str>,
+    announce: bool,
+) {
+    let w = &order[i];
+    let mut cmds = vec![
+        args(&["select-window", "-t", &format!("{at}{}", w.id)]),
+        args(&["set-option", "-t", at, STATE, &p.encode()]),
+    ];
+    if announce {
+        cmds.push(say(client, &announcement(&w.name, i + 1, order.len())));
+    }
+    crate::cli::tmux(&borrow(&chained(cmds))).await;
+}
+
+/// The waiting flip a press left: once `flip_wait_ms` from the press has
+/// gone, go where it said, unless another press has taken the presses on or
+/// the window has changed some other way.
+///
+/// Read and then act, two tmux calls: a press landing between them opens the
+/// list over a flip, which is the path a press after the wait takes anyway,
+/// and Esc there still goes back to where the presses began.
+pub async fn land(
+    session: Option<String>,
+    client: Option<String>,
+    waiting: &str,
+    settings: &Settings,
+) -> anyhow::Result<()> {
+    let Some(p) = Pressed::decode(waiting).filter(|p| p.waiting) else {
+        return Ok(());
+    };
+    let due = p.ms + settings.flip_wait_ms;
+    tokio::time::sleep(std::time::Duration::from_millis(
+        due.saturating_sub(now_ms()),
+    ))
+    .await;
+    let seen = look(session.as_deref(), client.as_deref()).await;
+    if seen.kept.as_ref() != Some(&p) || seen.current != p.origin {
+        return Ok(());
+    }
+    let order = by_recency(seen.windows);
+    let Some(i) = order
+        .iter()
+        .position(|w| Some(&w.id) == p.flipped_to.as_ref())
+    else {
+        return Ok(());
+    };
+    let landed = Pressed {
+        waiting: false,
+        ..p
+    };
+    let at = format!("{}:", seen.session);
+    flip(
+        &order,
+        i,
+        &landed,
+        &at,
+        client.as_deref(),
+        settings.announce,
+    )
+    .await;
+    Ok(())
 }
 
 /// Whether this tmux has `display-popup -B`, which came in 3.3. `3.5a` and
@@ -831,6 +934,7 @@ mod tests {
             ms: 1_790_067_600_000,
             origin: "@3".into(),
             flipped_to: Some("@5".into()),
+            waiting: false,
             pos: -2,
         };
         assert_eq!(Pressed::decode(&p.encode()), Some(p.clone()));
@@ -847,7 +951,7 @@ mod tests {
     #[test]
     fn one_press_flips_to_where_you_were_and_draws_nothing() {
         let order = by_recency(session("a:1 b:2 c*:3"));
-        match on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500) {
+        match on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500, 0) {
             Act::Flip(i, p) => {
                 assert_eq!(order[i].name, "b");
                 assert_eq!(p.origin, "@3");
@@ -857,7 +961,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         // Shift from rest goes round to the oldest.
-        match on_press(&order, None, 1_000, -1, SwitchFirst::Flip, 500) {
+        match on_press(&order, None, 1_000, -1, SwitchFirst::Flip, 500, 0) {
             Act::Flip(i, _) => assert_eq!(order[i].name, "a"),
             other => panic!("{other:?}"),
         }
@@ -868,14 +972,15 @@ mod tests {
         let mut w = session("a:1 b:2 c*:3 d");
         let mut seq = 3;
         let order = by_recency(w.clone());
-        let Act::Flip(i, kept) = on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500) else {
+        let Act::Flip(i, kept) = on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500, 0) else {
             panic!("the first press flips");
         };
         let flipped = order[i].id.clone();
         select(&mut w, &flipped, &mut seq);
         let order = by_recency(w.clone());
         assert_eq!(names(&order), "b c a d");
-        let Act::Open(p) = on_press(&order, Some(&kept), 1_300, 1, SwitchFirst::Flip, 500) else {
+        let Act::Open(p) = on_press(&order, Some(&kept), 1_300, 1, SwitchFirst::Flip, 500, 0)
+        else {
             panic!("the second press opens the list");
         };
         // The list is the order the first press saw, on its third row.
@@ -885,15 +990,68 @@ mod tests {
     }
 
     #[test]
+    fn with_a_wait_the_first_press_moves_nothing_yet() {
+        let order = by_recency(session("a:1 b:2 c*:3"));
+        match on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500, 150) {
+            Act::Wait(i, p) => {
+                assert_eq!(order[i].name, "b");
+                assert_eq!(p.origin, "@3");
+                assert_eq!(p.flipped_to.as_deref(), Some("@2"));
+                assert!(p.waiting);
+                assert_eq!(p.encode(), "1000 @3 ~@2 1");
+                assert_eq!(Pressed::decode(&p.encode()), Some(p));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_second_press_inside_the_wait_opens_the_list_where_it_began() {
+        let order = by_recency(session("a:1 b:2 c*:3 d"));
+        let Act::Wait(_, kept) = on_press(&order, None, 1_000, 1, SwitchFirst::Flip, 500, 150)
+        else {
+            panic!("the first press waits");
+        };
+        // Still in c: the flip never landed.
+        let Act::Open(p) = on_press(&order, Some(&kept), 1_100, 1, SwitchFirst::Flip, 500, 150)
+        else {
+            panic!("the second press opens the list");
+        };
+        assert!(p.opening());
+        // The same row a second press after a landed flip opens on.
+        let list = origin_first(order, &p.origin);
+        assert_eq!(names(&list), "c b a d");
+        assert_eq!(list[wrap(p.pos, list.len())].name, "a");
+    }
+
+    #[test]
+    fn a_waiting_flip_left_by_another_key_is_not_carried_on() {
+        // The flip from c was waiting, but a was selected some other way.
+        let order = by_recency(session("a*:5 b:2 c:3"));
+        let kept = Pressed {
+            ms: 1_000,
+            origin: "@3".into(),
+            flipped_to: Some("@2".into()),
+            waiting: true,
+            pos: 1,
+        };
+        assert!(matches!(
+            on_press(&order, Some(&kept), 1_100, 1, SwitchFirst::Flip, 500, 150),
+            Act::Wait(..)
+        ));
+    }
+
+    #[test]
     fn a_press_after_the_pause_is_a_new_flip() {
         let order = by_recency(session("a:1 b*:3 c:2"));
         let kept = Pressed {
             ms: 1_000,
             origin: "@3".into(),
             flipped_to: Some("@2".into()),
+            waiting: false,
             pos: 1,
         };
-        match on_press(&order, Some(&kept), 1_500, 1, SwitchFirst::Flip, 500) {
+        match on_press(&order, Some(&kept), 1_500, 1, SwitchFirst::Flip, 500, 0) {
             Act::Flip(i, p) => {
                 assert_eq!(order[i].name, "c");
                 assert_eq!(p.origin, "@2");
@@ -910,10 +1068,11 @@ mod tests {
             ms: 1_000,
             origin: "@3".into(),
             flipped_to: Some("@2".into()),
+            waiting: false,
             pos: 1,
         };
         assert!(matches!(
-            on_press(&order, Some(&kept), 1_100, 1, SwitchFirst::Flip, 500),
+            on_press(&order, Some(&kept), 1_100, 1, SwitchFirst::Flip, 500, 0),
             Act::Flip(..)
         ));
     }
@@ -925,9 +1084,10 @@ mod tests {
             ms: 1_000,
             origin: "@3".into(),
             flipped_to: None,
+            waiting: false,
             pos: 2,
         };
-        match on_press(&order, Some(&kept), 1_050, -1, SwitchFirst::Flip, 500) {
+        match on_press(&order, Some(&kept), 1_050, -1, SwitchFirst::Flip, 500, 0) {
             Act::Count(p) => {
                 assert_eq!(p.pos, 1);
                 assert_eq!(p.ms, 1_050);
@@ -937,7 +1097,7 @@ mod tests {
         }
         // A popup that never came is forgotten after the pause.
         assert!(matches!(
-            on_press(&order, Some(&kept), 2_000, 1, SwitchFirst::Flip, 500),
+            on_press(&order, Some(&kept), 2_000, 1, SwitchFirst::Flip, 500, 0),
             Act::Flip(..)
         ));
     }
@@ -945,7 +1105,7 @@ mod tests {
     #[test]
     fn list_first_opens_on_the_first_press_and_moves_nothing() {
         let order = by_recency(session("a:1 b*:3 c:2"));
-        match on_press(&order, None, 0, 1, SwitchFirst::List, 500) {
+        match on_press(&order, None, 0, 1, SwitchFirst::List, 500, 0) {
             Act::Open(p) => {
                 assert_eq!(p.origin, "@2");
                 assert_eq!(p.pos, 1);
@@ -959,11 +1119,11 @@ mod tests {
     fn one_window_goes_nowhere() {
         let order = by_recency(session("a*"));
         assert_eq!(
-            on_press(&order, None, 0, 1, SwitchFirst::Flip, 500),
+            on_press(&order, None, 0, 1, SwitchFirst::Flip, 500, 0),
             Act::Nothing
         );
         assert_eq!(
-            on_press(&[], None, 0, 1, SwitchFirst::List, 500),
+            on_press(&[], None, 0, 1, SwitchFirst::List, 500, 0),
             Act::Nothing
         );
     }
@@ -987,7 +1147,7 @@ mod tests {
         let mut w = session("a:1 b:2 c:3 d*:4");
         let mut seq = 4;
         let order = by_recency(w.clone());
-        let Act::Flip(i, kept) = on_press(&order, None, 0, 1, SwitchFirst::Flip, 500) else {
+        let Act::Flip(i, kept) = on_press(&order, None, 0, 1, SwitchFirst::Flip, 500, 0) else {
             panic!()
         };
         let id = order[i].id.clone();
@@ -999,6 +1159,7 @@ mod tests {
             1,
             SwitchFirst::Flip,
             500,
+            0,
         ) else {
             panic!()
         };
