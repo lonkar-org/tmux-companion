@@ -3,7 +3,11 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
-## Unreleased
+## 0.10.1 - 2026-10-22
+
+Mirror sessions behave like the host's own sessions now: they show its theme and its windows on the bar, a rename on either side follows through and `M-s` can make a new session on a host and ask where it starts. Both machines need 0.10.1 for that.
+
+`M-a` waits for Enter before it leaves the window list, so there's time to read the candidate or hear a screen reader say it. `commit = "pause"` under `[switcher]` brings the old way back.
 
 ### Added
 
