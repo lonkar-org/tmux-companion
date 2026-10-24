@@ -1336,27 +1336,79 @@ fn run_attach(argv: &[String]) -> (Option<i32>, Vec<String>) {
 
 /// Wait for `q` (close: true) or, when `reconnect` is offered, `r` (false).
 /// Every other key is ignored; ctrl-c is `q`.
+///
+/// Bytes, not crossterm events: a terminal reply the dead connection left
+/// unread, `ESC [ ? 2026 ; 2 $ y`, held crossterm's parser open until a `u` or
+/// a `c`, and every `r`, `q` and ctrl-c after it went into that sequence. What
+/// is queued is flushed first, and each read is judged on its own, so nothing
+/// a read leaves unfinished can swallow the next key.
 fn wait_for_close(reconnect: bool) -> anyhow::Result<bool> {
-    use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
     use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
+    use std::os::fd::AsRawFd;
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
         return Ok(true);
     }
     ratatui::crossterm::terminal::enable_raw_mode()?;
+    let _ = nix::sys::termios::tcflush(&stdin, nix::sys::termios::FlushArg::TCIFLUSH);
+    let mut buf = [0u8; 256];
     let answer = loop {
-        match event::read() {
-            Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
-                KeyCode::Char('q') => break true,
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break true,
-                KeyCode::Char('r') if reconnect => break false,
-                _ => {}
-            },
-            Ok(_) => {}
+        match nix::unistd::read(stdin.as_raw_fd(), &mut buf) {
+            Ok(0) => break true,
+            Ok(n) => {
+                if let Some(a) = key_answer(&buf[..n], reconnect) {
+                    break a;
+                }
+            }
+            Err(nix::errno::Errno::EINTR) => {}
             Err(_) => break true,
         }
     };
     let _ = ratatui::crossterm::terminal::disable_raw_mode();
     Ok(answer)
+}
+
+/// What one read from the terminal says: `Some(true)` for `q` or ctrl-c,
+/// `Some(false)` for `r` when reconnecting is offered, `None` for anything
+/// else. An escape sequence is skipped to its end within the read, CSI to its
+/// final byte and OSC, DCS, APC and PM to BEL or ST, so the `r` in an
+/// `rgb:` colour reply is not a key; one left open ends with the read.
+fn key_answer(bytes: &[u8], reconnect: bool) -> Option<bool> {
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            0x1b => {
+                i += 1;
+                match bytes.get(i) {
+                    Some(b'[') => {
+                        i += 1;
+                        while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                            i += 1;
+                        }
+                    }
+                    Some(b']' | b'P' | b'_' | b'^') => {
+                        i += 1;
+                        while i < bytes.len()
+                            && bytes[i] != 0x07
+                            && !(bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b'\\'))
+                        {
+                            i += 1;
+                        }
+                        if bytes.get(i) == Some(&0x1b) {
+                            i += 1;
+                        }
+                    }
+                    Some(b'O') => i += 1,
+                    _ => continue,
+                }
+            }
+            b'q' | 0x03 => return Some(true),
+            b'r' if reconnect => return Some(false),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Give each mirror session's row the path of the session it stands for on
@@ -1402,6 +1454,33 @@ pub async fn forget_row(host: &str, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_answer_reads_q_r_and_ctrl_c() {
+        assert_eq!(key_answer(b"q", true), Some(true));
+        assert_eq!(key_answer(b"\x03", false), Some(true));
+        assert_eq!(key_answer(b"r", true), Some(false));
+        assert_eq!(key_answer(b"r", false), None);
+        assert_eq!(key_answer(b"x", true), None);
+        // alt-q is still q
+        assert_eq!(key_answer(b"\x1bq", true), Some(true));
+    }
+
+    #[test]
+    fn key_answer_skips_terminal_replies() {
+        // DECRPM, the one that held crossterm open, with q after it
+        assert_eq!(key_answer(b"\x1b[?2026;2$y", true), None);
+        assert_eq!(key_answer(b"\x1b[?2026;2$yq", true), Some(true));
+        // the r in an OSC 11 colour reply, ended by BEL and by ST
+        assert_eq!(key_answer(b"\x1b]11;rgb:0000/0000/0000\x07", true), None);
+        assert_eq!(key_answer(b"\x1b]11;rgb:0/0/0\x07r", true), Some(false));
+        assert_eq!(key_answer(b"\x1b]11;rgb:0/0/0\x1b\\", true), None);
+        // DCS XTVERSION, an arrow key and F2 (`ESC O Q`)
+        assert_eq!(key_answer(b"\x1bP>|WezTerm 2024\x1b\\", true), None);
+        assert_eq!(key_answer(b"\x1b[A\x1bOQ", true), None);
+        // one left open ends with the read
+        assert_eq!(key_answer(b"\x1b]11;rgb:0/0/0", true), None);
+    }
     use crate::{config::LinkMode, link::manager::Kept};
 
     #[test]

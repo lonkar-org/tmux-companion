@@ -3,6 +3,16 @@
 Kept in the shape [keep a changelog](https://keepachangelog.com) suggests, one
 entry per phase of the comrades port.
 
+## Unreleased
+
+### Fixed
+
+- A mirror pane whose connection dropped no longer ignores `r`, `q` and
+  ctrl-c. A terminal reply the dead connection left unread, a DECRPM such
+  as `ESC[?2026;2$y`, held the key parser open until a `u` or a `c`, and
+  every key after it went into that sequence. The prompt now reads bytes,
+  flushes what was queued before it, and judges each read on its own.
+
 ## 0.10.1 - 2026-10-22
 
 Mirror sessions behave like the host's own sessions now: they show its theme and its windows on the bar, a rename on either side follows through and `M-s` can make a new session on a host and ask where it starts. Both machines need 0.10.1 for that.

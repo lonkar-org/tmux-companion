@@ -1634,6 +1634,50 @@ fn a_session_gone_from_the_host_is_said_in_one_line() {
     });
 }
 
+/// A terminal reply the dead connection left unread, a DECRPM here, doesn't
+/// swallow the keys after it: crossterm's parser held `ESC [ ?` open until a
+/// `u` or a `c`, and every `r`, `q` and ctrl-c went into it.
+#[test]
+fn a_stray_terminal_reply_does_not_eat_q() {
+    let Some(p) = Pair::start("stray") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "keep"]);
+    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let exe = binary().display().to_string();
+    p.a.must(
+        &p.bin,
+        &[
+            "new-window",
+            "-d",
+            "-t",
+            "=here:",
+            "-n",
+            "shim",
+            &format!("'{exe}' host attach b missing"),
+        ],
+    );
+    wait_for(15, "the shim's line", || {
+        p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=here:shim"])
+            .0
+            .contains("r reconnect   q close")
+    });
+    p.a.must(
+        &p.bin,
+        &["send-keys", "-l", "-t", "=here:shim", "\x1b[?2026;2$y"],
+    );
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:shim", "q"]);
+    wait_for(10, "the shim closed on q", || {
+        !p.a.tmux(
+            &p.bin,
+            &["list-windows", "-t", "=here", "-F", "#{window_name}"],
+        )
+        .0
+        .contains("shim")
+    });
+}
+
 // ── Phase 3: the rest of the read side ──────────────────────────────────────
 
 /// The pane id of the first pane in `target` on a side.
