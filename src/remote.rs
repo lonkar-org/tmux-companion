@@ -105,7 +105,7 @@ fn count(n: usize, one: &str) -> String {
 }
 
 /// Whether a host's rows are reachable now: anything but a link that failed.
-fn reachable(v: &HostView) -> bool {
+pub fn reachable(v: &HostView) -> bool {
     !matches!(v.state, State::Down { .. })
 }
 
@@ -317,6 +317,14 @@ pub enum HostAction {
         #[arg(long)]
         wait: bool,
     },
+    /// Kill SESSION on HOST, with the grouped sessions other machines'
+    /// mirrors of it use there, and close its mirror session here
+    Kill {
+        /// The host, by its name in `hosts`
+        host: String,
+        /// The session on the host
+        session: String,
+    },
 }
 
 /// What the shim does besides the plain attach: everything `host attach`
@@ -371,6 +379,10 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
                 wait,
             };
             attach(&host, &session, &shim).await
+        }
+        HostAction::Kill { host, session } => {
+            println!("{}", kill(&host, &session).await?);
+            Ok(())
         }
     }
 }
@@ -1437,6 +1449,139 @@ pub fn open_mirrors(local: &[crate::project::Row]) -> Vec<(String, String)> {
     local.iter().filter_map(|r| r.mirror.clone()).collect()
 }
 
+/// The shell line that kills `remote` on the host with every session in its
+/// group, the `remote~machine` sessions mirrors attach through among them:
+/// killing the session alone would leave its windows alive in those. Exits
+/// [`GONE`] when there is no such session.
+pub fn kill_line(remote: &str) -> String {
+    use crate::link::quote;
+    let exact = quote(&format!("={remote}"));
+    // Session names can't hold `:`, so it splits the group from the name.
+    format!(
+        "tmux has-session -t {exact} 2>/dev/null || exit {GONE}; \
+         g=$(tmux display-message -p -t {} '#{{session_group}}'); \
+         if [ -n \"$g\" ]; then tmux list-sessions -F '#{{session_group}}:#{{session_name}}' | \
+         while IFS= read -r l; do [ \"${{l%%:*}}\" = \"$g\" ] && tmux kill-session -t \"=${{l#*:}}\"; done; fi; \
+         tmux kill-session -t {exact} 2>/dev/null; exit 0",
+        quote(&format!("={remote}:")),
+    )
+}
+
+/// Kill `remote` on `host_name` through the host's command, forget its row,
+/// and close its mirror session here when one is open. One line saying what
+/// happened.
+pub async fn kill(host_name: &str, remote: &str) -> anyhow::Result<String> {
+    let Some(host) = find_host(host_name).await else {
+        anyhow::bail!("no host called {host_name}; `tmux-companion hosts` lists them");
+    };
+    let mut argv = host.command.clone();
+    argv.push(kill_line(remote));
+    let run = tokio::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+    let wait = std::time::Duration::from_secs(host.connect_secs + 10);
+    let said = match tokio::time::timeout(wait, run).await {
+        Err(_) => anyhow::bail!(
+            "could not kill {remote} on {host_name}: no answer in {}s",
+            wait.as_secs()
+        ),
+        Ok(Err(e)) => anyhow::bail!(
+            "could not kill {remote} on {host_name}: cannot run {}: {e}",
+            argv[0]
+        ),
+        Ok(Ok(out)) => match out.status.code() {
+            Some(0) => format!("killed {remote} on {host_name}"),
+            Some(GONE) => format!("{remote} was already gone from {host_name}"),
+            code => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let last = err
+                    .lines()
+                    .rev()
+                    .map(|l| crate::link::clean(l.trim()))
+                    .find(|l| !l.is_empty())
+                    .unwrap_or_else(|| match code {
+                        Some(c) => format!("exit status {c}"),
+                        None => "stopped by a signal".to_string(),
+                    });
+                anyhow::bail!("could not kill {remote} on {host_name}: {last}")
+            }
+        },
+    };
+    forget_row(host_name, remote).await;
+    let here = format!("={}", mirror::session_name(remote, host_name));
+    let _ = crate::tmux::command()
+        .args(["kill-session", "-t", &here])
+        .output()
+        .await;
+    Ok(said)
+}
+
+/// What ctrl-x on one of a host's session rows asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowAct {
+    /// Nothing: Esc, or the first row.
+    Keep,
+    /// Kill the session on the host.
+    Kill,
+    /// Drop the cached row, for a host that can't be reached to ask.
+    Drop,
+    /// Forget the host.
+    Forget,
+}
+
+/// The rows of the ctrl-x question, keep first so an Enter straight away
+/// does nothing. A host that can't be reached can't be asked to kill
+/// anything, so its row offers dropping the cached row instead.
+pub fn row_choices(host: &str, remote: &str, reachable: bool) -> Vec<(RowAct, String)> {
+    vec![
+        (RowAct::Keep, format!("keep {remote}@{host}")),
+        if reachable {
+            (
+                RowAct::Kill,
+                format!("kill {remote} on {host}, and every mirror of it"),
+            )
+        } else {
+            (
+                RowAct::Drop,
+                format!("drop the row; it comes back if {host} still has {remote}"),
+            )
+        },
+        (
+            RowAct::Forget,
+            format!("forget {host}: its sessions here and its entry in the config"),
+        ),
+    ]
+}
+
+/// Ask what ctrl-x on `remote@host` is for, in a picker in this popup.
+pub fn ask_row(
+    host: &str,
+    remote: &str,
+    reachable: bool,
+    config: &crate::config::Config,
+) -> anyhow::Result<RowAct> {
+    let choices = row_choices(host, remote, reachable);
+    let items = choices
+        .iter()
+        .map(|(_, line)| crate::picker::Item::new(line))
+        .collect();
+    let chrome = crate::picker::Chrome {
+        title: format!("[ {remote}@{host} ]"),
+        footer: "enter do it   esc keep".into(),
+        icon: crate::tmux::icons::SESSION.into(),
+        ..Default::default()
+    }
+    .laid_out_like(&config.picker, crate::config::Picker::Project);
+    Ok(match crate::picker::run(items, "", &chrome)? {
+        Some(i) => choices.get(i).map_or(RowAct::Keep, |(a, _)| *a),
+        None => RowAct::Keep,
+    })
+}
+
 /// Forget one cached row of a host. The next poll brings it back if the
 /// session is still there.
 pub async fn forget_row(host: &str, session: &str) {
@@ -1454,6 +1599,37 @@ pub async fn forget_row(host: &str, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kill_line_quotes_the_name_once_and_kills_the_group() {
+        let line = kill_line("we ird'1");
+        assert!(
+            line.starts_with("tmux has-session -t '=we ird'\\''1' 2>/dev/null || exit 75; "),
+            "{line}"
+        );
+        assert!(
+            line.contains("display-message -p -t '=we ird'\\''1:' '#{session_group}'"),
+            "{line}"
+        );
+        assert!(line.contains("${l%%:*}"), "{line}");
+        assert!(
+            line.ends_with("tmux kill-session -t '=we ird'\\''1' 2>/dev/null; exit 0"),
+            "{line}"
+        );
+        assert!(kill_line("api").starts_with("tmux has-session -t '=api' 2>"));
+    }
+
+    #[test]
+    fn row_choices_keep_first_and_kill_only_a_reachable_host() {
+        let up = row_choices("vm", "api", true);
+        assert_eq!(
+            up.iter().map(|(a, _)| *a).collect::<Vec<_>>(),
+            [RowAct::Keep, RowAct::Kill, RowAct::Forget]
+        );
+        assert_eq!(up[1].1, "kill api on vm, and every mirror of it");
+        let down = row_choices("vm", "api", false);
+        assert_eq!(down[1].0, RowAct::Drop);
+    }
 
     #[test]
     fn key_answer_reads_q_r_and_ctrl_c() {

@@ -4045,7 +4045,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
             "enter go   alt-{key} next   alt-{upper} back   esc stay   type to filter session, **concealed** projects"
         );
         if !views.is_empty() {
-            footer.push_str("   ctrl-o new on host   ctrl-x forget   ctrl-n add host");
+            footer.push_str("   ctrl-o new on host   ctrl-x kill or forget   ctrl-n add host");
             footer.push_str(crate::remote::alt_enter_hint(&views));
         }
         let chrome = crate::picker::Chrome {
@@ -4292,17 +4292,33 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
         if let (crate::picker::Outcome::Chosen(i), Some(k)) = (&outcome, pressed) {
             let i = *i;
             match (k, remote_at(i)) {
+                // A mirror session open here stands for its session on the
+                // host, so ctrl-x on it asks what a host's row asks.
+                ('x', false)
+                    if let Some((host, name)) = sessions.get(i).and_then(|r| r.mirror.clone()) =>
+                {
+                    let reachable = views
+                        .iter()
+                        .find(|v| v.name == host)
+                        .is_some_and(crate::remote::reachable);
+                    row_act(&host, &name, reachable, &config).await?;
+                    start_index = Some(i);
+                }
                 ('x', false) if i < n_local => {
                     crate::remote::say(&format!(
-                        "{} is on this machine; only remote rows can be forgotten",
+                        "{} is on this machine; ctrl-x is for a host's rows",
                         sessions[i].label
                     ))
                     .await;
                     start_index = Some(i);
                 }
                 ('x', true) => match &remote_rows[i - n_local].target {
-                    crate::remote::Target::Session { host, name, .. } => {
-                        crate::remote::forget_row(host, name).await;
+                    crate::remote::Target::Session {
+                        host,
+                        name,
+                        reachable,
+                    } => {
+                        row_act(host, name, *reachable, &config).await?;
                         start_index = Some(i);
                     }
                     crate::remote::Target::Group(host) => {
@@ -4356,7 +4372,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
                 }
                 _ => {
                     crate::remote::say(
-                        "ctrl-x forgets a remote row or a host; a directory is not kept to forget",
+                        "ctrl-x on a host's row kills a session there or forgets the host; a directory has neither",
                     )
                     .await;
                     start_index = Some(i);
@@ -4415,6 +4431,28 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
             ProjectPick::Nothing => Ok(()),
         };
     }
+}
+
+/// Ask what ctrl-x on `name@host` is for and do it, saying the outcome on
+/// tmux's message line; the switcher opens again over it.
+async fn row_act(
+    host: &str,
+    name: &str,
+    reachable: bool,
+    config: &crate::config::Config,
+) -> anyhow::Result<()> {
+    use crate::remote::RowAct;
+    let said = match crate::remote::ask_row(host, name, reachable, config)? {
+        RowAct::Keep => return Ok(()),
+        RowAct::Kill => crate::remote::kill(host, name).await,
+        RowAct::Drop => {
+            crate::remote::forget_row(host, name).await;
+            Ok(format!("dropped {name}@{host}"))
+        }
+        RowAct::Forget => crate::hosts::forget(host).await,
+    };
+    crate::remote::say(&said.unwrap_or_else(|e| format!("{e:#}"))).await;
+    Ok(())
 }
 
 /// `autosave`: the timer lives in the daemon, so this is the manual half.

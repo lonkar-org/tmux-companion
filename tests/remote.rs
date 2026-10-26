@@ -1634,6 +1634,34 @@ fn a_session_gone_from_the_host_is_said_in_one_line() {
     });
 }
 
+/// `host kill` kills the session on B with its whole group, the grouped
+/// sessions mirrors attach through among them, and nothing else; a second
+/// kill says it was already gone.
+#[test]
+fn host_kill_takes_the_group_and_leaves_the_rest() {
+    let Some(p) = Pair::start("kill") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "doomed"]);
+    p.b.must(
+        &p.bin,
+        &["new-session", "-d", "-t", "=doomed", "-s", "doomed~mac"],
+    );
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "keep"]);
+    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+
+    let (out, err, ok) = p.a(&["host", "kill", "b", "doomed"]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "killed doomed on b");
+    let left =
+        p.b.must(&p.bin, &["list-sessions", "-F", "#{session_name}"]);
+    assert_eq!(left.trim(), "keep", "{left}");
+
+    let (out, err, ok) = p.a(&["host", "kill", "b", "doomed"]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "doomed was already gone from b");
+}
+
 /// A terminal reply the dead connection left unread, a DECRPM here, doesn't
 /// swallow the keys after it: crossterm's parser held `ESC [ ?` open until a
 /// `u` or a `c`, and every `r`, `q` and ctrl-c went into it.

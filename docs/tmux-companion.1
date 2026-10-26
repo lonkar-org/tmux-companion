@@ -1704,16 +1704,30 @@ alt-enter on a host's session opens it the other way, once: it hands the
 terminal over for a host that mirrors, and mirrors one that hands over.
 A mirror session that is open is listed once, among this machine's sessions.
 .Pp
-ctrl-x forgets a host's session row at once; the next answer from the host
-brings it back if the session is still there.
+ctrl-x on a host's session row, or on a mirror session open here, asks in
+the same popup what it is for, one row each:
+.Ql keep api@vm ,
+first, so Enter at once does nothing;
+.Ql kill api on vm, and every mirror of it ,
+which runs
+.Ic host kill ;
+and
+.Ql forget vm ,
+which runs
+.Ic hosts forget .
+For a host that can't be reached the middle row drops the cached row
+instead, which the next answer from the host brings back if the session is
+still there.
+Esc keeps both.
+What happened is said on the message line.
 On a host's line it closes the list and asks
 .Ql forget vm? y/n
 on the message line, where one key answers and only
 .Ql y
 forgets, then opens the list again on the same row; it is refused, with the
 reason, while a mirror session to the host is open.
-On one of this machine's sessions it says that only remote rows can be
-forgotten.
+On one of this machine's own sessions it says that ctrl-x is for a host's
+rows.
 ctrl-n on a host's line, one of its sessions or a mirror session opens the
 form
 .Ic hosts add
@@ -2307,6 +2321,21 @@ to close.
 Every name goes into the remote shell line quoted, so a session called
 .Ql x'; touch pwned; '
 is a name and nothing else.
+.It Ic host kill Ar host Ar session
+Kill
+.Ar session
+on
+.Ar host
+through the host command, with every session in its group there, the
+.Ql api~mac
+sessions other machines' mirrors attach through among them, and close its
+mirror session here when one is open.
+One line says how it went:
+.Ql killed api on vm ,
+.Ql api was already gone from vm ,
+or
+.Ql could not kill api on vm:
+and the reason.
 .It Ic hosts connect Op Ar name
 Start or retry a host's link now, or every host's, and say how it went on
 one line each:

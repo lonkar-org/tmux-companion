@@ -5,6 +5,24 @@ entry per phase of the comrades port.
 
 ## Unreleased
 
+### Added
+
+- `host kill HOST SESSION` kills a session on a host with its whole group,
+  the grouped sessions other machines' mirrors attach through among them,
+  and closes its mirror session here. It runs plain tmux over the host
+  command, so the host's build doesn't matter.
+- `prefix H` lists the hosts, one line each, in a popup that stays until
+  Esc. `setup` offers it, falling back to `M-L` where `H` is taken.
+
+### Changed
+
+- ctrl-x on a host's session row in `switch sessions`, or on a mirror
+  session open here, asks in the popup what it is for: keep, kill it on the
+  host, or forget the host. Before, it dropped the cached row without a
+  word, and a session still on the host came back on the next poll, so
+  ctrl-x looked like it did nothing. For a host that can't be reached the
+  middle choice drops the cached row, as before.
+
 ### Fixed
 
 - A mirror pane whose connection dropped no longer ignores `r`, `q` and

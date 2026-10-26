@@ -180,6 +180,9 @@ pid.
   phase 3 of `docs/dev/design-remote-sessions.md`, the hosts in `brief`,
   `project` and `inbox`, and mirror sessions in snapshots. The host's inbox
   rides the link's existing poll; nothing to port.
+- `host kill` is new: ctrl-x on a host's session row in `switch sessions`
+  asks keep, kill or forget. It runs plain tmux over the host command, so
+  the host's build doesn't matter; nothing to port.
 - `quiet --focus [NAME]` and `--focus-off` are new, with
   `[quiet] follow_focus`: quiet while a macOS Focus is on, pushed by a
   Shortcuts automation or read from the Focus database with one stat every

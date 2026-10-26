@@ -106,6 +106,18 @@ snippet = '''bind -N "companion: project add a host to the session list" {key} d
 goes = "tmux.conf"
 
 [[item]]
+id = "hosts-list"
+group = "Keys"
+kind = "binding"
+line = "Which machines are in the session list, and is each one reachable?"
+command = "hosts"
+key = "H"
+table = "prefix"
+fallback = ["M-L", "C-M-l"]
+snippet = '''bind -N "companion: project the hosts, one line each" {key} display-popup -B -w 90% -h 50% "tmux-companion hosts"'''
+goes = "tmux.conf"
+
+[[item]]
 id = "new-window"
 group = "Keys"
 kind = "binding"

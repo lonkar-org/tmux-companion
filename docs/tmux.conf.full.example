@@ -293,6 +293,16 @@ bind -N "companion: project add a host to the session list" M-h \
 bind -N "companion: project add a host to the session list" M-h \
   display-popup -E -w 90% -h 10 "tmux-companion hosts add"
 %endif
+# Each host on one line: its link, when it was last heard and its sessions,
+# and why it can't be reached when it can't. Without -E the popup stays
+# once the list is printed, until Esc.
+%if "#{>=:#{version},3.3}"
+bind -N "companion: project the hosts, one line each" H \
+  display-popup -B -w 90% -h 50% "tmux-companion hosts"
+%else
+bind -N "companion: project the hosts, one line each" H \
+  display-popup -w 90% -h 50% "tmux-companion hosts"
+%endif
 %if "#{>=:#{version},3.3}"
 bind -N "companion: project the agents waiting on you" M-g \
   display-popup -B -E -w 80% -h 70% "tmux-companion inbox"
