@@ -478,6 +478,34 @@ pub async fn dispatch(req: Request, state: Arc<Mutex<ServerState>>) -> Response 
             )),
             Err(e) => Err(e),
         },
+        // A note from outside on the mark: set, replaced or cleared, written
+        // to the state directory, and the cached check dropped so the bar
+        // says it on its next draw.
+        "health_note" => match req.parse_args::<crate::proto::HealthNoteArgs>() {
+            Ok(args) => {
+                let now = crate::panes::now_secs();
+                let mut st = state.lock().await;
+                match crate::healthnote::answer(&args, &mut st.health_notes, now) {
+                    Ok((line, changed)) => {
+                        if changed {
+                            st.health_cache = None;
+                        }
+                        let kept = match (&st.health_notes_file, changed) {
+                            (Some(file), true) => crate::healthnote::write(file, &st.health_notes),
+                            _ => Ok(()),
+                        };
+                        match kept {
+                            Ok(()) => Ok(line),
+                            Err(e) => Err(anyhow::anyhow!(
+                                "{line}, but it wasn't kept for a restart: {e}"
+                            )),
+                        }
+                    }
+                    Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            }
+            Err(e) => Err(e),
+        },
         // Quiet hours: set, clear or ask. The daemon keeps the clock so every
         // timer and every client agree on it.
         "chunk" => match req.parse_args::<crate::proto::ChunkArgs>() {
@@ -1032,7 +1060,7 @@ pub(crate) async fn health_reasons(state: &Arc<Mutex<ServerState>>) -> Vec<Strin
 pub(crate) async fn health_check(
     state: &Arc<Mutex<ServerState>>,
 ) -> segments::health::HealthSample {
-    let (started, read_at, failures, quiet, offline, bar_note, unclean) = {
+    let (started, read_at, failures, quiet, offline, bar_note, unclean, notes) = {
         let s = state.lock().await;
         let now = crate::panes::now_secs();
         let quiet = s.is_quiet().then(|| s.quiet_status(now));
@@ -1047,6 +1075,7 @@ pub(crate) async fn health_check(
             offline,
             s.bar_note.clone(),
             s.recent_unclean(),
+            crate::healthnote::reasons(&s.health_notes, now),
         )
     };
     let config_changed = match crate::config::load() {
@@ -1069,6 +1098,9 @@ pub(crate) async fn health_check(
         reasons.push(b);
     }
     reasons.extend(unclean);
+    // Last: a note is somebody else's word, after everything the daemon
+    // found itself.
+    reasons.extend(notes);
     segments::health::HealthSample { reasons }
 }
 

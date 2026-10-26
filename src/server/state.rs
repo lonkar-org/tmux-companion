@@ -123,6 +123,12 @@ pub struct ServerState {
     /// them; see `push::note_unclean_stop`. Kept for the failure window or
     /// until `health ack`, like a failure, but not worded as one.
     pub unclean: Vec<(String, Instant)>,
+    /// Reasons tools outside the daemon put on the mark with `health note`,
+    /// one per source; see `healthnote`.
+    pub health_notes: Vec<crate::healthnote::Note>,
+    /// Where the notes are kept so a restart keeps them: the daemon's state
+    /// directory. `None` keeps them in memory, as a state built for a test.
+    pub health_notes_file: Option<std::path::PathBuf>,
     /// When this daemon came up, for telling a file edited since from one
     /// edited before.
     pub started_at: std::time::SystemTime,
@@ -234,6 +240,8 @@ impl ServerState {
             dirs_cache: HashMap::new(),
             bar_note: None,
             unclean: Vec::new(),
+            health_notes: Vec::new(),
+            health_notes_file: None,
             started_at: std::time::SystemTime::now(),
             config_read_at: std::time::SystemTime::now(),
             failures: std::collections::BTreeMap::new(),

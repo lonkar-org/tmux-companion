@@ -172,6 +172,23 @@ pub struct HealthArgs {
     pub ack: bool,
 }
 
+/// `health note`: set, replace or clear one source's note on the mark.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HealthNoteArgs {
+    /// Who says it: the key it is replaced and cleared by.
+    pub source: String,
+    /// What it says; ignored with `clear`.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Take the source's note away instead.
+    #[serde(default)]
+    pub clear: bool,
+    /// Seconds until it stops being said unless set again.
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+}
+
 /// [`build_id`] as a compile-time constant.
 ///
 /// Exists because clap's `version` attribute takes a `&'static str` and cannot

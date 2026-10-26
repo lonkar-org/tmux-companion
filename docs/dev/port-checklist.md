@@ -186,6 +186,8 @@ pid.
 - `hosts` in a terminal is a picker of the hosts and their sessions, with
   `hosts --print` the lines it was; `hosts edit`, `host rename` and `host
   close` are new, each a key in it. Nothing to port.
+- `health note` is new: a reason on the health mark from a tool outside the
+  daemon, kept in the state directory. Nothing to port.
 - `quiet --focus [NAME]` and `--focus-off` are new, with
   `[quiet] follow_focus`: quiet while a macOS Focus is on, pushed by a
   Shortcuts automation or read from the Focus database with one stat every

@@ -10,6 +10,11 @@ entry per phase of the comrades port.
 - `[[hosts]] colour`: the colour a host's name is drawn in on picker rows.
   Without one, each host takes the next of eight colours in host order, so
   two hosts read apart at a glance.
+- `health note SOURCE TEXT [--ttl DURATION]` puts another tool's reason on
+  the health mark, `SOURCE: TEXT`, in `health`, `brief` and on the bar; `health
+  note SOURCE --clear` takes it away. One note per source, replaced when said
+  again, kept across a daemon restart and left by `health ack`, so a daily
+  check such as a dotfiles drift report keeps one line until it is fixed.
 - `host kill HOST SESSION` kills a session on a host with its whole group,
   the grouped sessions other machines' mirrors attach through among them,
   and closes its mirror session here. It runs plain tmux over the host

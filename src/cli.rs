@@ -620,9 +620,10 @@ pub enum Cmd {
     },
 
     /// Why the health mark is up, a reason a line, or `ok`; `ack` forgets
-    /// the failures once they've been read
+    /// the failures once they've been read; `note` puts another tool's
+    /// reason on the mark
     Health {
-        /// `ack`, or nothing to only ask
+        /// `ack` or `note`, or nothing to only ask
         #[command(subcommand)]
         action: Option<HealthAction>,
     },
@@ -1326,6 +1327,15 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
             crate::quiet::run(duration, off, change).await?
         }
         Cmd::Chunk { action } => crate::chunk::run(action).await?,
+        Cmd::Health {
+            action:
+                Some(HealthAction::Note {
+                    source,
+                    text,
+                    clear,
+                    ttl,
+                }),
+        } => run_health_note(source, text, clear, ttl).await?,
         Cmd::Health { action } => run_health(action.is_some()).await?,
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
@@ -2111,11 +2121,57 @@ pub enum ChunkAction {
 }
 
 /// What `health` can be told to do.
-#[derive(Subcommand, Debug, Clone, Copy)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum HealthAction {
     /// Forget the timers and segments that failed, so the mark comes down
     /// now and not an hour after the last of them
     Ack,
+    /// Put SOURCE's TEXT on the mark as a reason, `SOURCE: TEXT`, replacing
+    /// what SOURCE said before; kept across a daemon restart, left by `ack`
+    Note {
+        /// Who says it: letters, digits, - _ and ., up to 32
+        source: String,
+        /// What it says, one line; the words are joined with spaces
+        #[arg(required_unless_present = "clear", conflicts_with = "clear")]
+        text: Vec<String>,
+        /// Take SOURCE's note away instead
+        #[arg(long)]
+        clear: bool,
+        /// Stop saying it after this long unless it is set again: `90m`, `2d`
+        #[arg(long, value_name = "DURATION", conflicts_with = "clear")]
+        ttl: Option<String>,
+    },
+}
+
+/// `health note`: set, replace or clear a source's note, and say which.
+async fn run_health_note(
+    source: String,
+    text: Vec<String>,
+    clear: bool,
+    ttl: Option<String>,
+) -> anyhow::Result<()> {
+    let ttl_secs = match ttl.as_deref() {
+        Some(t) => Some(
+            crate::quiet::parse_duration(t)
+                .filter(|s| *s > 0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--ttl takes a duration like 90m, 12h or 2d; {t} is not one")
+                })?,
+        ),
+        None => None,
+    };
+    let args = crate::proto::HealthNoteArgs {
+        source,
+        text: (!clear).then(|| text.join(" ")),
+        clear,
+        ttl_secs,
+    };
+    let resp = crate::client::send(Request::build("health_note", &args)).await?;
+    if let Some(e) = resp.error {
+        anyhow::bail!(e);
+    }
+    println!("{}", resp.output);
+    Ok(())
 }
 
 /// `health`: the daemon's reasons, or with `ack` what it forgot.

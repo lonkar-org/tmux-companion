@@ -3046,6 +3046,53 @@ lists them under what it forgot as
 The sessions timer finding no tmux server, or a server with no session in it,
 isn't a failure and is never a reason: every session closed is something
 people do, and the daemon is still there when tmux comes back.
+.It Xo Ic health note Ar source Ar text ...
+.Op Fl -ttl Ar duration
+.Xc
+.It Ic health note Ar source Fl -clear
+Put a reason on the mark from outside the daemon: a dotfiles check, a build,
+anything that wants the bar to say something until it is fixed.
+It is said as
+.Ql source: text ,
+or as the text alone when it already starts with
+.Ql source: ,
+after the daemon's own reasons, in
+.Ic health ,
+.Ic brief
+and behind the bar's health mark.
+.Ar source
+is letters, digits,
+.Ql - ,
+.Ql _
+and
+.Ql \&. ,
+up to 32, and each source has one note: saying it again replaces it in
+place, so a check that runs daily keeps one line.
+The words of
+.Ar text
+are joined with spaces into one line of up to 120 characters.
+.Fl -ttl
+takes it away after
+.Ar duration ,
+.Ql 90m ,
+.Ql 12h
+or
+.Ql 2d ,
+unless it is said again first, for a source that might stop running;
+without it a note lasts until
+.Fl -clear .
+.Ic health ack
+leaves notes standing, since their source says when they stop being true.
+Notes are kept in
+.Pa $XDG_STATE_HOME/tmux-companion/health-notes.json
+and read back when the daemon starts.
+On another machine's mirror bar a host's note is part of that host's own
+health segment.
+One line says what happened:
+.Ql noted dotfiles: 3 drifted ,
+.Ql cleared dotfiles's note
+or
+.Ql dotfiles had no note .
 .It Ic probe
 What the terminal answers about itself.
 .El
@@ -3079,6 +3126,10 @@ saved per-project layouts
 each host's last answer,
 .Pa <name>.bin ,
 kept so a host is listed before its link is up
+.It Pa $XDG_STATE_HOME/tmux-companion/health-notes.json
+the reasons
+.Ic health note
+put on the mark, one per source, kept across a daemon restart
 .It Pa $XDG_STATE_HOME/tmux-companion/branch-icons.toml
 the glyph the daemon picked for each branch prefix it looked up by glyph
 name; delete it and restart the daemon to pick again

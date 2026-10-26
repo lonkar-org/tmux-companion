@@ -2630,6 +2630,69 @@ fn an_empty_picker_says_so_on_the_message_line() {
     );
 }
 
+/// `health note` puts another tool's reason on the mark in its name,
+/// replaces it when the source says it again, outlives `health ack` and a
+/// daemon restart, and goes with `--clear`.
+#[test]
+fn a_health_note_stays_until_its_source_clears_it() {
+    let Some(t) = Tmux::start("healthnote") else {
+        return;
+    };
+    let (out, err, ok) = t.run(&["health", "note", "dots", "3", "drifted"]);
+    assert!(ok, "health note failed:\n{err}");
+    assert_eq!(out.trim(), "noted dots: 3 drifted");
+    let (out, _, _) = t.run(&["health", "note", "dots", "1 drifted"]);
+    assert_eq!(out.trim(), "noted dots: 1 drifted");
+    let (out, _, _) = t.run(&["health"]);
+    assert_eq!(
+        out.trim(),
+        "dots: 1 drifted",
+        "one note per source: {out:?}"
+    );
+
+    let (out, _, _) = t.run(&["health", "ack"]);
+    assert!(
+        out.contains("still on the mark: dots: 1 drifted"),
+        "{out:?}"
+    );
+    // A stop and a fresh start, the way the next client after a crash or an
+    // upgrade starts one: `restart` itself races its own new daemon under a
+    // loaded suite, and what is under test is the file, not the restart.
+    let marker = t.sandbox.join("state/tmux-companion/sessions/running");
+    let (out, err, ok) = t.run(&["shutdown"]);
+    assert!(ok, "shutdown failed: {out}{err}");
+    assert!(
+        t.until(10, |_| !marker.exists()),
+        "the daemon never stopped"
+    );
+    // The next client starts the new daemon; on a loaded machine its first
+    // answer can be a moment coming.
+    assert!(
+        t.until(10, |t| t.run(&["health"]).0.trim() == "dots: 1 drifted"),
+        "not kept across a restart: {:?}",
+        t.run(&["health"])
+    );
+
+    let (out, _, ok) = t.run(&["health", "note", "ci", "red", "--ttl", "2h"]);
+    assert!(ok);
+    assert_eq!(out.trim(), "noted ci: red, for 2h unless said again");
+    let (_, err, ok) = t.run(&["health", "note", "bad name", "x"]);
+    assert!(!ok);
+    assert!(err.contains("can't be in a source"), "{err}");
+    let (_, err, ok) = t.run(&["health", "note", "ci", "x", "--ttl", "soon"]);
+    assert!(!ok);
+    assert!(err.contains("--ttl takes a duration"), "{err}");
+
+    let (out, _, _) = t.run(&["health", "note", "dots", "--clear"]);
+    assert_eq!(out.trim(), "cleared dots's note");
+    let (out, _, _) = t.run(&["health", "note", "ci", "--clear"]);
+    assert_eq!(out.trim(), "cleared ci's note");
+    let (out, _, _) = t.run(&["health"]);
+    assert_eq!(out.trim(), "ok");
+    let (out, _, _) = t.run(&["health", "note", "ci", "--clear"]);
+    assert_eq!(out.trim(), "ci had no note");
+}
+
 /// `health` says what the mark says, and `health ack` says what it left
 /// standing: quiet hours are how things are, so acknowledging doesn't end them.
 #[test]

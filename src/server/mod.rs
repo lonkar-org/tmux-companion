@@ -170,6 +170,13 @@ pub async fn run() -> anyhow::Result<()> {
         let picks = crate::branch_icons::read_picks(&file);
         fresh.branch_icons.attach(picks, Some(file));
     }
+    // The notes outside tools left on the health mark, so a restart keeps
+    // what a source said once a day.
+    if let Some(dir) = state_dir() {
+        let file = crate::healthnote::path_in(&dir);
+        fresh.health_notes = crate::healthnote::read(&file, crate::panes::now_secs());
+        fresh.health_notes_file = Some(file);
+    }
     let state = Arc::new(Mutex::new(fresh));
 
     // Started before the accept loop, so it runs for as long as the daemon
