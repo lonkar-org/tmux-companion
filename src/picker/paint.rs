@@ -22,7 +22,8 @@
 //! | `Ok` | green | on, fine |
 //! | `Failed` | red | broken |
 //! | `Accent` | the theme's colour | the cursor, the query's matches, a label |
-//! | `Host` | `@tc-host-fg` | another machine's name, the `@vm` of `api@vm` |
+//! | `Host` | `@tc-host-fg` | another machine's name, the `@vm` of `api@vm`, when no host colour is known |
+//! | `HostAt(n)` | that host's colour | the `n`th host's name, each host in its own colour |
 //! | `Offline` | dark grey, faint | a row for something that can't be reached now |
 //!
 //! Focus is the band behind the row the cursor is on, and nothing else. The
@@ -65,6 +66,10 @@ pub enum Tone {
     /// Another machine's name: the `@vm` of a remote session, in the host
     /// colour the bar draws it in.
     Host,
+    /// One host's name in that host's own colour, by its place in the table
+    /// [`set_host_colours`] filled, so `@box2` and `@vm` differ at a
+    /// glance. Still the name in words: the colour only says it again.
+    HostAt(u8),
     /// A row for something that can't be reached now, a host's cached
     /// sessions while its link is down. Not `Dim`, which is detail.
     Offline,
@@ -88,6 +93,52 @@ pub fn set_host_colour(spec: &str) {
     if let Some(c) = super::colour_of(spec.trim()) {
         let _ = HOST_COLOUR.set(c);
     }
+}
+
+/// One host as the pickers paint it: its name, its colour, and whether it
+/// can be reached.
+type HostPaint = (String, Option<Color>, bool);
+
+/// Each host as the picker that lists hosts last gave it to
+/// [`set_host_colours`]. Replaced rather than set once: the hosts picker
+/// paints again after each key, and a host it connected is reachable now.
+static HOST_COLOURS: std::sync::RwLock<Vec<HostPaint>> = std::sync::RwLock::new(Vec::new());
+
+/// Take each host's colour, `(name, colour spec, reachable)` in host order.
+/// A spec that isn't a colour leaves that host on [`Tone::Host`].
+pub fn set_host_colours(hosts: &[(String, String, bool)]) {
+    let table = hosts
+        .iter()
+        .take(u8::MAX as usize)
+        .map(|(name, spec, up)| (name.clone(), super::colour_of(spec), *up))
+        .collect();
+    if let Ok(mut t) = HOST_COLOURS.write() {
+        *t = table;
+    }
+}
+
+/// The tone a host's name is drawn in: [`Tone::Offline`] while it can't be
+/// reached, its own colour once [`set_host_colours`] has one, the shared
+/// host tone otherwise.
+pub fn host_tone(name: &str) -> Tone {
+    let Ok(table) = HOST_COLOURS.read() else {
+        return Tone::Host;
+    };
+    match table.iter().position(|(n, _, _)| n == name) {
+        Some(i) if !table[i].2 => Tone::Offline,
+        Some(i) if table[i].1.is_some() => u8::try_from(i).map_or(Tone::Host, Tone::HostAt),
+        _ => Tone::Host,
+    }
+}
+
+/// Whether a host can be reached, as far as [`set_host_colours`] was told;
+/// true for a host it wasn't told about.
+pub fn host_reachable(name: &str) -> bool {
+    HOST_COLOURS.read().map_or(true, |t| {
+        t.iter()
+            .find(|(n, _, _)| n == name)
+            .is_none_or(|(_, _, up)| *up)
+    })
 }
 
 /// Amber: the colour the bar draws a waiting agent in, so the row that wants
@@ -309,6 +360,11 @@ impl Paint {
             Tone::Failed => s.fg(FAILED),
             Tone::Accent => s.fg(self.accent),
             Tone::Host => s.fg(*HOST_COLOUR.get().unwrap_or(&HOST_FALLBACK)),
+            Tone::HostAt(i) => s.fg(HOST_COLOURS
+                .read()
+                .ok()
+                .and_then(|t| t.get(usize::from(i)).and_then(|(_, c, _)| *c))
+                .unwrap_or(*HOST_COLOUR.get().unwrap_or(&HOST_FALLBACK))),
             Tone::Offline => s.fg(OFFLINE).add_modifier(Modifier::DIM),
         };
         self.checked(s)
@@ -610,6 +666,28 @@ pub fn is_key(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn each_host_has_its_own_colour_and_an_unreachable_one_is_offline() {
+        // Names no other test registers: the table is the process's.
+        set_host_colours(&[
+            ("paint-a".into(), "colour203".into(), true),
+            ("paint-b".into(), "colour75".into(), true),
+            ("paint-down".into(), "colour114".into(), false),
+            ("paint-bad".into(), "not a colour".into(), true),
+        ]);
+        let p = Paint::default();
+        let a = host_tone("paint-a");
+        let b = host_tone("paint-b");
+        assert!(matches!(a, Tone::HostAt(_)) && matches!(b, Tone::HostAt(_)));
+        assert_ne!(p.style(a).fg, p.style(b).fg, "two hosts, two colours");
+        assert_eq!(p.style(a).fg, Some(Color::Indexed(203)));
+        assert_eq!(host_tone("paint-down"), Tone::Offline);
+        assert!(!host_reachable("paint-down"));
+        assert_eq!(host_tone("paint-bad"), Tone::Host);
+        assert_eq!(host_tone("paint-unknown"), Tone::Host);
+        assert!(host_reachable("paint-unknown"));
+    }
 
     #[test]
     fn the_session_is_the_last_field_of_tmux() {

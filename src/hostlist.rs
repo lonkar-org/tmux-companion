@@ -177,6 +177,7 @@ pub async fn run() -> anyhow::Result<()> {
                 None => return Ok(()),
             }
         }
+        crate::hosts::paint_hosts(&views);
         let open = open_here().await;
         let now = crate::panes::now_secs();
         let rows = rows(&views, &open, now);

@@ -223,7 +223,7 @@ pub fn rows(views: &[HostView], open: &[(String, String)], now: u64) -> Vec<Row>
                     count(s.windows as usize, "window")
                 );
                 if !s.path.is_empty() {
-                    p.push_str(&s.path);
+                    p.push_str(&crate::project::short_host_path(&s.path));
                     p.push('\n');
                 }
                 // The host's own line, which the picker no longer shows as a
@@ -599,18 +599,27 @@ pub fn items(rows: &[Row], views: &[HostView], now: u64) -> Vec<crate::picker::I
                         .map(str::to_string)
                         .collect();
                     let tone = if up { Tone::Dim } else { Tone::Offline };
-                    let mut cells = vec![Cell::new(h.clone(), Tone::Host)];
+                    let host_tone = if up {
+                        crate::picker::paint::host_tone(h)
+                    } else {
+                        Tone::Offline
+                    };
+                    let mut cells = vec![Cell::new(h.clone(), host_tone)];
                     cells.push(Cell::new(rest.join(", "), tone));
                     Item::with_preview(r.line.clone(), r.preview.clone())
                         .in_cells(cells)
-                        .with_icon(crate::tmux::icons::SSH, Tone::Host)
+                        .with_icon(crate::tmux::icons::SSH, host_tone)
                         .not_a_step()
                 }
                 Target::Session { host, name, .. } => {
-                    let (name_tone, word_tone) = if up {
-                        (Tone::Strong, Tone::Dim)
+                    let (name_tone, word_tone, host_tone) = if up {
+                        (
+                            Tone::Strong,
+                            Tone::Dim,
+                            crate::picker::paint::host_tone(host),
+                        )
                     } else {
-                        (Tone::Offline, Tone::Offline)
+                        (Tone::Offline, Tone::Offline, Tone::Offline)
                     };
                     let rest = r
                         .line
@@ -620,20 +629,14 @@ pub fn items(rows: &[Row], views: &[HostView], now: u64) -> Vec<crate::picker::I
                         .to_string();
                     let mut cells = vec![
                         Cell::new(name.clone(), name_tone),
-                        Cell::new(
-                            format!("@{host}"),
-                            if up { Tone::Host } else { Tone::Offline },
-                        ),
+                        Cell::new(format!("@{host}"), host_tone),
                     ];
                     if !rest.is_empty() {
                         cells.push(Cell::new(rest, word_tone));
                     }
                     let item = Item::with_preview(r.line.clone(), r.preview.clone())
                         .in_cells(cells)
-                        .with_icon(
-                            crate::tmux::icons::SSH,
-                            if up { Tone::Host } else { Tone::Offline },
-                        );
+                        .with_icon(crate::tmux::icons::SSH, host_tone);
                     if up { item } else { item.not_a_step() }
                 }
             }

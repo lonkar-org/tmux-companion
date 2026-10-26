@@ -1699,7 +1699,7 @@ fn the_hosts_picker_acts_on_a_row_and_says_so() {
         return;
     };
     p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
-    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+    p.a_config(&p.fake_ssh(), "poll_secs = 1\ncolour = \"colour75\"");
     p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
     let mut client = p.a_client("here");
     let (out, err, ok) = p.a(&["hosts", "connect", "b"]);
@@ -1718,6 +1718,15 @@ fn the_hosts_picker_acts_on_a_row_and_says_so() {
         let s = screen();
         s.contains("Hosts ]") && s.contains("@b")
     });
+    // B's name in B's own colour, from its entry, where the shared host
+    // colour used to be.
+    let coloured =
+        p.a.tmux(&p.bin, &["capture-pane", "-p", "-e", "-t", "=here:"])
+            .0;
+    assert!(
+        coloured.contains("38;5;75m"),
+        "B's colour on screen:\n{coloured}"
+    );
     // The second row is api@b; ctrl-w on it says it isn't open here.
     p.a.must(&p.bin, &["send-keys", "-t", "=here:", "Down", "C-w"]);
     wait_for(10, "the footer's answer", || {
@@ -2098,16 +2107,20 @@ fn a_hosts_directories_come_over_the_link_and_open_there() {
     );
     let lines: Vec<&str> = out.lines().collect();
     assert!(lines[0].starts_with("session\tapi@b\t"), "{out}");
+    // The fifth column names the host a row is on.
+    assert!(lines[0].ends_with("\tb"), "the mirror's host: {out}");
     assert!(
         lines.iter().any(|l| l.starts_with("host\tb, ")),
         "B's group line: {out}"
     );
     assert!(
-        lines.iter().any(|l| l.starts_with("session\tw2@b")),
-        "B's other session: {out}"
+        lines
+            .iter()
+            .any(|l| l.starts_with("session\tw2@b") && l.ends_with("\tb")),
+        "B's other session, with its host: {out}"
     );
     assert!(
-        lines.contains(&format!("dir\tw1@b\t{}\t", w1.display()).as_str()),
+        lines.contains(&format!("dir\tw1@b\t{}\t\tb", w1.display()).as_str()),
         "B's directory, over the link: {out}"
     );
     assert!(

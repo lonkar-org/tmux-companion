@@ -20,6 +20,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if !matches!(cli.command, Cmd::Server) {
+        tmux_companion::cli::quiet_on_closed_stdout();
         tmux_companion::cli::cache_config_for_this_process();
         // A terminal on stdout inside tmux is a popup or a person at a
         // prompt; the bar's `#()` and every `run-shell` have a pipe. Only the

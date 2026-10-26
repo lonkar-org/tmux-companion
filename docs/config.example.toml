@@ -1509,8 +1509,9 @@ sessions_key = "s"
 # sessions while the link is up. They're listed in `M-s` after this machine's
 # own, and picking one opens it as a mirror session. `tmux-companion hosts`
 # says where each link is; `hosts add NAME -- ssh NAME` adds one without
-# editing this file. The colour a host is drawn in is the tmux options
-# @tc-host-fg and @tc-host-bg, set in the example tmux.conf files.
+# editing this file. On the bar a host is drawn in the tmux options
+# @tc-host-fg and @tc-host-bg, set in the example tmux.conf files; on picker
+# rows each host is drawn in its own `colour`, below.
 #
 # Set `BatchMode yes` and a `ConnectTimeout` for the host in ~/.ssh/config:
 # the link never asks for a password or a host key, it fails and says why.
@@ -1546,3 +1547,7 @@ sessions_key = "s"
 # # `api@vm` here whose pane attaches to it. "handover" is accepted and opens a
 # # mirror session until handing the terminal over is built.
 # open = "mirror"
+# # The colour its name is drawn in on every picker row, "colourN" or
+# # "#rrggbb". Empty takes the next of eight colours in host order, starting at
+# # colour203, so two hosts never share one until there are more than eight.
+# colour = ""

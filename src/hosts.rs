@@ -21,6 +21,54 @@ use crate::{
 /// survives a daemon restart and goes with the server it was added for.
 pub const SERVER_OPTION: &str = "@tc-hosts";
 
+/// The colours a host's name takes on picker rows when its `[[hosts]]`
+/// entry sets none, by its place in host order: 203 first, the one host
+/// colour there was before there were several, then hues apart from it and
+/// from each other on a dark or a light popup.
+pub const PALETTE: [&str; 8] = [
+    "colour203",
+    "colour75",
+    "colour114",
+    "colour179",
+    "colour177",
+    "colour80",
+    "colour209",
+    "colour168",
+];
+
+/// Each host's colour, `(name, spec)`, for `names` in host order: the
+/// `colour` its `[[hosts]]` entry in `configured` sets, else the palette
+/// colour for its place. By place rather than by a hash of the name, so two
+/// hosts never share a colour until there are more hosts than colours.
+pub fn colours(names: &[String], configured: &[Host]) -> Vec<(String, String)> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let own = configured
+                .iter()
+                .find(|h| h.name == *name)
+                .map(|h| h.colour.trim())
+                .filter(|c| !c.is_empty());
+            let spec = own.unwrap_or(PALETTE[i % PALETTE.len()]);
+            (name.clone(), spec.to_string())
+        })
+        .collect()
+}
+
+/// Fill the pickers' host colours from `views`, in their order, which is
+/// host order, with whether each can be reached. Once per process.
+pub fn paint_hosts(views: &[HostView]) {
+    let names: Vec<String> = views.iter().map(|v| v.name.clone()).collect();
+    let configured = crate::cli::config_or_default().hosts;
+    let table: Vec<(String, String, bool)> = colours(&names, &configured)
+        .into_iter()
+        .zip(views)
+        .map(|((name, spec), v)| (name, spec, crate::remote::reachable(v)))
+        .collect();
+    crate::picker::paint::set_host_colours(&table);
+}
+
 /// The longest a host name may be.
 pub const NAME_MAX: usize = 32;
 
@@ -1357,6 +1405,20 @@ pub async fn connect_lines(name: Option<String>) -> anyhow::Result<Vec<(String, 
 mod tests {
     use super::*;
     use crate::config::LinkMode;
+
+    #[test]
+    fn hosts_take_palette_colours_by_place_unless_their_entry_sets_one() {
+        let names: Vec<String> = ["vm", "box2", "box"].map(String::from).to_vec();
+        let mut own = Host::new("box", vec!["ssh".into(), "box".into()]);
+        own.colour = "#5f87ff".into();
+        let got = colours(&names, &[own]);
+        assert_eq!(got[0], ("vm".to_string(), "colour203".to_string()));
+        assert_eq!(got[1], ("box2".to_string(), "colour75".to_string()));
+        assert_eq!(got[2], ("box".to_string(), "#5f87ff".to_string()));
+        assert_ne!(got[0].1, got[1].1, "two hosts, two colours");
+        let many: Vec<String> = (0..9).map(|i| format!("h{i}")).collect();
+        assert_eq!(colours(&many, &[])[8].1, PALETTE[0], "the palette wraps");
+    }
 
     #[test]
     fn an_edited_host_keeps_its_place_its_other_keys_and_every_comment() {

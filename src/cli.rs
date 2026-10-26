@@ -2395,15 +2395,21 @@ async fn run_project(dir: Option<String>, print: bool, detached: bool) -> anyhow
     let now = crate::sessions::idle::now();
 
     if print {
+        // A fifth column names the host a row is on, empty for this
+        // machine: last, so a reader of the first four reads them as before.
         let print_row = |row: &crate::project::Row| {
+            let (path, host) = match &row.mirror {
+                Some((host, _)) => (crate::project::short_host_path(&row.path), host.as_str()),
+                None => (crate::project::short_path(&row.path, &home), ""),
+            };
             println!(
-                "{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{host}",
                 match row.kind {
                     Kind::Session => "session",
                     Kind::Directory => "dir",
                 },
                 row.label,
-                crate::project::short_path(&row.path, &home),
+                path,
                 row.colour.clone().unwrap_or_default()
             );
         };
@@ -2417,21 +2423,21 @@ async fn run_project(dir: Option<String>, print: bool, detached: bool) -> anyhow
                         .iter()
                         .find(|v| v.name == *h)
                         .map_or(r.line.clone(), |v| crate::remote::group_line(v, now, true));
-                    println!("host\t{line}\t\t");
+                    println!("host\t{line}\t\t\t{h}");
                 }
                 crate::remote::Target::Session { host, name, .. } => {
                     let path = views
                         .iter()
                         .find(|v| v.name == *host)
                         .and_then(|v| v.sessions.iter().find(|s| s.name == *name))
-                        .map(|s| s.path.clone())
+                        .map(|s| crate::project::short_host_path(&s.path))
                         .unwrap_or_default();
-                    println!("session\t{}\t{path}\t", r.line);
+                    println!("session\t{}\t{path}\t\t{host}", r.line);
                 }
             }
         }
         if let Some(why) = &dirs_failed {
-            println!("dirs\t{why}\t\t");
+            println!("dirs\t{why}\t\t\t");
         }
         dirs.iter().for_each(print_row);
         return Ok(());
@@ -2519,6 +2525,34 @@ pub(crate) struct ProjectRows {
     dirs_failed: Option<String>,
 }
 
+/// Whether a panic is a print to a stdout whose reader has gone, as when
+/// `project --print | head` closes the pipe after ten lines. Rust ignores
+/// SIGPIPE, so `println!` panics there instead of the process ending
+/// quietly the way a C tool does.
+pub fn is_closed_stdout(message: &str) -> bool {
+    message.starts_with("failed printing to stdout") && message.contains("Broken pipe")
+}
+
+/// For a client: end quietly with 141, the status a process killed by
+/// SIGPIPE reports, when stdout's reader has gone, and panic as before
+/// otherwise. The daemon keeps the ignored SIGPIPE, so a client that hangs
+/// up on it is an error it handles, not a death.
+pub fn quiet_on_closed_stdout() {
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if is_closed_stdout(message) {
+            std::process::exit(141);
+        }
+        before(info);
+    }));
+}
+
 /// The host a mirror session stands on, when the session the picker opened
 /// from is one: the first row, which recency puts there. Only inside tmux,
 /// since outside it no session is the one you are in.
@@ -2541,6 +2575,7 @@ async fn project_rows(config: &crate::config::Config, home: &str) -> ProjectRows
     };
     let mut sessions = crate::project::sessions(&[]).await;
     let views = crate::remote::views_for_picker();
+    crate::hosts::paint_hosts(&views);
     crate::remote::host_paths(&mut sessions, &views);
     let now = crate::sessions::idle::now();
     let open = crate::remote::open_mirrors(&sessions);
@@ -2602,47 +2637,43 @@ pub(crate) fn project_items(
             Kind::Session => "session",
             Kind::Directory => "dir",
         };
-        let where_it_is = crate::project::short_path(&r.path, home);
+        // A host's path is shortened against that host's home, not this one.
+        let where_it_is = match &r.mirror {
+            Some(_) => crate::project::short_host_path(&r.path),
+            None => crate::project::short_path(&r.path, home),
+        };
         // A detached session quiet for a day or more says so in a fourth
         // column, so the stale ones show without leaving the list. The column
         // is only pushed when there is something to say: an empty last cell
         // would still pad the path out to the widest row.
         let idle = crate::project::idle_column(r);
         let mut label = format!("{mark} {} {}", r.label, where_it_is);
-        let mut cells = match (&r.kind, &r.mirror) {
-            // A host's directory: `api@vm` in the words, with `@vm` in the
-            // host tone as a remote session's row has it.
-            (Kind::Directory, Some((host, _))) => {
+        let mut cells = match &r.mirror {
+            // A host's directory or a mirror session: `api@vm` in the words,
+            // with `@vm` in that host's own colour, so it reads as the host's
+            // whether it is open here or not, and two hosts read apart. While
+            // the host can't be reached the whole row is the offline tone.
+            Some((host, _)) => {
                 let base = r
                     .label
                     .strip_suffix(&format!("@{host}"))
                     .unwrap_or(&r.label)
                     .to_string();
+                let up = crate::picker::paint::host_reachable(host);
                 vec![
-                    Cell::new(base, name),
-                    Cell::new(format!("@{host}"), Tone::Host),
-                    Cell::dim(where_it_is),
+                    Cell::new(base, if up { name } else { Tone::Offline }),
+                    Cell::new(format!("@{host}"), crate::picker::paint::host_tone(host)),
+                    Cell::new(where_it_is, if up { Tone::Dim } else { Tone::Offline }),
                 ]
             }
-            // A mirror session the same, so it reads as the host's whether it
-            // is open here or not.
-            (Kind::Session, Some((host, _))) => {
-                let base = r
-                    .label
-                    .strip_suffix(&format!("@{host}"))
-                    .unwrap_or(&r.label)
-                    .to_string();
-                vec![
-                    Cell::new(base, name),
-                    Cell::new(format!("@{host}"), Tone::Host),
-                    Cell::dim(where_it_is),
-                ]
-            }
-            _ => vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)],
+            None => vec![Cell::new(r.label.clone(), name), Cell::dim(where_it_is)],
         };
         // A mirror session wears the ssh glyph its host's remote rows do.
         let (icon, icon_tone) = match (&r.kind, &r.mirror) {
-            (Kind::Session, Some(_)) => (crate::tmux::icons::SSH, Tone::Host),
+            (Kind::Session, Some((host, _))) => (
+                crate::tmux::icons::SSH,
+                crate::picker::paint::host_tone(host),
+            ),
             _ => (icon, Tone::Dim),
         };
         if let Some(idle) = idle {
@@ -4027,6 +4058,7 @@ async fn run_switch_sessions(reverse: bool, print: bool, at: Option<String>) -> 
         // is up; see `picker::Later`.
         let mut sessions = crate::project::sessions(&crate::switcher::hooks()).await;
         let views = crate::remote::views_for_picker();
+        crate::hosts::paint_hosts(&views);
         crate::remote::host_paths(&mut sessions, &views);
         // Inside a mirror session a typed path is the host's: its
         // directories are listed and a path opens there.
@@ -5559,6 +5591,17 @@ async fn run_zen(pane: Option<String>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_print_to_a_closed_stdout_ends_quietly() {
+        assert!(is_closed_stdout(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout(
+            "failed printing to stdout: No space left on device"
+        ));
+        assert!(!is_closed_stdout("index out of bounds: Broken pipe"));
+    }
 
     #[test]
     fn the_project_picker_opens_a_typed_directory_it_never_listed() {

@@ -7,6 +7,9 @@ entry per phase of the comrades port.
 
 ### Added
 
+- `[[hosts]] colour`: the colour a host's name is drawn in on picker rows.
+  Without one, each host takes the next of eight colours in host order, so
+  two hosts read apart at a glance.
 - `host kill HOST SESSION` kills a session on a host with its whole group,
   the grouped sessions other machines' mirrors attach through among them,
   and closes its mirror session here. It runs plain tmux over the host
@@ -37,6 +40,12 @@ entry per phase of the comrades port.
   health reason is still said in words, and `net` and `battery`, which are
   the host's machine rather than the session, are not sent. Both ends need
   this build; with either end older the bar is in words as before.
+- The pickers draw each host's `@vm` in that host's own colour, on M-s,
+  the project picker and the hosts picker, here and on the host alike, where
+  every host shared `@tc-host-fg` before. An open mirror whose host can't be
+  reached is dimmed like the host's other rows. A host's paths are shortened
+  against its home, `~/api` rather than `/home/me/api`. `project
+  --print` gains a fifth column naming the host, empty for this machine.
 - ctrl-x on a host's session row in `switch sessions`, or on a mirror
   session open here, asks in the popup what it is for: keep, kill it on the
   host, or forget the host. Before, it dropped the cached row without a
@@ -46,6 +55,9 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- `--print` into a pipe that closes early, such as `project --print |
+  head`, ends quietly with status 141 instead of panicking with "failed
+  printing to stdout: Broken pipe".
 - `sessions start NAME@HOST` with a HOST that names no host is refused,
   exit 1 with the hosts named, instead of starting a local session called
   `NAME@HOST` that looked like the remote one. HOST matches ignoring case

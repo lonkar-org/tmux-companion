@@ -145,6 +145,11 @@ pub struct Host {
     /// What picking one of its sessions does: `mirror` or `handover`.
     #[serde(default)]
     pub open: HostOpen,
+    /// The colour its name is drawn in on every picker row, `colourN` or
+    /// `#rrggbb`. Empty: the next of
+    /// [`crate::hosts::PALETTE`] in host order, so two hosts never share one.
+    #[serde(default)]
+    pub colour: String,
 }
 
 impl Host {
@@ -172,6 +177,7 @@ impl Host {
             connect_secs: Self::default_connect_secs(),
             ping_secs: Self::default_ping_secs(),
             open: HostOpen::default(),
+            colour: String::new(),
         }
     }
 }
@@ -3007,6 +3013,12 @@ pub fn check_hosts(hosts: &[Host]) -> Result<(), String> {
             return Err(format!(
                 "`[[hosts]]` has two hosts called `{}`, and the name is how every row and file tells them apart",
                 h.name
+            ));
+        }
+        if !h.colour.is_empty() && crate::picker::colour_of(h.colour.trim()).is_none() {
+            return Err(format!(
+                "`[[hosts]]` `{}` has `colour = \"{}\"`, which isn't a colour; use a tmux colour like \"colour75\" or \"#5f87ff\"",
+                h.name, h.colour
             ));
         }
         if h.command.is_empty() || h.command[0].trim().is_empty() {

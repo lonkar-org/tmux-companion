@@ -51,6 +51,35 @@ pub fn session_name(path: &str) -> String {
         .collect()
 }
 
+/// A path on another machine shortened the way [`short_path`] shortens one
+/// here, against that machine's home, which nothing here knows: the
+/// `/home/NAME`, `/Users/NAME` or `/root` it starts with. Anything else as
+/// it is.
+pub fn short_host_path(path: &str) -> String {
+    let home = host_home(path);
+    if home.is_empty() {
+        path.to_string()
+    } else {
+        short_path(path, home)
+    }
+}
+
+/// The home directory a path on another machine starts with, or empty.
+fn host_home(path: &str) -> &str {
+    if path == "/root" || path.starts_with("/root/") {
+        return "/root";
+    }
+    for base in ["/home/", "/Users/"] {
+        if let Some(rest) = path.strip_prefix(base) {
+            let user = rest.split('/').next().unwrap_or("");
+            if !user.is_empty() {
+                return &path[..base.len() + user.len()];
+            }
+        }
+    }
+    ""
+}
+
 /// Shorten a path for display, touching only what sits under `home`.
 ///
 /// The last component stays whole because it is the one being read, everything
@@ -658,6 +687,18 @@ mod tests {
     #[test]
     fn a_trailing_slash_does_not_produce_an_empty_name() {
         assert_eq!(session_name("/Users/y/mysetup/"), "mysetup");
+    }
+
+    #[test]
+    fn a_host_path_is_shortened_against_the_home_it_starts_with() {
+        assert_eq!(short_host_path("/home/me/api"), "~/api");
+        assert_eq!(short_host_path("/home/me/git-repos/dots"), "~/g/dots");
+        assert_eq!(short_host_path("/Users/a/src/api"), "~/s/api");
+        assert_eq!(short_host_path("/root/x"), "~/x");
+        assert_eq!(short_host_path("/home/me"), "~home");
+        assert_eq!(short_host_path("/srv/app"), "/srv/app");
+        assert_eq!(short_host_path("/home/"), "/home/");
+        assert_eq!(short_host_path(""), "");
     }
 
     #[test]

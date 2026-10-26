@@ -382,6 +382,8 @@ is the one that closes them.
 .Fl -print
 lists the rows and exits, and opens nothing; it cannot be combined with a
 directory.
+Each row is kind, name, path, colour and host, tab-separated, the host empty
+for this machine and a host's path shortened against its home.
 A host's group line prints as
 .Ql host ,
 its sessions as
@@ -2061,7 +2063,10 @@ and the ssh glyph on the left in the host colour, the tmux options
 .Ql @tc-host-fg
 and
 .Ql @tc-host-bg ,
-which the ssh hostname on the bar and the switcher's rows use too.
+which the ssh hostname on the bar uses too.
+The pickers draw each host's name in its own
+.Ic colour
+instead, so two hosts' rows read apart.
 .Pp
 The window list in a mirror session is the host's.
 A mirror session has one window here, the pane the attach runs in, so the
@@ -2453,7 +2458,22 @@ idle_secs = 600
 connect_secs = 10
 ping_secs = 15
 open = "mirror"
+colour = ""
 .Ed
+.Pp
+.Ic colour
+is the colour the host's name is drawn in on every picker row,
+.Ql colourN
+or
+.Ql #rrggbb .
+Empty, the default, takes the next of eight colours in host order, starting
+at
+.Ql colour203 ,
+so two hosts never share one until there are more than eight.
+The name is always in the words as well, as
+.Ql @vm ,
+and every row of a host that can't be reached is dimmed and says
+.Ql unreachable .
 .Pp
 .Ic link
 is when the link is up.
