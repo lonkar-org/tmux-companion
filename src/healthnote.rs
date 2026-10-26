@@ -154,13 +154,22 @@ pub fn answer(
     };
     let mut line = format!("noted {}", note.reason());
     if let Some(secs) = args.ttl_secs {
-        line.push_str(&format!(
-            ", for {} unless said again",
-            crate::sessions::idle::age(secs.max(1))
-        ));
+        line.push_str(&format!(", for {} unless said again", span(secs.max(1))));
     }
     set(notes, note);
     Ok((line, true))
+}
+
+/// A TTL in the largest unit that divides it evenly, `90m`, `2d`, `45s`,
+/// so the line says the TTL that was set: `age` would round 90m down to
+/// `1h`, which reads as a different TTL from the one kept.
+pub fn span(secs: u64) -> String {
+    for (unit, size) in [("d", 86_400), ("h", 3600), ("m", 60)] {
+        if secs >= size && secs.is_multiple_of(size) {
+            return format!("{}{unit}", secs / size);
+        }
+    }
+    format!("{secs}s")
 }
 
 /// The notes file in a state directory.
@@ -256,6 +265,20 @@ mod tests {
         assert_eq!(line, "noted ci: red, for 1h unless said again");
         assert_eq!(reasons(&notes, 3699), ["ci: red"]);
         assert!(reasons(&notes, 3700).is_empty());
+    }
+
+    #[test]
+    fn a_ttl_is_said_as_it_was_set() {
+        assert_eq!(span(5400), "90m");
+        assert_eq!(span(3600), "1h");
+        assert_eq!(span(172_800), "2d");
+        assert_eq!(span(129_600), "36h");
+        assert_eq!(span(45), "45s");
+        assert_eq!(span(3601), "3601s");
+        let mut notes = Vec::new();
+        let (line, _) = answer(&args("p", Some("x"), false, Some(5400)), &mut notes, 0).unwrap();
+        assert_eq!(line, "noted p: x, for 90m unless said again");
+        assert_eq!(notes[0].expires_at, Some(5400), "kept exact, not rounded");
     }
 
     #[test]
