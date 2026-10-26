@@ -690,6 +690,16 @@ This works whatever the
 host's link mode, since
 .Ql off
 stops the list and not the attach.
+.Ar host
+is matched ignoring case when only one host fits, so
+.Ql dev2
+finds
+.Ql Dev2 .
+A
+.Ar host
+that is no host is refused, exit 1 with the hosts named, rather than
+read as a local name; only a live session here by that very name still
+attaches.
 Otherwise it takes the first of these that knows the name:
 a live session called
 .Ar name ,
@@ -2188,8 +2198,37 @@ and runs no ssh until
 .Ql r ,
 so a restore after a reboot doesn't start a dozen handshakes at once.
 .Bl -tag -width Ds
-.It Ic hosts
-Each host on one line, in the order the configuration lists them and then
+.It Ic hosts Op Fl -print
+In a terminal, a picker of the hosts: each host's line, then its sessions,
+a session whose mirror is open here with
+.Ql open here
+after it.
+Each row's preview ends with the keys it takes, one a line.
+On a host's line, Enter brings its link up now, as
+.Ic hosts connect
+does; ctrl-e opens the add form filled in to edit it, as
+.Ic hosts edit
+does; ctrl-x asks, keep first, and forgets it; ctrl-o makes a session on
+it, asking for the name and the directory; ctrl-w closes every mirror of it
+open here.
+On a session, Enter opens its mirror here and switches to it; ctrl-w closes
+that mirror and leaves the session on the host, as
+.Ic host close
+does; ctrl-x asks what
+.Ic switch sessions
+asks, keep, kill it on the host or forget the host; ctrl-r asks for a new
+name and renames it on the host, as
+.Ic host rename
+does.
+ctrl-n adds a host from any row.
+What a key did is said in the footer in words, and the list opens again on
+the same row.
+With no hosts, it is the add form.
+.Pp
+With
+.Fl -print ,
+or off a terminal, each host on one line, in the order the configuration
+lists them and then
 the ones added for this tmux server: its name, its link mode, whether the
 link is up and why not when it isn't, when it is up whether the host is
 .Ql pushing
@@ -2278,6 +2317,29 @@ entry in
 every comment kept, or its place in
 .Ql @tc-hosts .
 Refused, with the reason, while a mirror session to it is open.
+.It Ic hosts edit Ar name Oo Fl -rename Ar new Oc Op Fl - Ar command ...
+Change a host where it is kept: its
+.Ic [[hosts]]
+entry in
+.Pa config.toml
+edited in place, its other keys, its place and every comment kept, or its
+place in
+.Ql @tc-hosts .
+The command after
+.Fl -
+replaces its command, read as
+.Ic hosts add
+reads one; without one it keeps the command it has.
+.Fl -rename
+gives it a new name, refused while a mirror session to it is open and when
+the name is another host's.
+One line says what changed:
+.Ql vm is now box, reached with ssh box .
+In the
+.Ic hosts
+picker ctrl-e opens the add form filled in, whose
+.Ql s
+keeps the change.
 .It Xo Ic host attach Ar host Ar session
 .Op Fl -create Op Fl -in Ar dir
 .Op Fl -dir Ar dir
@@ -2336,6 +2398,34 @@ One line says how it went:
 or
 .Ql could not kill api on vm:
 and the reason.
+.It Ic host rename Ar host Ar session Ar new
+Rename
+.Ar session
+on
+.Ar host
+to
+.Ar new
+through the host command, with plain tmux, so the host's build doesn't
+matter.
+The host's daemon moves the grouped sessions mirrors attach through, and a
+mirror session open here follows once the host's list says the new name.
+One line:
+.Ql api on vm is now web ,
+or why not:
+.Ql vm already has a session called web ,
+.Ql api is no longer on vm .
+.It Ic host close Ar host Ar session
+Close the mirror session of
+.Ar session
+on
+.Ar host
+here.
+The session stays on the host, and so does every other machine's mirror of
+it.
+One line:
+.Ql closed api@vm here; api stays on vm ,
+or exit 1 with
+.Ql api@vm isn't open here .
 .It Ic hosts connect Op Ar name
 Start or retry a host's link now, or every host's, and say how it went on
 one line each:

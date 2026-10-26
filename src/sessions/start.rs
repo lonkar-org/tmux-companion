@@ -156,12 +156,22 @@ async fn start(asked: &str, dir: Option<String>, detach: bool) -> anyhow::Result
     // that host, made there when the host has no session by that name. The
     // link's mode doesn't matter: `off` stops the list, not the attach. DIR
     // is where a session made there starts, on the host, `~` its home.
-    if let Some((remote, host)) = asked.trim().rsplit_once('@')
+    // The host is matched ignoring case when only one fits. One that matches
+    // no host is refused rather than read as a local name: `api@dev2`
+    // for a host called `Dev2` made a local session that looked like the
+    // remote one. Only a live session here by that very name still attaches.
+    if let Some((remote, typed_host)) = asked.trim().rsplit_once('@')
         && !remote.is_empty()
-        && crate::remote::find_host(host).await.is_some()
     {
-        crate::remote::open_new(host, remote, true, dir.as_deref(), detach).await?;
-        return Ok(0);
+        let hosts = crate::remote::host_names().await;
+        if let Some(host) = crate::remote::match_host(typed_host, &hosts) {
+            crate::remote::open_new(host, remote, true, dir.as_deref(), detach).await?;
+            return Ok(0);
+        }
+        if !crate::cli::session_exists(&format!("={}", tmux_name(asked))).await {
+            eprintln!("{}", no_such_host(typed_host, &hosts));
+            return Ok(1);
+        }
     }
     let name = tmux_name(asked);
     if name.is_empty() {
@@ -303,6 +313,15 @@ async fn start(asked: &str, dir: Option<String>, detach: bool) -> anyhow::Result
     }
     crate::cli::focus_session(&name).await?;
     Ok(0)
+}
+
+/// The refusal for `NAME@HOST` whose HOST is none of `hosts`, naming them.
+fn no_such_host(typed: &str, hosts: &[String]) -> String {
+    if hosts.is_empty() {
+        format!("no host called {typed}, and none is configured: tmux-companion hosts add")
+    } else {
+        format!("no host called {typed}; the hosts are {}", hosts.join(", "))
+    }
 }
 
 /// Why a DIR on the command line went unused, in words.

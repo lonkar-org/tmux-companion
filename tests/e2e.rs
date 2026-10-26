@@ -5089,6 +5089,23 @@ fn sessions_start_finds_a_name_live_then_saved_then_as_a_project() {
         "{err}"
     );
     assert!(!t.sessions().contains(&"nowhere".to_string()));
+
+    // NAME@HOST for a host nobody configured is refused, even with a
+    // directory that would start it here: a local `api@dev2` looked
+    // like the remote session it wasn't.
+    let (out, err, ok) = t.run(&["sessions", "start", "api@dev2", &scratch_arg]);
+    assert!(!ok, "start api@dev2 succeeded: {out}");
+    assert!(err.contains("no host called dev2"), "{err}");
+    assert!(
+        !t.sessions().iter().any(|s| s.contains('@')),
+        "{:?}",
+        t.sessions()
+    );
+    // A live session here by that very name still attaches.
+    t.must(&["new-session", "-d", "-s", "odd@thing"]);
+    let (out, err, ok) = t.run(&["sessions", "start", "odd@thing", "--detach"]);
+    assert!(ok, "start odd@thing: {out} {err}");
+    assert!(out.contains("odd@thing is running"), "{out}");
 }
 
 /// `sessions continue` goes back to the session a client last left, by the

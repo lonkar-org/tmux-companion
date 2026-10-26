@@ -655,6 +655,7 @@ def conf_file():
         f'bind -n M-k display-popup -B -E -w 80% -h 60% "{BIN} keys"',
         'bind -n M-e display-popup -B -E -w 65% -h 65% "printf POPUPREADY; sleep 0.2"',
         f'bind -n M-o display-popup -B -E -w 80% -h 70% "{BIN} switch sessions"',
+        f'bind -n M-h display-popup -B -E -w 90% -h 60% "{BIN} hosts"',
         # The window list with its clock off, so the burst typed after the
         # first frame is measured rather than racing a commit on the pause.
         f'bind -n M-w display-popup -B -E -w 50 -h 12 '
@@ -709,6 +710,10 @@ PICKERS = [
     ("switch windows", "M-w", b"Windows", b"Windows ]"),
     ("empty popup", "M-e", b"POPUPREADY", None),
 ]
+# The hosts picker has rows only with a host to list: with REMOTE, the fake
+# host's line is its first row. Without one it opens the add form instead.
+if REMOTE:
+    PICKERS.append(("hosts", "M-h", b"bench-rows", b"Hosts ]"))
 # Typed straight after the binding key: no row contains it, so it shows on
 # the pty only as the picker's query, and only if every key reached it.
 TYPEAHEAD = ["z", "z", "q", "x"]

@@ -38,6 +38,10 @@ pub const GONE: i32 = 75;
 /// session in the home directory and record the missing one as its path.
 pub const NO_DIR: i32 = 76;
 
+/// The status a rename on the host exits with when the new name is taken
+/// there.
+pub const TAKEN: i32 = 77;
+
 /// A directory on the host as one shell word for the host's shell: `~` and
 /// `~/...` are the host's home, which nothing here knows, and anything else
 /// is quoted as it is.
@@ -325,6 +329,23 @@ pub enum HostAction {
         /// The session on the host
         session: String,
     },
+    /// Rename SESSION on HOST to NEW; its mirror session here follows
+    Rename {
+        /// The host, by its name in `hosts`
+        host: String,
+        /// The session on the host
+        session: String,
+        /// Its new name
+        new: String,
+    },
+    /// Close the mirror session of SESSION on HOST here; the session stays
+    /// on the host
+    Close {
+        /// The host, by its name in `hosts`
+        host: String,
+        /// The session on the host
+        session: String,
+    },
 }
 
 /// What the shim does besides the plain attach: everything `host attach`
@@ -384,7 +405,29 @@ pub async fn run(action: HostAction) -> anyhow::Result<()> {
             println!("{}", kill(&host, &session).await?);
             Ok(())
         }
+        HostAction::Rename { host, session, new } => {
+            println!("{}", rename(&host, &session, &new).await?);
+            Ok(())
+        }
+        HostAction::Close { host, session } => {
+            println!("{}", close_mirror(&host, &session).await?);
+            Ok(())
+        }
     }
+}
+
+/// Close the mirror session of `remote` on `host` here. The session on the
+/// host stays, and so does every other machine's mirror of it. One line.
+pub async fn close_mirror(host: &str, remote: &str) -> anyhow::Result<String> {
+    let session = mirror::session_name(remote, host);
+    let out = crate::tmux::command()
+        .args(["kill-session", "-t", &format!("={session}")])
+        .output()
+        .await?;
+    if !out.status.success() {
+        anyhow::bail!("{session} isn't open here");
+    }
+    Ok(format!("closed {session} here; {remote} stays on {host}"))
 }
 
 /// A new session on `host`, asked for in two pickers in this popup: its
@@ -750,10 +793,44 @@ pub async fn find_host(name: &str) -> Option<Host> {
         .find(|h| h.name == name)
 }
 
-/// `name@host` split at its last `@`, when what follows is a host's name.
-pub fn split_at_host<'a>(typed: &'a str, hosts: &[String]) -> Option<(&'a str, &'a str)> {
+/// `name@host` split at its last `@`, when what follows names a host as
+/// [`match_host`] reads it. The host comes back spelled as the list spells it.
+pub fn split_at_host<'a, 'h>(typed: &'a str, hosts: &'h [String]) -> Option<(&'a str, &'h str)> {
     let (name, host) = typed.trim().rsplit_once('@')?;
-    (!name.is_empty() && hosts.iter().any(|h| h == host)).then_some((name, host))
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, match_host(host, hosts)?))
+}
+
+/// The host `typed` names: its exact name, else the one host whose name
+/// matches ignoring case, so `dev2` finds `Dev2`. None when no host
+/// fits, or when two fit ignoring case and neither exactly.
+pub fn match_host<'h>(typed: &str, hosts: &'h [String]) -> Option<&'h str> {
+    if let Some(h) = hosts.iter().find(|h| *h == typed) {
+        return Some(h);
+    }
+    let mut folded = hosts.iter().filter(|h| h.eq_ignore_ascii_case(typed));
+    match (folded.next(), folded.next()) {
+        (Some(h), None) => Some(h),
+        _ => None,
+    }
+}
+
+/// Every host's name, `[[hosts]]` first, then the ones kept for this tmux
+/// server, each once.
+pub async fn host_names() -> Vec<String> {
+    let mut names: Vec<String> = crate::cli::config_or_default()
+        .hosts
+        .iter()
+        .map(|h| h.name.clone())
+        .collect();
+    for h in crate::link::manager::server_hosts().await {
+        if !names.contains(&h.name) {
+            names.push(h.name);
+        }
+    }
+    names
 }
 
 /// Ask the daemon to start or retry a host's link now, and say so on the
@@ -1467,15 +1544,16 @@ pub fn kill_line(remote: &str) -> String {
     )
 }
 
-/// Kill `remote` on `host_name` through the host's command, forget its row,
-/// and close its mirror session here when one is open. One line saying what
-/// happened.
-pub async fn kill(host_name: &str, remote: &str) -> anyhow::Result<String> {
+/// Run one shell `line` on `host_name` through the host's command, with no
+/// terminal and nothing on stdin, waiting up to its connect time and ten
+/// seconds more. The exit status, or why there is none or it failed in
+/// words: the last line the host wrote to stderr, after `could not {what}`.
+async fn run_on_host(host_name: &str, line: String, what: &str) -> anyhow::Result<i32> {
     let Some(host) = find_host(host_name).await else {
         anyhow::bail!("no host called {host_name}; `tmux-companion hosts` lists them");
     };
     let mut argv = host.command.clone();
-    argv.push(kill_line(remote));
+    argv.push(line);
     let run = tokio::process::Command::new(&argv[0])
         .args(&argv[1..])
         .stdin(std::process::Stdio::null())
@@ -1484,18 +1562,11 @@ pub async fn kill(host_name: &str, remote: &str) -> anyhow::Result<String> {
         .kill_on_drop(true)
         .output();
     let wait = std::time::Duration::from_secs(host.connect_secs + 10);
-    let said = match tokio::time::timeout(wait, run).await {
-        Err(_) => anyhow::bail!(
-            "could not kill {remote} on {host_name}: no answer in {}s",
-            wait.as_secs()
-        ),
-        Ok(Err(e)) => anyhow::bail!(
-            "could not kill {remote} on {host_name}: cannot run {}: {e}",
-            argv[0]
-        ),
+    match tokio::time::timeout(wait, run).await {
+        Err(_) => anyhow::bail!("could not {what}: no answer in {}s", wait.as_secs()),
+        Ok(Err(e)) => anyhow::bail!("could not {what}: cannot run {}: {e}", argv[0]),
         Ok(Ok(out)) => match out.status.code() {
-            Some(0) => format!("killed {remote} on {host_name}"),
-            Some(GONE) => format!("{remote} was already gone from {host_name}"),
+            Some(c @ (0 | GONE | TAKEN)) => Ok(c),
             code => {
                 let err = String::from_utf8_lossy(&out.stderr);
                 let last = err
@@ -1507,9 +1578,59 @@ pub async fn kill(host_name: &str, remote: &str) -> anyhow::Result<String> {
                         Some(c) => format!("exit status {c}"),
                         None => "stopped by a signal".to_string(),
                     });
-                anyhow::bail!("could not kill {remote} on {host_name}: {last}")
+                anyhow::bail!("could not {what}: {last}")
             }
         },
+    }
+}
+
+/// The shell line that renames `remote` to `new` on the host: [`GONE`] when
+/// there is no such session, [`TAKEN`] when `new` is one already. Plain
+/// tmux, so the host's build doesn't matter; the host's daemon moves the
+/// `remote~machine` sessions mirrors attach through after it, as it does
+/// for any rename made there.
+pub fn rename_line(remote: &str, new: &str) -> String {
+    use crate::link::quote;
+    let exact = quote(&format!("={remote}"));
+    format!(
+        "tmux has-session -t {exact} 2>/dev/null || exit {GONE}; \
+         tmux has-session -t {} 2>/dev/null && exit {TAKEN}; \
+         tmux rename-session -t {exact} {}",
+        quote(&format!("={new}")),
+        quote(new),
+    )
+}
+
+/// Rename `remote` on `host_name` to `new` through the host's command, and
+/// forget its old row so the next poll lists it by the new name. A mirror
+/// session open here follows when the host says the session's new name. One
+/// line saying what happened.
+pub async fn rename(host_name: &str, remote: &str, new: &str) -> anyhow::Result<String> {
+    let new = crate::sessions::start::tmux_name(new);
+    if new.is_empty() {
+        anyhow::bail!("a session needs a name");
+    }
+    if new == remote {
+        return Ok(format!("{remote} on {host_name} already has that name"));
+    }
+    let what = format!("rename {remote} on {host_name}");
+    let said = match run_on_host(host_name, rename_line(remote, &new), &what).await? {
+        GONE => anyhow::bail!("{remote} is no longer on {host_name}"),
+        TAKEN => anyhow::bail!("{host_name} already has a session called {new}"),
+        _ => format!("{remote} on {host_name} is now {new}"),
+    };
+    forget_row(host_name, remote).await;
+    Ok(said)
+}
+
+/// Kill `remote` on `host_name` through the host's command, forget its row,
+/// and close its mirror session here when one is open. One line saying what
+/// happened.
+pub async fn kill(host_name: &str, remote: &str) -> anyhow::Result<String> {
+    let what = format!("kill {remote} on {host_name}");
+    let said = match run_on_host(host_name, kill_line(remote), &what).await? {
+        GONE => format!("{remote} was already gone from {host_name}"),
+        _ => format!("killed {remote} on {host_name}"),
     };
     forget_row(host_name, remote).await;
     let here = format!("={}", mirror::session_name(remote, host_name));
@@ -1617,6 +1738,23 @@ mod tests {
             "{line}"
         );
         assert!(kill_line("api").starts_with("tmux has-session -t '=api' 2>"));
+    }
+
+    #[test]
+    fn rename_line_quotes_both_names_once_and_refuses_a_taken_one() {
+        let line = rename_line("we ird'1", "new one");
+        assert!(
+            line.starts_with("tmux has-session -t '=we ird'\\''1' 2>/dev/null || exit 75; "),
+            "{line}"
+        );
+        assert!(
+            line.contains("tmux has-session -t '=new one' 2>/dev/null && exit 77; "),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("tmux rename-session -t '=we ird'\\''1' 'new one'"),
+            "{line}"
+        );
     }
 
     #[test]
@@ -1985,6 +2123,16 @@ mod tests {
         assert_eq!(split_at_host("api@nope", &hosts), None);
         assert_eq!(split_at_host("@vm", &hosts), None);
         assert_eq!(split_at_host("~/src/api", &hosts), None);
+    }
+
+    #[test]
+    fn a_host_is_found_ignoring_case_only_when_one_fits() {
+        let hosts = vec!["Dev2".to_string(), "vm".to_string(), "VM".to_string()];
+        assert_eq!(split_at_host("api@dev2", &hosts), Some(("api", "Dev2")));
+        assert_eq!(match_host("DEV2", &hosts), Some("Dev2"));
+        assert_eq!(match_host("VM", &hosts), Some("VM"), "exact wins");
+        assert_eq!(match_host("Vm", &hosts), None, "two fit, neither exactly");
+        assert_eq!(match_host("dev3", &hosts), None);
     }
 
     #[test]

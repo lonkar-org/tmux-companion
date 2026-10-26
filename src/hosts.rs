@@ -3,7 +3,8 @@
 //!
 //! The lines are the source of truth for the job "what is on my other
 //! machines": one line per host in config order, then its sessions, nothing
-//! said by colour or position. A picker that shows hosts is a view of these.
+//! said by colour or position. `hosts --print` gives them, and the picker
+//! `hosts` opens in a terminal ([`crate::hostlist`]) is a view of them.
 
 use std::time::Duration;
 
@@ -386,7 +387,7 @@ pub fn doctor_line(views: &[HostView], now: u64) -> String {
 }
 
 /// Ask the daemon for every host, after an ask or a reload.
-async fn ask(args: &HostsArgs) -> anyhow::Result<Vec<HostView>> {
+pub(crate) async fn ask(args: &HostsArgs) -> anyhow::Result<Vec<HostView>> {
     let resp = crate::client::send(Request::build("__hosts", args)).await?;
     if let Some(e) = resp.error {
         anyhow::bail!("{e}");
@@ -432,6 +433,19 @@ pub enum HostsAction {
         #[arg(last = true, value_name = "COMMAND")]
         command: Vec<String>,
     },
+    /// Change a host's command, or its name with --rename while no mirror
+    /// session to it is open, where it is kept: config.toml with every
+    /// comment kept, or this tmux server
+    Edit {
+        /// The host
+        name: String,
+        /// Its new name: letters, digits, - and _, up to 32
+        #[arg(long, value_name = "NEW")]
+        rename: Option<String>,
+        /// Its new command, after `--`; without one it keeps its command
+        #[arg(last = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
     /// Start or retry a host's link now and say how it went, one line per
     /// host
     Connect {
@@ -456,9 +470,14 @@ pub enum HostsAction {
     },
 }
 
-/// `hosts`, `hosts add` and `hosts connect`.
-pub async fn run(action: Option<HostsAction>) -> anyhow::Result<()> {
+/// `hosts`, `hosts add` and `hosts connect`. Bare `hosts` in a terminal is
+/// the picker; with `print`, or off a terminal, the lines.
+pub async fn run(action: Option<HostsAction>, print: bool) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
     match action {
+        None if !print && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() => {
+            crate::hostlist::run().await
+        }
         None => {
             let views = ask(&HostsArgs::default()).await?;
             if views.is_empty() {
@@ -493,6 +512,25 @@ pub async fn run(action: Option<HostsAction>) -> anyhow::Result<()> {
         }) if !command.is_empty() => add(&name, save, &command).await,
         Some(HostsAction::Add { .. }) => {
             anyhow::bail!("hosts add needs a name and a command: hosts add vm -- ssh vm")
+        }
+        Some(HostsAction::Edit {
+            name,
+            rename,
+            command,
+        }) => {
+            let command = if command.is_empty() {
+                known()
+                    .await?
+                    .into_iter()
+                    .find(|h| h.name == name)
+                    .map(|h| h.command)
+                    .ok_or_else(|| anyhow::anyhow!("no host called {name}; `hosts` lists them"))?
+            } else {
+                command_from(&command).map_err(anyhow::Error::msg)?
+            };
+            let new = rename.unwrap_or_else(|| name.clone());
+            println!("{}", edit_host(&name, &new, &command).await?);
+            Ok(())
         }
         Some(HostsAction::Connect { name }) => connect(name).await,
         Some(HostsAction::Forget {
@@ -579,6 +617,111 @@ pub async fn add_host(name: &str, save: bool, command: &[String]) -> anyhow::Res
     })
     .await?;
     Ok(said)
+}
+
+/// Change a host's command, and its name when no mirror session to it is
+/// open, where the host is kept: its `[[hosts]]` entry in config.toml edited
+/// in place with every comment kept, or its place in `@tc-hosts`. The daemon
+/// reads its hosts again, and a renamed host's cache file goes, since it is
+/// named for the old name. One line saying what changed.
+pub async fn edit_host(old: &str, new: &str, command: &[String]) -> anyhow::Result<String> {
+    check_name(new).map_err(anyhow::Error::msg)?;
+    for w in command {
+        refuse(w).map_err(anyhow::Error::msg)?;
+    }
+    if new != old {
+        if let Some(open) = open_mirrors(old).await.first() {
+            anyhow::bail!("{open} is open; close it before renaming {old}");
+        }
+        if let Some(h) = known().await?.iter().find(|h| h.name == new) {
+            anyhow::bail!("{}", taken_line(h));
+        }
+    }
+    let path = crate::setup::config_file()?;
+    let old_text = std::fs::read_to_string(&path).ok();
+    let edited = match old_text.as_deref() {
+        Some(text) => with_host_edited(text, old, new, command)?,
+        None => None,
+    };
+    let said = edit_said(old, new, command);
+    let said = if let Some(text) = edited {
+        write_config(&path, old_text.as_deref(), &text)?;
+        format!("{said}, in {}", path.display())
+    } else {
+        let mut server = crate::link::manager::server_hosts().await;
+        let Some(h) = server.iter_mut().find(|h| h.name == old) else {
+            anyhow::bail!("no host called {old}; `hosts` lists them");
+        };
+        *h = Host::new(new, command.to_vec());
+        set_server_hosts(&server, new).await?;
+        said
+    };
+    ask(&HostsArgs {
+        reload: true,
+        ..HostsArgs::default()
+    })
+    .await?;
+    if new != old
+        && let Some(dir) = crate::link::cache::dir()
+    {
+        crate::link::cache::remove(&crate::link::cache::path_in(&dir, old));
+    }
+    Ok(said)
+}
+
+/// What an edit changed, in words: `vm is now box, reached with ssh box`,
+/// or `vm is reached with ssh -p 2222 vm` when the name stayed.
+fn edit_said(old: &str, new: &str, command: &[String]) -> String {
+    let argv = command
+        .iter()
+        .map(|w| crate::link::quote(w))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if old == new {
+        format!("{old} is reached with {argv}")
+    } else {
+        format!("{old} is now {new}, reached with {argv}")
+    }
+}
+
+/// config.toml's text with the `[[hosts]]` entry called `old` renamed to
+/// `new` and given `command`, its other keys, its place and every comment
+/// kept; `None` when it has no such entry.
+pub fn with_host_edited(
+    text: &str,
+    old: &str,
+    new: &str,
+    command: &[String],
+) -> anyhow::Result<Option<String>> {
+    let mut doc: toml_edit::DocumentMut = text.parse()?;
+    let Some(list) = doc
+        .get_mut("hosts")
+        .and_then(|i| i.as_array_of_tables_mut())
+    else {
+        return Ok(None);
+    };
+    let Some(table) = list
+        .iter_mut()
+        .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(old))
+    else {
+        return Ok(None);
+    };
+    let mut argv = toml_edit::Array::new();
+    for w in command {
+        argv.push(w.as_str());
+    }
+    set_keeping_decor(table, "name", new.into());
+    set_keeping_decor(table, "command", argv.into());
+    Ok(Some(doc.to_string()))
+}
+
+/// Set `key` in `table` to `value`, keeping the comment and spacing around
+/// the old value, so `command = [...] # the jump host` keeps its comment.
+fn set_keeping_decor(table: &mut toml_edit::Table, key: &str, mut value: toml_edit::Value) {
+    if let Some(old) = table.get(key).and_then(|i| i.as_value()) {
+        *value.decor_mut() = old.decor().clone();
+    }
+    table[key] = toml_edit::Item::Value(value);
 }
 
 /// Write config.toml through any symlink to the real file, and put it back
@@ -822,6 +965,10 @@ pub struct Form {
     /// (false), or neither, such as `connecting`. Drawn as a tone; the words
     /// say it too.
     pub passed: Option<bool>,
+    /// The host being edited, by the name it had when the form opened;
+    /// `None` adds one. An edit keeps the host where it is kept, so `s`
+    /// alone keeps it, and its own name is not a name in use.
+    pub editing: Option<String>,
 }
 
 /// What a key did to the form.
@@ -838,6 +985,23 @@ pub enum FormAct {
 }
 
 impl Form {
+    /// The form filled in with `host`, to edit it.
+    pub fn editing(host: &Host) -> Self {
+        Self {
+            name: host.name.clone(),
+            named: true,
+            command: host
+                .command
+                .iter()
+                .map(|w| crate::link::quote(w))
+                .collect::<Vec<_>>()
+                .join(" "),
+            on_command: true,
+            editing: Some(host.name.clone()),
+            ..Self::default()
+        }
+    }
+
     /// The name the form shows: the person's, or the default from the
     /// command once it splits.
     fn refresh_name(&mut self, taken: &[String]) {
@@ -864,7 +1028,7 @@ impl Form {
         if self.tested {
             match key.code {
                 KeyCode::Char('s') => return FormAct::Keep(true),
-                KeyCode::Char('t') => return FormAct::Keep(false),
+                KeyCode::Char('t') if self.editing.is_none() => return FormAct::Keep(false),
                 _ => {
                     self.tested = false;
                     self.said.clear();
@@ -892,7 +1056,10 @@ impl Form {
                     self.on_command = false;
                     return FormAct::Edit;
                 }
-                if let Some(h) = taken.iter().find(|h| h.name == self.name) {
+                if let Some(h) = taken
+                    .iter()
+                    .find(|h| h.name == self.name && self.editing.as_ref() != Some(&h.name))
+                {
                     self.said = taken_line(h);
                     self.passed = Some(false);
                     self.on_command = false;
@@ -931,15 +1098,21 @@ impl Form {
     /// column, both from 0): in the field being typed into, or at the end of
     /// the answer once there is one to read.
     pub fn screen(&self) -> (Vec<String>, (usize, usize)) {
-        let keys = if self.tested {
-            "s save to config.toml   t keep for this tmux server   esc leave   any other key edits"
-        } else {
-            "tab next field   enter test the command   esc leave"
+        let keys = match (self.tested, &self.editing) {
+            (true, None) => {
+                "s save to config.toml   t keep for this tmux server   esc leave   any other key edits"
+            }
+            (true, Some(_)) => "s keep the change   esc leave   any other key edits",
+            (false, _) => "tab next field   enter test the command   esc leave",
+        };
+        let title = match &self.editing {
+            Some(name) => format!("Edit {name}"),
+            None => "Add a host".to_string(),
         };
         // The keys first, where every picker has them, then the fields.
         let lines = vec![
             keys.to_string(),
-            "Add a host".to_string(),
+            title,
             format!("name: {}", self.name),
             format!("command: {}", self.command),
             self.said.clone(),
@@ -1031,9 +1204,16 @@ async fn test_hello(name: &str, command: Vec<String>) -> (String, bool) {
 /// Every state is one line. Returns the line saying where the host was kept,
 /// or `None` when nothing was added.
 pub async fn form() -> anyhow::Result<Option<String>> {
+    form_for(None).await
+}
+
+/// The same form filled in with `host`, whose Enter tests the changed
+/// command and `s` keeps the change where the host is kept, through
+/// [`edit_host`]. With `None`, the add form.
+pub async fn form_for(host: Option<&Host>) -> anyhow::Result<Option<String>> {
     use ratatui::crossterm::event::{self, Event, KeyEventKind};
     let taken = known().await?;
-    let mut f = Form::default();
+    let mut f = host.map(Form::editing).unwrap_or_default();
     ratatui::crossterm::terminal::enable_raw_mode()?;
     let result: anyhow::Result<Option<String>> = async {
         loop {
@@ -1056,7 +1236,11 @@ pub async fn form() -> anyhow::Result<Option<String>> {
                 }
                 FormAct::Keep(save) => {
                     let command = split_words(&f.command).map_err(anyhow::Error::msg)?;
-                    match add_host(&f.name, save, &command).await {
+                    let kept = match &f.editing {
+                        Some(old) => edit_host(old, &f.name, &command).await,
+                        None => add_host(&f.name, save, &command).await,
+                    };
+                    match kept {
                         Ok(said) => return Ok(Some(said)),
                         Err(e) => {
                             f.said = format!("{e:#}");
@@ -1098,9 +1282,24 @@ pub fn outcome(v: &HostView) -> Option<(String, bool)> {
     }
 }
 
-/// `hosts connect`: ask, then wait for each host's attempt to end, up to its
-/// connect time and a little more, and say how each went.
+/// `hosts connect`: each host's line from [`connect_lines`], exit 1 when any
+/// didn't answer.
 async fn connect(name: Option<String>) -> anyhow::Result<()> {
+    let mut all_ok = true;
+    for (line, ok) in connect_lines(name).await? {
+        all_ok &= ok;
+        println!("{line}");
+    }
+    if !all_ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Ask for a host's link now, or every host's, then wait for each attempt
+/// to end, up to its connect time and a little more: one line each saying
+/// how it went, and whether it answered.
+pub async fn connect_lines(name: Option<String>) -> anyhow::Result<Vec<(String, bool)>> {
     let before = ask(&HostsArgs {
         connect: Some(name.clone().unwrap_or_default()),
         ..HostsArgs::default()
@@ -1131,7 +1330,7 @@ async fn connect(name: Option<String>) -> anyhow::Result<()> {
         .max()
         .unwrap_or(10);
     let deadline = std::time::Instant::now() + Duration::from_secs(longest + 3);
-    let mut all_ok = true;
+    let mut lines = Vec::new();
     for t in &targets {
         let line = loop {
             let now = ask(&HostsArgs::default()).await?;
@@ -1149,19 +1348,64 @@ async fn connect(name: Option<String>) -> anyhow::Result<()> {
             }
             tokio::time::sleep(Duration::from_millis(150)).await;
         };
-        all_ok &= line.1;
-        println!("{}", line.0);
+        lines.push(line);
     }
-    if !all_ok {
-        std::process::exit(1);
-    }
-    Ok(())
+    Ok(lines)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::LinkMode;
+
+    #[test]
+    fn an_edited_host_keeps_its_place_its_other_keys_and_every_comment() {
+        let text = "# hosts\n[[hosts]]\nname = \"vm\" # the box\ncommand = [\"ssh\", \"vm\"]\nlink = \"always\"\n\n[[hosts]]\nname = \"two\"\ncommand = [\"ssh\", \"two\"]\n";
+        let cmd = vec![
+            "ssh".to_string(),
+            "-p".to_string(),
+            "2222".to_string(),
+            "box".to_string(),
+        ];
+        let out = with_host_edited(text, "vm", "box", &cmd)
+            .expect("parses")
+            .expect("has vm");
+        assert!(
+            out.starts_with("# hosts\n[[hosts]]\nname = \"box\" # the box\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("command = [\"ssh\", \"-p\", \"2222\", \"box\"]\nlink = \"always\""),
+            "{out}"
+        );
+        assert!(out.find("box").unwrap() < out.find("two").unwrap(), "{out}");
+        assert_eq!(
+            with_host_edited(text, "nope", "x", &cmd).expect("parses"),
+            None
+        );
+    }
+
+    #[test]
+    fn the_edit_form_starts_filled_in_and_its_own_name_is_not_taken() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let host = Host::new("vm", vec!["ssh".into(), "dev box".into()]);
+        let mut f = Form::editing(&host);
+        assert_eq!(f.command, "ssh 'dev box'");
+        assert_eq!(f.screen().0[1], "Edit vm");
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let act = f.key(enter, std::slice::from_ref(&host));
+        assert!(
+            matches!(act, FormAct::Test(ref n, _) if n == "vm"),
+            "{act:?}"
+        );
+        f.tested = true;
+        let t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(
+            f.key(t, &[]),
+            FormAct::Edit,
+            "an edit keeps the host where it is"
+        );
+    }
 
     #[test]
     fn names_are_letters_digits_dashes_and_underscores_up_to_32() {

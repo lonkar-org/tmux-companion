@@ -1662,6 +1662,152 @@ fn host_kill_takes_the_group_and_leaves_the_rest() {
     assert_eq!(out.trim(), "doomed was already gone from b");
 }
 
+/// `host rename` renames the session on B and nothing else; a name B has
+/// already, and a session B doesn't have, are refused in words.
+#[test]
+fn host_rename_renames_on_b_and_refuses_a_taken_name() {
+    let Some(p) = Pair::start("rename") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "web"]);
+    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+
+    let (out, err, ok) = p.a(&["host", "rename", "b", "api", "svc"]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "api on b is now svc");
+    let names =
+        p.b.must(&p.bin, &["list-sessions", "-F", "#{session_name}"]);
+    let mut names: Vec<&str> = names.lines().collect();
+    names.sort_unstable();
+    assert_eq!(names, ["svc", "web"]);
+
+    let (out, err, ok) = p.a(&["host", "rename", "b", "svc", "web"]);
+    assert!(!ok, "{out}");
+    assert!(err.contains("b already has a session called web"), "{err}");
+    let (out, err, ok) = p.a(&["host", "rename", "b", "gone", "x"]);
+    assert!(!ok, "{out}");
+    assert!(err.contains("gone is no longer on b"), "{err}");
+}
+
+/// The `hosts` picker in a pane on A: B's line and its session as rows, a
+/// key on a row says what it did in the footer and the list stays, and
+/// Enter on the session opens its mirror and switches A's client there.
+#[test]
+fn the_hosts_picker_acts_on_a_row_and_says_so() {
+    let Some(p) = Pair::start("hostlist") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let mut client = p.a_client("here");
+    let (out, err, ok) = p.a(&["hosts", "connect", "b"]);
+    assert!(ok, "{out}{err}");
+    p.hosts_until(15, |o| o.contains("api@b"));
+
+    let picker = format!(
+        "env PATH='{}:{}' '{}' hosts",
+        p.bin.display(),
+        std::env::var("PATH").unwrap_or_default(),
+        binary().display()
+    );
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:", &picker, "Enter"]);
+    let screen = || p.a.tmux(&p.bin, &["capture-pane", "-p", "-t", "=here:"]).0;
+    wait_for(10, "the hosts picker", || {
+        let s = screen();
+        s.contains("Hosts ]") && s.contains("@b")
+    });
+    // The second row is api@b; ctrl-w on it says it isn't open here.
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:", "Down", "C-w"]);
+    wait_for(10, "the footer's answer", || {
+        screen().contains("api@b isn't open here")
+    });
+    p.a.must(&p.bin, &["send-keys", "-t", "=here:", "Enter"]);
+    let client_session = || {
+        p.a.tmux(&p.bin, &["list-clients", "-F", "#{client_session}"])
+            .0
+    };
+    wait_for(10, "A's client in api@b", || client_session() == "api@b");
+    let _ = client.kill();
+    let _ = client.wait();
+}
+
+/// `host close` closes the mirror session here and leaves the session on
+/// B; a second close says nothing of it is open.
+#[test]
+fn host_close_closes_the_mirror_and_leaves_the_session_on_b() {
+    let Some(p) = Pair::start("close") else {
+        return;
+    };
+    p.b.must(&p.bin, &["new-session", "-d", "-s", "api"]);
+    p.a_config(&p.fake_ssh(), "poll_secs = 1");
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let (out, err, ok) = p.a(&["sessions", "start", "api@b", "--detach"]);
+    assert!(ok, "{out}{err}");
+    let (_, _, open) = p.a.tmux(&p.bin, &["has-session", "-t", "=api@b"]);
+    assert!(open, "no mirror session to close");
+
+    let (out, err, ok) = p.a(&["host", "close", "b", "api"]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "closed api@b here; api stays on b");
+    let (_, _, open) = p.a.tmux(&p.bin, &["has-session", "-t", "=api@b"]);
+    assert!(!open, "the mirror is still open");
+    let (_, _, there) = p.b.tmux(&p.bin, &["has-session", "-t", "=api"]);
+    assert!(there, "api went from B");
+
+    let (out, err, ok) = p.a(&["host", "close", "b", "api"]);
+    assert!(!ok, "{out}");
+    assert!(err.contains("api@b isn't open here"), "{err}");
+}
+
+/// `hosts edit` changes a host where it is kept: on the tmux server, or in
+/// config.toml in place with its comment; a name in use and a host that
+/// isn't there are refused.
+#[test]
+fn hosts_edit_changes_a_host_where_it_is_kept() {
+    let Some(p) = Pair::start("edit") else {
+        return;
+    };
+    p.a.must(&p.bin, &["new-session", "-d", "-s", "here"]);
+    let (out, err, ok) = p.a(&["hosts", "add", "vm", "--", "ssh", "dev@vm"]);
+    assert!(ok, "{out}{err}");
+    let (out, err, ok) = p.a(&[
+        "hosts", "edit", "vm", "--rename", "box", "--", "ssh", "dev@box",
+    ]);
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim(), "vm is now box, reached with ssh dev@box");
+    let opt = p.a.must(&p.bin, &["show-options", "-sv", "@tc-hosts"]);
+    assert!(opt.contains("\"box\"") && opt.contains("dev@box"), "{opt}");
+    assert!(!opt.contains("\"vm\""), "{opt}");
+
+    let (out, err, ok) = p.a(&["hosts", "add", "saved", "--save", "--", "ssh", "saved"]);
+    assert!(ok, "{out}{err}");
+    let path = p.a.config();
+    let text = std::fs::read_to_string(&path).expect("config");
+    std::fs::write(
+        &path,
+        text.replace("name = \"saved\"", "name = \"saved\" # the jump box"),
+    )
+    .expect("comment");
+    let (out, err, ok) = p.a(&["hosts", "edit", "saved", "--", "ssh", "-p", "2222", "saved"]);
+    assert!(ok, "{out}{err}");
+    assert!(
+        out.starts_with("saved is reached with ssh -p 2222 saved, in "),
+        "{out}"
+    );
+    let text = std::fs::read_to_string(&path).expect("config");
+    assert!(text.contains("name = \"saved\" # the jump box"), "{text}");
+    assert!(text.contains("\"2222\""), "{text}");
+
+    let (_, err, ok) = p.a(&["hosts", "edit", "saved", "--rename", "box"]);
+    assert!(!ok);
+    assert!(err.contains("box is already a host"), "{err}");
+    let (_, err, ok) = p.a(&["hosts", "edit", "nope", "--", "ssh", "x"]);
+    assert!(!ok);
+    assert!(err.contains("no host called nope"), "{err}");
+}
+
 /// A terminal reply the dead connection left unread, a DECRPM here, doesn't
 /// swallow the keys after it: crossterm's parser held `ESC [ ?` open until a
 /// `u` or a `c`, and every `r`, `q` and ctrl-c went into it.

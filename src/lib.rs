@@ -114,6 +114,8 @@ pub mod doctor;
 #[doc(hidden)]
 pub mod earcons;
 #[doc(hidden)]
+pub mod hostlist;
+#[doc(hidden)]
 pub mod hosts;
 #[doc(hidden)]
 pub mod identity;

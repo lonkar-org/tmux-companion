@@ -109,12 +109,12 @@ goes = "tmux.conf"
 id = "hosts-list"
 group = "Keys"
 kind = "binding"
-line = "Which machines are in the session list, and is each one reachable?"
+line = "Which machines are in the session list, is each one reachable, and what to do about them?"
 command = "hosts"
 key = "H"
 table = "prefix"
 fallback = ["M-L", "C-M-l"]
-snippet = '''bind -N "companion: project the hosts, one line each" {key} display-popup -B -w 90% -h 50% "tmux-companion hosts"'''
+snippet = '''bind -N "companion: project the hosts and their sessions" {key} display-popup -B -E -w 90% -h 60% "tmux-companion hosts"'''
 goes = "tmux.conf"
 
 [[item]]

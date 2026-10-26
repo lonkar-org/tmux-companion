@@ -656,11 +656,16 @@ pub enum Cmd {
     },
 
     /// Other machines' tmux-companion: each host, its link and its
-    /// sessions, one line each; `add` adds one, `connect` brings one's link up
+    /// sessions, in a picker that edits, forgets and connects hosts and
+    /// opens, closes, kills and renames their sessions; `--print` gives one
+    /// line each; `add` adds one, `connect` brings one's link up
     Hosts {
-        /// `add` or `connect`, or nothing to list
+        /// `add` or `connect`, or nothing for the picker
         #[command(subcommand)]
         action: Option<crate::hosts::HostsAction>,
+        /// Print each host and its sessions, one line each, and open nothing
+        #[arg(long)]
+        print: bool,
     },
 
     /// One other machine's session, from this one: `host attach vm api` is
@@ -1325,7 +1330,7 @@ pub async fn run(command: Cmd) -> anyhow::Result<()> {
         Cmd::Note { text, pane, clear } => crate::note::run(text, pane, clear).await?,
         Cmd::Cheatsheet { print } => run_cheatsheet(print).await?,
         Cmd::Doctor => crate::doctor::run().await?,
-        Cmd::Hosts { action } => crate::hosts::run(action).await?,
+        Cmd::Hosts { action, print } => crate::hosts::run(action, print).await?,
         Cmd::Host { action } => crate::remote::run(action).await?,
         Cmd::Bridge { methods } => crate::link::bridge::run(methods).await?,
         // No `Request::build` and no args struct in proto.rs: the checklist

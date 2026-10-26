@@ -183,6 +183,9 @@ pid.
 - `host kill` is new: ctrl-x on a host's session row in `switch sessions`
   asks keep, kill or forget. It runs plain tmux over the host command, so
   the host's build doesn't matter; nothing to port.
+- `hosts` in a terminal is a picker of the hosts and their sessions, with
+  `hosts --print` the lines it was; `hosts edit`, `host rename` and `host
+  close` are new, each a key in it. Nothing to port.
 - `quiet --focus [NAME]` and `--focus-off` are new, with
   `[quiet] follow_focus`: quiet while a macOS Focus is on, pushed by a
   Shortcuts automation or read from the Focus database with one stat every

@@ -11,8 +11,22 @@ entry per phase of the comrades port.
   the grouped sessions other machines' mirrors attach through among them,
   and closes its mirror session here. It runs plain tmux over the host
   command, so the host's build doesn't matter.
-- `prefix H` lists the hosts, one line each, in a popup that stays until
-  Esc. `setup` offers it, falling back to `M-L` where `H` is taken.
+- `prefix H` opens the hosts picker in a popup. `setup` offers it, falling
+  back to `M-L` where `H` is taken.
+- `hosts` in a terminal is a picker: each host's line, then its sessions.
+  On a host, enter brings its link up, ctrl-e edits it, ctrl-x forgets it,
+  ctrl-o makes a session there and ctrl-w closes its mirrors here; on a
+  session, enter opens its mirror, ctrl-w closes the mirror and leaves the
+  session on the host, ctrl-x kills it there and ctrl-r renames it there;
+  ctrl-n adds a host. What a key did is said in the footer, and each row's
+  keys are in its preview. `hosts --print`, and `hosts` off a terminal,
+  give the lines it gave before. A binding made by an earlier `setup` runs
+  it in a popup without `-E`, which stays open once the picker closes;
+  `setup` again, or `-E` added by hand, fixes that.
+- `hosts edit NAME [--rename NEW] [-- COMMAND]` changes a host where it is
+  kept, its `[[hosts]]` entry edited in place with every comment.
+- `host rename HOST SESSION NEW` renames a session on a host, and `host
+  close HOST SESSION` closes its mirror here and leaves it on the host.
 
 ### Changed
 
@@ -25,6 +39,11 @@ entry per phase of the comrades port.
 
 ### Fixed
 
+- `sessions start NAME@HOST` with a HOST that names no host is refused,
+  exit 1 with the hosts named, instead of starting a local session called
+  `NAME@HOST` that looked like the remote one. HOST matches ignoring case
+  when one host fits, here and for a typed `name@host` in `switch
+  sessions`, so `api@dev2` opens on `Dev2`.
 - A mirror pane whose connection dropped no longer ignores `r`, `q` and
   ctrl-c. A terminal reply the dead connection left unread, a DECRPM such
   as `ESC[?2026;2$y`, held the key parser open until a `u` or a `c`, and
