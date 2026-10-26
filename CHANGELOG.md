@@ -30,6 +30,13 @@ entry per phase of the comrades port.
 
 ### Changed
 
+- A mirror session's bar draws the host's segments the way the host's own
+  bar does: in its `[status.right]` order, the agents in its `[agents]
+  style`, git as `gst` draws it, and the chunk clock, each in the host's
+  colours. They cross the link as text and colour names, never markup. The
+  health reason is still said in words, and `net` and `battery`, which are
+  the host's machine rather than the session, are not sent. Both ends need
+  this build; with either end older the bar is in words as before.
 - ctrl-x on a host's session row in `switch sessions`, or on a mirror
   session open here, asks in the popup what it is for: keep, kill it on the
   host, or forget the host. Before, it dropped the cached row without a

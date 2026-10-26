@@ -155,15 +155,85 @@ async fn link_segments(session: &str, state: &Arc<Mutex<ServerState>>) -> anyhow
 
 /// The segments of one session's active pane, from a pane list already
 /// read; `None` for a session the list doesn't have.
+///
+/// In `[status.right]`'s order, each with the runs this machine's own bar
+/// draws for it, separator included, so a mirror of it looks like it: the
+/// chunk clock, the agents in `[agents] style`, git as `gst` draws it. `net`
+/// and `battery` are this machine's and say nothing about the session, so
+/// they are not sent. `text` stays in words, for a mirror from before runs.
 async fn segments_of(
     session: &str,
     panes: &[crate::panes::Pane],
     state: &Arc<Mutex<ServerState>>,
 ) -> Option<Vec<crate::link::Segment>> {
+    use crate::config::SegmentName;
+    use crate::link::{Segment, runs_of};
+    let (words, right) = words_of(session, panes, state).await?;
+    let mut segments = Vec::new();
+    for configured in &right.segments {
+        let role = match configured.name {
+            SegmentName::Git => "git",
+            SegmentName::Agents => "agents",
+            SegmentName::Health => "health",
+            SegmentName::Chunk => "chunk",
+            SegmentName::Net | SegmentName::Battery => continue,
+        };
+        let Some(mut seg) = words.iter().find(|s| s.role == role).cloned().or_else(|| {
+            (role == "chunk").then(|| Segment {
+                role: role.into(),
+                ..Segment::default()
+            })
+        }) else {
+            continue;
+        };
+        if role != "health" {
+            let drawn = match configured.name {
+                SegmentName::Git => {
+                    let path = panes
+                        .iter()
+                        .filter(|p| p.session == session)
+                        .find(|p| p.visible)
+                        .map(|p| std::path::PathBuf::from(&p.path));
+                    let args = StatusRightArgs {
+                        path,
+                        style: Default::default(),
+                        branch_max_len: None,
+                        branch_icon: false,
+                        force: false,
+                        ttl_secs: crate::proto::default_ttl_secs(),
+                    };
+                    git_part(&args, state).await
+                }
+                SegmentName::Agents => agents(state).await,
+                _ => chunk_segment(state).await,
+            };
+            if !drawn.is_empty() {
+                let sep = crate::config::expand_glyphs(&configured.separator_before);
+                seg.runs = runs_of(&format!("{sep}{drawn}"));
+            }
+            if role == "chunk" {
+                seg.text = runs_of(&drawn).iter().map(|r| r.text.as_str()).collect();
+            }
+        }
+        if !seg.text.is_empty() || !seg.runs.is_empty() {
+            segments.push(seg);
+        }
+    }
+    Some(segments)
+}
+
+/// The segments in words, git, agents and health, each only when it has
+/// something to say, and the side they are ordered by.
+async fn words_of(
+    session: &str,
+    panes: &[crate::panes::Pane],
+    state: &Arc<Mutex<ServerState>>,
+) -> Option<(Vec<crate::link::Segment>, crate::config::StatusRight)> {
     use crate::link::Segment;
     let mine: Vec<&crate::panes::Pane> = panes.iter().filter(|p| p.session == session).collect();
     let pane = mine.iter().find(|p| p.visible).or(mine.first())?;
     let mut segments = Vec::new();
+    let right = state.lock().await.config.status.right.clone();
 
     let path = std::path::PathBuf::from(&pane.path);
     let ttl = state.lock().await.git_ttl();
@@ -213,7 +283,7 @@ async fn segments_of(
             ..Segment::default()
         });
     }
-    Some(segments)
+    Some((segments, right))
 }
 
 /// How long a `watch` waits with nothing changing before it looks at the

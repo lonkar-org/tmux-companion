@@ -40,6 +40,17 @@ struct Segment {
   fg @2 :Text;            # a colour name, empty for the bar's own
   bg @3 :Text;
   glyph @4 :Text;         # an icons.rs constant's name, empty for none
+  # The segment as the host's own bar draws it, in the host's glyph style and
+  # with its separator: text in colours, split where the colour changes. An
+  # older end ignores it and draws `text`, which stays in words for that.
+  runs @5 :List(Run);
+}
+
+# A stretch of a segment in one colour pair. Text, never markup.
+struct Run {
+  text @0 :Text;
+  fg @1 :Text;            # a colour name, empty for the bar's own
+  bg @2 :Text;
 }
 
 # One window of a grouped session, for the mirror session's bar to list in

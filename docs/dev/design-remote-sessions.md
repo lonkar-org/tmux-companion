@@ -123,7 +123,7 @@ interface Bridge {
 }
 ```
 
-`Segment` is structured: text, a role (`git`, `agents`, `health`), a foreground and a background colour as names and a glyph by its `icons.rs` name. The VM never sends tmux markup. A `#(` in a status line runs a command on the Mac, so the Mac renders the segment itself and treats every string as text.
+`Segment` is structured: text, a role (`git`, `agents`, `health`, `chunk`), a foreground and a background colour as names, a glyph by its `icons.rs` name, and runs: the segment as the host's own bar draws it, in its order and glyph style, as text in colour names, split where the colour changes. The VM never sends tmux markup. A `#(` in a status line runs a command on the Mac, so the Mac renders the segment itself and treats every string as text.
 
 ### Modes, per host
 

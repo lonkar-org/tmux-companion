@@ -94,6 +94,88 @@ pub struct Segment {
     pub bg: String,
     /// An `icons.rs` constant's name, empty for none.
     pub glyph: String,
+    /// The segment as the host's own bar draws it, separator first, in the
+    /// host's order and glyph style. Empty from a daemon from before them,
+    /// and for `health`, which the mirror bar says in words; `text` is then
+    /// what is drawn.
+    #[serde(default)]
+    pub runs: Vec<Run>,
+}
+
+/// A stretch of a segment in one colour pair: text, never markup.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Run {
+    /// What it says.
+    pub text: String,
+    /// A colour name, empty for the bar's own.
+    pub fg: String,
+    /// A colour name, empty for the bar's own.
+    pub bg: String,
+}
+
+/// The most runs taken of one segment off the wire.
+pub const MAX_RUNS: usize = 32;
+
+/// A segment the host's bar drew, as runs: the text between `#[...]`s, each
+/// with the colours in force there and `##` back to `#`. Every other
+/// attribute, `range=` and `bold` among them, is dropped, so nothing of the
+/// markup crosses the link; `reverse` is the one kept, by swapping the pair.
+/// Neighbours in one pair are joined.
+pub fn runs_of(markup: &str) -> Vec<Run> {
+    let (mut fg, mut bg, mut reverse) = (String::new(), String::new(), false);
+    let mut out: Vec<Run> = Vec::new();
+    let mut buf = String::new();
+    let flush = |buf: &mut String, out: &mut Vec<Run>, fg: &str, bg: &str, reverse: bool| {
+        if buf.is_empty() {
+            return;
+        }
+        let (fg, bg) = if reverse { (bg, fg) } else { (fg, bg) };
+        match out.last_mut() {
+            Some(last) if last.fg == fg && last.bg == bg => last.text.push_str(buf),
+            _ => out.push(Run {
+                text: buf.clone(),
+                fg: fg.to_string(),
+                bg: bg.to_string(),
+            }),
+        }
+        buf.clear();
+    };
+    let mut rest = markup;
+    while let Some(c) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("##") {
+            buf.push('#');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("#[") {
+            let end = after.find(']').unwrap_or(after.len());
+            flush(&mut buf, &mut out, &fg, &bg, reverse);
+            for attr in after[..end].split(',').map(str::trim) {
+                let colour = |v: &str| {
+                    if v == "default" {
+                        String::new()
+                    } else {
+                        v.to_string()
+                    }
+                };
+                if let Some(v) = attr.strip_prefix("fg=") {
+                    fg = colour(v);
+                } else if let Some(v) = attr.strip_prefix("bg=") {
+                    bg = colour(v);
+                } else if attr == "reverse" {
+                    reverse = true;
+                } else if attr == "noreverse" || attr == "none" {
+                    reverse = false;
+                } else if attr == "default" {
+                    (fg, bg, reverse) = (String::new(), String::new(), false);
+                }
+            }
+            rest = after.get(end + 1..).unwrap_or("");
+        } else {
+            buf.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    flush(&mut buf, &mut out, &fg, &bg, reverse);
+    out
 }
 
 /// One window of a grouped session, for the mirror session's bar.
@@ -263,6 +345,21 @@ pub fn read_segments(
                 fg: text(r.get_fg())?,
                 bg: text(r.get_bg())?,
                 glyph: text(r.get_glyph())?,
+                runs: if r.has_runs() {
+                    r.get_runs()?
+                        .iter()
+                        .take(MAX_RUNS)
+                        .map(|r| {
+                            Ok(Run {
+                                text: text(r.get_text())?,
+                                fg: text(r.get_fg())?,
+                                bg: text(r.get_bg())?,
+                            })
+                        })
+                        .collect::<capnp::Result<_>>()?
+                } else {
+                    Vec::new()
+                },
             })
         })
         .collect()
@@ -901,6 +998,36 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn runs_keep_the_text_and_colours_and_nothing_else_of_the_markup() {
+        let r = |text: &str, fg: &str, bg: &str| Run {
+            text: text.into(),
+            fg: fg.into(),
+            bg: bg.into(),
+        };
+        assert_eq!(
+            runs_of(
+                "#[fg=colour114,bg=color233]󱫐 37m#[range=user|agents]\
+                 #[fg=color254,bg=color233] 󰚩 2#[norange,bold]#[fg=color254] ##1"
+            ),
+            [
+                r("󱫐 37m", "colour114", "color233"),
+                r(" 󰚩 2 #1", "color254", "color233")
+            ]
+        );
+        // `reverse` swaps the pair; `none` and `default` undo it.
+        assert_eq!(
+            runs_of("#[reverse,fg=color237]>#[bg=color237,none]x#[default]y"),
+            [
+                r(">", "", "color237"),
+                r("x", "color237", "color237"),
+                r("y", "", "")
+            ]
+        );
+        assert!(runs_of("#[fg=red]").is_empty());
+        assert_eq!(runs_of("#[fg=red"), Vec::<Run>::new());
     }
 
     #[test]

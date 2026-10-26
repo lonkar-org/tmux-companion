@@ -365,7 +365,7 @@ pub struct KeysArgs {
 
 /// The default `--ttl`, kept here rather than imported from `server::state` so
 /// the wire types do not depend on the server.
-fn default_ttl_secs() -> f64 {
+pub(crate) fn default_ttl_secs() -> f64 {
     5.0
 }
 

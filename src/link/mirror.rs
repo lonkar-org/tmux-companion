@@ -129,7 +129,26 @@ pub fn render(host: &str, segments: Option<&[Segment]>, link_up: bool, here: &[S
     let mut out = String::new();
     match (link_up, segments) {
         (true, Some(segs)) => {
+            let mut drew_runs = false;
             for s in segs {
+                // The host's own drawing, from a host that sends it: its
+                // colours where they read as colours, the bar's otherwise.
+                if !s.runs.is_empty() {
+                    for r in &s.runs {
+                        let text = literal(&r.text);
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let fg = colour(&r.fg).unwrap_or_else(|| "default".to_string());
+                        let bg = colour(&r.bg).unwrap_or_else(|| BAR_BG.to_string());
+                        out.push_str(&format!("#[fg={fg},bg={bg}]{text}"));
+                    }
+                    drew_runs = true;
+                    continue;
+                }
+                if std::mem::take(&mut drew_runs) {
+                    out.push(' ');
+                }
                 let text = literal(&s.text);
                 if text.is_empty() {
                     continue;
@@ -142,6 +161,9 @@ pub fn render(host: &str, segments: Option<&[Segment]>, link_up: bool, here: &[S
                 let fg = colour(&s.fg).unwrap_or_else(|| SEGMENT_FG.to_string());
                 let bg = colour(&s.bg).unwrap_or_else(|| SEGMENT_BG.to_string());
                 out.push_str(&format!("#[fg={fg},bg={bg}] {}{text} ", glyph(&s.glyph)));
+            }
+            if drew_runs {
+                out.push_str(&format!("#[bg={BAR_BG}] "));
             }
         }
         (true, None) => {}
@@ -1178,7 +1200,52 @@ mod tests {
             fg: fg.into(),
             bg: bg.into(),
             glyph: glyph.into(),
+            ..Segment::default()
         }
+    }
+
+    fn run(text: &str, fg: &str, bg: &str) -> crate::link::Run {
+        crate::link::Run {
+            text: text.into(),
+            fg: fg.into(),
+            bg: bg.into(),
+        }
+    }
+
+    #[test]
+    fn a_hosts_runs_are_drawn_as_it_drew_them_in_its_order() {
+        let chunk = Segment {
+            role: "chunk".into(),
+            text: "󱫐 37m".into(),
+            runs: vec![run("󱫐 37m", "colour114", "color233")],
+            ..Segment::default()
+        };
+        let agents = Segment {
+            runs: vec![run(" 󰚩 2", "", "color233"), run(" 󰦖 2", "colour33", "")],
+            ..seg("agents", "2 agents, 2 busy", "", "", "AGENT")
+        };
+        let out = render(
+            "vm",
+            Some(&[chunk, agents, seg("health", "offline", "", "", "")]),
+            true,
+            &[],
+        );
+        assert_eq!(
+            out,
+            "#[fg=colour114,bg=color233]󱫐 37m\
+             #[fg=default,bg=color233] 󰚩 2\
+             #[fg=colour33,bg=colour233] 󰦖 2 \
+             #[fg=colour251,bg=colour236] vm: offline \
+             #[default]"
+        );
+        // Words alone, from a host from before runs, are drawn as they were.
+        let old = render(
+            "vm",
+            Some(&[seg("agents", "1 agent", "", "", "AGENT")]),
+            true,
+            &[],
+        );
+        assert_eq!(old, "#[fg=colour251,bg=colour236] 󰚩 1 agent #[default]");
     }
 
     #[test]
@@ -1215,6 +1282,10 @@ mod tests {
         let segs = vec![
             seg("git", evil, evil, evil, evil),
             seg("agents", evil, "colour1", "colour2", "AGENT"),
+            Segment {
+                runs: vec![run(evil, evil, evil), run(evil, "colour1]#(id)", "red")],
+                ..seg("chunk", evil, "", "", "")
+            },
             seg("health", evil, "", "", ""),
         ];
         // Read the way tmux reads a format: `##` is a `#`, and any other `#`
@@ -1235,7 +1306,7 @@ mod tests {
             seen
         };
         let out = render(evil, Some(&segs), true, &[evil.to_string()]);
-        assert_eq!(out.matches("##(touch").count(), 5, "{out}");
+        assert_eq!(out.matches("##(touch").count(), 7, "{out}");
         assert!(starts(&out).iter().all(|c| *c == '['), "{out}");
         let down = render(evil, Some(&segs), false, &[evil.to_string()]);
         assert!(starts(&down).iter().all(|c| *c == '['), "{down}");

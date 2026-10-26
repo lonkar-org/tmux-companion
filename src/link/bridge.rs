@@ -353,6 +353,15 @@ fn write_segments(
         b.set_fg(&s.fg);
         b.set_bg(&s.bg);
         b.set_glyph(&s.glyph);
+        if !s.runs.is_empty() {
+            let mut runs = b.init_runs(s.runs.len() as u32);
+            for (j, r) in s.runs.iter().enumerate() {
+                let mut rb = runs.reborrow().get(j as u32);
+                rb.set_text(&r.text);
+                rb.set_fg(&r.fg);
+                rb.set_bg(&r.bg);
+            }
+        }
     }
 }
 
