@@ -25,7 +25,7 @@
 # bytes until somebody changes it on purpose, and .github/dependabot.yml is
 # what does that, as a pull request. Resolve one by hand with
 #   docker buildx imagetools inspect rust:1-alpine
-FROM rust:1-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS build
+FROM rust:1-alpine@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 # Cargo.lock and the manifest first, then every dependency fetched, so a
@@ -47,7 +47,7 @@ RUN cargo build --release --locked && strip target/release/tmux-companion
 
 
 # ── The playground ──────────────────────────────────────────────────────────
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # git, because the status bar's largest segment reads it. neovim and zsh
 # because the tour opens both. zoxide because the project picker asks it which
