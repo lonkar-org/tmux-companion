@@ -811,11 +811,32 @@ impl Default for GstOptions {
 
 #[doc(hidden)]
 /// Render the git segment, serving from the cache unless `opts.force` is set.
+///
+/// A directory deleted while the segment reads it (an agent's temporary
+/// checkout, a worktree being removed) ends a git call with ENOENT; that is
+/// the pane's directory going away, not a fault, so it draws nothing.
 pub async fn render(opts: &GstOptions, state: &Arc<Mutex<ServerState>>) -> anyhow::Result<String> {
+    match render_existing(opts, state).await {
+        Err(_) if opts.path.as_ref().is_some_and(|p| !p.exists()) => Ok(String::new()),
+        other => other,
+    }
+}
+
+async fn render_existing(
+    opts: &GstOptions,
+    state: &Arc<Mutex<ServerState>>,
+) -> anyhow::Result<String> {
     // empty cap glyph = status_line_capped skips the end cap entirely
     let cap = if opts.no_cap { Some("") } else { None };
     let path = match &opts.path {
-        Some(p) => p.canonicalize()?,
+        // A pane whose directory was deleted under it still reports that
+        // path; there is no tree to show, which is not a failure (it put a
+        // health reason on every bar of the Mac's, 2026-10-29).
+        Some(p) => match p.canonicalize() {
+            Ok(path) => path,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+            Err(e) => return Err(e.into()),
+        },
         None => std::env::current_dir()?,
     };
 

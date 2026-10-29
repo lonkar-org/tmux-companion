@@ -1660,6 +1660,19 @@ mod tests {
         assert_eq!(r.output, "");
     }
 
+    #[tokio::test]
+    async fn gst_on_a_deleted_path_renders_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone");
+        let r = dispatch(
+            Request::raw("gst", serde_json::json!({"path": gone.to_string_lossy()})),
+            state(),
+        )
+        .await;
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(r.output, "");
+    }
+
     /// Every segment that rendered is introduced by its separator, and a side
     /// that rendered nothing carries no separator at all.
     ///
