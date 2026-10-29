@@ -217,10 +217,14 @@ async fn segments_of(
                 SegmentName::Battery => battery(state).await.unwrap_or_default(),
                 _ => chunk_segment(state).await,
             };
-            if !drawn.is_empty() {
-                let sep = crate::config::expand_glyphs(&configured.separator_before);
-                seg.runs = runs_of(&format!("{sep}{drawn}"));
+            // What the host's bar leaves out, the mirror leaves out: the
+            // agents in quiet hours, git where the pane has none. Its words
+            // would otherwise stand in, a look the host never draws.
+            if drawn.is_empty() {
+                continue;
             }
+            let sep = crate::config::expand_glyphs(&configured.separator_before);
+            seg.runs = runs_of(&format!("{sep}{drawn}"));
             if drawn_only {
                 seg.text = runs_of(&drawn).iter().map(|r| r.text.as_str()).collect();
             }

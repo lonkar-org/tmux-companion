@@ -119,6 +119,16 @@ pub fn short_word(reason: &str) -> &'static str {
     }
 }
 
+/// A reason as a mirror bar says it: quiet as the bell crossed out, as on the
+/// host's own mark, and everything else in its words.
+pub fn mirror_word(reason: &str) -> String {
+    if crate::quiet::is_status_line(reason) {
+        QUIET.to_string()
+    } else {
+        reason.to_string()
+    }
+}
+
 /// The segment: the glyph and the first reason's word, `+N` when there are
 /// more, or nothing.
 ///

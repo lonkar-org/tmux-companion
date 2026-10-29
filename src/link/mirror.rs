@@ -154,6 +154,11 @@ pub fn render(host: &str, segments: Option<&[Segment]>, link_up: bool, here: &[S
                     continue;
                 }
                 let text = if s.role == "health" {
+                    let text = text
+                        .split("; ")
+                        .map(crate::segments::health::mirror_word)
+                        .collect::<Vec<_>>()
+                        .join("; ");
                     format!("{host}: {text}")
                 } else {
                     text
@@ -171,7 +176,7 @@ pub fn render(host: &str, segments: Option<&[Segment]>, link_up: bool, here: &[S
     }
     let here: Vec<String> = here
         .iter()
-        .map(|r| literal(r))
+        .map(|r| literal(&crate::segments::health::mirror_word(r)))
         .filter(|r| !r.is_empty())
         .collect();
     if !here.is_empty() {
@@ -1210,6 +1215,20 @@ mod tests {
             fg: fg.into(),
             bg: bg.into(),
         }
+    }
+
+    #[test]
+    fn quiet_is_the_bell_crossed_out_on_both_sides_of_a_mirror() {
+        let q = crate::tmux::icons::QUIET;
+        let out = render(
+            "vm",
+            Some(&[seg("health", "quiet for 9h; offline for 2m", "", "", "")]),
+            true,
+            &["quiet for 1h more".to_string()],
+        );
+        assert!(out.contains(&format!("vm: {q}; offline for 2m")), "{out:?}");
+        assert!(out.contains(&format!("here: {q} ")), "{out:?}");
+        assert!(!out.contains("quiet for"), "{out:?}");
     }
 
     #[test]
