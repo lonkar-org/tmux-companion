@@ -158,9 +158,10 @@ async fn link_segments(session: &str, state: &Arc<Mutex<ServerState>>) -> anyhow
 ///
 /// In `[status.right]`'s order, each with the runs this machine's own bar
 /// draws for it, separator included, so a mirror of it looks like it: the
-/// chunk clock, the agents in `[agents] style`, git as `gst` draws it. `net`
-/// and `battery` are this machine's and say nothing about the session, so
-/// they are not sent. `text` stays in words, for a mirror from before runs.
+/// chunk clock, the agents in `[agents] style`, git as `gst` draws it, and
+/// this machine's `net` and `battery`, which say nothing about the session
+/// but are what a mirror can't see from its own side. `text` stays in words,
+/// for a mirror from before runs.
 async fn segments_of(
     session: &str,
     panes: &[crate::panes::Pane],
@@ -176,10 +177,15 @@ async fn segments_of(
             SegmentName::Agents => "agents",
             SegmentName::Health => "health",
             SegmentName::Chunk => "chunk",
-            SegmentName::Net | SegmentName::Battery => continue,
+            // This host's rate and battery, not the session's: what a mirror
+            // wants to see is what the host's agents pull and push (asked
+            // for 2026-10-29). Empty where the host has no battery.
+            SegmentName::Net => "net",
+            SegmentName::Battery => "battery",
         };
+        let drawn_only = matches!(role, "chunk" | "net" | "battery");
         let Some(mut seg) = words.iter().find(|s| s.role == role).cloned().or_else(|| {
-            (role == "chunk").then(|| Segment {
+            drawn_only.then(|| Segment {
                 role: role.into(),
                 ..Segment::default()
             })
@@ -205,13 +211,17 @@ async fn segments_of(
                     git_part(&args, state).await
                 }
                 SegmentName::Agents => agents(state).await,
+                // A failure is the host's own bar's to report; the mirror
+                // just goes without.
+                SegmentName::Net => net(state).await.unwrap_or_default(),
+                SegmentName::Battery => battery(state).await.unwrap_or_default(),
                 _ => chunk_segment(state).await,
             };
             if !drawn.is_empty() {
                 let sep = crate::config::expand_glyphs(&configured.separator_before);
                 seg.runs = runs_of(&format!("{sep}{drawn}"));
             }
-            if role == "chunk" {
+            if drawn_only {
                 seg.text = runs_of(&drawn).iter().map(|r| r.text.as_str()).collect();
             }
         }
