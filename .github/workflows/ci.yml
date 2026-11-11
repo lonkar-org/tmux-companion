@@ -125,7 +125,7 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: clippy
           add-rust-environment-hash-key: false
@@ -201,7 +201,7 @@ jobs:
           fi
           rustup show active-toolchain || rustup toolchain install
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests
           add-rust-environment-hash-key: false
@@ -282,7 +282,7 @@ jobs:
       # RUSTUP_TOOLCHAIN so the cache keys on the rustc this job checks with:
       # in the repository rust-toolchain.toml answers instead, which would key
       # on the pinned toolchain and install it for nothing.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
@@ -317,7 +317,7 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
       # It compiled every dependency from nothing on each run, about a minute
       # of the job's own.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: docs
           add-rust-environment-hash-key: false
